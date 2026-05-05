@@ -1,0 +1,27 @@
+services:
+  migrations:
+    build: ./web-app
+    image: drift:latest
+    command: bun run src/migrate.ts
+    volumes:
+      - drift-data:/app/data
+    environment:
+      - NODE_ENV=production
+
+  web-app:
+    image: drift:latest
+    command: bun run src/index.ts
+    ports:
+      - "5000:5000"
+    volumes:
+      - drift-data:/app/data
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  drift-data:

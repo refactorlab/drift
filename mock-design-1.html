@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drift — PR #2847 Scan Report</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --bg-elevated: #11121a;
+    --bg-card: #15161f;
+    --bg-hover: #1c1d28;
+    --border: #24262f;
+    --border-strong: #2e3038;
+    --text: #e8e9ef;
+    --text-dim: #8b8d97;
+    --text-faint: #5a5c66;
+    --accent: #7c5cff;
+    --accent-glow: rgba(124, 92, 255, 0.15);
+    --critical: #ff4d6d;
+    --warning: #ffb547;
+    --success: #00d97e;
+    --info: #4dabff;
+    --gradient: linear-gradient(135deg, #7c5cff 0%, #4dabff 100%);
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(124, 92, 255, 0.08) 0%, transparent 50%),
+      radial-gradient(circle at 80% 0%, rgba(77, 171, 255, 0.06) 0%, transparent 50%);
+    background-attachment: fixed;
+  }
+
+  /* Top Nav */
+  .nav {
+    border-bottom: 1px solid var(--border);
+    background: rgba(10, 10, 15, 0.8);
+    backdrop-filter: blur(20px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .nav-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 32px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    gap: 32px;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  .logo-mark {
+    width: 28px; height: 28px;
+    background: var(--gradient);
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 0 20px var(--accent-glow);
+  }
+  .logo-mark svg { width: 16px; height: 16px; color: white; }
+  .nav-links {
+    display: flex; gap: 4px;
+    flex: 1;
+  }
+  .nav-link {
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .nav-link.active { color: var(--text); background: var(--bg-hover); }
+  .nav-link:hover { color: var(--text); }
+  .nav-right {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff6b6b, #ffb547);
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 600; color: white;
+  }
+
+  /* Container */
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 32px;
+  }
+
+  /* Breadcrumb / Header */
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .breadcrumb a { color: var(--text-dim); text-decoration: none; }
+  .breadcrumb a:hover { color: var(--text); }
+  .breadcrumb .sep { color: var(--text-faint); }
+  .breadcrumb strong { color: var(--text); font-weight: 500; }
+
+  .pr-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    margin-bottom: 32px;
+  }
+  .pr-title-block { flex: 1; }
+  .pr-title {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .pr-number { color: var(--text-dim); font-weight: 400; }
+  .pr-meta {
+    display: flex; align-items: center; gap: 16px;
+    color: var(--text-dim); font-size: 13px;
+  }
+  .pr-meta-item { display: flex; align-items: center; gap: 6px; }
+  .pr-meta-item svg { width: 14px; height: 14px; }
+
+  .verdict-card {
+    padding: 16px 20px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(255, 77, 109, 0.12), rgba(255, 77, 109, 0.04));
+    border: 1px solid rgba(255, 77, 109, 0.3);
+    min-width: 240px;
+    text-align: right;
+  }
+  .verdict-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .verdict-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--critical);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .verdict-value::before {
+    content: '';
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--critical);
+    box-shadow: 0 0 12px var(--critical);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .verdict-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+  /* Stats Grid */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent-color, var(--accent));
+    opacity: 0.6;
+  }
+  .stat-card.critical { --accent-color: var(--critical); }
+  .stat-card.warning { --accent-color: var(--warning); }
+  .stat-card.info { --accent-color: var(--info); }
+  .stat-card.success { --accent-color: var(--success); }
+
+  .stat-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .stat-trend {
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .stat-trend.up { color: var(--critical); }
+  .stat-trend.down { color: var(--success); }
+
+  /* Main Layout */
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 24px;
+  }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Flame graph card */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+  .card-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tab-row {
+    display: flex; gap: 2px;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 3px;
+  }
+  .tab {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.15s;
+  }
+  .tab.active {
+    background: var(--bg-card);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  /* Flame graph */
+  .flamegraph {
+    padding: 20px;
+    background:
+      linear-gradient(to right, transparent 49.5%, rgba(255,255,255,0.03) 49.5%, rgba(255,255,255,0.03) 50.5%, transparent 50.5%),
+      var(--bg-elevated);
+  }
+  .flame-row {
+    display: flex;
+    height: 26px;
+    margin-bottom: 2px;
+    gap: 2px;
+  }
+  .flame-block {
+    height: 100%;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(0,0,0,0.85);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: filter 0.15s, transform 0.15s;
+    position: relative;
+  }
+  .flame-block:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .flame-block.hot { background: linear-gradient(180deg, #ff6b6b, #ee3535); color: white; }
+  .flame-block.warm { background: linear-gradient(180deg, #ffb547, #ff8c42); }
+  .flame-block.cool { background: linear-gradient(180deg, #ffd166, #ffb547); }
+  .flame-block.mild { background: linear-gradient(180deg, #d4e157, #aebf3c); }
+  .flame-block.calm { background: linear-gradient(180deg, #81c784, #4caf50); color: white; }
+  .flame-block.faded { background: linear-gradient(180deg, #4a5568, #2d3748); color: var(--text-dim); }
+
+  .flame-block .pct {
+    margin-left: auto;
+    font-weight: 600;
+    opacity: 0.9;
+  }
+  .flame-axis {
+    margin-top: 8px;
+    height: 18px;
+    position: relative;
+    border-top: 1px solid var(--border);
+    padding-top: 4px;
+  }
+  .flame-axis-label {
+    position: absolute;
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+
+  /* Issues List */
+  .issue {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    background: var(--bg-card);
+    transition: border-color 0.15s;
+  }
+  .issue:hover { border-color: var(--border-strong); }
+
+  .issue-head {
+    padding: 14px 18px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .severity-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+  .severity-dot.critical { background: var(--critical); box-shadow: 0 0 8px var(--critical); }
+  .severity-dot.high { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
+  .severity-dot.medium { background: var(--info); }
+  .severity-dot.low { background: var(--text-faint); }
+
+  .issue-main { flex: 1; }
+  .issue-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .issue-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .issue-meta code {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge.critical { background: rgba(255, 77, 109, 0.15); color: var(--critical); }
+  .badge.high { background: rgba(255, 181, 71, 0.15); color: var(--warning); }
+  .badge.medium { background: rgba(77, 171, 255, 0.15); color: var(--info); }
+  .badge.low { background: rgba(139, 141, 151, 0.15); color: var(--text-dim); }
+
+  .issue-impact {
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .impact-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--critical);
+  }
+  .impact-label {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .issue-body {
+    border-top: 1px solid var(--border);
+    padding: 16px 18px;
+    background: var(--bg-elevated);
+  }
+  .issue-section {
+    margin-bottom: 16px;
+  }
+  .issue-section:last-child { margin-bottom: 0; }
+  .issue-section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .issue-section p { font-size: 13px; color: var(--text); margin-bottom: 6px; }
+
+  .code-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    font-size: 12.5px;
+  }
+  .code-header {
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+  }
+  .code-line {
+    display: flex;
+    padding: 0;
+  }
+  .code-line .ln {
+    width: 38px;
+    color: var(--text-faint);
+    text-align: right;
+    padding: 2px 10px 2px 0;
+    user-select: none;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+  }
+  .code-line .src {
+    padding: 2px 12px;
+    white-space: pre;
+    flex: 1;
+  }
+  .code-line.bad { background: rgba(255, 77, 109, 0.08); }
+  .code-line.bad .ln { color: var(--critical); }
+  .code-line.good { background: rgba(0, 217, 126, 0.08); }
+  .code-line.good .ln { color: var(--success); }
+
+  .tok-key { color: #c792ea; }
+  .tok-fn { color: #82aaff; }
+  .tok-str { color: #c3e88d; }
+  .tok-num { color: #f78c6c; }
+  .tok-comment { color: var(--text-faint); font-style: italic; }
+  .tok-var { color: #ffcb6b; }
+
+  .suggestion-box {
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: rgba(0, 217, 126, 0.06);
+    border: 1px solid rgba(0, 217, 126, 0.2);
+    border-radius: 8px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .suggestion-icon {
+    width: 24px; height: 24px;
+    background: var(--gradient);
+    border-radius: 6px;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .suggestion-icon svg { width: 14px; height: 14px; color: white; }
+  .suggestion-content { flex: 1; }
+  .suggestion-title {
+    font-size: 13px; font-weight: 600;
+    margin-bottom: 2px;
+    color: var(--success);
+  }
+  .suggestion-text { font-size: 12.5px; color: var(--text-dim); }
+
+  /* Right Sidebar */
+  .sidebar > .card { margin-bottom: 16px; }
+
+  .check-item {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .check-item:last-child { border-bottom: none; }
+  .check-icon {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .check-icon.pass { background: rgba(0, 217, 126, 0.15); color: var(--success); }
+  .check-icon.fail { background: rgba(255, 77, 109, 0.15); color: var(--critical); }
+  .check-icon.warn { background: rgba(255, 181, 71, 0.15); color: var(--warning); }
+  .check-icon svg { width: 11px; height: 11px; }
+  .check-name { flex: 1; }
+  .check-val { color: var(--text-dim); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+
+  /* Resource bars */
+  .resource {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .resource:last-child { border-bottom: none; }
+  .resource-head {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .resource-name { display: flex; align-items: center; gap: 8px; }
+  .resource-name svg { width: 14px; height: 14px; color: var(--text-dim); }
+  .resource-val { font-weight: 600; }
+  .bar {
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+  .bar-fill.high { background: linear-gradient(90deg, var(--warning), var(--critical)); }
+  .bar-fill.med { background: linear-gradient(90deg, var(--info), var(--accent)); }
+  .bar-fill.low { background: linear-gradient(90deg, var(--success), #4caf50); }
+
+  /* Action button */
+  .action-card {
+    padding: 18px;
+    background: linear-gradient(135deg, rgba(124, 92, 255, 0.1), rgba(77, 171, 255, 0.05));
+    border: 1px solid rgba(124, 92, 255, 0.25);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    width: 100%;
+  }
+  .btn.primary {
+    background: var(--gradient);
+    color: white;
+    box-shadow: 0 4px 16px rgba(124, 92, 255, 0.3);
+  }
+  .btn.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124, 92, 255, 0.4); }
+  .btn.secondary {
+    background: var(--bg-hover);
+    color: var(--text);
+    margin-top: 8px;
+  }
+  .btn.secondary:hover { background: var(--border-strong); }
+
+  .summary-text {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+    line-height: 1.55;
+  }
+
+  /* Timeline trace */
+  .timeline {
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .timeline-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .timeline-label {
+    width: 110px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .timeline-bar-container {
+    flex: 1;
+    height: 14px;
+    background: var(--bg);
+    border-radius: 3px;
+    position: relative;
+  }
+  .timeline-bar {
+    position: absolute;
+    height: 100%;
+    border-radius: 3px;
+  }
+  .timeline-bar.io { background: var(--info); }
+  .timeline-bar.cpu { background: var(--warning); }
+  .timeline-bar.db { background: var(--critical); }
+  .timeline-bar.cache { background: var(--success); }
+  .timeline-time {
+    width: 60px;
+    text-align: right;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Top Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="logo">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <div style="display: flex; flex-direction: column; line-height: 1.1;">
+        <span>Drift</span>
+        <span style="font-size: 10px; font-weight: 500; color: var(--text-faint); letter-spacing: 0.04em;">by waste-labs</span>
+      </div>
+    </div>
+    <div class="nav-links">
+      <div class="nav-link">Dashboard</div>
+      <div class="nav-link active">Scans</div>
+      <div class="nav-link">Repositories</div>
+      <div class="nav-link">Policies</div>
+      <div class="nav-link">Integrations</div>
+    </div>
+    <div class="nav-right">
+      <div class="avatar">JD</div>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Breadcrumb -->
+  <div class="breadcrumb">
+    <a href="#">waste-labs</a>
+    <span class="sep">/</span>
+    <a href="#">checkout-service</a>
+    <span class="sep">/</span>
+    <a href="#">Pull Requests</a>
+    <span class="sep">/</span>
+    <strong>#2847</strong>
+  </div>
+
+  <!-- PR Header -->
+  <div class="pr-header">
+    <div class="pr-title-block">
+      <div class="pr-title">
+        feat: refactor user dashboard data loading
+        <span class="pr-number">#2847</span>
+      </div>
+      <div class="pr-meta">
+        <div class="pr-meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          feature/dashboard-refactor → main
+        </div>
+        <div class="pr-meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          Profiled 3m 42s ago
+        </div>
+        <div class="pr-meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          14 commits · 23 files
+        </div>
+      </div>
+    </div>
+    <div class="verdict-card">
+      <div class="verdict-label">Profile Verdict</div>
+      <div class="verdict-value">FAILED</div>
+      <div class="verdict-sub">3 critical regressions blocking merge</div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card critical">
+      <div class="stat-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        P95 Latency
+      </div>
+      <div class="stat-value">847ms</div>
+      <div class="stat-trend up">▲ 312% vs baseline (206ms)</div>
+    </div>
+    <div class="stat-card warning">
+      <div class="stat-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/></svg>
+        CPU Usage
+      </div>
+      <div class="stat-value">82%</div>
+      <div class="stat-trend up">▲ 47% vs baseline</div>
+    </div>
+    <div class="stat-card info">
+      <div class="stat-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        DB Queries
+      </div>
+      <div class="stat-value">1,247</div>
+      <div class="stat-trend up">▲ N+1 detected (×184)</div>
+    </div>
+    <div class="stat-card success">
+      <div class="stat-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/><polyline points="9 12 11 14 15 10"/></svg>
+        Cache Hit Rate
+      </div>
+      <div class="stat-value">12%</div>
+      <div class="stat-trend down">▼ 76% vs baseline (88%)</div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- Main Column -->
+    <div class="main">
+
+      <!-- Flamegraph -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+            CPU Flame Graph
+          </div>
+          <div class="tab-row">
+            <div class="tab active">CPU</div>
+            <div class="tab">Memory</div>
+            <div class="tab">I/O Wait</div>
+            <div class="tab">Allocations</div>
+          </div>
+        </div>
+        <div class="flamegraph">
+          <div class="flame-row">
+            <div class="flame-block faded" style="flex: 1">main.handleRequest <span class="pct">100%</span></div>
+          </div>
+          <div class="flame-row">
+            <div class="flame-block faded" style="flex: 0.08">auth <span class="pct">8%</span></div>
+            <div class="flame-block hot" style="flex: 0.84">DashboardController.load <span class="pct">84%</span></div>
+            <div class="flame-block faded" style="flex: 0.08">render <span class="pct">8%</span></div>
+          </div>
+          <div class="flame-row">
+            <div class="flame-block faded" style="flex: 0.08"></div>
+            <div class="flame-block hot" style="flex: 0.62">UserService.getUserStats <span class="pct">62%</span></div>
+            <div class="flame-block warm" style="flex: 0.22">OrdersRepo.findAll <span class="pct">22%</span></div>
+            <div class="flame-block faded" style="flex: 0.08"></div>
+          </div>
+          <div class="flame-row">
+            <div class="flame-block faded" style="flex: 0.08"></div>
+            <div class="flame-block hot" style="flex: 0.48">db.query (×184 N+1) <span class="pct">48%</span></div>
+            <div class="flame-block cool" style="flex: 0.14">jsonSerialize <span class="pct">14%</span></div>
+            <div class="flame-block warm" style="flex: 0.22">SQL.fullScan <span class="pct">22%</span></div>
+            <div class="flame-block faded" style="flex: 0.08"></div>
+          </div>
+          <div class="flame-row">
+            <div class="flame-block faded" style="flex: 0.08"></div>
+            <div class="flame-block hot" style="flex: 0.32">socket.read <span class="pct">32%</span></div>
+            <div class="flame-block warm" style="flex: 0.16">deserialize <span class="pct">16%</span></div>
+            <div class="flame-block cool" style="flex: 0.14"></div>
+            <div class="flame-block mild" style="flex: 0.22">heap.scan <span class="pct">22%</span></div>
+            <div class="flame-block faded" style="flex: 0.08"></div>
+          </div>
+          <div class="flame-row">
+            <div class="flame-block faded" style="flex: 0.08"></div>
+            <div class="flame-block hot" style="flex: 0.18">syscall.recv <span class="pct">18%</span></div>
+            <div class="flame-block warm" style="flex: 0.14">tcp.wait <span class="pct">14%</span></div>
+            <div class="flame-block cool" style="flex: 0.14"></div>
+            <div class="flame-block calm" style="flex: 0.46"></div>
+            <div class="flame-block faded" style="flex: 0.08"></div>
+          </div>
+          <div class="flame-axis">
+            <span class="flame-axis-label" style="left: 0">0ms</span>
+            <span class="flame-axis-label" style="left: 25%">210ms</span>
+            <span class="flame-axis-label" style="left: 50%">420ms</span>
+            <span class="flame-axis-label" style="left: 75%">630ms</span>
+            <span class="flame-axis-label" style="right: 0">847ms</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issues -->
+      <div class="section-title">
+        <span>Detected Issues · 7 total</span>
+        <span style="font-weight: 400; text-transform: none; letter-spacing: 0;">Sorted by impact</span>
+      </div>
+
+      <!-- Issue 1 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot critical"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              N+1 Query Pattern in User Dashboard Loader
+              <span class="badge critical">Critical</span>
+            </div>
+            <div class="issue-meta">
+              <code>src/services/UserService.ts:47</code>
+              <span>·</span>
+              <span>184 queries × ~2.1ms each</span>
+              <span>·</span>
+              <span>Database overuse</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+387ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+        <div class="issue-body">
+          <div class="issue-section">
+            <div class="issue-section-label">Problem</div>
+            <p>Each user in the dashboard list triggers a separate query to fetch their order history. With 184 active users, this generates 184 sequential DB round-trips instead of a single batched query.</p>
+          </div>
+          <div class="issue-section">
+            <div class="issue-section-label">Code</div>
+            <div class="code-block">
+              <div class="code-header">
+                <span>src/services/UserService.ts</span>
+                <span>TypeScript</span>
+              </div>
+              <div class="code-line bad"><span class="ln">45</span><span class="src"><span class="tok-key">const</span> users = <span class="tok-key">await</span> userRepo.findAll();</span></div>
+              <div class="code-line bad"><span class="ln">46</span><span class="src"><span class="tok-key">for</span> (<span class="tok-key">const</span> user <span class="tok-key">of</span> users) {</span></div>
+              <div class="code-line bad"><span class="ln">47</span><span class="src">  user.orders = <span class="tok-key">await</span> ordersRepo.<span class="tok-fn">findByUserId</span>(user.id); <span class="tok-comment">// N+1 ❌</span></span></div>
+              <div class="code-line bad"><span class="ln">48</span><span class="src">}</span></div>
+            </div>
+          </div>
+          <div class="issue-section">
+            <div class="issue-section-label">Suggested Fix</div>
+            <div class="code-block">
+              <div class="code-header">
+                <span>Replace with batched IN-query</span>
+                <span>−4 +3</span>
+              </div>
+              <div class="code-line good"><span class="ln">45</span><span class="src"><span class="tok-key">const</span> users = <span class="tok-key">await</span> userRepo.findAll();</span></div>
+              <div class="code-line good"><span class="ln">46</span><span class="src"><span class="tok-key">const</span> orders = <span class="tok-key">await</span> ordersRepo.<span class="tok-fn">findByUserIds</span>(users.<span class="tok-fn">map</span>(u => u.id));</span></div>
+              <div class="code-line good"><span class="ln">47</span><span class="src"><span class="tok-key">const</span> ordersByUser = _.<span class="tok-fn">groupBy</span>(orders, <span class="tok-str">'userId'</span>);</span></div>
+              <div class="code-line good"><span class="ln">48</span><span class="src">users.<span class="tok-fn">forEach</span>(u => u.orders = ordersByUser[u.id] ?? []);</span></div>
+            </div>
+            <div class="suggestion-box">
+              <div class="suggestion-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </div>
+              <div class="suggestion-content">
+                <div class="suggestion-title">Estimated improvement: ~370ms saved per request</div>
+                <div class="suggestion-text">Reduces DB round-trips from 184 → 1. Combined with cache layer (see Issue #3) could bring this path under 50ms.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issue 2 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot critical"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              Blocking Synchronous I/O on Hot Path
+              <span class="badge critical">Critical</span>
+            </div>
+            <div class="issue-meta">
+              <code>src/api/dashboard.handler.ts:112</code>
+              <span>·</span>
+              <span>fs.readFileSync blocks event loop for ~80ms</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+82ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+        <div class="issue-body">
+          <div class="issue-section">
+            <div class="issue-section-label">Problem</div>
+            <p>A synchronous file read inside the request handler blocks the Node.js event loop, starving all concurrent requests. Under load (50 RPS), this cascades into thread pool exhaustion.</p>
+          </div>
+          <div class="issue-section">
+            <div class="issue-section-label">Code</div>
+            <div class="code-block">
+              <div class="code-header">
+                <span>src/api/dashboard.handler.ts</span>
+                <span>TypeScript</span>
+              </div>
+              <div class="code-line bad"><span class="ln">112</span><span class="src"><span class="tok-key">const</span> template = fs.<span class="tok-fn">readFileSync</span>(<span class="tok-str">'./templates/dash.html'</span>); <span class="tok-comment">// blocks!</span></span></div>
+            </div>
+            <div class="suggestion-box">
+              <div class="suggestion-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </div>
+              <div class="suggestion-content">
+                <div class="suggestion-title">Move to startup, or use async fs.promises.readFile</div>
+                <div class="suggestion-text">Templates should be loaded once at boot and cached in memory. Eliminates 80ms blocking per request.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issue 3 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot critical"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              Redis Cache Bypassed — Direct DB Reads on Hot Object
+              <span class="badge critical">Critical</span>
+            </div>
+            <div class="issue-meta">
+              <code>src/services/UserService.ts:23</code>
+              <span>·</span>
+              <span>UserPreferences fetched 1,200×/min, 0% cached</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+94ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+        <div class="issue-body">
+          <div class="issue-section">
+            <div class="issue-section-label">Problem</div>
+            <p>The new <code style="font-family: monospace; background: var(--bg); padding: 1px 5px; border-radius: 3px;">getUserPreferences()</code> implementation removed the Redis lookup that existed in the previous version. This object changes &lt;1×/day per user but is now read from Postgres on every request.</p>
+          </div>
+          <div class="issue-section">
+            <div class="issue-section-label">Recommended Pattern</div>
+            <div class="code-block">
+              <div class="code-header">
+                <span>Cache-aside with 5min TTL</span>
+                <span>+8</span>
+              </div>
+              <div class="code-line good"><span class="ln">23</span><span class="src"><span class="tok-key">const</span> cacheKey = <span class="tok-str">`prefs:${userId}`</span>;</span></div>
+              <div class="code-line good"><span class="ln">24</span><span class="src"><span class="tok-key">const</span> cached = <span class="tok-key">await</span> redis.<span class="tok-fn">get</span>(cacheKey);</span></div>
+              <div class="code-line good"><span class="ln">25</span><span class="src"><span class="tok-key">if</span> (cached) <span class="tok-key">return</span> <span class="tok-fn">JSON</span>.<span class="tok-fn">parse</span>(cached);</span></div>
+              <div class="code-line good"><span class="ln">26</span><span class="src"><span class="tok-key">const</span> prefs = <span class="tok-key">await</span> prefsRepo.<span class="tok-fn">findByUserId</span>(userId);</span></div>
+              <div class="code-line good"><span class="ln">27</span><span class="src"><span class="tok-key">await</span> redis.<span class="tok-fn">setex</span>(cacheKey, <span class="tok-num">300</span>, <span class="tok-fn">JSON</span>.<span class="tok-fn">stringify</span>(prefs));</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issue 4 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot high"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              CPU-bound JSON serialization on large payload
+              <span class="badge high">High</span>
+            </div>
+            <div class="issue-meta">
+              <code>src/api/dashboard.handler.ts:201</code>
+              <span>·</span>
+              <span>14% of total CPU time</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+118ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issue 5 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot high"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              Missing index on <code style="font-family: monospace; background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 11px;">orders.user_id</code> causes full table scan
+              <span class="badge high">High</span>
+            </div>
+            <div class="issue-meta">
+              <code>migrations/0024_orders.sql</code>
+              <span>·</span>
+              <span>Avg query: 22ms (should be &lt;1ms)</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+62ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issue 6 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot medium"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              Unbounded array growth — possible memory pressure
+              <span class="badge medium">Medium</span>
+            </div>
+            <div class="issue-meta">
+              <code>src/services/MetricsBuffer.ts:18</code>
+              <span>·</span>
+              <span>Heap grew 340MB during 5min profile</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+24ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Issue 7 -->
+      <div class="issue">
+        <div class="issue-head">
+          <div class="severity-dot low"></div>
+          <div class="issue-main">
+            <div class="issue-title">
+              Redundant logger.info call in tight loop
+              <span class="badge low">Low</span>
+            </div>
+            <div class="issue-meta">
+              <code>src/utils/processItems.ts:34</code>
+              <span>·</span>
+              <span>Called 1,800×/sec at INFO level</span>
+            </div>
+          </div>
+          <div class="issue-impact">
+            <div class="impact-value">+8ms</div>
+            <div class="impact-label">P95 impact</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Action -->
+      <div class="card action-card">
+        <div class="card-title" style="margin-bottom: 8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          AI Auto-fix Available
+        </div>
+        <div class="summary-text">
+          Drift can generate a single PR fixing 5 of 7 issues. Estimated combined improvement: <strong style="color: var(--success);">−671ms P95</strong>.
+        </div>
+        <button class="btn primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Generate fix PR
+        </button>
+        <button class="btn secondary">View full report</button>
+      </div>
+
+      <!-- Checks -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Performance Gates</div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon fail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </div>
+          <span class="check-name">P95 latency &lt; 300ms</span>
+          <span class="check-val">847ms</span>
+        </div>
+        <div class="check-item">
+          <div class="check-icon fail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </div>
+          <span class="check-name">DB queries / req &lt; 20</span>
+          <span class="check-val">1,247</span>
+        </div>
+        <div class="check-item">
+          <div class="check-icon fail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </div>
+          <span class="check-name">Cache hit rate &gt; 80%</span>
+          <span class="check-val">12%</span>
+        </div>
+        <div class="check-item">
+          <div class="check-icon warn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+          </div>
+          <span class="check-name">CPU usage &lt; 70%</span>
+          <span class="check-val">82%</span>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <span class="check-name">No memory leaks</span>
+          <span class="check-val">OK</span>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <span class="check-name">Error rate &lt; 0.1%</span>
+          <span class="check-val">0.02%</span>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <span class="check-name">No deadlocks detected</span>
+          <span class="check-val">OK</span>
+        </div>
+      </div>
+
+      <!-- Resource Distribution -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Time Distribution</div>
+        </div>
+        <div class="resource">
+          <div class="resource-head">
+            <div class="resource-name">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/></svg>
+              Database
+            </div>
+            <div class="resource-val">48%</div>
+          </div>
+          <div class="bar"><div class="bar-fill high" style="width: 48%"></div></div>
+        </div>
+        <div class="resource">
+          <div class="resource-head">
+            <div class="resource-name">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+              CPU
+            </div>
+            <div class="resource-val">22%</div>
+          </div>
+          <div class="bar"><div class="bar-fill med" style="width: 22%"></div></div>
+        </div>
+        <div class="resource">
+          <div class="resource-head">
+            <div class="resource-name">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              I/O Wait
+            </div>
+            <div class="resource-val">18%</div>
+          </div>
+          <div class="bar"><div class="bar-fill med" style="width: 18%"></div></div>
+        </div>
+        <div class="resource">
+          <div class="resource-head">
+            <div class="resource-name">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              Network
+            </div>
+            <div class="resource-val">8%</div>
+          </div>
+          <div class="bar"><div class="bar-fill low" style="width: 8%"></div></div>
+        </div>
+        <div class="resource">
+          <div class="resource-head">
+            <div class="resource-name">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+              Cache
+            </div>
+            <div class="resource-val">4%</div>
+          </div>
+          <div class="bar"><div class="bar-fill low" style="width: 4%"></div></div>
+        </div>
+      </div>
+
+      <!-- Request Trace -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Sample Request Trace</div>
+        </div>
+        <div class="timeline">
+          <div class="timeline-row">
+            <span class="timeline-label">auth.verify</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar cpu" style="left: 0%; width: 2%"></div>
+            </div>
+            <span class="timeline-time">14ms</span>
+          </div>
+          <div class="timeline-row">
+            <span class="timeline-label">db.findUsers</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar db" style="left: 2%; width: 6%"></div>
+            </div>
+            <span class="timeline-time">52ms</span>
+          </div>
+          <div class="timeline-row">
+            <span class="timeline-label">db.orders ×184</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar db" style="left: 8%; width: 46%"></div>
+            </div>
+            <span class="timeline-time">387ms</span>
+          </div>
+          <div class="timeline-row">
+            <span class="timeline-label">fs.readSync</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar io" style="left: 54%; width: 10%"></div>
+            </div>
+            <span class="timeline-time">82ms</span>
+          </div>
+          <div class="timeline-row">
+            <span class="timeline-label">prefs.fetch</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar db" style="left: 64%; width: 11%"></div>
+            </div>
+            <span class="timeline-time">94ms</span>
+          </div>
+          <div class="timeline-row">
+            <span class="timeline-label">json.serialize</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar cpu" style="left: 75%; width: 14%"></div>
+            </div>
+            <span class="timeline-time">118ms</span>
+          </div>
+          <div class="timeline-row">
+            <span class="timeline-label">response.send</span>
+            <div class="timeline-bar-container">
+              <div class="timeline-bar io" style="left: 89%; width: 11%"></div>
+            </div>
+            <span class="timeline-time">100ms</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
