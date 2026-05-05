@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver, validator } from 'hono-openapi';
 import { z } from 'zod';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/index.ts';
+import { pullRequests, repos, departments, scans } from '../db/schema.ts';
 import { PRSummarySchema, PRPatchSchema, PRStatus } from '../schemas.ts';
 
 const prs = new Hono();
@@ -12,45 +14,75 @@ const listQuerySchema = z.object({
   departmentId: z.coerce.number().optional(),
 });
 
-type PRListRow = {
-  id: number; number: number; title: string; status: 'pending' | 'approved' | 'merged';
-  author: string; githubUrl: string; improvement: string | null;
-  businessValue: number; hoursSaved: number;
-  branch: string; baseBranch: string; commits: number; filesChanged: number;
-  repoId: number; repoOwner: string; repoName: string;
-  deptId: number | null; deptName: string | null;
-  scanVerdict: string | null; scanP95: number | null; scanProfiledAt: number | null;
-};
+type PRListRow = Awaited<ReturnType<typeof selectPRs>>[number];
 
-function selectPRsSql(where: string) {
-  return `SELECT pr.id, pr.number, pr.title, pr.status,
-                pr.author, pr.github_url AS githubUrl, pr.improvement,
-                pr.business_value AS businessValue, pr.hours_saved AS hoursSaved,
-                pr.branch, pr.base_branch AS baseBranch, pr.commits, pr.files_changed AS filesChanged,
-                r.id AS repoId, r.owner AS repoOwner, r.name AS repoName,
-                d.id AS deptId, d.name AS deptName,
-                s.verdict AS scanVerdict, s.p95_latency_ms AS scanP95, s.profiled_at AS scanProfiledAt
-         FROM pull_requests pr
-         JOIN repos r ON r.id = pr.repo_id
-         LEFT JOIN departments d ON d.id = r.department_id
-         LEFT JOIN scans s ON s.id = (
-           SELECT id FROM scans WHERE pr_id = pr.id ORDER BY id DESC LIMIT 1
-         )
-         ${where}
-         ORDER BY pr.number DESC`;
+function selectPRs(where?: SQL) {
+  const latestScan = db
+    .select({
+      id: sql<number>`MAX(${scans.id})`.as('latest_id'),
+      prId: scans.prId,
+    })
+    .from(scans)
+    .groupBy(scans.prId)
+    .as('latest_scan');
+
+  const q = db
+    .select({
+      id: pullRequests.id,
+      number: pullRequests.number,
+      title: pullRequests.title,
+      status: pullRequests.status,
+      author: pullRequests.author,
+      githubUrl: pullRequests.githubUrl,
+      improvement: pullRequests.improvement,
+      businessValue: pullRequests.businessValue,
+      hoursSaved: pullRequests.hoursSaved,
+      branch: pullRequests.branch,
+      baseBranch: pullRequests.baseBranch,
+      commits: pullRequests.commits,
+      filesChanged: pullRequests.filesChanged,
+      repoId: repos.id,
+      repoOwner: repos.owner,
+      repoName: repos.name,
+      deptId: departments.id,
+      deptName: departments.name,
+      scanVerdict: scans.verdict,
+      scanP95: scans.p95LatencyMs,
+      scanProfiledAt: scans.profiledAt,
+    })
+    .from(pullRequests)
+    .innerJoin(repos, eq(repos.id, pullRequests.repoId))
+    .leftJoin(departments, eq(departments.id, repos.departmentId))
+    .leftJoin(latestScan, eq(latestScan.prId, pullRequests.id))
+    .leftJoin(scans, eq(scans.id, latestScan.id))
+    .orderBy(desc(pullRequests.number));
+
+  return where ? q.where(where) : q;
 }
 
 function rowToPR(r: PRListRow) {
   return {
-    id: r.id, number: r.number, title: r.title, status: r.status,
-    author: r.author, githubUrl: r.githubUrl, improvement: r.improvement,
-    businessValue: r.businessValue, hoursSaved: r.hoursSaved,
-    branch: r.branch, baseBranch: r.baseBranch,
-    commits: r.commits, filesChanged: r.filesChanged,
+    id: r.id,
+    number: r.number,
+    title: r.title,
+    status: r.status as 'pending' | 'approved' | 'merged',
+    author: r.author,
+    githubUrl: r.githubUrl,
+    improvement: r.improvement,
+    businessValue: r.businessValue,
+    hoursSaved: r.hoursSaved,
+    branch: r.branch,
+    baseBranch: r.baseBranch,
+    commits: r.commits,
+    filesChanged: r.filesChanged,
     repo: { id: r.repoId, owner: r.repoOwner, name: r.repoName },
     department: r.deptId != null ? { id: r.deptId, name: r.deptName! } : null,
     scan: r.scanVerdict
-      ? { verdict: r.scanVerdict, p95LatencyMs: r.scanP95!, profiledAt: r.scanProfiledAt! }
+      ? {
+          verdict: r.scanVerdict,
+          p95LatencyMs: r.scanP95!,
+          profiledAt: r.scanProfiledAt!,
+        }
       : null,
   };
 }
@@ -68,15 +100,14 @@ prs.get(
     },
   }),
   validator('query', listQuerySchema),
-  (c) => {
+  async (c) => {
     const q = c.req.valid('query');
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (q.status) { conds.push('pr.status = ?'); params.push(q.status); }
-    if (q.repoId) { conds.push('pr.repo_id = ?'); params.push(q.repoId); }
-    if (q.departmentId) { conds.push('r.department_id = ?'); params.push(q.departmentId); }
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    const rows = db.prepare(selectPRsSql(where)).all(...params) as PRListRow[];
+    const conds: SQL[] = [];
+    if (q.status) conds.push(eq(pullRequests.status, q.status));
+    if (q.repoId) conds.push(eq(pullRequests.repoId, q.repoId));
+    if (q.departmentId) conds.push(eq(repos.departmentId, q.departmentId));
+    const where = conds.length ? and(...conds) : undefined;
+    const rows = await selectPRs(where);
     return c.json(rows.map(rowToPR));
   },
 );
@@ -91,9 +122,9 @@ prs.get(
       404: { description: 'PR not found' },
     },
   }),
-  (c) => {
+  async (c) => {
     const id = Number(c.req.param('id'));
-    const row = db.prepare(selectPRsSql('WHERE pr.id = ?')).get(id) as PRListRow | null;
+    const [row] = await selectPRs(eq(pullRequests.id, id));
     if (!row) return c.json({ error: 'pr not found' }, 404);
     return c.json(rowToPR(row));
   },
@@ -114,20 +145,25 @@ prs.patch(
     },
   }),
   validator('json', PRPatchSchema),
-  (c) => {
+  async (c) => {
     const id = Number(c.req.param('id'));
     const body = c.req.valid('json');
-    const sets: string[] = []; const params: unknown[] = [];
-    if (body.improvement !== undefined) { sets.push('improvement = ?'); params.push(body.improvement); }
-    if (body.businessValue !== undefined) { sets.push('business_value = ?'); params.push(body.businessValue); }
-    if (body.hoursSaved !== undefined) { sets.push('hours_saved = ?'); params.push(body.hoursSaved); }
-    if (body.status !== undefined) { sets.push('status = ?'); params.push(body.status); }
-    if (!sets.length) return c.json({ error: 'no fields to update' }, 400);
-    params.push(id);
-    const result = db.prepare(`UPDATE pull_requests SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-    if (result.changes === 0) return c.json({ error: 'pr not found' }, 404);
-    const row = db.prepare(selectPRsSql('WHERE pr.id = ?')).get(id) as PRListRow;
-    return c.json(rowToPR(row));
+    const patch: Record<string, unknown> = {};
+    if (body.improvement !== undefined) patch.improvement = body.improvement;
+    if (body.businessValue !== undefined) patch.businessValue = body.businessValue;
+    if (body.hoursSaved !== undefined) patch.hoursSaved = body.hoursSaved;
+    if (body.status !== undefined) patch.status = body.status;
+    if (Object.keys(patch).length === 0) {
+      return c.json({ error: 'no fields to update' }, 400);
+    }
+    const updated = await db
+      .update(pullRequests)
+      .set(patch)
+      .where(eq(pullRequests.id, id))
+      .returning({ id: pullRequests.id });
+    if (updated.length === 0) return c.json({ error: 'pr not found' }, 404);
+    const [row] = await selectPRs(eq(pullRequests.id, id));
+    return c.json(rowToPR(row!));
   },
 );
 

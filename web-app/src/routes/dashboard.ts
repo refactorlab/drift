@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
+import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
+import { pullRequests, repos, scans } from '../db/schema.ts';
 import { DashboardSchema } from '../schemas.ts';
 
 const dashboard = new Hono();
@@ -17,82 +19,94 @@ dashboard.get(
       },
     },
   }),
-  (c) => {
-    const scanCounts = db
-      .prepare(
-        `SELECT
-           COUNT(*) AS total,
-           SUM(CASE WHEN verdict = 'FAILED' THEN 1 ELSE 0 END) AS failed,
-           SUM(CASE WHEN verdict = 'PASSED' THEN 1 ELSE 0 END) AS passed,
-           SUM(CASE WHEN verdict = 'WARN' THEN 1 ELSE 0 END) AS warn
-         FROM (
-           SELECT s.* FROM scans s
-           WHERE s.id = (SELECT id FROM scans WHERE pr_id = s.pr_id ORDER BY id DESC LIMIT 1)
-         )`,
-      )
-      .get() as { total: number; failed: number; passed: number; warn: number };
+  async (c) => {
+    const [scanCounts] = await db.execute<{
+      total: number; failed: number; passed: number; warn: number;
+    }>(sql`
+      SELECT
+        COUNT(*)::int AS total,
+        COALESCE(SUM(CASE WHEN verdict = 'FAILED' THEN 1 ELSE 0 END), 0)::int AS failed,
+        COALESCE(SUM(CASE WHEN verdict = 'PASSED' THEN 1 ELSE 0 END), 0)::int AS passed,
+        COALESCE(SUM(CASE WHEN verdict = 'WARN' THEN 1 ELSE 0 END), 0)::int AS warn
+      FROM (
+        SELECT s.* FROM ${scans} s
+        WHERE s.id = (SELECT id FROM ${scans} WHERE pr_id = s.pr_id ORDER BY id DESC LIMIT 1)
+      ) latest
+    `);
 
-    const improvements = db
-      .prepare(
-        `SELECT
-           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN status IN ('approved', 'merged') THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN status = 'pending' THEN business_value ELSE 0 END) AS pendingBV,
-           SUM(CASE WHEN status IN ('approved', 'merged') THEN business_value ELSE 0 END) AS approvedBV,
-           SUM(hours_saved) AS totalHS
-         FROM pull_requests`,
-      )
-      .get() as {
-        pending: number; approved: number;
-        pendingBV: number; approvedBV: number; totalHS: number;
-      };
+    const [improvements] = await db.execute<{
+      pending: number; approved: number;
+      pendingBV: number; approvedBV: number; totalHS: number;
+    }>(sql`
+      SELECT
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0)::int AS pending,
+        COALESCE(SUM(CASE WHEN status IN ('approved', 'merged') THEN 1 ELSE 0 END), 0)::int AS approved,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN business_value ELSE 0 END), 0)::int AS "pendingBV",
+        COALESCE(SUM(CASE WHEN status IN ('approved', 'merged') THEN business_value ELSE 0 END), 0)::int AS "approvedBV",
+        COALESCE(SUM(hours_saved), 0)::int AS "totalHS"
+      FROM ${pullRequests}
+    `);
 
-    const topRepos = db
-      .prepare(
-        `SELECT r.id, r.owner, r.name,
-                COUNT(pr.id) AS prCount,
-                COALESCE(SUM(pr.business_value), 0) AS totalBV
-         FROM repos r
-         LEFT JOIN pull_requests pr ON pr.repo_id = r.id
-         GROUP BY r.id
-         ORDER BY totalBV DESC
-         LIMIT 5`,
-      )
-      .all() as Array<{ id: number; owner: string; name: string; prCount: number; totalBV: number }>;
+    const topRepos = await db
+      .select({
+        id: repos.id,
+        owner: repos.owner,
+        name: repos.name,
+        prCount: sql<number>`COUNT(${pullRequests.id})::int`,
+        totalBV: sql<number>`COALESCE(SUM(${pullRequests.businessValue}), 0)::int`,
+      })
+      .from(repos)
+      .leftJoin(pullRequests, eq(pullRequests.repoId, repos.id))
+      .groupBy(repos.id)
+      .orderBy(desc(sql`COALESCE(SUM(${pullRequests.businessValue}), 0)`))
+      .limit(5);
 
-    const recentScansRaw = db
-      .prepare(
-        `SELECT pr.number AS prNumber, pr.title AS prTitle, pr.status AS prStatus, pr.author,
-                r.id AS repoId, r.owner, r.name AS repoName,
-                s.verdict, s.verdict_sub AS verdictSub, s.profiled_at AS profiledAt,
-                s.p95_latency_ms AS p95LatencyMs, s.p95_baseline_ms AS p95BaselineMs,
-                s.cpu_pct AS cpuPct, s.cache_hit_rate AS cacheHitRate
-         FROM pull_requests pr
-         JOIN repos r ON r.id = pr.repo_id
-         JOIN scans s ON s.id = (SELECT id FROM scans WHERE pr_id = pr.id ORDER BY id DESC LIMIT 1)
-         ORDER BY s.profiled_at DESC
-         LIMIT 6`,
-      )
-      .all() as Array<{
-        prNumber: number; prTitle: string; prStatus: string; author: string;
-        repoId: number; owner: string; repoName: string;
-        verdict: string; verdictSub: string; profiledAt: number;
-        p95LatencyMs: number; p95BaselineMs: number; cpuPct: number; cacheHitRate: number;
-      }>;
+    const latestScan = db
+      .select({
+        id: sql<number>`MAX(${scans.id})`.as('latest_id'),
+        prId: scans.prId,
+      })
+      .from(scans)
+      .groupBy(scans.prId)
+      .as('latest_scan');
+
+    const recentScansRaw = await db
+      .select({
+        prNumber: pullRequests.number,
+        prTitle: pullRequests.title,
+        prStatus: pullRequests.status,
+        author: pullRequests.author,
+        repoId: repos.id,
+        repoOwner: repos.owner,
+        repoName: repos.name,
+        verdict: scans.verdict,
+        verdictSub: scans.verdictSub,
+        profiledAt: scans.profiledAt,
+        p95LatencyMs: scans.p95LatencyMs,
+        p95BaselineMs: scans.p95BaselineMs,
+        cpuPct: scans.cpuPct,
+        cacheHitRate: scans.cacheHitRate,
+      })
+      .from(pullRequests)
+      .innerJoin(repos, eq(repos.id, pullRequests.repoId))
+      .innerJoin(latestScan, eq(latestScan.prId, pullRequests.id))
+      .innerJoin(scans, eq(scans.id, latestScan.id))
+      .orderBy(desc(scans.profiledAt))
+      .limit(6);
 
     return c.json({
       scans: {
-        total: scanCounts.total ?? 0,
-        failed: scanCounts.failed ?? 0,
-        passed: scanCounts.passed ?? 0,
-        warn: scanCounts.warn ?? 0,
+        total: scanCounts?.total ?? 0,
+        failed: scanCounts?.failed ?? 0,
+        passed: scanCounts?.passed ?? 0,
+        warn: scanCounts?.warn ?? 0,
       },
       improvements: {
-        pending: improvements.pending ?? 0,
-        approved: improvements.approved ?? 0,
-        pendingBusinessValue: improvements.pendingBV ?? 0,
-        approvedBusinessValue: improvements.approvedBV ?? 0,
-        totalHoursSaved: improvements.totalHS ?? 0,
+        pending: improvements?.pending ?? 0,
+        approved: improvements?.approved ?? 0,
+        pendingBusinessValue: improvements?.pendingBV ?? 0,
+        approvedBusinessValue: improvements?.approvedBV ?? 0,
+        totalHoursSaved: improvements?.totalHS ?? 0,
       },
       topRepos: topRepos.map((r) => ({
         id: r.id,
@@ -104,9 +118,9 @@ dashboard.get(
       recentScans: recentScansRaw.map((r) => ({
         prNumber: r.prNumber,
         prTitle: r.prTitle,
-        prStatus: r.prStatus,
+        prStatus: r.prStatus as 'pending' | 'approved' | 'merged',
         author: r.author,
-        repo: { id: r.repoId, owner: r.owner, name: r.repoName },
+        repo: { id: r.repoId, owner: r.repoOwner, name: r.repoName },
         verdict: r.verdict,
         verdictSub: r.verdictSub,
         profiledAt: r.profiledAt,

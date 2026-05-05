@@ -1,16 +1,12 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
 import { z } from 'zod';
+import { asc, eq } from 'drizzle-orm';
 import { db } from '../db/index.ts';
+import { users as usersTable, departments } from '../db/schema.ts';
 import { UserSchema } from '../schemas.ts';
 
 const users = new Hono();
-
-type UserRow = {
-  id: number; email: string; name: string; role: string;
-  github_username: string; initials: string;
-  department_id: number | null; department_name: string | null;
-};
 
 users.get(
   '/',
@@ -20,30 +16,37 @@ users.get(
     responses: {
       200: {
         description: 'User list',
-        content: { 'application/json': { schema: resolver(z.array(UserSchema)) } },
+        content: {
+          'application/json': { schema: resolver(z.array(UserSchema)) },
+        },
       },
     },
   }),
-  (c) => {
-    const rows = db
-      .prepare(
-        `SELECT u.id, u.email, u.name, u.role, u.github_username, u.initials,
-                d.id AS department_id, d.name AS department_name
-         FROM users u
-         LEFT JOIN departments d ON d.id = u.department_id
-         ORDER BY u.name ASC`,
-      )
-      .all() as UserRow[];
+  async (c) => {
+    const rows = await db
+      .select({
+        id: usersTable.id,
+        email: usersTable.email,
+        name: usersTable.name,
+        role: usersTable.role,
+        githubUsername: usersTable.githubUsername,
+        initials: usersTable.initials,
+        deptId: departments.id,
+        deptName: departments.name,
+      })
+      .from(usersTable)
+      .leftJoin(departments, eq(departments.id, usersTable.departmentId))
+      .orderBy(asc(usersTable.name));
+
     return c.json(
       rows.map((r) => ({
         id: r.id,
         email: r.email,
         name: r.name,
         role: r.role,
-        githubUsername: r.github_username,
+        githubUsername: r.githubUsername,
         initials: r.initials,
-        department:
-          r.department_id != null ? { id: r.department_id, name: r.department_name! } : null,
+        department: r.deptId != null ? { id: r.deptId, name: r.deptName! } : null,
       })),
     );
   },

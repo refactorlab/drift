@@ -1,63 +1,50 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
 import { z } from 'zod';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
+import {
+  pullRequests, repos, scans as scansTable,
+  issues as issuesTable, gates as gatesTable,
+  flameRows, flameBlocks, flameAxis,
+  timeDistribution, traceSpans,
+} from '../db/schema.ts';
 import { ScanDetailSchema, ScanListItemSchema } from '../schemas.ts';
 
 const scans = new Hono();
 
-type PRRow = {
-  id: number;
-  number: number;
-  title: string;
-  branch: string;
-  base_branch: string;
-  commits: number;
-  files_changed: number;
-  author: string;
-  status: 'pending' | 'approved' | 'merged';
-  github_url: string;
-  repo_id: number;
-  owner: string;
-  repo_name: string;
-};
-
-type ScanRow = {
-  id: number;
-  pr_id: number;
-  verdict: string;
-  verdict_sub: string;
-  profiled_at: number;
-  p95_latency_ms: number;
-  p95_baseline_ms: number;
-  cpu_pct: number;
-  cpu_baseline_pct: number;
-  db_queries: number;
-  db_n_plus_one: number;
-  cache_hit_rate: number;
-  cache_baseline: number;
-  autofix_count: number;
-  autofix_total: number;
-  autofix_savings_ms: number;
-};
-
-function getPR(prNumber: number): PRRow | null {
-  return db
-    .prepare(
-      `SELECT pr.id, pr.number, pr.title, pr.branch, pr.base_branch,
-              pr.commits, pr.files_changed, pr.author, pr.status, pr.github_url,
-              pr.repo_id, r.owner, r.name AS repo_name
-       FROM pull_requests pr
-       JOIN repos r ON r.id = pr.repo_id
-       WHERE pr.number = ?`,
-    )
-    .get(prNumber) as PRRow | null;
+async function getPR(prNumber: number) {
+  const [row] = await db
+    .select({
+      id: pullRequests.id,
+      number: pullRequests.number,
+      title: pullRequests.title,
+      branch: pullRequests.branch,
+      baseBranch: pullRequests.baseBranch,
+      commits: pullRequests.commits,
+      filesChanged: pullRequests.filesChanged,
+      author: pullRequests.author,
+      status: pullRequests.status,
+      githubUrl: pullRequests.githubUrl,
+      repoId: repos.id,
+      owner: repos.owner,
+      repoName: repos.name,
+    })
+    .from(pullRequests)
+    .innerJoin(repos, eq(repos.id, pullRequests.repoId))
+    .where(eq(pullRequests.number, prNumber))
+    .limit(1);
+  return row ?? null;
 }
 
-function getLatestScan(prId: number): ScanRow | null {
-  return db
-    .prepare(`SELECT * FROM scans WHERE pr_id = ? ORDER BY id DESC LIMIT 1`)
-    .get(prId) as ScanRow | null;
+async function getLatestScan(prId: number) {
+  const [row] = await db
+    .select()
+    .from(scansTable)
+    .where(eq(scansTable.prId, prId))
+    .orderBy(desc(scansTable.id))
+    .limit(1);
+  return row ?? null;
 }
 
 scans.get(
@@ -74,35 +61,46 @@ scans.get(
       },
     },
   }),
-  (c) => {
-    const rows = db
-      .prepare(
-        `SELECT pr.number AS prNumber, pr.title AS prTitle, pr.status AS prStatus,
-                pr.author,
-                r.id AS repoId, r.owner, r.name AS repoName,
-                s.verdict, s.verdict_sub AS verdictSub, s.profiled_at AS profiledAt,
-                s.p95_latency_ms AS p95LatencyMs, s.p95_baseline_ms AS p95BaselineMs,
-                s.cpu_pct AS cpuPct, s.cache_hit_rate AS cacheHitRate
-         FROM pull_requests pr
-         JOIN repos r ON r.id = pr.repo_id
-         JOIN scans s ON s.id = (
-           SELECT id FROM scans WHERE pr_id = pr.id ORDER BY id DESC LIMIT 1
-         )
-         ORDER BY s.profiled_at DESC`,
-      )
-      .all() as Array<{
-        prNumber: number; prTitle: string; prStatus: string; author: string;
-        repoId: number; owner: string; repoName: string;
-        verdict: string; verdictSub: string; profiledAt: number;
-        p95LatencyMs: number; p95BaselineMs: number; cpuPct: number; cacheHitRate: number;
-      }>;
+  async (c) => {
+    const latestScan = db
+      .select({
+        id: sql<number>`MAX(${scansTable.id})`.as('latest_id'),
+        prId: scansTable.prId,
+      })
+      .from(scansTable)
+      .groupBy(scansTable.prId)
+      .as('latest_scan');
+
+    const rows = await db
+      .select({
+        prNumber: pullRequests.number,
+        prTitle: pullRequests.title,
+        prStatus: pullRequests.status,
+        author: pullRequests.author,
+        repoId: repos.id,
+        repoOwner: repos.owner,
+        repoName: repos.name,
+        verdict: scansTable.verdict,
+        verdictSub: scansTable.verdictSub,
+        profiledAt: scansTable.profiledAt,
+        p95LatencyMs: scansTable.p95LatencyMs,
+        p95BaselineMs: scansTable.p95BaselineMs,
+        cpuPct: scansTable.cpuPct,
+        cacheHitRate: scansTable.cacheHitRate,
+      })
+      .from(pullRequests)
+      .innerJoin(repos, eq(repos.id, pullRequests.repoId))
+      .innerJoin(latestScan, eq(latestScan.prId, pullRequests.id))
+      .innerJoin(scansTable, eq(scansTable.id, latestScan.id))
+      .orderBy(desc(scansTable.profiledAt));
+
     return c.json(
       rows.map((r) => ({
         prNumber: r.prNumber,
         prTitle: r.prTitle,
-        prStatus: r.prStatus,
+        prStatus: r.prStatus as 'pending' | 'approved' | 'merged',
         author: r.author,
-        repo: { id: r.repoId, owner: r.owner, name: r.repoName },
+        repo: { id: r.repoId, owner: r.repoOwner, name: r.repoName },
         verdict: r.verdict,
         verdictSub: r.verdictSub,
         profiledAt: r.profiledAt,
@@ -130,93 +128,133 @@ scans.get(
       404: { description: 'PR or scan not found' },
     },
   }),
-  (c) => {
+  async (c) => {
     const num = Number(c.req.param('prNumber'));
     if (!Number.isFinite(num)) return c.json({ error: 'invalid pr number' }, 400);
 
-    const pr = getPR(num);
+    const pr = await getPR(num);
     if (!pr) return c.json({ error: 'pr not found' }, 404);
-    const scan = getLatestScan(pr.id);
+    const scan = await getLatestScan(pr.id);
     if (!scan) return c.json({ error: 'no scan for pr' }, 404);
 
-    const issues = db
-      .prepare(
-        `SELECT id, severity, title, file_path, line_number, meta, category, impact_ms,
-                problem, code_before, code_after, code_lang, code_diff_label,
-                suggestion_title, suggestion_text
-         FROM issues WHERE scan_id = ? ORDER BY sort_order ASC`,
-      )
-      .all(scan.id);
+    const issues = await db
+      .select({
+        id: issuesTable.id,
+        severity: issuesTable.severity,
+        title: issuesTable.title,
+        file_path: issuesTable.filePath,
+        line_number: issuesTable.lineNumber,
+        meta: issuesTable.meta,
+        category: issuesTable.category,
+        impact_ms: issuesTable.impactMs,
+        problem: issuesTable.problem,
+        code_before: issuesTable.codeBefore,
+        code_after: issuesTable.codeAfter,
+        code_lang: issuesTable.codeLang,
+        code_diff_label: issuesTable.codeDiffLabel,
+        suggestion_title: issuesTable.suggestionTitle,
+        suggestion_text: issuesTable.suggestionText,
+      })
+      .from(issuesTable)
+      .where(eq(issuesTable.scanId, scan.id))
+      .orderBy(asc(issuesTable.sortOrder));
 
-    const gates = db
-      .prepare(
-        `SELECT name, value, status FROM gates WHERE scan_id = ? ORDER BY sort_order ASC`,
-      )
-      .all(scan.id);
+    const gates = await db
+      .select({
+        name: gatesTable.name,
+        value: gatesTable.value,
+        status: gatesTable.status,
+      })
+      .from(gatesTable)
+      .where(eq(gatesTable.scanId, scan.id))
+      .orderBy(asc(gatesTable.sortOrder));
 
-    const flameRowRows = db
-      .prepare(`SELECT id, depth FROM flame_rows WHERE scan_id = ? ORDER BY depth ASC`)
-      .all(scan.id) as Array<{ id: number; depth: number }>;
+    const flameRowRows = await db
+      .select({ id: flameRows.id, depth: flameRows.depth })
+      .from(flameRows)
+      .where(eq(flameRows.scanId, scan.id))
+      .orderBy(asc(flameRows.depth));
 
-    const blockStmt = db.prepare(
-      `SELECT label, flex, pct, heat FROM flame_blocks WHERE row_id = ? ORDER BY sort_order ASC`,
+    const flame = await Promise.all(
+      flameRowRows.map(async (r) => ({
+        depth: r.depth,
+        blocks: await db
+          .select({
+            label: flameBlocks.label,
+            flex: flameBlocks.flex,
+            pct: flameBlocks.pct,
+            heat: flameBlocks.heat,
+          })
+          .from(flameBlocks)
+          .where(eq(flameBlocks.rowId, r.id))
+          .orderBy(asc(flameBlocks.sortOrder)),
+      })),
     );
-    const flame = flameRowRows.map((r) => ({
-      depth: r.depth,
-      blocks: blockStmt.all(r.id),
-    }));
 
-    const flameAxis = db
-      .prepare(
-        `SELECT label, offset_pct FROM flame_axis WHERE scan_id = ? ORDER BY sort_order ASC`,
-      )
-      .all(scan.id);
+    const axis = await db
+      .select({
+        label: flameAxis.label,
+        offset_pct: flameAxis.offsetPct,
+      })
+      .from(flameAxis)
+      .where(eq(flameAxis.scanId, scan.id))
+      .orderBy(asc(flameAxis.sortOrder));
 
-    const timeDistribution = db
-      .prepare(
-        `SELECT name, pct, level FROM time_distribution WHERE scan_id = ? ORDER BY sort_order ASC`,
-      )
-      .all(scan.id);
+    const timeDist = await db
+      .select({
+        name: timeDistribution.name,
+        pct: timeDistribution.pct,
+        level: timeDistribution.level,
+      })
+      .from(timeDistribution)
+      .where(eq(timeDistribution.scanId, scan.id))
+      .orderBy(asc(timeDistribution.sortOrder));
 
-    const trace = db
-      .prepare(
-        `SELECT label, kind, offset_pct, width_pct, time_ms FROM trace_spans WHERE scan_id = ? ORDER BY sort_order ASC`,
-      )
-      .all(scan.id);
+    const trace = await db
+      .select({
+        label: traceSpans.label,
+        kind: traceSpans.kind,
+        offset_pct: traceSpans.offsetPct,
+        width_pct: traceSpans.widthPct,
+        time_ms: traceSpans.timeMs,
+      })
+      .from(traceSpans)
+      .where(eq(traceSpans.scanId, scan.id))
+      .orderBy(asc(traceSpans.sortOrder));
 
     return c.json({
       pr: {
         number: pr.number,
         title: pr.title,
         branch: pr.branch,
-        baseBranch: pr.base_branch,
+        baseBranch: pr.baseBranch,
         commits: pr.commits,
-        filesChanged: pr.files_changed,
+        filesChanged: pr.filesChanged,
         author: pr.author,
-        githubUrl: pr.github_url,
-        status: pr.status,
-        repo: { id: pr.repo_id, owner: pr.owner, name: pr.repo_name },
+        githubUrl: pr.githubUrl,
+        status: pr.status as 'pending' | 'approved' | 'merged',
+        repo: { id: pr.repoId, owner: pr.owner, name: pr.repoName },
       },
       scan: {
         verdict: scan.verdict,
-        verdictSub: scan.verdict_sub,
-        profiledAt: scan.profiled_at,
+        verdictSub: scan.verdictSub,
+        profiledAt: scan.profiledAt,
         stats: {
-          p95: { value: scan.p95_latency_ms, baseline: scan.p95_baseline_ms },
-          cpu: { value: scan.cpu_pct, baseline: scan.cpu_baseline_pct },
-          db: { queries: scan.db_queries, nPlusOne: scan.db_n_plus_one },
-          cache: { hitRate: scan.cache_hit_rate, baseline: scan.cache_baseline },
+          p95: { value: scan.p95LatencyMs, baseline: scan.p95BaselineMs },
+          cpu: { value: scan.cpuPct, baseline: scan.cpuBaselinePct },
+          db: { queries: scan.dbQueries, nPlusOne: scan.dbNPlusOne },
+          cache: { hitRate: scan.cacheHitRate, baseline: scan.cacheBaseline },
         },
         autofix: {
-          fixable: scan.autofix_count,
-          total: scan.autofix_total,
-          savingsMs: scan.autofix_savings_ms,
+          fixable: scan.autofixCount,
+          total: scan.autofixTotal,
+          savingsMs: scan.autofixSavingsMs,
         },
       },
       issues,
       gates,
-      flame: { rows: flame, axis: flameAxis },
-      timeDistribution,
+      flame: { rows: flame, axis },
+      timeDistribution: timeDist,
       trace,
     });
   },
@@ -246,17 +284,17 @@ scans.post(
       404: { description: 'PR or scan not found' },
     },
   }),
-  (c) => {
+  async (c) => {
     const num = Number(c.req.param('prNumber'));
-    const pr = getPR(num);
+    const pr = await getPR(num);
     if (!pr) return c.json({ error: 'pr not found' }, 404);
-    const scan = getLatestScan(pr.id);
+    const scan = await getLatestScan(pr.id);
     if (!scan) return c.json({ error: 'no scan' }, 404);
     const fixPrNumber = pr.number + 1;
     return c.json({
       ok: true,
-      message: `Drift will open PR #${fixPrNumber} fixing ${scan.autofix_count} of ${scan.autofix_total} issues`,
-      estimatedSavingsMs: scan.autofix_savings_ms,
+      message: `Drift will open PR #${fixPrNumber} fixing ${scan.autofixCount} of ${scan.autofixTotal} issues`,
+      estimatedSavingsMs: scan.autofixSavingsMs,
       fixPrNumber,
     });
   },

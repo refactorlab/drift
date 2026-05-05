@@ -13,6 +13,8 @@ import repos from './routes/repos.ts';
 import users from './routes/users.ts';
 import departments from './routes/departments.ts';
 import dashboard from './routes/dashboard.ts';
+import auth from './routes/auth.ts';
+import { requireAuth } from './auth/middleware.ts';
 
 const app = new Hono();
 
@@ -27,6 +29,11 @@ app.use(
 );
 
 app.get('/healthcheck', (c) => c.json({ ok: true }));
+
+app.route('/api/auth', auth);
+
+// Everything else under /api/* requires a valid access cookie.
+app.use('/api/*', requireAuth);
 
 app.route('/api/scans', scans);
 app.route('/api/prs', prs);

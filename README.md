@@ -1,3 +1,51 @@
+# Drift
+
+Performance reports for your PRs — React SPA + Hono API, backed by Postgres + Drizzle.
+
+## Quick start
+
+```bash
+docker compose up --build
+```
+
+- Web app: http://localhost:5000
+- pgAdmin: http://localhost:5050  (login `admin@example.com` / `admin`)
+- Postgres: `localhost:5432`  (`drift` / `drift` / db `drift`)
+- API docs: http://localhost:5000/docs
+
+## Demo login
+
+The migrations container creates an admin user on every boot (idempotent upsert with an argon2id-hashed password). Sign in at the web app with:
+
+| Field    | Value              |
+|----------|--------------------|
+| Email    | `admin@drift.local`|
+| Password | `1234`             |
+
+Override via env vars before `docker compose up`:
+
+```bash
+export ADMIN_EMAIL=you@example.com
+export ADMIN_PASSWORD='your-strong-password'
+export JWT_SECRET="$(openssl rand -hex 32)"   # required in production
+docker compose up --build
+```
+
+## Auth model
+
+- **Access token** — JWT, 15 min TTL, in `drift_access` HttpOnly+Secure+SameSite=Lax cookie.
+- **Refresh token** — JWT, 7 day TTL, in `drift_refresh` HttpOnly+Secure cookie scoped to `/api/auth/refresh`.
+- **Password hashing** — argon2id via `Bun.password.hash` (constant-time verify).
+- **Endpoints** — `POST /api/auth/token`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`.
+- **Middleware** — every `/api/*` route except `/api/auth/*` requires a valid access cookie; the SPA shows a login page on 401.
+- **Production** — server refuses to boot if `JWT_SECRET` is missing or shorter than 32 chars.
+
+---
+
+Below is the original step-by-step scaffolding guide that produced the initial layout — kept for reference.
+
+---
+
 Here's a complete scaffolding guide for your `web-app` setup. I'll structure it as a step-by-step you can execute.
 
 ## Final structure preview

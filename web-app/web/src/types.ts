@@ -2,8 +2,10 @@ export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export type GateStatus = 'pass' | 'fail' | 'warn';
 export type TraceKind = 'io' | 'cpu' | 'db' | 'cache';
 export type FlameHeat = 'hot' | 'warm' | 'cool' | 'mild' | 'calm' | 'faded';
+export type PRStatus = 'pending' | 'approved' | 'merged';
 
-export interface Repo { owner: string; name: string }
+export interface Repo { id: number; owner: string; name: string }
+export interface DepartmentRef { id: number; name: string }
 
 export interface PR {
   number: number;
@@ -13,10 +15,10 @@ export interface PR {
   commits: number;
   filesChanged: number;
   author: string;
+  githubUrl: string;
+  status: PRStatus;
   repo: Repo;
 }
-
-export interface Stat<T = number> { value: T; baseline: T }
 
 export interface ScanStats {
   p95: { value: number; baseline: number };
@@ -80,4 +82,106 @@ export interface ScanResponse {
   flame: { rows: FlameRow[]; axis: FlameAxis[] };
   timeDistribution: TimeDistRow[];
   trace: TraceSpan[];
+}
+
+export interface ScanListItem {
+  prNumber: number;
+  prTitle: string;
+  prStatus: PRStatus;
+  author: string;
+  repo: Repo;
+  verdict: string;
+  verdictSub: string;
+  profiledAt: number;
+  p95LatencyMs: number;
+  p95BaselineMs: number;
+  cpuPct: number;
+  cacheHitRate: number;
+}
+
+export interface ImprovementRow {
+  id: number;
+  number: number;
+  title: string;
+  status: PRStatus;
+  author: string;
+  githubUrl: string;
+  improvement: string | null;
+  businessValue: number;
+  hoursSaved: number;
+  branch: string;
+  baseBranch: string;
+  commits: number;
+  filesChanged: number;
+  repo: Repo;
+  department: DepartmentRef | null;
+  scan: { verdict: string; p95LatencyMs: number; profiledAt: number } | null;
+  rollups: {
+    repoTotal: number;
+    departmentTotal: number;
+    companyTotal: number;
+  };
+}
+
+export interface ImprovementsResponse {
+  pending: ImprovementRow[];
+  approved: ImprovementRow[];
+  totals: {
+    pendingCount: number;
+    approvedCount: number;
+    pendingBusinessValue: number;
+    approvedBusinessValue: number;
+    pendingHoursSaved: number;
+    approvedHoursSaved: number;
+    companyBusinessValue: number;
+    companyHoursSaved: number;
+  };
+}
+
+export interface ArchitectureSuggestion {
+  id: number;
+  title: string;
+  description: string;
+  githubUrl: string | null;
+  businessValue: number;
+  hoursSaved: number;
+  status: string;
+  createdAt: number;
+  repo: Repo | null;
+  department: DepartmentRef | null;
+}
+
+export interface RepoListItem {
+  id: number;
+  owner: string;
+  name: string;
+  department: DepartmentRef | null;
+  prCount: number;
+  totalBusinessValue: number;
+  totalHoursSaved: number;
+}
+
+export interface DepartmentListItem {
+  id: number;
+  name: string;
+  repoCount: number;
+  prCount: number;
+  totalBusinessValue: number;
+  totalHoursSaved: number;
+}
+
+export interface DashboardResponse {
+  scans: { total: number; failed: number; passed: number; warn: number };
+  improvements: {
+    pending: number;
+    approved: number;
+    pendingBusinessValue: number;
+    approvedBusinessValue: number;
+    totalHoursSaved: number;
+  };
+  topRepos: Array<{
+    id: number; owner: string; name: string;
+    prCount: number; totalBusinessValue: number;
+  }>;
+  recentScans: ScanListItem[];
 }

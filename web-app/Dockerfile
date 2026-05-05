@@ -7,8 +7,9 @@ RUN bun install --frozen-lockfile
 COPY web/package.json web/bun.lock ./web/
 RUN cd web && bun install --frozen-lockfile
 
-COPY tsconfig.json ./
+COPY tsconfig.json drizzle.config.ts ./
 COPY src ./src
+COPY drizzle ./drizzle
 COPY web ./web
 
 RUN cd web && bun run build
@@ -21,9 +22,10 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/bun.lock ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/drizzle ./drizzle
+COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/web/dist ./web/dist
 
-RUN mkdir -p /app/data && chown -R bun:bun /app/data
 USER bun
 
 EXPOSE 5000

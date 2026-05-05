@@ -1,16 +1,12 @@
 import { Hono } from 'hono';
 import { describeRoute, resolver } from 'hono-openapi';
 import { z } from 'zod';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
+import { repos as reposTable, departments, pullRequests } from '../db/schema.ts';
 import { RepoSchema } from '../schemas.ts';
 
 const repos = new Hono();
-
-type RepoRow = {
-  id: number; owner: string; name: string;
-  department_id: number | null; department_name: string | null;
-  prCount: number; totalBV: number; totalHS: number;
-};
 
 repos.get(
   '/',
@@ -24,26 +20,30 @@ repos.get(
       },
     },
   }),
-  (c) => {
-    const rows = db
-      .prepare(
-        `SELECT r.id, r.owner, r.name,
-                d.id AS department_id, d.name AS department_name,
-                (SELECT COUNT(*) FROM pull_requests WHERE repo_id = r.id) AS prCount,
-                (SELECT COALESCE(SUM(business_value), 0) FROM pull_requests WHERE repo_id = r.id) AS totalBV,
-                (SELECT COALESCE(SUM(hours_saved), 0) FROM pull_requests WHERE repo_id = r.id) AS totalHS
-         FROM repos r
-         LEFT JOIN departments d ON d.id = r.department_id
-         ORDER BY totalBV DESC, r.name ASC`,
-      )
-      .all() as RepoRow[];
+  async (c) => {
+    const rows = await db
+      .select({
+        id: reposTable.id,
+        owner: reposTable.owner,
+        name: reposTable.name,
+        deptId: departments.id,
+        deptName: departments.name,
+        prCount: sql<number>`COUNT(${pullRequests.id})::int`,
+        totalBV: sql<number>`COALESCE(SUM(${pullRequests.businessValue}), 0)::int`,
+        totalHS: sql<number>`COALESCE(SUM(${pullRequests.hoursSaved}), 0)::int`,
+      })
+      .from(reposTable)
+      .leftJoin(departments, eq(departments.id, reposTable.departmentId))
+      .leftJoin(pullRequests, eq(pullRequests.repoId, reposTable.id))
+      .groupBy(reposTable.id, departments.id, departments.name)
+      .orderBy(desc(sql`COALESCE(SUM(${pullRequests.businessValue}), 0)`), asc(reposTable.name));
+
     return c.json(
       rows.map((r) => ({
         id: r.id,
         owner: r.owner,
         name: r.name,
-        department:
-          r.department_id != null ? { id: r.department_id, name: r.department_name! } : null,
+        department: r.deptId != null ? { id: r.deptId, name: r.deptName! } : null,
         prCount: r.prCount,
         totalBusinessValue: r.totalBV,
         totalHoursSaved: r.totalHS,

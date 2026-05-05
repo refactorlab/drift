@@ -1,65 +1,83 @@
-import { db, migrate } from './index.ts';
+import { db } from './index.ts';
+import {
+  departments,
+  users,
+  repos,
+  pullRequests,
+  scans,
+  issues,
+  gates,
+  flameRows,
+  flameBlocks,
+  flameAxis,
+  timeDistribution,
+  traceSpans,
+  architectureSuggestions,
+} from './schema.ts';
 
-migrate();
-
-db.exec('DELETE FROM trace_spans');
-db.exec('DELETE FROM time_distribution');
-db.exec('DELETE FROM flame_blocks');
-db.exec('DELETE FROM flame_rows');
-db.exec('DELETE FROM flame_axis');
-db.exec('DELETE FROM gates');
-db.exec('DELETE FROM issues');
-db.exec('DELETE FROM scans');
-db.exec('DELETE FROM architecture_suggestions');
-db.exec('DELETE FROM pull_requests');
-db.exec('DELETE FROM repos');
-db.exec('DELETE FROM users');
-db.exec('DELETE FROM departments');
+// Truncate in dependency-safe order. We restart identities so subsequent IDs
+// always start at 1 and the demo PR #2847 maps to a stable scan_id.
+await db.execute(/* sql */ `
+  TRUNCATE TABLE
+    trace_spans,
+    time_distribution,
+    flame_blocks,
+    flame_rows,
+    flame_axis,
+    gates,
+    issues,
+    scans,
+    architecture_suggestions,
+    pull_requests,
+    repos,
+    users,
+    departments
+  RESTART IDENTITY CASCADE
+`);
 
 // ── departments ─────────────────────────────────────────────────────────────
-const insertDept = db.prepare(`INSERT INTO departments (name) VALUES (?) RETURNING id`);
+const deptRows = await db
+  .insert(departments)
+  .values([{ name: 'Platform' }, { name: 'Growth' }, { name: 'Reliability' }])
+  .returning();
 const deptIds = {
-  Platform: (insertDept.get('Platform') as { id: number }).id,
-  Growth: (insertDept.get('Growth') as { id: number }).id,
-  Reliability: (insertDept.get('Reliability') as { id: number }).id,
+  Platform: deptRows.find((d) => d.name === 'Platform')!.id,
+  Growth: deptRows.find((d) => d.name === 'Growth')!.id,
+  Reliability: deptRows.find((d) => d.name === 'Reliability')!.id,
 };
 
 // ── users ───────────────────────────────────────────────────────────────────
-const insertUser = db.prepare(
-  `INSERT INTO users (email, name, role, github_username, initials, department_id) VALUES (?, ?, ?, ?, ?, ?)`,
-);
-const users: Array<[string, string, string, string, string, number]> = [
-  ['jane.doe@waste-labs.io', 'Jane Doe', 'admin', 'jdoe', 'JD', deptIds.Platform],
-  ['marcus.lee@waste-labs.io', 'Marcus Lee', 'engineer', 'mlee', 'ML', deptIds.Platform],
-  ['lin.wei@waste-labs.io', 'Lin Wei', 'engineer', 'lwei', 'LW', deptIds.Platform],
-  ['priya.shah@waste-labs.io', 'Priya Shah', 'engineer', 'pshah', 'PS', deptIds.Growth],
-  ['alex.kim@waste-labs.io', 'Alex Kim', 'lead', 'akim', 'AK', deptIds.Growth],
-  ['noah.patel@waste-labs.io', 'Noah Patel', 'engineer', 'npatel', 'NP', deptIds.Growth],
-  ['sam.rivera@waste-labs.io', 'Sam Rivera', 'lead', 'srivera', 'SR', deptIds.Reliability],
-  ['tom.brennan@waste-labs.io', 'Tom Brennan', 'engineer', 'tbrennan', 'TB', deptIds.Reliability],
-];
-users.forEach((u) => insertUser.run(...u));
+await db.insert(users).values([
+  { email: 'jane.doe@waste-labs.io', name: 'Jane Doe', role: 'admin', githubUsername: 'jdoe', initials: 'JD', departmentId: deptIds.Platform },
+  { email: 'marcus.lee@waste-labs.io', name: 'Marcus Lee', role: 'engineer', githubUsername: 'mlee', initials: 'ML', departmentId: deptIds.Platform },
+  { email: 'lin.wei@waste-labs.io', name: 'Lin Wei', role: 'engineer', githubUsername: 'lwei', initials: 'LW', departmentId: deptIds.Platform },
+  { email: 'priya.shah@waste-labs.io', name: 'Priya Shah', role: 'engineer', githubUsername: 'pshah', initials: 'PS', departmentId: deptIds.Growth },
+  { email: 'alex.kim@waste-labs.io', name: 'Alex Kim', role: 'lead', githubUsername: 'akim', initials: 'AK', departmentId: deptIds.Growth },
+  { email: 'noah.patel@waste-labs.io', name: 'Noah Patel', role: 'engineer', githubUsername: 'npatel', initials: 'NP', departmentId: deptIds.Growth },
+  { email: 'sam.rivera@waste-labs.io', name: 'Sam Rivera', role: 'lead', githubUsername: 'srivera', initials: 'SR', departmentId: deptIds.Reliability },
+  { email: 'tom.brennan@waste-labs.io', name: 'Tom Brennan', role: 'engineer', githubUsername: 'tbrennan', initials: 'TB', departmentId: deptIds.Reliability },
+]);
 
 // ── repos ───────────────────────────────────────────────────────────────────
-const insertRepo = db.prepare(
-  `INSERT INTO repos (owner, name, department_id) VALUES (?, ?, ?) RETURNING id`,
-);
+const repoRows = await db
+  .insert(repos)
+  .values([
+    { owner: 'waste-labs', name: 'checkout-service', departmentId: deptIds.Platform },
+    { owner: 'waste-labs', name: 'analytics-pipeline', departmentId: deptIds.Growth },
+    { owner: 'waste-labs', name: 'billing-service', departmentId: deptIds.Growth },
+    { owner: 'waste-labs', name: 'observability', departmentId: deptIds.Reliability },
+    { owner: 'waste-labs', name: 'gateway', departmentId: deptIds.Reliability },
+  ])
+  .returning();
 const repoIds = {
-  checkout: (insertRepo.get('waste-labs', 'checkout-service', deptIds.Platform) as { id: number }).id,
-  analytics: (insertRepo.get('waste-labs', 'analytics-pipeline', deptIds.Growth) as { id: number }).id,
-  billing: (insertRepo.get('waste-labs', 'billing-service', deptIds.Growth) as { id: number }).id,
-  observability: (insertRepo.get('waste-labs', 'observability', deptIds.Reliability) as { id: number }).id,
-  gateway: (insertRepo.get('waste-labs', 'gateway', deptIds.Reliability) as { id: number }).id,
+  checkout: repoRows.find((r) => r.name === 'checkout-service')!.id,
+  analytics: repoRows.find((r) => r.name === 'analytics-pipeline')!.id,
+  billing: repoRows.find((r) => r.name === 'billing-service')!.id,
+  observability: repoRows.find((r) => r.name === 'observability')!.id,
+  gateway: repoRows.find((r) => r.name === 'gateway')!.id,
 };
 
 // ── pull_requests ───────────────────────────────────────────────────────────
-const insertPR = db.prepare(
-  `INSERT INTO pull_requests (
-     repo_id, number, title, branch, base_branch, commits, files_changed, author,
-     status, github_url, improvement, business_value, hours_saved
-   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-);
-
 type PRSeed = {
   repoId: number; ownerName: string; number: number; title: string;
   branch: string; commits: number; files: number; author: string;
@@ -82,43 +100,50 @@ const prSeeds: PRSeed[] = [
   { repoId: repoIds.gateway, ownerName: 'waste-labs/gateway', number: 82, title: 'fix: TLS session resumption to remove handshake bottleneck', branch: 'fix/tls-resumption', commits: 7, files: 11, author: 'tbrennan', status: 'approved', improvement: 'Enables TLS 1.3 0-RTT; removes 80ms handshake on warm connections.', businessValue: 22000, hoursSaved: 120 },
 ];
 
-const prRows = prSeeds.map((p) => ({
-  ...p,
-  prId: (
-    insertPR.get(
-      p.repoId, p.number, p.title, p.branch, 'main', p.commits, p.files, p.author,
-      p.status, `https://github.com/${p.ownerName}/pull/${p.number}`,
-      p.improvement, p.businessValue, p.hoursSaved,
-    ) as { id: number }
-  ).id,
-}));
+const prRows = await db
+  .insert(pullRequests)
+  .values(
+    prSeeds.map((p) => ({
+      repoId: p.repoId,
+      number: p.number,
+      title: p.title,
+      branch: p.branch,
+      baseBranch: 'main',
+      commits: p.commits,
+      filesChanged: p.files,
+      author: p.author,
+      status: p.status,
+      githubUrl: `https://github.com/${p.ownerName}/pull/${p.number}`,
+      improvement: p.improvement,
+      businessValue: p.businessValue,
+      hoursSaved: p.hoursSaved,
+    })),
+  )
+  .returning({ id: pullRequests.id, number: pullRequests.number });
 
-const dashboardPR = prRows.find((p) => p.number === 2847)!;
+const prByNumber = new Map(prRows.map((r) => [r.number, r.id]));
+const dashboardPRId = prByNumber.get(2847)!;
 
 // ── full scan for PR #2847 ──────────────────────────────────────────────────
 const profiledAt = Date.now() - 3 * 60 * 1000 - 42 * 1000;
-const scanId = (db.prepare(
-  `INSERT INTO scans (
-    pr_id, verdict, verdict_sub, profiled_at,
-    p95_latency_ms, p95_baseline_ms, cpu_pct, cpu_baseline_pct,
-    db_queries, db_n_plus_one, cache_hit_rate, cache_baseline,
-    autofix_count, autofix_total, autofix_savings_ms
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-).get(
-  dashboardPR.prId, 'FAILED', '3 critical regressions blocking merge', profiledAt,
-  847, 206, 82, 35, 1247, 184, 12, 88, 5, 7, 671,
-) as { id: number }).id;
+const [scanRow] = await db
+  .insert(scans)
+  .values({
+    prId: dashboardPRId,
+    verdict: 'FAILED',
+    verdictSub: '3 critical regressions blocking merge',
+    profiledAt,
+    p95LatencyMs: 847, p95BaselineMs: 206,
+    cpuPct: 82, cpuBaselinePct: 35,
+    dbQueries: 1247, dbNPlusOne: 184,
+    cacheHitRate: 12, cacheBaseline: 88,
+    autofixCount: 5, autofixTotal: 7, autofixSavingsMs: 671,
+  })
+  .returning({ id: scans.id });
+const scanId = scanRow.id;
 
-// lightweight scans for other PRs
-const lightScan = db.prepare(
-  `INSERT INTO scans (
-    pr_id, verdict, verdict_sub, profiled_at,
-    p95_latency_ms, p95_baseline_ms, cpu_pct, cpu_baseline_pct,
-    db_queries, db_n_plus_one, cache_hit_rate, cache_baseline,
-    autofix_count, autofix_total, autofix_savings_ms
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-);
-const lightScanData: Array<[number, string, string, number, number, number, number, number, number, number, number, number]> = [
+// lightweight scans for other PRs (indexed by their PR # in prSeeds order)
+const lightScanData: Array<[number, 'PASSED' | 'WARN' | 'FAILED', string, number, number, number, number, number, number, number, number, number]> = [
   [1, 'PASSED', 'all gates pass', 198, 206, 32, 35, 18, 0, 91, 88, 0],
   [2, 'PASSED', 'meets perf budget', 142, 206, 28, 35, 14, 0, 94, 88, 0],
   [3, 'PASSED', 'index drops query time', 95, 206, 22, 35, 12, 0, 90, 88, 0],
@@ -131,75 +156,75 @@ const lightScanData: Array<[number, string, string, number, number, number, numb
   [10, 'WARN', 'pool not fully tuned', 340, 380, 58, 55, 180, 0, 70, 75, 90],
   [11, 'PASSED', 'TLS bottleneck gone', 210, 380, 42, 55, 80, 0, 84, 75, 0],
 ];
-for (const [idx, verdict, sub, p95, base, cpu, cpuB, q, npo, cache, cacheB, savings] of lightScanData) {
-  const pr = prRows[idx];
-  lightScan.run(
-    pr.prId, verdict as string, sub as string, Date.now() - (idx + 1) * 60 * 60 * 1000,
-    p95 as number, base as number, cpu as number, cpuB as number,
-    q as number, npo as number, cache as number, cacheB as number,
-    npo === 0 ? 0 : 1, npo === 0 ? 0 : 2, savings as number,
-  );
-}
+
+await db.insert(scans).values(
+  lightScanData.map(([idx, verdict, sub, p95, base, cpu, cpuB, q, npo, cache, cacheB, savings]) => {
+    const pr = prRows[idx];
+    return {
+      prId: pr.id,
+      verdict,
+      verdictSub: sub,
+      profiledAt: Date.now() - (idx + 1) * 60 * 60 * 1000,
+      p95LatencyMs: p95, p95BaselineMs: base,
+      cpuPct: cpu, cpuBaselinePct: cpuB,
+      dbQueries: q, dbNPlusOne: npo,
+      cacheHitRate: cache, cacheBaseline: cacheB,
+      autofixCount: npo === 0 ? 0 : 1,
+      autofixTotal: npo === 0 ? 0 : 2,
+      autofixSavingsMs: savings,
+    };
+  }),
+);
 
 // ── issues for PR #2847 ─────────────────────────────────────────────────────
-const insertIssue = db.prepare(`
-  INSERT INTO issues (
-    scan_id, severity, title, file_path, line_number, meta, category, impact_ms,
-    problem, code_before, code_after, code_lang, code_diff_label,
-    suggestion_title, suggestion_text, sort_order
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-const issues: Array<Parameters<typeof insertIssue.run>> = [
-  [
-    scanId, 'critical',
-    'N+1 Query Pattern in User Dashboard Loader',
-    'src/services/UserService.ts', 47,
-    '184 queries × ~2.1ms each · Database overuse',
-    'database', 387,
-    'Each user in the dashboard list triggers a separate query to fetch their order history. With 184 active users, this generates 184 sequential DB round-trips instead of a single batched query.',
-    `const users = await userRepo.findAll();\nfor (const user of users) {\n  user.orders = await ordersRepo.findByUserId(user.id); // N+1\n}`,
-    `const users = await userRepo.findAll();\nconst orders = await ordersRepo.findByUserIds(users.map(u => u.id));\nconst ordersByUser = _.groupBy(orders, 'userId');\nusers.forEach(u => u.orders = ordersByUser[u.id] ?? []);`,
-    'TypeScript', 'Replace with batched IN-query',
-    'Estimated improvement: ~370ms saved per request',
-    'Reduces DB round-trips from 184 → 1. Combined with cache layer (see Issue #3) could bring this path under 50ms.',
-    1,
-  ],
-  [
-    scanId, 'critical',
-    'Blocking Synchronous I/O on Hot Path',
-    'src/api/dashboard.handler.ts', 112,
-    'fs.readFileSync blocks event loop for ~80ms',
-    'io', 82,
-    'A synchronous file read inside the request handler blocks the Node.js event loop, starving all concurrent requests. Under load (50 RPS), this cascades into thread pool exhaustion.',
-    `const template = fs.readFileSync('./templates/dash.html'); // blocks!`,
-    null, 'TypeScript', null,
-    'Move to startup, or use async fs.promises.readFile',
-    'Templates should be loaded once at boot and cached in memory. Eliminates 80ms blocking per request.',
-    2,
-  ],
-  [
-    scanId, 'critical',
-    'Redis Cache Bypassed — Direct DB Reads on Hot Object',
-    'src/services/UserService.ts', 23,
-    'UserPreferences fetched 1,200×/min, 0% cached',
-    'cache', 94,
-    'The new getUserPreferences() implementation removed the Redis lookup that existed in the previous version. This object changes <1×/day per user but is now read from Postgres on every request.',
-    null,
-    `const cacheKey = \`prefs:\${userId}\`;\nconst cached = await redis.get(cacheKey);\nif (cached) return JSON.parse(cached);\nconst prefs = await prefsRepo.findByUserId(userId);\nawait redis.setex(cacheKey, 300, JSON.stringify(prefs));`,
-    'TypeScript', 'Cache-aside with 5min TTL',
-    null, null, 3,
-  ],
-  [scanId, 'high', 'CPU-bound JSON serialization on large payload', 'src/api/dashboard.handler.ts', 201, '14% of total CPU time', 'cpu', 118, null, null, null, 'TypeScript', null, null, null, 4],
-  [scanId, 'high', 'Missing index on `orders.user_id` causes full table scan', 'migrations/0024_orders.sql', null, 'Avg query: 22ms (should be <1ms)', 'database', 62, null, null, null, 'SQL', null, null, null, 5],
-  [scanId, 'medium', 'Unbounded array growth — possible memory pressure', 'src/services/MetricsBuffer.ts', 18, 'Heap grew 340MB during 5min profile', 'memory', 24, null, null, null, 'TypeScript', null, null, null, 6],
-  [scanId, 'low', 'Redundant logger.info call in tight loop', 'src/utils/processItems.ts', 34, 'Called 1,800×/sec at INFO level', 'logging', 8, null, null, null, 'TypeScript', null, null, null, 7],
-];
-for (const i of issues) insertIssue.run(...i);
+await db.insert(issues).values([
+  {
+    scanId, severity: 'critical',
+    title: 'N+1 Query Pattern in User Dashboard Loader',
+    filePath: 'src/services/UserService.ts', lineNumber: 47,
+    meta: '184 queries × ~2.1ms each · Database overuse',
+    category: 'database', impactMs: 387,
+    problem: 'Each user in the dashboard list triggers a separate query to fetch their order history. With 184 active users, this generates 184 sequential DB round-trips instead of a single batched query.',
+    codeBefore: `const users = await userRepo.findAll();\nfor (const user of users) {\n  user.orders = await ordersRepo.findByUserId(user.id); // N+1\n}`,
+    codeAfter: `const users = await userRepo.findAll();\nconst orders = await ordersRepo.findByUserIds(users.map(u => u.id));\nconst ordersByUser = _.groupBy(orders, 'userId');\nusers.forEach(u => u.orders = ordersByUser[u.id] ?? []);`,
+    codeLang: 'TypeScript', codeDiffLabel: 'Replace with batched IN-query',
+    suggestionTitle: 'Estimated improvement: ~370ms saved per request',
+    suggestionText: 'Reduces DB round-trips from 184 → 1. Combined with cache layer (see Issue #3) could bring this path under 50ms.',
+    sortOrder: 1,
+  },
+  {
+    scanId, severity: 'critical',
+    title: 'Blocking Synchronous I/O on Hot Path',
+    filePath: 'src/api/dashboard.handler.ts', lineNumber: 112,
+    meta: 'fs.readFileSync blocks event loop for ~80ms',
+    category: 'io', impactMs: 82,
+    problem: 'A synchronous file read inside the request handler blocks the Node.js event loop, starving all concurrent requests. Under load (50 RPS), this cascades into thread pool exhaustion.',
+    codeBefore: `const template = fs.readFileSync('./templates/dash.html'); // blocks!`,
+    codeAfter: null, codeLang: 'TypeScript', codeDiffLabel: null,
+    suggestionTitle: 'Move to startup, or use async fs.promises.readFile',
+    suggestionText: 'Templates should be loaded once at boot and cached in memory. Eliminates 80ms blocking per request.',
+    sortOrder: 2,
+  },
+  {
+    scanId, severity: 'critical',
+    title: 'Redis Cache Bypassed — Direct DB Reads on Hot Object',
+    filePath: 'src/services/UserService.ts', lineNumber: 23,
+    meta: 'UserPreferences fetched 1,200×/min, 0% cached',
+    category: 'cache', impactMs: 94,
+    problem: 'The new getUserPreferences() implementation removed the Redis lookup that existed in the previous version. This object changes <1×/day per user but is now read from Postgres on every request.',
+    codeBefore: null,
+    codeAfter: `const cacheKey = \`prefs:\${userId}\`;\nconst cached = await redis.get(cacheKey);\nif (cached) return JSON.parse(cached);\nconst prefs = await prefsRepo.findByUserId(userId);\nawait redis.setex(cacheKey, 300, JSON.stringify(prefs));`,
+    codeLang: 'TypeScript', codeDiffLabel: 'Cache-aside with 5min TTL',
+    suggestionTitle: null, suggestionText: null, sortOrder: 3,
+  },
+  { scanId, severity: 'high', title: 'CPU-bound JSON serialization on large payload', filePath: 'src/api/dashboard.handler.ts', lineNumber: 201, meta: '14% of total CPU time', category: 'cpu', impactMs: 118, problem: null, codeBefore: null, codeAfter: null, codeLang: 'TypeScript', codeDiffLabel: null, suggestionTitle: null, suggestionText: null, sortOrder: 4 },
+  { scanId, severity: 'high', title: 'Missing index on `orders.user_id` causes full table scan', filePath: 'migrations/0024_orders.sql', lineNumber: null, meta: 'Avg query: 22ms (should be <1ms)', category: 'database', impactMs: 62, problem: null, codeBefore: null, codeAfter: null, codeLang: 'SQL', codeDiffLabel: null, suggestionTitle: null, suggestionText: null, sortOrder: 5 },
+  { scanId, severity: 'medium', title: 'Unbounded array growth — possible memory pressure', filePath: 'src/services/MetricsBuffer.ts', lineNumber: 18, meta: 'Heap grew 340MB during 5min profile', category: 'memory', impactMs: 24, problem: null, codeBefore: null, codeAfter: null, codeLang: 'TypeScript', codeDiffLabel: null, suggestionTitle: null, suggestionText: null, sortOrder: 6 },
+  { scanId, severity: 'low', title: 'Redundant logger.info call in tight loop', filePath: 'src/utils/processItems.ts', lineNumber: 34, meta: 'Called 1,800×/sec at INFO level', category: 'logging', impactMs: 8, problem: null, codeBefore: null, codeAfter: null, codeLang: 'TypeScript', codeDiffLabel: null, suggestionTitle: null, suggestionText: null, sortOrder: 7 },
+]);
 
-const insertGate = db.prepare(
-  `INSERT INTO gates (scan_id, name, value, status, sort_order) VALUES (?, ?, ?, ?, ?)`,
-);
-const gates = [
+// ── gates ───────────────────────────────────────────────────────────────────
+const gateData = [
   ['P95 latency < 300ms', '847ms', 'fail'],
   ['DB queries / req < 20', '1,247', 'fail'],
   ['Cache hit rate > 80%', '12%', 'fail'],
@@ -208,14 +233,13 @@ const gates = [
   ['Error rate < 0.1%', '0.02%', 'pass'],
   ['No deadlocks detected', 'OK', 'pass'],
 ];
-gates.forEach((g, idx) => insertGate.run(scanId, g[0], g[1], g[2], idx + 1));
-
-const insertRow = db.prepare(`INSERT INTO flame_rows (scan_id, depth) VALUES (?, ?) RETURNING id`);
-const insertBlock = db.prepare(
-  `INSERT INTO flame_blocks (row_id, label, flex, pct, heat, sort_order) VALUES (?, ?, ?, ?, ?, ?)`,
+await db.insert(gates).values(
+  gateData.map((g, i) => ({ scanId, name: g[0], value: g[1], status: g[2], sortOrder: i + 1 })),
 );
+
+// ── flame graph ─────────────────────────────────────────────────────────────
 type Block = { label: string; flex: number; pct: number | null; heat: string };
-const flameRows: Block[][] = [
+const flameRowData: Block[][] = [
   [{ label: 'main.handleRequest', flex: 1, pct: 100, heat: 'faded' }],
   [{ label: 'auth', flex: 0.08, pct: 8, heat: 'faded' }, { label: 'DashboardController.load', flex: 0.84, pct: 84, heat: 'hot' }, { label: 'render', flex: 0.08, pct: 8, heat: 'faded' }],
   [{ label: '', flex: 0.08, pct: null, heat: 'faded' }, { label: 'UserService.getUserStats', flex: 0.62, pct: 62, heat: 'hot' }, { label: 'OrdersRepo.findAll', flex: 0.22, pct: 22, heat: 'warm' }, { label: '', flex: 0.08, pct: null, heat: 'faded' }],
@@ -223,28 +247,34 @@ const flameRows: Block[][] = [
   [{ label: '', flex: 0.08, pct: null, heat: 'faded' }, { label: 'socket.read', flex: 0.32, pct: 32, heat: 'hot' }, { label: 'deserialize', flex: 0.16, pct: 16, heat: 'warm' }, { label: '', flex: 0.14, pct: null, heat: 'cool' }, { label: 'heap.scan', flex: 0.22, pct: 22, heat: 'mild' }, { label: '', flex: 0.08, pct: null, heat: 'faded' }],
   [{ label: '', flex: 0.08, pct: null, heat: 'faded' }, { label: 'syscall.recv', flex: 0.18, pct: 18, heat: 'hot' }, { label: 'tcp.wait', flex: 0.14, pct: 14, heat: 'warm' }, { label: '', flex: 0.14, pct: null, heat: 'cool' }, { label: '', flex: 0.46, pct: null, heat: 'calm' }, { label: '', flex: 0.08, pct: null, heat: 'faded' }],
 ];
-flameRows.forEach((row, depth) => {
-  const r = insertRow.get(scanId, depth) as { id: number };
-  row.forEach((b, i) => insertBlock.run(r.id, b.label, b.flex, b.pct, b.heat, i));
-});
+const insertedRows = await db
+  .insert(flameRows)
+  .values(flameRowData.map((_, depth) => ({ scanId, depth })))
+  .returning({ id: flameRows.id, depth: flameRows.depth });
+const blockValues = insertedRows.flatMap((r) =>
+  flameRowData[r.depth].map((b, i) => ({
+    rowId: r.id, label: b.label, flex: b.flex, pct: b.pct, heat: b.heat, sortOrder: i,
+  })),
+);
+await db.insert(flameBlocks).values(blockValues);
 
-const insertAxis = db.prepare(
-  `INSERT INTO flame_axis (scan_id, label, offset_pct, sort_order) VALUES (?, ?, ?, ?)`,
-);
-[['0ms', 0], ['210ms', 25], ['420ms', 50], ['630ms', 75], ['847ms', 100]].forEach(
-  (a, i) => insertAxis.run(scanId, a[0] as string, a[1] as number, i),
+// ── flame axis ──────────────────────────────────────────────────────────────
+const axisData: Array<[string, number]> = [['0ms', 0], ['210ms', 25], ['420ms', 50], ['630ms', 75], ['847ms', 100]];
+await db.insert(flameAxis).values(
+  axisData.map(([label, offsetPct], i) => ({ scanId, label, offsetPct, sortOrder: i })),
 );
 
-const insertTd = db.prepare(
-  `INSERT INTO time_distribution (scan_id, name, pct, level, sort_order) VALUES (?, ?, ?, ?, ?)`,
+// ── time distribution ──────────────────────────────────────────────────────
+const tdData: Array<[string, number, string]> = [
+  ['Database', 48, 'high'], ['CPU', 22, 'med'], ['I/O Wait', 18, 'med'],
+  ['Network', 8, 'low'], ['Cache', 4, 'low'],
+];
+await db.insert(timeDistribution).values(
+  tdData.map(([name, pct, level], i) => ({ scanId, name, pct, level, sortOrder: i })),
 );
-const tds = [['Database', 48, 'high'], ['CPU', 22, 'med'], ['I/O Wait', 18, 'med'], ['Network', 8, 'low'], ['Cache', 4, 'low']];
-tds.forEach((t, i) => insertTd.run(scanId, t[0] as string, t[1] as number, t[2] as string, i));
 
-const insertSpan = db.prepare(
-  `INSERT INTO trace_spans (scan_id, label, kind, offset_pct, width_pct, time_ms, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-);
-const spans = [
+// ── trace spans ────────────────────────────────────────────────────────────
+const spanData: Array<[string, string, number, number, number]> = [
   ['auth.verify', 'cpu', 0, 2, 14],
   ['db.findUsers', 'db', 2, 6, 52],
   ['db.orders ×184', 'db', 8, 46, 387],
@@ -253,25 +283,23 @@ const spans = [
   ['json.serialize', 'cpu', 75, 14, 118],
   ['response.send', 'io', 89, 11, 100],
 ];
-spans.forEach((s, i) => insertSpan.run(scanId, s[0] as string, s[1] as string, s[2] as number, s[3] as number, s[4] as number, i));
+await db.insert(traceSpans).values(
+  spanData.map(([label, kind, offsetPct, widthPct, timeMs], i) => ({
+    scanId, label, kind, offsetPct, widthPct, timeMs, sortOrder: i,
+  })),
+);
 
 // ── architecture suggestions ────────────────────────────────────────────────
-const insertArch = db.prepare(
-  `INSERT INTO architecture_suggestions
-   (title, description, github_url, business_value, hours_saved, repo_id, department_id, status, created_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-);
 const now = Date.now();
-const archRows: Array<Parameters<typeof insertArch.run>> = [
-  ['Migrate event bus to Kafka', 'Replace the in-house RabbitMQ event bus with Kafka to support replay, partitioning, and exactly-once semantics across the platform. Foundational for the analytics CDC migration.', 'https://github.com/waste-labs/checkout-service/issues/3104', 120000, 600, repoIds.checkout, deptIds.Platform, 'proposed', now - 7 * 86400000],
-  ['Consolidate billing & checkout into shared Payments service', 'Both checkout-service and billing-service duplicate Stripe call patterns and tokenization logic. Extract a shared Payments service with stable contract.', 'https://github.com/waste-labs/checkout-service/issues/3198', 80000, 400, repoIds.billing, deptIds.Platform, 'review', now - 14 * 86400000],
-  ['Adopt OpenTelemetry across all services', 'Replace per-service tracing libs with OTel SDK; export to a single collector. Removes 3 maintenance burdens and unifies trace context propagation.', 'https://github.com/waste-labs/observability/issues/512', 45000, 240, repoIds.observability, deptIds.Reliability, 'proposed', now - 21 * 86400000],
-  ['Replace polling-based analytics with CDC', 'Move all batch ETL pulls to change-data-capture via Debezium → Kafka → Materialized views. Reduces lag from 30s to <1s and removes load on primary.', 'https://github.com/waste-labs/analytics-pipeline/issues/889', 90000, 500, repoIds.analytics, deptIds.Growth, 'proposed', now - 4 * 86400000],
-];
-for (const a of archRows) insertArch.run(...a);
+await db.insert(architectureSuggestions).values([
+  { title: 'Migrate event bus to Kafka', description: 'Replace the in-house RabbitMQ event bus with Kafka to support replay, partitioning, and exactly-once semantics across the platform. Foundational for the analytics CDC migration.', githubUrl: 'https://github.com/waste-labs/checkout-service/issues/3104', businessValue: 120000, hoursSaved: 600, repoId: repoIds.checkout, departmentId: deptIds.Platform, status: 'proposed', createdAt: now - 7 * 86400000 },
+  { title: 'Consolidate billing & checkout into shared Payments service', description: 'Both checkout-service and billing-service duplicate Stripe call patterns and tokenization logic. Extract a shared Payments service with stable contract.', githubUrl: 'https://github.com/waste-labs/checkout-service/issues/3198', businessValue: 80000, hoursSaved: 400, repoId: repoIds.billing, departmentId: deptIds.Platform, status: 'review', createdAt: now - 14 * 86400000 },
+  { title: 'Adopt OpenTelemetry across all services', description: 'Replace per-service tracing libs with OTel SDK; export to a single collector. Removes 3 maintenance burdens and unifies trace context propagation.', githubUrl: 'https://github.com/waste-labs/observability/issues/512', businessValue: 45000, hoursSaved: 240, repoId: repoIds.observability, departmentId: deptIds.Reliability, status: 'proposed', createdAt: now - 21 * 86400000 },
+  { title: 'Replace polling-based analytics with CDC', description: 'Move all batch ETL pulls to change-data-capture via Debezium → Kafka → Materialized views. Reduces lag from 30s to <1s and removes load on primary.', githubUrl: 'https://github.com/waste-labs/analytics-pipeline/issues/889', businessValue: 90000, hoursSaved: 500, repoId: repoIds.analytics, departmentId: deptIds.Growth, status: 'proposed', createdAt: now - 4 * 86400000 },
+]);
 
 console.log(
-  `✓ Seeded ${Object.keys(deptIds).length} depts, ${users.length} users, ` +
-  `${Object.keys(repoIds).length} repos, ${prRows.length} PRs (1 full scan + ${lightScanData.length} light scans), ` +
-  `${issues.length} issues, ${gates.length} gates, ${flameRows.length} flame rows, ${spans.length} trace spans, ${archRows.length} arch suggestions`,
+  `✓ Seeded ${deptRows.length} depts, 8 users, ${repoRows.length} repos, ` +
+  `${prRows.length} PRs (1 full scan + ${lightScanData.length} light scans), ` +
+  `7 issues, ${gateData.length} gates, ${flameRowData.length} flame rows, ${spanData.length} trace spans, 4 arch suggestions`,
 );

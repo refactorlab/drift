@@ -1,22 +1,34 @@
-import { db, migrate, dropAll, currentSchemaVersion, SCHEMA_VERSION } from './db/index.ts';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { sql as count } from 'drizzle-orm';
+import path from 'node:path';
+import { db, sql } from './db/index.ts';
+import { scans } from './db/schema.ts';
+import { seedAdmin, ADMIN_EMAIL } from './db/seed-admin.ts';
 
-console.log('▲ Running migrations…');
+console.log('▲ Running Drizzle migrations…');
 
-const current = currentSchemaVersion();
-if (current !== 0 && current !== SCHEMA_VERSION) {
-  console.log(`▲ Schema mismatch (db=${current}, code=${SCHEMA_VERSION}); resetting…`);
-  dropAll();
-}
-
-migrate();
-
-const row = db.prepare('SELECT COUNT(*) AS n FROM scans').get() as { n: number };
-
-if (row.n === 0) {
-  console.log('▲ Database empty — seeding initial dataset…');
-  await import('./db/seed.ts');
-} else {
-  console.log(`▲ Skipping seed (${row.n} scans already present)`);
-}
+await migrate(db, {
+  migrationsFolder: path.resolve(import.meta.dir, '../drizzle'),
+});
 
 console.log('✓ Migrations complete');
+
+const [{ n }] = await db
+  .select({ n: count<number>`count(*)::int` })
+  .from(scans);
+
+if (n === 0) {
+  console.log('▲ Database empty — seeding demo dataset…');
+  await import('./db/seed.ts');
+} else {
+  console.log(`▲ Skipping demo seed (${n} scans already present)`);
+}
+
+const admin = await seedAdmin();
+console.log(
+  admin.created
+    ? `▲ Created admin user ${ADMIN_EMAIL}`
+    : `▲ Updated admin user ${ADMIN_EMAIL}`,
+);
+
+await sql.end();

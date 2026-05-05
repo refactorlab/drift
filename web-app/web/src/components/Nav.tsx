@@ -1,12 +1,21 @@
+import { NavLink } from 'react-router-dom';
 import { BoltIcon } from './icons';
+import { useAuth } from '../auth';
 
-const links = ['Dashboard', 'Scans', 'Repositories', 'Policies', 'Integrations'];
+const links: Array<{ to: string; label: string; end?: boolean }> = [
+  { to: '/', label: 'Dashboard', end: true },
+  { to: '/scans', label: 'Scans' },
+  { to: '/improvements', label: 'Improvements' },
+  { to: '/repositories', label: 'Repositories' },
+];
 
 export function Nav() {
+  const { user, logout } = useAuth();
+
   return (
     <nav className="nav">
       <div className="nav-inner">
-        <div className="logo">
+        <NavLink to="/" className="logo" style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="logo-mark">
             <BoltIcon />
           </div>
@@ -14,16 +23,41 @@ export function Nav() {
             <span>Drift</span>
             <span className="logo-sub">by waste-labs</span>
           </div>
-        </div>
+        </NavLink>
         <div className="nav-links">
           {links.map((l) => (
-            <button key={l} className={`nav-link${l === 'Scans' ? ' active' : ''}`}>
-              {l}
-            </button>
+            <NavLink
+              key={l.to}
+              to={l.to}
+              end={l.end}
+              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+              style={{ textDecoration: 'none' }}
+            >
+              {l.label}
+            </NavLink>
           ))}
+          <a
+            className="nav-link"
+            href="/docs"
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: 'none', marginLeft: 'auto' }}
+          >
+            API ↗
+          </a>
         </div>
         <div className="nav-right">
-          <div className="avatar">JD</div>
+          {user && (
+            <>
+              <div className="nav-user" title={user.email}>
+                {user.name}
+              </div>
+              <div className="avatar">{user.initials}</div>
+              <button type="button" className="nav-logout" onClick={() => void logout()}>
+                Sign out
+              </button>
+            </>
+          )}
         </div>
       </div>
     </nav>
