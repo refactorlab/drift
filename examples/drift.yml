@@ -1,0 +1,29 @@
+name: Drift
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Drift performance scan
+        uses: drift-dev/drift-action@v1
+        with:
+          api-token: ${{ secrets.DRIFT_API_TOKEN }}
+          # The command Drift runs to gather profile data. It must write a JSON
+          # report to $DRIFT_REPORT_PATH. Replace with your project's profiler.
+          profile-command: 'npx drift-profile'
+          # Block the PR only on a confirmed regression. Use `any` to also
+          # block on inconclusive runs, or `never` to make Drift advisory.
+          fail-on: regression

@@ -1,0 +1,70 @@
+name: 'Drift Performance Scan'
+description: 'Profile your PR, detect performance regressions, and post a verdict check + sticky comment.'
+author: 'Drift'
+
+branding:
+  icon: 'activity'
+  color: 'purple'
+
+inputs:
+  api-url:
+    description: 'Drift API base URL (e.g. https://api.drift.dev). Defaults to the public hosted endpoint.'
+    required: false
+    default: 'https://api.drift.dev'
+  api-token:
+    description: 'Drift API token (create at https://app.drift.dev/settings/tokens). Required when using the hosted backend.'
+    required: false
+  profile-command:
+    description: 'Shell command Drift runs to gather profiling data. Must produce a JSON report at $DRIFT_REPORT_PATH.'
+    required: false
+    default: 'npx drift-profile'
+  baseline-ref:
+    description: 'Git ref to compare against (defaults to the PR base branch).'
+    required: false
+  fail-on:
+    description: 'Verdict that should fail the check: never | regression | any. Default regression.'
+    required: false
+    default: 'regression'
+  comment:
+    description: 'Post a sticky PR comment with the verdict summary.'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'Token used to post the Check Run and PR comment. Defaults to the workflow token.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  scan-id:
+    description: 'Drift scan id'
+    value: ${{ steps.drift.outputs.scan-id }}
+  scan-url:
+    description: 'URL to the Drift scan report'
+    value: ${{ steps.drift.outputs.scan-url }}
+  verdict:
+    description: 'Verdict: pass | regression | error'
+    value: ${{ steps.drift.outputs.verdict }}
+  p95-latency-ms:
+    description: 'p95 latency observed in this scan, in milliseconds'
+    value: ${{ steps.drift.outputs.p95-latency-ms }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run Drift scan
+      id: drift
+      shell: bash
+      env:
+        DRIFT_API_URL: ${{ inputs.api-url }}
+        DRIFT_API_TOKEN: ${{ inputs.api-token }}
+        DRIFT_PROFILE_COMMAND: ${{ inputs.profile-command }}
+        DRIFT_BASELINE_REF: ${{ inputs.baseline-ref }}
+        DRIFT_FAIL_ON: ${{ inputs.fail-on }}
+        DRIFT_COMMENT: ${{ inputs.comment }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "${{ github.action_path }}/dist/index.js"

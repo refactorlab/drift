@@ -1,0 +1,17 @@
+{
+  "name": "@drift/action",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drift GitHub Action runner",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/index.js",
+    "test": "node --test --no-warnings 'src/__tests__/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.0"
+  }
+}

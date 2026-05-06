@@ -1,0 +1,36 @@
+# GitHub App manifest. Lets users one-click create a Drift App in their org via
+#   POST /settings/apps/new?manifest=<this manifest, url-encoded>
+# After creation GitHub redirects to redirect_url with a temporary `code` that
+# the backend exchanges for credentials at POST /app-manifests/:code/conversions.
+
+name: Drift
+url: https://drift.dev
+hook_attributes:
+  url: https://api.drift.dev/api/github/webhooks
+  active: true
+redirect_url: https://app.drift.dev/setup/github/callback
+setup_url: https://app.drift.dev/setup/github
+setup_on_update: true
+public: true
+description: |
+  Drift profiles your pull requests and posts a performance verdict directly on
+  the PR. Detects p95 regressions, N+1 queries, and CPU hotspots — with code-level
+  suggestions and an autofix link.
+
+default_events:
+  - pull_request
+  - pull_request_review
+  - check_run
+  - check_suite
+  - installation
+  - installation_repositories
+  - push
+
+default_permissions:
+  # Read code and PR diffs to attribute hotspots to changed files
+  contents: read
+  pull_requests: write       # post and update sticky comments
+  checks: write              # create check runs and annotations
+  issues: write              # fallback for repos without Checks
+  metadata: read
+  members: read              # team-scoped reports

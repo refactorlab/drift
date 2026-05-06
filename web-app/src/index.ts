@@ -14,6 +14,8 @@ import users from './routes/users.ts';
 import departments from './routes/departments.ts';
 import dashboard from './routes/dashboard.ts';
 import auth from './routes/auth.ts';
+import ingest from './routes/ingest.ts';
+import githubWebhooks from './routes/github-webhooks.ts';
 import { requireAuth } from './auth/middleware.ts';
 
 const app = new Hono();
@@ -31,6 +33,10 @@ app.use(
 app.get('/healthcheck', (c) => c.json({ ok: true }));
 
 app.route('/api/auth', auth);
+
+// Bearer-token + HMAC routes — must mount BEFORE the cookie auth gate below.
+app.route('/api/ingest', ingest);
+app.route('/api/github', githubWebhooks);
 
 // Everything else under /api/* requires a valid access cookie.
 app.use('/api/*', requireAuth);
