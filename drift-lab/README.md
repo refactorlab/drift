@@ -34,11 +34,31 @@ Run `make help` for the full target list, grouped by purpose.
 ### Get a pre-built binary
 
 If you don't want to compile locally, every push to `main` produces installable
-bundles attached to a [GitHub Release](https://github.com/refactor-labs-pub/drift/releases):
+bundles attached to a [GitHub Release](https://github.com/refactor-labs-pub/drift/releases)
+under a `drift-lab-vX.Y.Z` tag:
 
 - **macOS** (both Apple Silicon and Intel) — `Drift Lab_*.dmg`
 - **Debian / Ubuntu** — `drift-lab_*_amd64.deb`
 - **Other Linux** — `drift-lab_*_amd64.AppImage`
+
+#### Install commands
+
+```sh
+# macOS — open the DMG, drag Drift Lab.app to /Applications.
+open ~/Downloads/Drift\ Lab_*_*.dmg
+
+# Debian / Ubuntu
+sudo dpkg -i ~/Downloads/drift-lab_*_amd64.deb
+
+# Other Linux distributions (AppImage runs portably, no install)
+chmod +x ~/Downloads/drift-lab_*_amd64.AppImage
+~/Downloads/drift-lab_*_amd64.AppImage
+```
+
+> **Note**: macOS may flag the app as untrusted on first launch since the
+> bundle isn't yet code-signed. Right-click → Open, or run
+> `xattr -dr com.apple.quarantine /Applications/Drift\ Lab.app` to clear the
+> quarantine flag.
 
 ---
 
