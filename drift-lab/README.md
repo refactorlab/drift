@@ -104,6 +104,56 @@ docker run --rm --platform linux/amd64 \
 
 ---
 
+## Continuous integration
+
+Two GitHub Actions workflows at the repo root, both scoped via `paths:` so
+they only run when `drift-lab/**` changes:
+
+| File | Trigger | What it does |
+| ---- | ------- | ------------ |
+| `drift-lab-desktop-build.yml`   | PR touching `drift-lab/**` · `workflow_dispatch` | Validation matrix build (no release). Uploads bundles as 7-day workflow artifacts so reviewers can grab a build off a PR. |
+| `drift-lab-desktop-release.yml` | **Every push to `main`** touching `drift-lab/**` · `workflow_dispatch` | Auto-bumps a `drift-lab-v*` tag (conventional-commit driven), runs the matrix, attaches all installable bundles to a published GitHub Release. |
+
+Matrix legs: `macos-14` (Apple Silicon) · `macos-13` (Intel) · `ubuntu-22.04`
+(for the `libwebkit2gtk-4.1` deps Tauri 2 requires). Rust `target/`, npm
+modules, and the `cargo-tauri` binary are all cached between runs.
+
+### How the auto-release works
+
+```
+push to main (drift-lab/** touched)
+        │
+        ▼
+┌──────────────┐    ┌──────────────────────────────┐    ┌────────────────────────┐
+│ bump (1 job) │ →  │ build matrix (3 parallel)    │ →  │ publish (1 job)        │
+│              │    │  ─ macos-arm64 → .dmg        │    │  ─ download artifacts  │
+│ reads last   │    │  ─ macos-x86_64 → .dmg       │    │  ─ generate notes      │
+│ drift-lab-v* │    │  ─ linux-x86_64 → .deb +     │    │  ─ git tag + push      │
+│ tag, decides │    │     .AppImage                │    │  ─ gh release create   │
+│ next version │    └──────────────────────────────┘    └────────────────────────┘
+└──────────────┘
+```
+
+**Version bumps** (since the last `drift-lab-v*.*.*` tag):
+
+- Any commit message containing `BREAKING CHANGE` or matching `<type>!:` → **major**
+- Any commit message starting with `feat:` or `feat(scope):` → **minor**
+- Anything else → **patch**
+
+Only commits that actually touched `drift-lab/` count toward the bump or the
+release notes — drift-lab releases are independent of the surrounding
+`action/` and `web-app/` work in this repo.
+
+**To force a release** without a code change, use the workflow's **Run
+workflow** button (workflow_dispatch). The bump job will skip if there are no
+new drift-lab commits since the last tag.
+
+### First release
+
+On first run, no `drift-lab-v*` tag exists → version starts at `v0.0.0` and
+gets bumped from there. With the current commit history (`feat: add drift-lab
+desktop app…`) the first auto-release will be `drift-lab-v0.1.0`.
+
 ## Stack
 
 | Layer            | Choice                                |

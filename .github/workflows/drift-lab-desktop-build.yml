@@ -1,0 +1,106 @@
+name: drift-lab desktop / build
+
+# PR-only validation that the desktop app compiles and bundles successfully on
+# every supported platform. Artifacts are uploaded for inspection (7-day
+# retention) but no GitHub Release is created here — that happens automatically
+# on every push to main via drift-lab-desktop-release.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'drift-lab/**'
+      - '.github/workflows/drift-lab-desktop-build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: drift-lab-desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build / ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14         # Apple Silicon
+            label: macos-arm64
+          - runner: macos-13         # Intel
+            label: macos-x86_64
+          - runner: ubuntu-22.04     # Tauri 2 needs libwebkit2gtk-4.1
+            label: linux-x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            build-essential \
+            file
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: drift-lab/desktop-ui/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-lab/src-tauri -> target
+          key: ${{ matrix.label }}
+
+      - name: Cache cargo-tauri binary
+        id: tauri-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: cargo-tauri-2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-tauri (on cache miss)
+        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Install frontend deps
+        working-directory: drift-lab/desktop-ui
+        run: npm ci
+
+      - name: Build desktop app (release)
+        working-directory: drift-lab
+        run: cargo tauri build
+
+      - name: Upload macOS bundles
+        if: startsWith(matrix.runner, 'macos')
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-lab-${{ matrix.label }}
+          path: drift-lab/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux bundles
+        if: matrix.runner == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-lab-${{ matrix.label }}
+          path: |
+            drift-lab/src-tauri/target/release/bundle/deb/*.deb
+            drift-lab/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 7

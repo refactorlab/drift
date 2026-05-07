@@ -22,11 +22,18 @@ ICON_SOURCE   := $(TAURI_DIR)/icon-source.png
 
 UNAME_S := $(shell uname -s)
 
-# Pick tauri-cli: prefer cargo-installed `cargo-tauri`, else npx fallback.
+# Make cargo + cargo-installed binaries visible to recipes even on the same
+# `make` run that just installed them (rustup writes to ~/.cargo/bin, which
+# isn't on PATH until a new shell sources ~/.cargo/env).
+export PATH := $(HOME)/.cargo/bin:$(PATH)
+
+# Pick tauri-cli: prefer cargo-installed `cargo-tauri`, else the binary
+# `@tauri-apps/cli` drops into desktop-ui/node_modules/.bin/. Both must run
+# from the drift-lab/ root so tauri can locate src-tauri/tauri.conf.json.
 ifneq ($(shell command -v cargo-tauri 2>/dev/null),)
 TAURI := cargo tauri
 else
-TAURI := cd $(UI_DIR) && npx tauri
+TAURI := $(UI_DIR)/node_modules/.bin/tauri
 endif
 
 BLUE   := \033[1;34m
