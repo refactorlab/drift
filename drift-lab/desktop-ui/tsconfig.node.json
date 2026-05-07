@@ -8,7 +8,8 @@
     "strict": true,
     "noEmit": false,
     "emitDeclarationOnly": true,
-    "outDir": "./dist-tsbuild-node"
+    "outDir": "./dist-tsbuild-node",
+    "types": ["node"]
   },
   "include": ["vite.config.ts"]
 }
