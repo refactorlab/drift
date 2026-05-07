@@ -277,6 +277,7 @@ auth.post(
       path: '/',
       expires: new Date(0), // Ensure it's expired
     });
+    // add permissioning for jwt server
 
     // 3. Return a success response
     return c.json({ success: true, message: 'Logged out successfully' }, 200);
