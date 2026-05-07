@@ -102,13 +102,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload Linux bundles
+      # Split into two single-path uploads so each artifact is flat.
+      - name: Upload Linux .deb
         if: matrix.runner == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
-          name: drift-lab-${{ matrix.label }}
-          path: |
-            drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/deb/*.deb
-            drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/appimage/*.AppImage
+          name: drift-lab-${{ matrix.label }}-deb
+          path: drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux .AppImage
+        if: matrix.runner == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-lab-${{ matrix.label }}-appimage
+          path: drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 7

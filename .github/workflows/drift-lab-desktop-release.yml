@@ -185,14 +185,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload Linux bundles
+      # Two separate uploads so each artifact is FLAT (no preserved subdirs).
+      # When upload-artifact has multiple paths, it preserves the LCA-relative
+      # directory structure; that's what produced `dist/deb/` + `dist/appimage/`
+      # subfolders in the previous broken run. Single-path uploads keep the
+      # downloaded structure flat, which makes `gh release` happy regardless
+      # of how the publish step enumerates files.
+      - name: Upload Linux .deb
         if: matrix.runner == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
-          name: drift-lab-${{ matrix.label }}
-          path: |
-            drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/deb/*.deb
-            drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/appimage/*.AppImage
+          name: drift-lab-${{ matrix.label }}-deb
+          path: drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux .AppImage
+        if: matrix.runner == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-lab-${{ matrix.label }}-appimage
+          path: drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 7
 
