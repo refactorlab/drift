@@ -1,4 +1,4 @@
-import { db } from './index.ts';
+import { db, dialect, execRaw } from './index.ts';
 import {
   departments,
   users,
@@ -17,23 +17,38 @@ import {
 
 // Truncate in dependency-safe order. We restart identities so subsequent IDs
 // always start at 1 and the demo PR #2847 maps to a stable scan_id.
-await db.execute(/* sql */ `
-  TRUNCATE TABLE
-    trace_spans,
-    time_distribution,
-    flame_blocks,
-    flame_rows,
-    flame_axis,
-    gates,
-    issues,
-    scans,
-    architecture_suggestions,
-    pull_requests,
-    repos,
-    users,
-    departments
-  RESTART IDENTITY CASCADE
-`);
+const TABLES_IN_DELETE_ORDER = [
+  'trace_spans',
+  'time_distribution',
+  'flame_blocks',
+  'flame_rows',
+  'flame_axis',
+  'gates',
+  'issues',
+  'scans',
+  'architecture_suggestions',
+  'pull_requests',
+  'repos',
+  'users',
+  'departments',
+];
+
+if (dialect === 'pg') {
+  await execRaw(
+    `TRUNCATE TABLE ${TABLES_IN_DELETE_ORDER.join(', ')} RESTART IDENTITY CASCADE`,
+  );
+} else {
+  // SQLite: no TRUNCATE/CASCADE. Disable FKs, delete rows, reset autoincrement
+  // counters, re-enable FKs.
+  await execRaw('PRAGMA foreign_keys = OFF');
+  for (const t of TABLES_IN_DELETE_ORDER) await execRaw(`DELETE FROM ${t}`);
+  await execRaw(
+    `DELETE FROM sqlite_sequence WHERE name IN (${TABLES_IN_DELETE_ORDER
+      .map((t) => `'${t}'`)
+      .join(',')})`,
+  );
+  await execRaw('PRAGMA foreign_keys = ON');
+}
 
 // ── departments ─────────────────────────────────────────────────────────────
 const deptRows = await db

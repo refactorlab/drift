@@ -1,20 +1,27 @@
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { sql as count } from 'drizzle-orm';
 import path from 'node:path';
-import { db, sql } from './db/index.ts';
+import { db, sql, dialect } from './db/index.ts';
 import { scans } from './db/schema.ts';
 import { seedAdmin, ADMIN_EMAIL } from './db/seed-admin.ts';
 
-console.log('▲ Running Drizzle migrations…');
+console.log(`▲ Running Drizzle migrations (${dialect})…`);
 
-await migrate(db, {
-  migrationsFolder: path.resolve(import.meta.dir, '../drizzle'),
-});
+if (dialect === 'pg') {
+  const { migrate } = await import('drizzle-orm/postgres-js/migrator');
+  await migrate(db, {
+    migrationsFolder: path.resolve(import.meta.dir, '../drizzle'),
+  });
+} else {
+  const { migrate } = await import('drizzle-orm/bun-sqlite/migrator');
+  await migrate(db, {
+    migrationsFolder: path.resolve(import.meta.dir, '../drizzle/sqlite'),
+  });
+}
 
 console.log('✓ Migrations complete');
 
 const [{ n }] = await db
-  .select({ n: count<number>`count(*)::int` })
+  .select({ n: count<number>`count(*)` })
   .from(scans);
 
 if (n === 0) {

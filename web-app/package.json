@@ -3,13 +3,16 @@
   "module": "src/index.ts",
   "type": "module",
   "scripts": {
+    "postinstall": "cd web && bun install",
     "dev": "concurrently -n api,web -c blue,magenta \"bun run dev:api\" \"bun run dev:web\"",
     "dev:api": "bun run --hot src/index.ts",
     "dev:web": "cd web && bun run dev",
     "build": "cd web && bun run build",
-    "start": "bun run src/index.ts",
+    "start": "bun run build && bun run migrate && bun run src/index.ts",
+    "serve": "bun run src/index.ts",
     "migrate": "bun run src/migrate.ts",
     "db:generate": "drizzle-kit generate",
+    "db:generate:sqlite": "drizzle-kit generate --config=drizzle.sqlite.config.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },
