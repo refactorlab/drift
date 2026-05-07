@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  action:
+    name: action / build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        working-directory: action
+        run: npm install
+
+      - name: Typecheck
+        working-directory: action
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: action
+        run: npm test
+
+      - name: Build
+        working-directory: action
+        run: npm run build
+
+      - name: Verify dist/index.js is in sync
+        run: |
+          if ! git diff --quiet -- dist/index.js; then
+            echo "::error::dist/index.js is out of sync with action/src — run 'cd action && npm run build' and commit the result"
+            git --no-pager diff --stat -- dist/index.js
+            exit 1
+          fi
+
+  web-app:
+    name: web-app / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        working-directory: web-app
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        working-directory: web-app
+        run: bun test src/__tests__
