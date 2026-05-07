@@ -45,31 +45,47 @@ Every push to `main` produces installable bundles attached to a
 | **Debian / Ubuntu**                                  | `drift-lab_*_amd64.deb` |
 | **Other Linux** (portable, no install)               | `drift-lab_*_amd64.AppImage` |
 
-#### macOS — first-launch Gatekeeper warning
-
-Drift Lab is **open source** (MIT) and not signed with a paid Apple Developer
-ID, so the first time you open it macOS will show:
-
-> *"Drift Lab" Not Opened — Apple could not verify "Drift Lab" is free of malware…*
-
-This is expected for any unsigned, un-notarized app. Two ways past it:
+#### macOS — recommended one-line install
 
 ```sh
-# Option A — drag to Applications, then clear the quarantine flag once:
-open ~/Downloads/Drift\ Lab_*.dmg                              # open the DMG
+curl -fsSL https://raw.githubusercontent.com/refactor-labs-pub/drift/main/drift-lab/scripts/install-macos.sh | bash
+```
+
+That script downloads the latest `Drift Lab.dmg`, copies the app to
+`/Applications`, **clears the `com.apple.quarantine` flag**, and launches it.
+The Gatekeeper "Not Opened" dialog never appears because quarantine is
+cleared before macOS sees the app — the same pattern `rustup`, Homebrew,
+and most modern open-source CLIs use.
+
+> **Why a script and not a regular DMG download?** Drift Lab is open source
+> and isn't signed with a paid Apple Developer ID ($99/yr), so on macOS
+> Sonoma+ a regular DMG download will trigger a *"Drift Lab Not Opened"*
+> dialog with **no "Open Anyway" button** — Apple removed that path for
+> unsigned apps. The script side-steps the entire dialog by clearing the
+> quarantine attribute that browsers attach to downloads.
+
+##### Manual install (if you'd rather not pipe a script to bash)
+
+```sh
+# 1. Download the .dmg from GitHub Releases manually, then:
+open ~/Downloads/Drift\ Lab_*.dmg
 cp -R "/Volumes/Drift Lab/Drift Lab.app" /Applications/
 xattr -dr com.apple.quarantine "/Applications/Drift Lab.app"
 open "/Applications/Drift Lab.app"
 ```
 
-```sh
-# Option B — right-click the .app, choose "Open", then click "Open" again
-# in the dialog. macOS remembers the exception going forward.
-```
+Or from a clone of this repo: `cd drift-lab && make trust` does the `xattr`
+step on an already-installed `.app`.
 
-The `xattr -dr com.apple.quarantine` trick removes the `com.apple.quarantine`
-extended attribute that Safari (and other browsers) attach to downloaded
-files. macOS's Gatekeeper only blocks unsigned apps that carry that flag.
+##### Click-only fallback (no terminal)
+
+If you've already double-clicked the app and seen the strict dialog:
+
+1. Click **Done** on the dialog.
+2. Open **System Settings → Privacy & Security**.
+3. Scroll to the "Security" section — you'll see *"Drift Lab was blocked because it is not from an identified developer"* with an **`Open Anyway`** button. Click it.
+4. Try opening Drift Lab again — a softer dialog appears with `Open Anyway`. Click it.
+5. App opens and macOS remembers your decision.
 
 #### Linux
 
