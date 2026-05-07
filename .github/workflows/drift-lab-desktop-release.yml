@@ -108,12 +108,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS universal binary — single .dmg runs on both Apple Silicon and
+          # Intel. Avoids the macos-13 runner queue (30-90+ min on busy days).
           - runner: macos-14
-            label: macos-arm64
-          - runner: macos-13
-            label: macos-x86_64
+            label: macos-universal
+            tauri_args: --target universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            bundle_dir: universal-apple-darwin/release/bundle
           - runner: ubuntu-22.04
             label: linux-x86_64
+            tauri_args: ''
+            rust_targets: x86_64-unknown-linux-gnu
+            bundle_dir: release/bundle
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
 
@@ -142,6 +148,8 @@ jobs:
           cache-dependency-path: drift-lab/desktop-ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -165,7 +173,7 @@ jobs:
 
       - name: Build desktop app (release)
         working-directory: drift-lab
-        run: cargo tauri build
+        run: cargo tauri build ${{ matrix.tauri_args }}
 
       # Per-runner uploads — keeps `if-no-files-found: error` honest on each leg.
       - name: Upload macOS bundles
@@ -173,7 +181,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: drift-lab-${{ matrix.label }}
-          path: drift-lab/src-tauri/target/release/bundle/dmg/*.dmg
+          path: drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/dmg/*.dmg
           if-no-files-found: error
           retention-days: 7
 
@@ -183,8 +191,8 @@ jobs:
         with:
           name: drift-lab-${{ matrix.label }}
           path: |
-            drift-lab/src-tauri/target/release/bundle/deb/*.deb
-            drift-lab/src-tauri/target/release/bundle/appimage/*.AppImage
+            drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/deb/*.deb
+            drift-lab/src-tauri/target/${{ matrix.bundle_dir }}/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 7
 

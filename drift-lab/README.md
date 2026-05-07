@@ -130,9 +130,11 @@ they only run when `drift-lab/**` changes:
 | `drift-lab-desktop-build.yml`   | PR touching `drift-lab/**` · `workflow_dispatch` | Validation matrix build (no release). Uploads bundles as 7-day workflow artifacts so reviewers can grab a build off a PR. |
 | `drift-lab-desktop-release.yml` | **Every push to `main`** touching `drift-lab/**` · `workflow_dispatch` | Auto-bumps a `drift-lab-v*` tag (conventional-commit driven), runs the matrix, attaches all installable bundles to a published GitHub Release. |
 
-Matrix legs: `macos-14` (Apple Silicon) · `macos-13` (Intel) · `ubuntu-22.04`
-(for the `libwebkit2gtk-4.1` deps Tauri 2 requires). Rust `target/`, npm
-modules, and the `cargo-tauri` binary are all cached between runs.
+Matrix legs: `macos-14` builds a **universal `.dmg`** that runs on both Apple
+Silicon and Intel (single fat binary via `--target universal-apple-darwin`,
+avoids the chronic macos-13 runner queue) · `ubuntu-22.04` for the
+`libwebkit2gtk-4.1` deps Tauri 2 requires. Rust `target/`, npm modules, and
+the `cargo-tauri` binary are all cached between runs.
 
 ### How the auto-release works
 
@@ -141,9 +143,9 @@ push to main (drift-lab/** touched)
         │
         ▼
 ┌──────────────┐    ┌──────────────────────────────┐    ┌────────────────────────┐
-│ bump (1 job) │ →  │ build matrix (3 parallel)    │ →  │ publish (1 job)        │
-│              │    │  ─ macos-arm64 → .dmg        │    │  ─ download artifacts  │
-│ reads last   │    │  ─ macos-x86_64 → .dmg       │    │  ─ generate notes      │
+│ bump (1 job) │ →  │ build matrix (2 parallel)    │ →  │ publish (1 job)        │
+│              │    │  ─ macos-universal → .dmg    │    │  ─ download artifacts  │
+│ reads last   │    │     (fat: arm64 + x86_64)    │    │  ─ generate notes      │
 │ drift-lab-v* │    │  ─ linux-x86_64 → .deb +     │    │  ─ git tag + push      │
 │ tag, decides │    │     .AppImage                │    │  ─ gh release create   │
 │ next version │    └──────────────────────────────┘    └────────────────────────┘
