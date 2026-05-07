@@ -35,9 +35,24 @@ if (dialect === 'pg') {
     return (_prepare as any).call(this, cleaned, ...rest);
   };
 
-  const sqlite = new Database(SQLITE_PATH, { create: true });
-  sqlite.exec('PRAGMA journal_mode = WAL;');
+  // Try read/write first (local dev, Vercel build step); fall back to
+  // readonly if the filesystem rejects writes (Vercel function runtime).
+  // The DB file must already exist in readonly mode — it's created and
+  // seeded at build time and bundled with the function via vercel.json
+  // `includeFiles`.
+  let sqlite: InstanceType<typeof Database>;
+  let isReadonly = false;
+  try {
+    sqlite = new Database(SQLITE_PATH, { create: true });
+    sqlite.exec('PRAGMA journal_mode = WAL;');
+  } catch {
+    sqlite = new Database(SQLITE_PATH, { readonly: true });
+    isReadonly = true;
+  }
   sqlite.exec('PRAGMA foreign_keys = ON;');
+  if (isReadonly) {
+    console.log(`▲ SQLite opened read-only at ${SQLITE_PATH}`);
+  }
   _db = drizzle(sqlite, { schema });
   // Compat: routes call `db.execute(sql\`…\`)` (a postgres-js drizzle method)
   // for raw queries returning rows. The sqlite driver exposes `.all()` for the

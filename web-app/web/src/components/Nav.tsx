@@ -21,7 +21,7 @@ export function Nav() {
           </div>
           <div className="logo-stack">
             <span>Drift</span>
-            <span className="logo-sub">by waste-labs</span>
+            <span className="logo-sub">by refactor-labs</span>
           </div>
         </NavLink>
         <div className="nav-links">

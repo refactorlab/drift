@@ -1,6 +1,6 @@
 import { sql as count } from 'drizzle-orm';
 import path from 'node:path';
-import { db, sql, dialect } from './db/index.ts';
+import { db, sql, dialect, execRaw } from './db/index.ts';
 import { scans } from './db/schema.ts';
 import { seedAdmin, ADMIN_EMAIL } from './db/seed-admin.ts';
 
@@ -37,5 +37,14 @@ console.log(
     ? `▲ Created admin user ${ADMIN_EMAIL}`
     : `▲ Updated admin user ${ADMIN_EMAIL}`,
 );
+
+if (dialect === 'sqlite') {
+  // Flush WAL into the main file and switch journal mode to DELETE so the
+  // resulting db.sqlite is self-contained — no -wal/-shm sidecars needed.
+  // This is what lets the file be opened read-only on Vercel's serverless FS.
+  await execRaw('PRAGMA wal_checkpoint(TRUNCATE)');
+  await execRaw('PRAGMA journal_mode = DELETE');
+  console.log('▲ SQLite finalized (WAL checkpointed, journal mode = DELETE)');
+}
 
 await sql.end();

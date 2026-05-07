@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Drift Lab",
+  "version": "0.1.0",
+  "identifier": "io.refactor-labs.drift-lab",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../desktop-ui run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm --prefix ../desktop-ui run build",
+    "frontendDist": "../desktop-ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Drift Lab",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 880,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "transparent": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost https://api.refactor-labs.io"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Profile Dockerized services with one click.",
+    "longDescription": "Drift Lab attaches a profiler to a running Docker workload, drives load, and ranks performance issues from the resulting flame graph."
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [],
+      "pubkey": ""
+    }
+  }
+}
