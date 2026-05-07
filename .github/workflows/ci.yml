@@ -264,7 +264,14 @@ jobs:
           path: dist
 
       - name: List downloaded assets
-        run: ls -la dist/
+        run: ls -laR dist/
+
+      - name: Flatten artifacts
+        run: |
+          # download-artifact preserves subdirs from the upload path (e.g. appimage/, deb/).
+          # Move every bundle file up to dist/ so gh release create gets flat paths.
+          find dist -mindepth 2 -type f -exec mv -v {} dist/ \;
+          find dist -mindepth 1 -type d -empty -delete
 
       - name: Generate release notes
         id: notes
@@ -309,7 +316,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t files < <(find dist -type f \
+          mapfile -t files < <(find dist -maxdepth 1 -type f \
             \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" \))
 
           if [ ${#files[@]} -eq 0 ]; then
