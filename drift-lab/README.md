@@ -1,7 +1,9 @@
 # Drift Lab
 
 Desktop app for profiling Dockerized services. Built with **Tauri 2 + React 18
-+ TypeScript + Rust**.
++ TypeScript + Rust**. MIT licensed · open source.
+
+[![Latest release](https://img.shields.io/github/v/release/refactor-labs-pub/drift?filter=drift-lab-v*&label=drift-lab&color=ff6b3d)](https://github.com/refactor-labs-pub/drift/releases?q=drift-lab&expanded=true)
 
 ---
 
