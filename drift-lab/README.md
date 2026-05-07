@@ -31,6 +31,15 @@ webview hot-reloads; edit a `.rs` and the binary rebuilds + relaunches.
 
 Run `make help` for the full target list, grouped by purpose.
 
+### Get a pre-built binary
+
+If you don't want to compile locally, every push to `main` produces installable
+bundles attached to a [GitHub Release](https://github.com/refactor-labs-pub/drift/releases):
+
+- **macOS** (both Apple Silicon and Intel) — `Drift Lab_*.dmg`
+- **Debian / Ubuntu** — `drift-lab_*_amd64.deb`
+- **Other Linux** — `drift-lab_*_amd64.AppImage`
+
 ---
 
 ## First-time setup
