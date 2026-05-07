@@ -96,10 +96,17 @@ jobs:
             prev="$last_tag"
           fi
 
-          # Only commits that actually touched drift-lab/ count for a release.
-          relevant=$(git log "$range" --no-merges --pretty=format:'%H' -- drift-lab/ || true)
+          # Commits that touched drift-lab/ OR a workflow file that affects the
+          # drift-lab pipeline count for a release. CI fixes (e.g. publish-step
+          # bug fixes) need to ship a release too, otherwise the "fix" is
+          # invisible until the next code change.
+          relevant=$(git log "$range" --no-merges --pretty=format:'%H' -- \
+            drift-lab/ \
+            .github/workflows/ci.yml \
+            .github/workflows/drift-lab-desktop-build.yml \
+            || true)
           if [ -z "$relevant" ]; then
-            echo "No drift-lab commits since $prev — skipping release."
+            echo "No drift-lab-relevant commits since $prev — skipping release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
