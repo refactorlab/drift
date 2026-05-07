@@ -28,7 +28,7 @@ COPY --from=builder /app/web/dist ./web/dist
 
 USER bun
 
-EXPOSE 5000
-ENV PORT=5000
+EXPOSE 8000
+ENV PORT=8000
 
 CMD ["bun", "run", "src/index.ts"]

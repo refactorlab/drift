@@ -107,7 +107,7 @@ ingest.post('/scans', async (c) => {
     );
   }
 
-  const publicHost = process.env.PUBLIC_URL ?? 'http://localhost:5000';
+  const publicHost = process.env.PUBLIC_URL ?? 'http://localhost:8000';
   return c.json({
     id: scanRow.id,
     url: `${publicHost}/prs/${pr.number}/scans/${scanRow.id}`,

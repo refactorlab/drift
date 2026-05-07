@@ -24,7 +24,7 @@ app.use(
   '/api/*',
   cors({
     credentials: true,
-    origin: ['http://localhost:5173', 'http://localhost:5000'],
+    origin: ['http://localhost:5173', 'http://localhost:8000'],
     allowHeaders: ['Content-Type', 'Authorization'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   }),
@@ -96,7 +96,7 @@ app.get('/*', async (c) => {
   return new Response(Bun.file(INDEX));
 });
 
-const port = Number(process.env.PORT ?? 5000);
+const port = Number(process.env.PORT ?? 8000);
 console.log(`▲ Drift on http://localhost:${port}  (docs: /docs)`);
 
 export default {
