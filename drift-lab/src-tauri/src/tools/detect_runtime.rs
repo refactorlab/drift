@@ -36,11 +36,15 @@ pub struct Args {
     pub image: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Language {
     Python,
     Node,
+    /// Bun is a separate runtime but largely a Node-superset for profiling
+    /// purposes — same JS/TS stack, same V8/JSCore-class engines available
+    /// for sampling. Distinguished so the UI can label it correctly.
+    Bun,
     Java,
     Go,
     Ruby,
@@ -50,6 +54,9 @@ pub enum Language {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+// `AsyncProfiler` matches the product's actual name (https://github.com/async-profiler);
+// the wire form is `async-profiler` (kebab-case), so the variant doesn't read as redundant.
+#[allow(clippy::enum_variant_names)]
 pub enum Profiler {
     PySpy,
     AsyncProfiler,
@@ -131,6 +138,17 @@ fn detect_language(env: &[String], entry: &[String], cmd: &[String]) -> Language
     {
         return Language::Python;
     }
+    // Bun before Node — the bun base image (`oven/bun:*`) sets `BUN_VERSION`
+    // and the entrypoint is literally `bun ...`. If we let Node match first,
+    // bun stacks running `bun --hot index.ts` would be misclassified.
+    if env.iter().any(|e| e.starts_with("BUN_VERSION=") || e.starts_with("BUN_INSTALL="))
+        || lower.starts_with("bun ")
+        || lower.contains(" bun ")
+        || lower.contains("/bun ")
+        || lower.ends_with(" bun")
+    {
+        return Language::Bun;
+    }
     if env.iter().any(|e| e.starts_with("NODE_VERSION=")) || lower.contains("node ") || lower.ends_with("node") {
         return Language::Node;
     }
@@ -153,6 +171,7 @@ fn detect_version(env: &[String], language: Language) -> Option<String> {
     let key = match language {
         Language::Python => "PYTHON_VERSION=",
         Language::Node => "NODE_VERSION=",
+        Language::Bun => "BUN_VERSION=",
         Language::Java => "JAVA_VERSION=",
         Language::Go => "GO_VERSION=",
         Language::Ruby => "RUBY_VERSION=",
@@ -189,7 +208,12 @@ fn profiler_for(lang: Language) -> Profiler {
         Language::Python => Profiler::PySpy,
         Language::Java => Profiler::AsyncProfiler,
         Language::Go => Profiler::Perf,
+        // Bun's CPU profiles aren't supported by Clinic out of the box; fall
+        // back to `perf` (Linux) which can sample the bun process at native
+        // frame granularity. `bun --inspect` is a richer alternative but
+        // requires the user's code to opt in.
         Language::Node => Profiler::NodeClinic,
+        Language::Bun => Profiler::Perf,
         Language::Ruby => Profiler::Rbspy,
         Language::Dotnet => Profiler::Dotrace,
         Language::Unknown => Profiler::None,
@@ -231,6 +255,32 @@ mod tests {
     fn detects_node_from_env() {
         let env = vec![s("NODE_VERSION=20.10.0")];
         assert!(matches!(detect_language(&env, &[], &[]), Language::Node));
+    }
+
+    #[test]
+    fn detects_bun_from_env() {
+        let env = vec![s("BUN_VERSION=1.3.0"), s("PATH=/usr/local/bin")];
+        assert_eq!(detect_language(&env, &[], &[]), Language::Bun);
+        assert_eq!(detect_version(&env, Language::Bun).as_deref(), Some("1.3.0"));
+    }
+
+    #[test]
+    fn detects_bun_from_cmd() {
+        // cf-copilot's compose runs `bun --inspect=... --hot index.ts`.
+        let cmd = vec![s("bun"), s("--inspect=0.0.0.0:6499"), s("--hot"), s("index.ts")];
+        assert_eq!(detect_language(&[], &[], &cmd), Language::Bun);
+    }
+
+    #[test]
+    fn bun_does_not_collide_with_node() {
+        // A literal "node" string in cmd should still resolve to Node, not Bun.
+        let cmd = vec![s("node"), s("server.js")];
+        assert_eq!(detect_language(&[], &[], &cmd), Language::Node);
+    }
+
+    #[test]
+    fn bun_recommends_perf_profiler() {
+        assert!(matches!(profiler_for(Language::Bun), Profiler::Perf));
     }
 
     #[test]

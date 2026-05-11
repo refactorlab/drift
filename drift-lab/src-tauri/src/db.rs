@@ -1,4 +1,10 @@
-//! App-local SQLite store: run history, settings, cached image metadata.
+//! SQLite app-store. Single file at `<app_data_dir>/drift-lab.sqlite`.
+//!
+//! Currently holds the local-runtime discovery cache (`runtime_cache`) so
+//! the UI can render last-known runtimes instantly while a fresh probe
+//! runs in the background. Add more tables here as new persistence needs
+//! land — the pool is a process-wide `OnceCell`, so any module can call
+//! [`pool()`] after [`init`] runs.
 
 use std::path::PathBuf;
 
@@ -14,40 +20,57 @@ fn db_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf> {
     let dir = app
         .path()
         .app_data_dir()
-        .context("failed to resolve app data dir")?;
-    std::fs::create_dir_all(&dir).context("create app data dir")?;
+        .context("resolving app data dir")?;
+    std::fs::create_dir_all(&dir).context("creating app data dir")?;
     Ok(dir.join("drift-lab.sqlite"))
 }
 
+/// Open the SQLite file (creating it if missing), apply migrations, and
+/// stash the pool in the process-wide `OnceCell`. Safe to call multiple
+/// times — only the first call does work.
 pub async fn init<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
+    if POOL.get().is_some() {
+        return Ok(());
+    }
     let path = db_path(app)?;
+    tracing::info!(path = %path.display(), "opening sqlite store");
     let opts = SqliteConnectOptions::new()
         .filename(&path)
         .create_if_missing(true);
-
-    let pool = SqlitePoolOptions::new().max_connections(5).connect_with(opts).await?;
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS runs (
-            run_id TEXT PRIMARY KEY,
-            project_path TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            finished_at TEXT,
-            issues_found INTEGER,
-            critical_count INTEGER,
-            error TEXT
-        );
-        "#,
-    )
-    .execute(&pool)
-    .await?;
-
-    POOL.set(pool).ok();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(opts)
+        .await
+        .context("connecting sqlite pool")?;
+    migrate(&pool).await?;
+    let _ = POOL.set(pool);
     Ok(())
 }
 
-#[allow(dead_code)]
+/// Apply the schema. Each statement is idempotent (`CREATE TABLE IF NOT
+/// EXISTS`) so calling this on an already-initialized DB is a no-op.
+async fn migrate(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS runtime_cache (
+            preset_id    TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            base_url     TEXT NOT NULL,
+            models_json  TEXT NOT NULL,
+            note         TEXT,
+            last_seen_at INTEGER NOT NULL
+        );
+        "#,
+    )
+    .execute(pool)
+    .await
+    .context("creating runtime_cache table")?;
+    Ok(())
+}
+
+/// Returns the process-wide pool, or `None` if [`init`] hasn't run yet.
+/// All callers should treat `None` as "fall back to a fresh probe" — it
+/// shouldn't happen in production but is the right contract in tests.
 pub fn pool() -> Option<&'static SqlitePool> {
     POOL.get()
 }

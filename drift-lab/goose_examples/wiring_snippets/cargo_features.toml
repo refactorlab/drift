@@ -1,0 +1,89 @@
+# =============================================================================
+# Cargo.toml snippets for the local-inference + download_manager port
+# =============================================================================
+#
+# These are extracted from goose's actual Cargo.toml files. Drop the relevant
+# pieces into your own Cargo.toml.
+#
+# Source: crates/goose/Cargo.toml lines 11-40, 80, 116, 144, 154-208
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. FEATURE FLAGS — only `local-inference` matters for this port.
+#    The audio-related deps (symphonia/rubato/byteorder) are for Whisper
+#    dictation; you can drop them if you only want LLM inference.
+# ---------------------------------------------------------------------------
+
+[features]
+default = ["local-inference", "rustls-tls"]
+
+# Minimum: just LLM inference. Drop the audio deps if no Whisper.
+local-inference = [
+    "dep:llama-cpp-2",
+    # Audio (Whisper) — drop if not porting dictation:
+    # "dep:candle-core",
+    # "dep:candle-nn",
+    # "dep:candle-transformers",
+    # "dep:tokenizers",
+    # "dep:symphonia",
+    # "dep:rubato",
+    # "dep:byteorder",
+]
+
+cuda   = ["local-inference", "llama-cpp-2/cuda"]
+vulkan = ["local-inference", "llama-cpp-2/vulkan"]
+
+rustls-tls = [
+    "reqwest/rustls",
+]
+
+# ---------------------------------------------------------------------------
+# 2. DEPENDENCIES — runtime crates needed by the copied files.
+# ---------------------------------------------------------------------------
+
+[dependencies]
+# === Always needed (download_manager) ===
+anyhow      = "1"
+async-trait = "0.1"
+base64      = "0.22"           # only if porting multimodal.rs
+etcetera    = "0.11"           # OS-aware data_dir resolution
+fs2         = "0.4"            # registry.json file locking
+futures     = "0.3"
+once_cell   = "1"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+tempfile    = "3"              # atomic registry.json writes
+tokio       = { version = "1", features = ["full"] }
+tracing     = "0.1"
+uuid        = { version = "1", features = ["v4"] }
+
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    # pick one TLS backend via features above (rustls-tls or native-tls)
+] }
+
+# === HTTP server side (only if exposing as REST API) ===
+axum   = { version = "0.7", features = ["macros"] }
+utoipa = { version = "5", features = ["axum_extras"] }   # OpenAPI generation
+
+# === In-process inference (main_agent only) ===
+llama-cpp-2 = { version = "0.1.145", features = ["sampler", "metal", "mtmd"], optional = true }
+encoding_rs = "0.8"            # incremental UTF-8 token decoder
+rmcp        = "0.x"            # only if porting tool calling — Model Context Protocol types
+async-stream = "0.3"           # try_stream! macro in the provider
+
+# Optional accelerators — wire only if porting the dictation/embedding paths
+# candle-core         = { version = "0.10.2", default-features = false, optional = true }
+# candle-nn           = { version = "0.10.2", default-features = false, optional = true }
+# candle-transformers = { version = "0.10.2", default-features = false, optional = true }
+# tokenizers          = { version = "0.21",  optional = true }
+# symphonia           = { version = "0.5",   optional = true }
+# rubato              = { version = "0.16",  optional = true }
+# byteorder           = { version = "1",     optional = true }
+
+# Mac-only override: enable Metal feature for llama-cpp-2.
+# Goose places this under [target.'cfg(target_os = "macos")'.dependencies]
+# in crates/goose/Cargo.toml line 206-208.
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1.145", features = ["sampler", "metal", "mtmd"], optional = true }

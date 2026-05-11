@@ -87,7 +87,7 @@ pub fn list<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<ConversationSummary>> 
         .filter_map(|(_, v)| serde_json::from_value::<Conversation>(v).ok())
         .map(|c| ConversationSummary::from(&c))
         .collect();
-    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    summaries.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
     Ok(summaries)
 }
 

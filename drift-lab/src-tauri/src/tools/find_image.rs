@@ -90,20 +90,98 @@ fn try_compose(root: &Path) -> Result<Option<Output>> {
         }
         let raw = std::fs::read_to_string(&candidate)
             .with_context(|| format!("read {}", candidate.display()))?;
-        let (service, image, build_ctx) = parse_compose(&raw);
-        if service.is_none() {
+        let services = parse_compose(&raw);
+        let Some(svc) = pick_service(&services, root) else {
             continue;
-        }
-        let image_ref = image.unwrap_or_else(|| synthetic_tag(root));
+        };
+        // When the service builds from a local Dockerfile, that's the user's
+        // own code — synthesise a `drift-lab/<dirname>-<service>` tag so we
+        // don't accidentally report a third-party `image:` pull.
+        let image_ref = match (&svc.image, &svc.build_ctx) {
+            (_, Some(_)) => synthetic_tag_for_service(root, &svc.name),
+            (Some(img), None) => img.clone(),
+            (None, None) => synthetic_tag_for_service(root, &svc.name),
+        };
         return Ok(Some(Output {
             image_ref,
             source: Source::Compose,
             manifest_path: candidate.display().to_string(),
-            compose_service: service,
-            build_context: build_ctx,
+            compose_service: Some(svc.name.clone()),
+            build_context: svc.build_ctx.clone(),
         }));
     }
     Ok(None)
+}
+
+/// One parsed entry from `services:`. We carry image + build_ctx side by side
+/// so the picker can score each service independently.
+#[derive(Debug, Clone, PartialEq)]
+struct ServiceDecl {
+    name: String,
+    image: Option<String>,
+    build_ctx: Option<String>,
+}
+
+/// Pick the service that most likely represents the user's app. Scoring:
+///
+/// - **+100** has a `build:` block — that's the user's code, not a pulled dep.
+/// - **+50** name matches / contains the project dirname.
+/// - **+10** name contains an "app-like" hint (api/app/web/server/service/backend).
+/// - **-20** image is a pulled-from-registry tag and there's no build block —
+///   strong signal it's a dependency (databases, caches, queues).
+///
+/// Ties broken by document order. Returns `None` only when the compose file
+/// has zero services.
+fn pick_service<'a>(services: &'a [ServiceDecl], root: &Path) -> Option<&'a ServiceDecl> {
+    if services.is_empty() {
+        return None;
+    }
+    let dir_name = root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mut best: Option<(i32, usize, &ServiceDecl)> = None;
+    for (idx, svc) in services.iter().enumerate() {
+        let mut score: i32 = 0;
+        if svc.build_ctx.is_some() {
+            score += 100;
+        }
+        if !dir_name.is_empty()
+            && (dir_name.contains(&svc.name.to_lowercase())
+                || svc.name.to_lowercase().contains(&dir_name))
+        {
+            score += 50;
+        }
+        let lc = svc.name.to_lowercase();
+        for hint in ["api", "app", "web", "server", "service", "backend"] {
+            if lc.contains(hint) {
+                score += 10;
+                break;
+            }
+        }
+        if svc.image.is_some() && svc.build_ctx.is_none() {
+            score -= 20;
+        }
+        let better = match best {
+            None => true,
+            // Higher score wins; ties go to earlier document position.
+            Some((s, i, _)) => score > s || (score == s && idx < i),
+        };
+        if better {
+            best = Some((score, idx, svc));
+        }
+    }
+    best.map(|(_, _, s)| s)
+}
+
+fn synthetic_tag_for_service(root: &Path, service: &str) -> String {
+    let dir = root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("project")
+        .to_lowercase();
+    format!("drift-lab/{dir}-{service}:latest")
 }
 
 fn try_dockerfile(root: &Path) -> Result<Option<Output>> {
@@ -120,15 +198,15 @@ fn try_dockerfile(root: &Path) -> Result<Option<Output>> {
     }))
 }
 
-/// Tiny line-based compose parser — pulls out the first service block,
-/// its `image:` (if any) and its `build:` context. We deliberately avoid a
-/// full YAML dependency here; this is a heuristic, not a validator.
-fn parse_compose(raw: &str) -> (Option<String>, Option<String>, Option<String>) {
+/// Tiny line-based compose parser — pulls out every service block with its
+/// `image:` and `build:` context. We deliberately avoid a full YAML dependency
+/// here; this is a heuristic, not a validator. It works on the 95% of compose
+/// files written in plain 2-space-indent style.
+fn parse_compose(raw: &str) -> Vec<ServiceDecl> {
+    let mut services: Vec<ServiceDecl> = Vec::new();
     let mut in_services = false;
-    let mut current_service: Option<String> = None;
-    let mut first_service: Option<String> = None;
-    let mut image: Option<String> = None;
-    let mut build_ctx: Option<String> = None;
+    let mut current: Option<ServiceDecl> = None;
+    let mut in_build_block = false;
 
     for line in raw.lines() {
         let trimmed = line.trim_end();
@@ -138,7 +216,11 @@ fn parse_compose(raw: &str) -> (Option<String>, Option<String>, Option<String>) 
         let indent = trimmed.len() - trimmed.trim_start().len();
 
         if indent == 0 {
+            if let Some(svc) = current.take() {
+                services.push(svc);
+            }
             in_services = trimmed.starts_with("services:");
+            in_build_block = false;
             continue;
         }
         if !in_services {
@@ -147,35 +229,45 @@ fn parse_compose(raw: &str) -> (Option<String>, Option<String>, Option<String>) 
 
         // Service name lines look like `  myservice:` at indent 2.
         if indent == 2 && trimmed.trim_end().ends_with(':') {
-            let name = trimmed.trim().trim_end_matches(':').to_string();
-            current_service = Some(name.clone());
-            if first_service.is_none() {
-                first_service = Some(name);
+            if let Some(svc) = current.take() {
+                services.push(svc);
             }
+            let name = trimmed.trim().trim_end_matches(':').to_string();
+            current = Some(ServiceDecl {
+                name,
+                image: None,
+                build_ctx: None,
+            });
+            in_build_block = false;
             continue;
         }
 
+        let Some(svc) = current.as_mut() else { continue };
+        let body = trimmed.trim_start();
         // Per-service keys at indent 4.
-        if indent == 4 && current_service == first_service {
-            let body = trimmed.trim_start();
+        if indent == 4 {
+            in_build_block = false;
             if let Some(rest) = body.strip_prefix("image:") {
-                image = Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
+                svc.image = Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
             } else if let Some(rest) = body.strip_prefix("build:") {
                 let val = rest.trim();
-                if !val.is_empty() {
-                    build_ctx = Some(val.trim_matches('"').trim_matches('\'').to_string());
+                if val.is_empty() {
+                    in_build_block = true;
+                } else {
+                    svc.build_ctx = Some(val.trim_matches('"').trim_matches('\'').to_string());
                 }
             }
-        } else if indent == 6 && current_service == first_service {
-            // `build:\n      context: .`
-            let body = trimmed.trim_start();
+        } else if indent == 6 && in_build_block {
+            // `build:\n      context: .` — only honour context inside a build block.
             if let Some(rest) = body.strip_prefix("context:") {
-                build_ctx = Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
+                svc.build_ctx = Some(rest.trim().trim_matches('"').trim_matches('\'').to_string());
             }
         }
     }
-
-    (first_service, image, build_ctx)
+    if let Some(svc) = current.take() {
+        services.push(svc);
+    }
+    services
 }
 
 fn synthetic_tag(root: &Path) -> String {
@@ -201,32 +293,99 @@ mod tests {
     #[test]
     fn parses_compose_with_image() {
         let raw = "services:\n  api:\n    image: my/api:1.2\n    ports:\n      - \"8080:80\"\n";
-        let (svc, image, _) = parse_compose(raw);
-        assert_eq!(svc.as_deref(), Some("api"));
-        assert_eq!(image.as_deref(), Some("my/api:1.2"));
+        let services = parse_compose(raw);
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "api");
+        assert_eq!(services[0].image.as_deref(), Some("my/api:1.2"));
+        assert!(services[0].build_ctx.is_none());
     }
 
     #[test]
     fn parses_compose_with_build_context() {
         let raw = "services:\n  worker:\n    build:\n      context: ./worker\n";
-        let (svc, image, ctx) = parse_compose(raw);
-        assert_eq!(svc.as_deref(), Some("worker"));
-        assert!(image.is_none());
-        assert_eq!(ctx.as_deref(), Some("./worker"));
+        let services = parse_compose(raw);
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "worker");
+        assert!(services[0].image.is_none());
+        assert_eq!(services[0].build_ctx.as_deref(), Some("./worker"));
     }
 
     #[test]
     fn parse_compose_skips_comments_and_blanks() {
         let raw = "# top-level comment\nservices:\n\n  api:\n    # service comment\n    image: \"foo:1\"\n";
-        let (svc, image, _) = parse_compose(raw);
-        assert_eq!(svc.as_deref(), Some("api"));
-        assert_eq!(image.as_deref(), Some("foo:1"));
+        let services = parse_compose(raw);
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "api");
+        assert_eq!(services[0].image.as_deref(), Some("foo:1"));
+    }
+
+    #[test]
+    fn parse_compose_returns_every_service_in_order() {
+        // Real-world: a deps-first compose with redis followed by the actual
+        // app service that builds locally. The parser used to skip everything
+        // past the first service.
+        let raw = "services:\n  redis:\n    image: valkey/valkey:8.0-alpine\n  api:\n    build:\n      context: .\n      dockerfile: Dockerfile\n";
+        let services = parse_compose(raw);
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0].name, "redis");
+        assert_eq!(services[0].image.as_deref(), Some("valkey/valkey:8.0-alpine"));
+        assert!(services[0].build_ctx.is_none());
+        assert_eq!(services[1].name, "api");
+        assert!(services[1].image.is_none());
+        assert_eq!(services[1].build_ctx.as_deref(), Some("."));
+    }
+
+    #[test]
+    fn pick_service_prefers_build_over_pulled_image() {
+        let services = vec![
+            ServiceDecl {
+                name: "redis".into(),
+                image: Some("valkey/valkey:8.0-alpine".into()),
+                build_ctx: None,
+            },
+            ServiceDecl {
+                name: "api".into(),
+                image: None,
+                build_ctx: Some(".".into()),
+            },
+        ];
+        let root = std::path::Path::new("/tmp/automation-enrichements");
+        let picked = pick_service(&services, root).unwrap();
+        assert_eq!(picked.name, "api");
+    }
+
+    #[test]
+    fn pick_service_prefers_name_matching_dirname() {
+        let services = vec![
+            ServiceDecl {
+                name: "postgres".into(),
+                image: Some("postgres:15".into()),
+                build_ctx: None,
+            },
+            ServiceDecl {
+                name: "checkout".into(),
+                image: Some("internal/checkout:dev".into()),
+                build_ctx: None,
+            },
+        ];
+        let root = std::path::Path::new("/srv/checkout-service");
+        let picked = pick_service(&services, root).unwrap();
+        assert_eq!(picked.name, "checkout");
     }
 
     #[test]
     fn synthetic_tag_lowercases_dirname() {
         let path = std::path::Path::new("/tmp/Checkout-Service");
         assert_eq!(synthetic_tag(path), "drift-lab/checkout-service:latest");
+    }
+
+    #[test]
+    fn synthetic_tag_for_service_appends_service_name() {
+        let path = std::path::Path::new("/tmp/Checkout-Service");
+        assert_eq!(
+            synthetic_tag_for_service(path, "api"),
+            "drift-lab/checkout-service-api:latest"
+        );
     }
 
     #[tokio::test]
@@ -242,6 +401,47 @@ mod tests {
         assert!(matches!(out.source, Source::Compose));
         assert_eq!(out.image_ref, "registry/svc:42");
         assert_eq!(out.compose_service.as_deref(), Some("api"));
+    }
+
+    #[tokio::test]
+    async fn run_skips_third_party_service_and_picks_build_service() {
+        // Regression: this is the exact compose shape from
+        // /Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements.
+        // The old parser picked `redis` (valkey/valkey:8.0-alpine) — the wrong
+        // image. We now must pick `api` because it has a `build:` block.
+        let dir = tempdir("api-plus-deps");
+        std::fs::write(
+            dir.join("docker-compose.yml"),
+            r#"services:
+  redis:
+    image: valkey/valkey:8.0-alpine
+    ports:
+      - "6379:6379"
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+"#,
+        )
+        .unwrap();
+
+        let out = run(Args { path: dir.display().to_string() }).await.unwrap();
+        assert!(matches!(out.source, Source::Compose));
+        assert_eq!(out.compose_service.as_deref(), Some("api"));
+        // image_ref must reflect "we'll build it", not the unrelated valkey tag.
+        assert!(
+            !out.image_ref.contains("valkey"),
+            "image_ref must not pick up the unrelated dependency image, got {}",
+            out.image_ref
+        );
+        assert!(
+            out.image_ref.starts_with("drift-lab/"),
+            "expected synthetic build tag, got {}",
+            out.image_ref
+        );
+        assert_eq!(out.build_context.as_deref(), Some("."));
     }
 
     #[tokio::test]

@@ -1,0 +1,63 @@
+// =============================================================================
+// SNIPPET 5 — Provider factory: how "create('local', model_config)" works
+// Source: providers/init.rs:156-173 (the public `create` function)
+//         providers/local_inference.rs:397-407 (LocalInferenceProvider::from_env)
+// =============================================================================
+//
+// `providers::create("local", ...)` is what update_agent_provider and
+// set_config_provider both call. It's a name-based dispatch into the
+// process-wide provider registry.
+
+// The dispatch (providers/init.rs):
+pub async fn create(
+    name: &str,
+    model: ModelConfig,
+    extensions: Vec<ExtensionConfig>,
+) -> Result<Arc<dyn Provider>> {
+    let entry = get_from_registry(name).await?;     // registry was populated at startup
+    entry.create(model, extensions).await            // calls the registered ::from_env
+}
+
+// The registry was populated at startup (init.rs:53-89):
+async fn init_registry() -> RwLock<ProviderRegistry> {
+    let mut registry = ProviderRegistry::new().with_providers(|registry| {
+        // ... 30+ providers ...
+        #[cfg(feature = "local-inference")]
+        registry.register::<LocalInferenceProvider>(false);
+        // ... rest ...
+    });
+    // ...
+}
+
+// What `entry.create("local", model, exts)` calls (local_inference.rs:397-407):
+impl LocalInferenceProvider {
+    pub async fn from_env(
+        model: ModelConfig,
+        _extensions: Vec<ExtensionConfig>,
+    ) -> Result<Self> {
+        // [a] Initialize the singleton llama backend if not already done
+        let runtime = InferenceRuntime::get_or_init()?;
+
+        // [b] Look up (or create) the slot for this specific model_name.
+        //     The slot is `Arc<Mutex<Option<LoadedModel>>>` — currently empty.
+        //     Multiple LocalInferenceProvider instances can share the same
+        //     slot if they refer to the same model_name (rare, but the
+        //     pattern allows it).
+        let model_slot = runtime.get_or_create_model_slot(&model.model_name);
+
+        // [c] Construct. NO LlamaModel::load_from_file YET. That happens
+        //     lazily on the first .stream() call.
+        Ok(Self {
+            runtime,
+            model: model_slot,
+            model_config: model,
+            name: PROVIDER_NAME.to_string(),       // "local"
+        })
+    }
+}
+
+// === KEY OBSERVATION ===
+// The provider's `from_env` is FAST (microseconds). The expensive thing —
+// loading the GGUF — is deferred to the first chat message. This is why
+// switching models in the settings tab feels instant: nothing actually
+// happens with the GGUF until someone sends a chat message.

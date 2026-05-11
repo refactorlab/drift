@@ -1,34 +1,52 @@
+#[allow(dead_code)] // Public API surface — callers (tests, future commands) opt in over time.
+pub mod agent;
 mod agent_tools;
 mod app_config;
 mod backend;
 mod commands;
 mod db;
 mod docker;
-mod events;
+pub mod events;
 mod history;
-mod local_server;
 mod model_config;
-mod model_discovery;
-mod persisted;
+pub mod model_discovery;
 mod presets;
 #[allow(dead_code)] // Trait + file-backed impl. Kept as the swap path to a future KeychainSecretStore.
 mod secret_store;
 mod state;
 #[allow(dead_code)] // Each tool is independently callable by the LLM; not all are wired into workflow.rs yet.
-mod tools;
+pub mod tools;
 mod tray;
 mod workflow;
 
 use tauri::Manager;
 use tracing::info;
 
+/// Initialise a `tracing` subscriber that writes formatted lines to stderr.
+///
+/// `RUST_LOG` controls the filter (default `info,drift=debug` so the agent /
+/// tools / workflow log lines all show up while we keep external crates
+/// quiet). Note: this also installs a global `log` logger via `tracing-log`,
+/// which is why we don't register `tauri-plugin-log` — both would race to set
+/// the global `log::set_logger` and the second one panics.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,drift=debug,drift_lab_lib=debug"));
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_writer(std::io::stderr)
+        .compact()
+        .try_init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_tracing();
     let mut builder = tauri::Builder::default()
         .manage(state::AppState::new())
-        .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build());
@@ -47,25 +65,23 @@ pub fn run() {
                 tracing::warn!("tray install failed: {e}");
             }
 
-            // Initialize SQLite app database.
-            let handle = app.handle().clone();
+            info!("drift-lab ready");
+
+            // Open the SQLite app store (runtime_cache + future tables).
+            let handle_for_db = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = db::init(&handle).await {
-                    tracing::error!("db init failed: {e:?}");
+                if let Err(e) = db::init(&handle_for_db).await {
+                    tracing::warn!("sqlite init failed (non-fatal): {e:?}");
                 }
-                info!("drift-lab ready");
             });
 
-            // Hydrate persisted LLM backend config. We seed AppState from the
-            // multi-provider AppConfig (with one-time migration from the older
-            // single-config `backend.json`) and, if there's an active provider,
-            // kick a background resolve so chat is hot when the UI gets there.
+            // Hydrate persisted LLM backend config + eager-resolve the active
+            // provider in the background so chat is hot when the UI gets there.
             let handle_for_hydrate = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state: tauri::State<'_, state::AppState> = handle_for_hydrate.state();
                 commands::hydrate_app_config_on_startup(&handle_for_hydrate, &state).await;
 
-                // Eager resolve of the active provider, in the background.
                 let active = {
                     let cfg = state.app_config.lock().await;
                     cfg.active_provider_id
@@ -73,14 +89,11 @@ pub fn run() {
                         .and_then(|id| cfg.providers.iter().find(|p| &p.id == id).cloned())
                 };
                 if let Some(provider) = active {
-                    let mode = match &provider.config {
-                        model_config::ModelBackend::Api { .. } => "api".to_string(),
-                        model_config::ModelBackend::Local { .. } => "local".to_string(),
-                    };
+                    let mode = "api".to_string();
                     let model_label = match &provider.config {
                         model_config::ModelBackend::Api { model, .. } => model.clone(),
-                        model_config::ModelBackend::Local { spec, .. } => spec.clone(),
                     };
+
                     match backend::resolve(provider.config, &handle_for_hydrate).await {
                         Ok(resolved) => {
                             *state.backend.lock().await = Some(resolved);
@@ -115,7 +128,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_run,
             commands::cancel_run,
-            commands::list_recent_runs,
             // Single-provider (legacy) — kept for the existing Settings UI.
             commands::configure_backend,
             commands::save_backend_config,
@@ -129,19 +141,20 @@ pub fn run() {
             commands::activate_provider,
             commands::delete_provider,
             commands::reset_all_config,
-            // Curated catalogs.
+            // Curated provider catalog.
             presets::list_presets,
-            presets::list_local_presets,
-            // Live discovery (HF search + endpoint /v1/models probe).
-            model_discovery::search_hf_models,
-            model_discovery::list_hf_quants,
+            // Live discovery: probe local runtimes + endpoint /v1/models probe.
+            model_discovery::probe_local_runtimes,
+            model_discovery::cached_local_runtimes,
             model_discovery::list_models_from_endpoint,
-            // Local-server pre-flight (is `llama-server` on PATH?).
-            local_server::check_llama_server,
             // Chat.
             commands::chat,
             commands::chat_oneshot,
             commands::cancel_chat,
+            // Iterative agent loop (goose-style).
+            commands::agent_chat,
+            commands::start_agent_run,
+            commands::list_prompt_presets,
             // Conversation history (Phase 3).
             commands::list_conversations,
             commands::load_conversation,

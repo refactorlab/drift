@@ -1,0 +1,67 @@
+// =============================================================================
+// SettingsView integration touchpoints — extract these blocks into your own
+// settings shell so the local-inference tab is gated by the feature flag.
+//
+// Source: ui/desktop/src/components/settings/SettingsView.tsx
+//   - lines 28, 32, 44-46, 89, 113, 120, 130-132, 197-206, 260-267
+// =============================================================================
+
+// 1) IMPORTS (add to top of file)
+import LocalInferenceSection from './localInference/LocalInferenceSection';
+import { useFeatures } from '../../contexts/FeaturesContext';
+import { HardDrive } from 'lucide-react';
+
+// 2) i18n message (in your defineMessages block)
+const i18n = defineMessages({
+  // ...
+  tabLocalInference: {
+    id: 'settingsView.tabLocalInference',
+    defaultMessage: 'Local Inference',
+  },
+});
+
+// 3) Inside your component
+const { localInference } = useFeatures();
+
+// 4) When deep-linking to /settings?section=local-inference
+const sectionToTab: Record<string, string> = {
+  // ...
+  'local-inference': 'local-inference',
+};
+
+const targetTab = sectionToTab[viewOptions.section];
+if (
+  targetTab &&
+  (targetTab !== 'local-inference' || localInference)
+) {
+  setActiveTab(targetTab);
+}
+
+// 5) Reset active tab if feature becomes unavailable mid-session
+useEffect(() => {
+  if (!localInference && activeTab === 'local-inference') {
+    setActiveTab('models');
+  }
+}, [localInference, activeTab]);
+
+// 6) Conditional tab trigger
+{localInference && (
+  <TabsTrigger
+    value="local-inference"
+    className="flex gap-2"
+    data-testid="settings-local-inference-tab"
+  >
+    <HardDrive className="h-4 w-4" />
+    {intl.formatMessage(i18n.tabLocalInference)}
+  </TabsTrigger>
+)}
+
+// 7) Conditional tab content panel
+{localInference && (
+  <TabsContent
+    value="local-inference"
+    className="mt-0 focus-visible:outline-none focus-visible:ring-0"
+  >
+    <LocalInferenceSection />
+  </TabsContent>
+)}

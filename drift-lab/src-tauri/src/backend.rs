@@ -1,26 +1,25 @@
-//! Resolve a [`ModelBackend`] config into a uniform `ResolvedBackend`.
+//! Resolve a [`ModelBackend`] config into a `ResolvedBackend`.
 //!
-//! Both API and Local mode produce the same `rig` OpenAI client — Local mode
-//! spawns `llama-server -hf <spec>` (the binary handles the GGUF download
-//! itself; first boot is slow, subsequent boots hit the cache).
+//! Every runtime — cloud or local — speaks OpenAI-compatible HTTP and lives
+//! behind a base URL. drift-lab no longer runs any inference itself: local
+//! runtimes (Ollama, LM Studio, Docker Model Runner) are detected via
+//! [`crate::model_discovery::probe_local_runtimes`] and treated identically
+//! to cloud providers downstream.
 
 use anyhow::{Context, Result};
 use rig::providers::openai;
 use tauri::{AppHandle, Runtime};
-use tokio::process::Child;
 
-use crate::{local_server, model_config::ModelBackend};
+use crate::model_config::ModelBackend;
 
 pub struct ResolvedBackend {
-    pub client: openai::Client,
+    pub client: openai::CompletionsClient,
     pub model: String,
-    /// Held so the subprocess is killed when the backend is dropped/replaced.
-    _server: Option<Child>,
 }
 
 pub async fn resolve<R: Runtime>(
     backend: ModelBackend,
-    app: &AppHandle<R>,
+    _app: &AppHandle<R>,
 ) -> Result<ResolvedBackend> {
     match backend {
         ModelBackend::Api {
@@ -28,35 +27,19 @@ pub async fn resolve<R: Runtime>(
             api_key,
             model,
         } => {
+            // `.completions_api()` switches rig from the new Responses API
+            // (`POST /responses`) to classic Chat Completions. Local OpenAI-
+            // compatible servers (Ollama, LM Studio, Docker Model Runner,
+            // llama-server) only expose `/chat/completions` — the default
+            // builder silently 404s against them. See `tests/openai_live.rs`
+            // for the load-bearing assertion.
             let client = openai::Client::builder()
                 .api_key(api_key)
                 .base_url(base_url)
                 .build()
-                .context("building OpenAI client")?;
-            Ok(ResolvedBackend {
-                client,
-                model,
-                _server: None,
-            })
-        }
-        ModelBackend::Local { spec, port } => {
-            let _ = app; // currently unused for local; reserved for future progress events
-            let server = local_server::spawn_llama_server(&spec, port).await?;
-
-            let base = format!("http://127.0.0.1:{port}/v1");
-            let client = openai::Client::builder()
-                .api_key("not-needed".to_string())
-                .base_url(base)
-                .build()
-                .context("building local OpenAI-compatible client")?;
-
-            // llama-server uses the spec as the model identifier; chat/completions
-            // requests with `model: spec` route to the loaded GGUF.
-            Ok(ResolvedBackend {
-                client,
-                model: spec,
-                _server: Some(server),
-            })
+                .context("building OpenAI-compatible client")?
+                .completions_api();
+            Ok(ResolvedBackend { client, model })
         }
     }
 }

@@ -1,0 +1,62 @@
+// =============================================================================
+// SNIPPET 1 — User clicks the radio button next to a downloaded model
+// Source: LocalInferenceSettings.tsx:200-210, 413-432
+// =============================================================================
+//
+// The "Downloaded Models" section renders one row per LocalModelResponse
+// with status === "Downloaded". Each row has a radio button. Clicking the
+// radio fires `selectModel(modelId)`, which writes to the global config
+// (no session_id → updates the default GOOSE_PROVIDER + GOOSE_MODEL).
+//
+// Why no per-session call here? Because the settings tab is a global
+// preferences UI, not a chat-window provider switcher. The current chat
+// session keeps its own provider until the user opens a NEW session, which
+// inherits from the global default just-set.
+
+import { setConfigProvider } from '../../../api';
+import { useModelAndProvider } from '../../ModelAndProviderContext';
+
+const { currentModel, currentProvider, refreshCurrentModelAndProvider } =
+  useModelAndProvider();
+
+// "Is this row currently selected?" — purely derived from global config:
+const selectedModelId = currentProvider === 'local' ? currentModel : null;
+
+// The handler. Three things happen:
+//   1) Write provider="local" + model=<id> to backend config (persisted)
+//   2) Trigger a refresh of the React state holding currentModel/currentProvider
+//   3) The radio button re-renders as checked
+const selectModel = async (modelId: string) => {
+  try {
+    await setConfigProvider({
+      body: { provider: 'local', model: modelId },
+      throwOnError: true,
+    });
+    await refreshCurrentModelAndProvider();
+  } catch (error) {
+    console.error('Failed to select model:', error);
+  }
+};
+
+// Rendered radio:
+{downloadedModels.map((model) => {
+  const isSelected = selectedModelId === model.id;
+  return (
+    <div className={isSelected ? 'border-accent-primary' : 'border-border-subtle'}>
+      <input
+        type="radio"
+        checked={isSelected}
+        onChange={() => selectModel(model.id)}
+      />
+      <span>{model.id}</span>
+      <span>{formatBytes(model.size_bytes)}</span>
+      {model.recommended && <RecommendedBadge />}
+      {model.vision_capable && <VisionBadge model={model} />}
+    </div>
+  );
+})}
+
+// Note the auto-select side effect: when a download completes
+// (LocalInferenceSettings.tsx:246-254), the polling loop calls
+// selectModel(modelId) automatically, so the freshly-downloaded model
+// becomes the active one without an extra user click.

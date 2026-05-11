@@ -1,160 +1,24 @@
-//! Live model discovery — two flavours:
+//! Live model discovery for OpenAI-compatible endpoints.
 //!
-//! 1. [`search_hf_models`] / [`list_hf_quants`] — query the public HuggingFace
-//!    API for GGUF repos and the GGUF files inside each one. No auth needed.
-//! 2. [`list_models_from_endpoint`] — `GET /v1/models` against any
-//!    OpenAI-compatible endpoint (cloud or local: Ollama, LM Studio, Docker
-//!    Model Runner, vLLM, llama-server, ...). Used by the Add Provider form
-//!    to populate the model dropdown live.
+//! Two related capabilities, both built on the same `GET <base_url>/models`
+//! probe (OpenAI shape):
+//!
+//! 1. [`list_models_from_endpoint`] — single-endpoint probe. Used by the
+//!    "Add Provider" form to populate the model dropdown live once a user
+//!    types a base URL.
+//! 2. [`probe_local_runtimes`] — fans out the probe across the curated set
+//!    of local OpenAI-compatible runtimes (Ollama, LM Studio, Docker Model
+//!    Runner) in parallel with a hard per-runtime timeout. Used to render
+//!    the "Detected local runtimes" picker on the home/settings/onboarding
+//!    screens — plug-and-play: whichever runtime the user already has
+//!    installed shows up automatically.
+
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HfModelHit {
-    pub repo_id: String,
-    pub author: Option<String>,
-    pub downloads: u64,
-    pub likes: u64,
-    pub last_modified: Option<String>,
-    pub tags: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct HfModelsApi {
-    #[serde(rename = "id")]
-    id: String,
-    #[serde(default)]
-    author: Option<String>,
-    #[serde(default)]
-    downloads: u64,
-    #[serde(default)]
-    likes: u64,
-    #[serde(default, rename = "lastModified")]
-    last_modified: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HfQuantFile {
-    /// Filename, e.g. `gemma-3-1b-it-Q4_K_M.gguf`.
-    pub filename: String,
-    /// Quant tag extracted from the filename (best-effort): `Q4_K_M`, `IQ3_M`,
-    /// `Q8_0`, etc.
-    pub quant: Option<String>,
-    /// Size in bytes if HF reported it.
-    pub size: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct HfRepoInfo {
-    siblings: Vec<HfSibling>,
-}
-
-#[derive(Deserialize)]
-struct HfSibling {
-    rfilename: String,
-    #[serde(default)]
-    size: Option<u64>,
-}
-
-/// Search HuggingFace for GGUF repos.
-///
-/// We hit the public list endpoint with `filter=gguf` and sort by downloads
-/// — that's the same heuristic LM Studio / Jan use to rank popular community
-/// quants. Up to 30 hits to keep the payload small.
-#[tauri::command]
-pub async fn search_hf_models(query: String) -> Result<Vec<HfModelHit>, String> {
-    do_search(&query).await.map_err(|e| e.to_string())
-}
-
-async fn do_search(query: &str) -> Result<Vec<HfModelHit>> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return Ok(vec![]);
-    }
-    let url = format!(
-        "https://huggingface.co/api/models?search={}&filter=gguf&limit=30&sort=downloads&direction=-1",
-        urlencode(trimmed)
-    );
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .header("user-agent", "drift-lab")
-        .send()
-        .await
-        .context("HuggingFace search request")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("HuggingFace search returned {}", resp.status());
-    }
-    let raw: Vec<HfModelsApi> = resp.json().await.context("parsing HuggingFace response")?;
-    Ok(raw
-        .into_iter()
-        .map(|m| HfModelHit {
-            repo_id: m.id,
-            author: m.author,
-            downloads: m.downloads,
-            likes: m.likes,
-            last_modified: m.last_modified,
-            tags: m.tags,
-        })
-        .collect())
-}
-
-/// List the GGUF files inside a HuggingFace repo, with the quant tag parsed
-/// out of each filename. The result feeds the "pick a quant" dropdown after
-/// the user selects a search hit.
-#[tauri::command]
-pub async fn list_hf_quants(repo_id: String) -> Result<Vec<HfQuantFile>, String> {
-    do_list_quants(&repo_id).await.map_err(|e| e.to_string())
-}
-
-async fn do_list_quants(repo_id: &str) -> Result<Vec<HfQuantFile>> {
-    let url = format!("https://huggingface.co/api/models/{repo_id}");
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .header("user-agent", "drift-lab")
-        .send()
-        .await
-        .context("HuggingFace repo info")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("HuggingFace repo `{repo_id}` returned {}", resp.status());
-    }
-    let info: HfRepoInfo = resp.json().await.context("parsing HuggingFace repo info")?;
-    Ok(info
-        .siblings
-        .into_iter()
-        .filter(|s| s.rfilename.to_lowercase().ends_with(".gguf"))
-        .map(|s| HfQuantFile {
-            quant: extract_quant(&s.rfilename),
-            filename: s.rfilename,
-            size: s.size,
-        })
-        .collect())
-}
-
-fn extract_quant(filename: &str) -> Option<String> {
-    // Match common llama.cpp quant tags: Q4_K_M, Q5_K_S, Q8_0, IQ3_XS, F16, BF16…
-    // We scan filename segments and return the first one that looks like a quant.
-    let stem = filename.trim_end_matches(".gguf");
-    for chunk in stem.rsplit(|c: char| c == '-' || c == '_' || c == '.') {
-        let upper = chunk.to_uppercase();
-        if upper.starts_with("IQ")
-            || upper.starts_with('Q')
-            || upper == "F16"
-            || upper == "BF16"
-            || upper == "F32"
-        {
-            // Q4 alone isn't useful — require either a digit or an underscore form
-            if upper.chars().any(|c| c.is_ascii_digit()) || upper.contains('_') {
-                return Some(upper);
-            }
-        }
-    }
-    None
-}
+use crate::{db, presets::PRESETS};
 
 #[derive(Deserialize)]
 struct OpenAiModelList {
@@ -174,16 +38,22 @@ pub async fn list_models_from_endpoint(
     base_url: String,
     api_key: Option<String>,
 ) -> Result<Vec<String>, String> {
-    do_list_endpoint(&base_url, api_key.as_deref())
+    do_list_endpoint(&base_url, api_key.as_deref(), Duration::from_secs(8))
         .await
         .map_err(|e| e.to_string())
 }
 
-async fn do_list_endpoint(base_url: &str, api_key: Option<&str>) -> Result<Vec<String>> {
+async fn do_list_endpoint(
+    base_url: &str,
+    api_key: Option<&str>,
+    timeout: Duration,
+) -> Result<Vec<String>> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let mut req = reqwest::Client::new()
-        .get(&url)
-        .header("user-agent", "drift-lab");
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .context("building http client")?;
+    let mut req = client.get(&url).header("user-agent", "drift-lab");
     if let Some(k) = api_key {
         if !k.is_empty() && k != "not-needed" {
             req = req.bearer_auth(k);
@@ -200,38 +70,240 @@ async fn do_list_endpoint(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
     Ok(list.data.into_iter().map(|m| m.id).collect())
 }
 
-/// Minimal URL-encoder for the `search` parameter. Tiny crate-free encoder
-/// over the printable ASCII space; we only ever feed it user search text.
-fn urlencode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
+/// One local runtime detected on the user's machine, with the live model
+/// list pulled from its `/v1/models` endpoint at probe time.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredRuntime {
+    /// Preset id from [`crate::presets::PRESETS`] (e.g. `ollama`, `lm-studio`).
+    pub preset_id: String,
+    /// Display name from the preset.
+    pub name: String,
+    /// OpenAI-compatible base URL the runtime is bound to.
+    pub base_url: String,
+    /// Models the runtime currently has loaded / available.
+    pub models: Vec<String>,
+    /// Optional UI hint — e.g. set when models were detected via the Docker
+    /// CLI but the HTTP endpoint isn't reachable (host-side TCP toggle off).
+    /// When present, the UI should disable activation and show this string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Run `docker model list --openai` with a tight timeout and parse the
+/// OpenAI-shaped model list. Returns `None` if Docker isn't installed, the
+/// daemon is down, or Docker Model Runner isn't enabled — i.e. anything that
+/// makes the command fail. Drift-lab doesn't surface those as errors because
+/// they're the normal "no DMR here" path.
+async fn probe_docker_model_runner_cli() -> Option<Vec<String>> {
+    let output = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::process::Command::new("docker")
+            .args(["model", "list", "--openai"])
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    if !output.status.success() {
+        tracing::debug!(
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            "docker model list --openai exited non-zero"
+        );
+        return None;
+    }
+
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let data = body.get("data")?.as_array()?;
+    Some(
+        data.iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
+            .collect(),
+    )
+}
+
+/// Probe every preset that looks like a local OpenAI-compatible runtime —
+/// i.e. requires no API key AND its base URL points at loopback. Each probe
+/// gets a tight 800ms ceiling so the call returns fast even when nothing is
+/// running. Also shells out to `docker model list --openai` to catch Docker
+/// Model Runner models even when its host-side TCP endpoint is disabled.
+///
+/// This is the discovery surface the UI uses to show "Detected local
+/// runtimes" — plug-and-play. The user installs Ollama / LM Studio / Docker
+/// Desktop with Model Runner, and drift-lab picks it up automatically.
+#[tauri::command]
+pub async fn probe_local_runtimes() -> Vec<DiscoveredRuntime> {
+    let timeout = Duration::from_millis(800);
+    let candidates: Vec<_> = PRESETS
+        .iter()
+        .filter(|p| !p.requires_api_key && is_loopback(p.base_url))
+        .collect();
+
+    // HTTP probes in parallel — one slow runtime can't block the rest.
+    let http_probes = futures_util::future::join_all(candidates.into_iter().map(|p| async move {
+        let result = do_list_endpoint(p.base_url, None, timeout).await;
+        match result {
+            Ok(models) => Some(DiscoveredRuntime {
+                preset_id: p.id.to_string(),
+                name: p.name.to_string(),
+                base_url: p.base_url.to_string(),
+                models,
+                note: None,
+            }),
+            Err(e) => {
+                tracing::debug!(
+                    preset = p.id,
+                    url = p.base_url,
+                    error = %e,
+                    "runtime probe failed (likely not running)"
+                );
+                None
             }
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }));
+
+    // Docker CLI fallback runs concurrently with the HTTP probes.
+    let (http_results, dmr_cli_models) =
+        tokio::join!(http_probes, probe_docker_model_runner_cli());
+
+    let mut detected: Vec<DiscoveredRuntime> = http_results.into_iter().flatten().collect();
+
+    // Merge in DMR-via-CLI: if the HTTP probe already caught it, just union
+    // the model lists. Otherwise add a new entry with a "TCP toggle" hint so
+    // the user knows why activation isn't immediate.
+    if let Some(cli_models) = dmr_cli_models {
+        if !cli_models.is_empty() {
+            let dmr_preset = PRESETS.iter().find(|p| p.id == "docker-model-runner");
+            let already_via_http = detected.iter().any(|r| r.preset_id == "docker-model-runner");
+
+            if already_via_http {
+                if let Some(existing) = detected
+                    .iter_mut()
+                    .find(|r| r.preset_id == "docker-model-runner")
+                {
+                    for m in cli_models {
+                        if !existing.models.iter().any(|e| e == &m) {
+                            existing.models.push(m);
+                        }
+                    }
+                }
+            } else if let Some(p) = dmr_preset {
+                detected.push(DiscoveredRuntime {
+                    preset_id: p.id.to_string(),
+                    name: p.name.to_string(),
+                    base_url: p.base_url.to_string(),
+                    models: cli_models,
+                    note: Some(
+                        "Detected via `docker model list` but the HTTP endpoint at \
+                         localhost:12434 isn't reachable. Enable \"Host-side TCP support\" in \
+                         Docker Desktop → Settings → AI to use these models."
+                            .to_string(),
+                    ),
+                });
+            }
         }
     }
-    out
+
+    // Best-effort: persist to the SQLite cache so the next launch can show
+    // these runtimes instantly. Cache failures don't fail the probe.
+    if let Err(e) = write_runtime_cache(&detected).await {
+        tracing::warn!(error = %e, "failed to write runtime_cache (non-fatal)");
+    }
+
+    detected
+}
+
+/// Return last-known discovered runtimes from the SQLite cache. The UI
+/// calls this on mount to render something instantly; a fresh
+/// [`probe_local_runtimes`] then runs in the background and updates the
+/// cache (and the UI on next refresh).
+#[tauri::command]
+pub async fn cached_local_runtimes() -> Vec<DiscoveredRuntime> {
+    match read_runtime_cache().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(error = %e, "runtime_cache read failed; returning empty");
+            Vec::new()
+        }
+    }
+}
+
+async fn read_runtime_cache() -> Result<Vec<DiscoveredRuntime>> {
+    let pool = db::pool().context("sqlite pool not initialised")?;
+    let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT preset_id, name, base_url, models_json, note FROM runtime_cache ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("reading runtime_cache")?;
+    Ok(rows
+        .into_iter()
+        .map(|(preset_id, name, base_url, models_json, note)| {
+            let models: Vec<String> =
+                serde_json::from_str(&models_json).unwrap_or_default();
+            DiscoveredRuntime {
+                preset_id,
+                name,
+                base_url,
+                models,
+                note,
+            }
+        })
+        .collect())
+}
+
+async fn write_runtime_cache(runtimes: &[DiscoveredRuntime]) -> Result<()> {
+    let pool = db::pool().context("sqlite pool not initialised")?;
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Clear and reinsert. Simpler than upserting + deleting stale rows: the
+    // table is small (3-7 rows max) and the writes are infrequent.
+    let mut tx = pool.begin().await.context("starting cache tx")?;
+    sqlx::query("DELETE FROM runtime_cache")
+        .execute(&mut *tx)
+        .await
+        .context("clearing runtime_cache")?;
+    for rt in runtimes {
+        let models_json = serde_json::to_string(&rt.models).unwrap_or_else(|_| "[]".into());
+        sqlx::query(
+            "INSERT INTO runtime_cache (preset_id, name, base_url, models_json, note, last_seen_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&rt.preset_id)
+        .bind(&rt.name)
+        .bind(&rt.base_url)
+        .bind(models_json)
+        .bind(rt.note.as_deref())
+        .bind(now_secs)
+        .execute(&mut *tx)
+        .await
+        .context("inserting runtime_cache row")?;
+    }
+    tx.commit().await.context("committing cache tx")?;
+    Ok(())
+}
+
+fn is_loopback(base_url: &str) -> bool {
+    let lower = base_url.to_lowercase();
+    lower.starts_with("http://localhost")
+        || lower.starts_with("http://127.0.0.1")
+        || lower.starts_with("http://[::1]")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::extract_quant;
+    use super::*;
 
     #[test]
-    fn parses_quant_tags() {
-        assert_eq!(
-            extract_quant("gemma-3-1b-it-Q4_K_M.gguf"),
-            Some("Q4_K_M".into())
-        );
-        assert_eq!(
-            extract_quant("Llama-3.2-3B-Instruct-Q5_K_S.gguf"),
-            Some("Q5_K_S".into())
-        );
-        assert_eq!(extract_quant("model-IQ3_M.gguf"), Some("IQ3_M".into()));
-        assert_eq!(extract_quant("model-F16.gguf"), Some("F16".into()));
-        assert_eq!(extract_quant("README.gguf"), None);
+    fn loopback_check_matches_expected_hosts() {
+        assert!(is_loopback("http://localhost:11434/v1"));
+        assert!(is_loopback("http://127.0.0.1:1234/v1"));
+        assert!(is_loopback("http://[::1]:8080/v1"));
+        assert!(!is_loopback("https://api.openai.com/v1"));
+        assert!(!is_loopback("http://example.com/v1"));
     }
 }

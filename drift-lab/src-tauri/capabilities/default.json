@@ -11,8 +11,6 @@
     "core:app:default",
     "dialog:default",
     "dialog:allow-open",
-    "fs:default",
-    "log:default",
     "opener:default",
     "opener:allow-open-url",
     "store:default",

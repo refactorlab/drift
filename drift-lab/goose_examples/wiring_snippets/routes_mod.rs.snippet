@@ -1,0 +1,17 @@
+// =============================================================================
+// Router mounting — extracted from crates/goose-server/src/routes/mod.rs
+// =============================================================================
+
+#[cfg(feature = "local-inference")]
+pub mod local_inference;
+
+pub fn configure(state: Arc<crate::state::AppState>) -> Router {
+    let router = Router::new()
+        // ... your other route merges ...
+        ;
+
+    #[cfg(feature = "local-inference")]
+    let router = router.merge(local_inference::routes(state));
+
+    router
+}

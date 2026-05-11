@@ -100,68 +100,7 @@ pub const PRESETS: &[ProviderPreset] = &[
     },
 ];
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalModelPreset {
-    /// `repo_id:quant`, fed to `llama-server -hf`.
-    pub spec: &'static str,
-    pub name: &'static str,
-    pub size_gb: f32,
-    pub description: &'static str,
-    /// Display badges. Common values: "Recommended", "Vision", "Tools",
-    /// "Code", "Long context".
-    pub tags: &'static [&'static str],
-}
-
-/// Top-tier featured catalog. Intentionally short (4-5 picks) — anything else
-/// the user wants is one HF search away via [`crate::model_discovery`]. Gemma
-/// 4 is pinned first per user request; `llama-server -hf` resolves the spec
-/// at runtime so availability is checked when activating, not at compile time.
-pub const LOCAL_PRESETS: &[LocalModelPreset] = &[
-    LocalModelPreset {
-        spec: "unsloth/gemma-4-26B-A4B-it-GGUF:Q4_K_M",
-        name: "Gemma 4 26B A4B",
-        size_gb: 15.8,
-        description:
-            "Mixture-of-experts (~26B total, ~4B active). Strong general + vision. ~16 GB on disk.",
-        tags: &["Recommended", "Vision"],
-    },
-    LocalModelPreset {
-        spec: "unsloth/Llama-3.3-70B-Instruct-GGUF:Q4_K_M",
-        name: "Llama 3.3 70B",
-        size_gb: 42.0,
-        description: "Meta's top open chat model. Needs 64 GB+ RAM.",
-        tags: &["Tools"],
-    },
-    LocalModelPreset {
-        spec: "Qwen/Qwen3-32B-GGUF:Q4_K_M",
-        name: "Qwen 3 32B",
-        size_gb: 19.0,
-        description: "Latest Qwen flagship. Strong reasoning + multilingual.",
-        tags: &[],
-    },
-    LocalModelPreset {
-        spec: "unsloth/DeepSeek-R1-Distill-Llama-70B-GGUF:Q4_K_M",
-        name: "DeepSeek R1 Distill 70B",
-        size_gb: 42.0,
-        description: "Distilled reasoning model. Shows its thinking trace.",
-        tags: &[],
-    },
-    LocalModelPreset {
-        spec: "unsloth/phi-4-GGUF:Q4_K_M",
-        name: "Phi-4 14B",
-        size_gb: 8.5,
-        description: "Microsoft Phi-4. Strong reasoning per param.",
-        tags: &[],
-    },
-];
-
 #[tauri::command]
 pub fn list_presets() -> Vec<ProviderPreset> {
     PRESETS.to_vec()
-}
-
-#[tauri::command]
-pub fn list_local_presets() -> Vec<LocalModelPreset> {
-    LOCAL_PRESETS.to_vec()
 }

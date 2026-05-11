@@ -1,0 +1,81 @@
+// =============================================================================
+// SNIPPET 4 — Backend handler: POST /agent/update_provider
+// Source: routes/agent.rs:569-650
+// =============================================================================
+//
+// Live-replaces the Provider instance for ONE active session. This is what
+// makes "switching models mid-chat" work: the next call to provider.stream()
+// hits the new provider, which means a different LLM (or, for "local", a
+// different GGUF) generates the next response.
+//
+// The flow:
+//   1) Look up the agent for this session_id (must already exist)
+//   2) Build a ModelConfig from the request
+//   3) Look up the session's currently-enabled extensions (so the new
+//      provider sees the same tools)
+//   4) Call providers::create() — this dispatches to the named provider's
+//      from_env(model_config, extensions) factory. For "local", that's
+//      LocalInferenceProvider::from_env which:
+//         - calls InferenceRuntime::get_or_init() (already-initialized)
+//         - calls runtime.get_or_create_model_slot(model_name)
+//         - returns a Provider Arc; NO model is loaded yet
+//   5) agent.update_provider(new_provider) — swaps the Mutex<Option<Arc<dyn Provider>>>
+//   6) Persist the choice into the session record so resume works
+
+async fn update_agent_provider(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UpdateProviderRequest>,
+) -> Result<(), impl IntoResponse> {
+    // [1] Get the agent for this session (or 424 if not initialized yet)
+    let agent = state
+        .get_agent_for_route(payload.session_id.clone())
+        .await
+        .map_err(|e| (e, "No agent for session id".to_owned()))?;
+
+    // [2] Build a ModelConfig — applies canonical context limits if the
+    //     model name matches a known model (e.g. "gpt-4o" → 128k ctx).
+    //     For local models, the canonical registry doesn't know about them
+    //     so the per-model registry settings (context_size from the gear UI)
+    //     are used instead.
+    let config = Config::global();
+    let model = payload.model.or_else(|| config.get_goose_model().ok())
+        .ok_or((StatusCode::BAD_REQUEST, "No model specified".to_owned()))?;
+
+    let model_config = ModelConfig::new(&model)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid model config: {}", e)))?
+        .with_canonical_limits(&payload.provider)
+        .with_context_limit(payload.context_limit)
+        .with_request_params(payload.request_params);
+
+    // [3] Carry over the session's enabled extensions so tool definitions
+    //     stay consistent across the provider switch
+    let extensions = EnabledExtensionsState::for_session(
+        state.session_manager(), &payload.session_id, config
+    ).await;
+
+    // [4] Construct the new provider. For "local" this returns a
+    //     LocalInferenceProvider that holds a model_slot but hasn't loaded
+    //     any GGUF weights yet — that happens lazily on first .stream() call.
+    let new_provider = create(&payload.provider, model_config, extensions)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST,
+                      format!("Failed to create {} provider: {}", &payload.provider, e)))?;
+
+    // [5] Atomically swap the agent's provider field
+    //     (agent.rs:1906-1926 in goose) and persist to session
+    agent.update_provider(new_provider, &payload.session_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
+                      format!("Failed to update provider: {}", e)))?;
+
+    // [6] Mode (chat/normal/auto) is per-session — re-apply it to the
+    //     new provider so it can adjust permission gating
+    let mode = agent.goose_mode().await;
+    agent.update_goose_mode(mode, &payload.session_id).await?;
+
+    Ok(())
+}
+
+// Note: This is the SAME endpoint regardless of which provider is being
+// switched to. `create()` does the dispatch by name. Adding a new provider
+// requires only registering it in providers/init.rs — no changes here.

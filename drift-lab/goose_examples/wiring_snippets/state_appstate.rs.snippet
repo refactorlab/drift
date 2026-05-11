@@ -1,0 +1,52 @@
+// =============================================================================
+// AppState wiring — host-app integration for InferenceRuntime
+// Extracted from: crates/goose-server/src/state.rs lines 16-17, 30-31, 50-74
+// =============================================================================
+//
+// Pattern: AppState holds an Arc<OnceLock<Arc<InferenceRuntime>>> so that the
+// llama.cpp backend is lazily initialized only the first time a request needs
+// it. Multiple concurrent requests race safely on OnceLock::set; the loser
+// drops its Arc and reads the winner's value.
+
+use std::sync::{Arc, OnceLock};
+
+#[cfg(feature = "local-inference")]
+use crate::providers::local_inference::InferenceRuntime;
+
+#[derive(Clone)]
+pub struct AppState {
+    // ... your other fields ...
+
+    #[cfg(feature = "local-inference")]
+    inference_runtime: Arc<OnceLock<Arc<InferenceRuntime>>>,
+}
+
+impl AppState {
+    pub async fn new() -> anyhow::Result<Arc<AppState>> {
+        Ok(Arc::new(Self {
+            // ... your other fields ...
+            #[cfg(feature = "local-inference")]
+            inference_runtime: Arc::new(OnceLock::new()),
+        }))
+    }
+
+    #[cfg(feature = "local-inference")]
+    pub fn get_inference_runtime(&self) -> anyhow::Result<Arc<InferenceRuntime>> {
+        if let Some(runtime) = self.inference_runtime.get() {
+            return Ok(runtime.clone());
+        }
+
+        let runtime = InferenceRuntime::get_or_init()?;
+
+        // Another thread may win the race to cache the runtime in AppState.
+        // In that case, return the already-initialized cached runtime.
+        match self.inference_runtime.set(runtime.clone()) {
+            Ok(()) => Ok(runtime),
+            Err(_) => Ok(self
+                .inference_runtime
+                .get()
+                .expect("inference runtime initialized by another thread")
+                .clone()),
+        }
+    }
+}

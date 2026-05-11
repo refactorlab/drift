@@ -1,0 +1,21 @@
+// =============================================================================
+// Provider module + registry registration
+// Extracted from: crates/goose/src/providers/mod.rs lines 36-37
+//                 crates/goose/src/providers/init.rs lines 5-6, 61-62
+// =============================================================================
+
+// In your providers/mod.rs:
+#[cfg(feature = "local-inference")]
+pub mod local_inference;
+
+
+// In your providers/init.rs (or wherever you build the ProviderRegistry):
+#[cfg(feature = "local-inference")]
+use super::local_inference::LocalInferenceProvider;
+
+// Inside init_registry():
+#[cfg(feature = "local-inference")]
+registry.register::<LocalInferenceProvider>(false);
+//                                          ^---- `false` = not visible by
+//                                                default in provider lists;
+//                                                user has to enable it.

@@ -193,7 +193,7 @@ pub(crate) struct Summary {
     pub max: f64,
 }
 
-pub(crate) fn summarise(latencies: &mut Vec<f64>) -> Summary {
+pub(crate) fn summarise(latencies: &mut [f64]) -> Summary {
     latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     if latencies.is_empty() {
         return Summary { mean: 0.0, p50: 0.0, p95: 0.0, p99: 0.0, max: 0.0 };

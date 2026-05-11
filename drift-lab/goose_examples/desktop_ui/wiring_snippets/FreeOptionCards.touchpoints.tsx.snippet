@@ -1,0 +1,71 @@
+// =============================================================================
+// Onboarding touchpoints — show "Use a Local Model" as a third option in your
+// free-tier onboarding card list (Tetrate / NanoGPT / Local).
+//
+// Source: ui/desktop/src/components/onboarding/FreeOptionCards.tsx
+//   - lines 5-7, 31-39, 75, 100-102, 113-117, 159-177
+// =============================================================================
+
+// 1) IMPORTS
+import LocalModelPicker from './LocalModelPicker';
+import { HardDrive } from 'lucide-react';
+import { useFeatures } from '../../contexts/FeaturesContext';
+
+// 2) i18n strings
+const i18n = defineMessages({
+  // ...
+  localModelTitle: {
+    id: 'freeOptionCards.localModelTitle',
+    defaultMessage: 'Use a Local Model',
+  },
+  localModelDescription: {
+    id: 'freeOptionCards.localModelDescription',
+    defaultMessage: 'Run inference locally — no API key, fully private.',
+  },
+  freeAndPrivate: {
+    id: 'freeOptionCards.freeAndPrivate',
+    defaultMessage: 'Free & Private',
+  },
+});
+
+// 3) Component constant for the local-provider option marker
+const LOCAL_PROVIDER = 'local';
+
+// 4) Inside the component
+const { localInference } = useFeatures();
+const [selectedProvider, setSelectedProvider] = useState<FreeOption | null>(null);
+
+const handleRunLocallyClick = () => {
+  setSelectedProvider(LOCAL_PROVIDER);
+};
+
+// 5) Replace the entire card list when local is selected
+if (selectedProvider === LOCAL_PROVIDER) {
+  return (
+    <LocalModelPicker
+      onConfigured={onConfigured}
+      onBack={() => setSelectedProvider(null)}
+    />
+  );
+}
+
+// 6) Conditionally render the third onboarding card
+{localInference && (
+  <div onClick={handleRunLocallyClick} className={cardClass(false)}>
+    <div className="flex items-start justify-between mb-1">
+      <div className="flex items-center gap-2">
+        <HardDrive className="w-5 h-5 text-text-default" />
+        <span className="font-medium text-text-default text-base">
+          {intl.formatMessage(i18n.localModelTitle)}
+        </span>
+        <span className="inline-block px-1.5 py-0.5 text-[10px] font-medium bg-green-600 text-white rounded-full">
+          {intl.formatMessage(i18n.freeAndPrivate)}
+        </span>
+      </div>
+      <ChevronRight />
+    </div>
+    <p className="text-text-muted text-sm">
+      {intl.formatMessage(i18n.localModelDescription)}
+    </p>
+  </div>
+)}

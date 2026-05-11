@@ -1,0 +1,144 @@
+// =============================================================================
+// SNIPPET 6 — The lazy GGUF load on first .stream() call
+// Source: providers/local_inference.rs:569-605, 409-461
+// =============================================================================
+//
+// Agent::reply → stream_response_from_provider → provider.stream(...)
+// lands here. The provider sees an empty model slot, so it loads the GGUF
+// from disk. Subsequent calls reuse the loaded model.
+
+#[async_trait]
+impl Provider for LocalInferenceProvider {
+    async fn stream(
+        &self,
+        model_config: &ModelConfig,
+        _session_id: &str,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+
+        // [1] Look up the registry entry to find the file on disk
+        let resolved = resolve_model_path(&model_config.model_name)
+            .ok_or_else(|| ProviderError::ExecutionError(
+                format!("Model not found: {}", model_config.model_name)))?;
+        let model_context_limit = resolved.context_limit;
+        let model_settings = resolved.settings;
+
+        // [2] If the slot is empty, load the model. This is the slow path,
+        //     ~1-3 seconds for a 4 GB Q4_K_M GGUF on M2.
+        {
+            let mut model_lock = self.model.lock().await;
+            if model_lock.is_none() {
+                // [2a] Evict any other model first — only one resident at a time
+                for slot in self.runtime.other_model_slots(&model_config.model_name) {
+                    let mut other = slot.lock().await;
+                    if other.is_some() {
+                        tracing::info!("Unloading previous model to free memory");
+                        *other = None;
+                    }
+                }
+
+                // [2b] Load on a blocking thread (llama.cpp is sync)
+                let model_id = model_config.model_name.clone();
+                let settings_for_load = model_settings.clone();
+                let runtime_for_load = self.runtime.clone();
+                let loaded = tokio::task::spawn_blocking(move || {
+                    Self::load_model_sync(&runtime_for_load, &model_id, &settings_for_load)
+                })
+                .await
+                .map_err(|e| ProviderError::ExecutionError(e.to_string()))??;
+
+                *model_lock = Some(loaded);
+            }
+        }
+
+        // [3] Choose the tool-calling strategy based on registry settings:
+        //       native_tool_calling = true  → Jinja path (Gemma)
+        //       native_tool_calling = false → text-protocol emulator (Llama, Mistral)
+        let native_tool_calling = model_settings.native_tool_calling;
+        let use_emulator = !native_tool_calling && !tools.is_empty();
+        let system_prompt = if use_emulator {
+            load_tiny_model_prompt()                 // baked-in shell-tool teaching prompt
+        } else {
+            system.to_string()
+        };
+
+        // [4] Build llama-cpp chat messages from goose Messages
+        let mut chat_messages = vec![
+            LlamaChatMessage::new("system".to_string(), system_prompt.clone())?
+        ];
+        // ... (extract images for vision models, convert tool calls to text for emulator path) ...
+
+        // [5] Spawn the generation task on a blocking thread, return the
+        //     receiver as a MessageStream. The agent loop will drain this.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let model_arc = self.model.clone();
+        // ... clone other state ...
+
+        tokio::task::spawn_blocking(move || {
+            let mut model_guard = model_arc.blocking_lock();
+            let loaded = model_guard.as_mut().unwrap();
+
+            let mut gen_ctx = GenerationContext {
+                loaded, runtime: &runtime, chat_messages: &chat_messages,
+                settings: &settings, context_limit, model_name,
+                message_id: &message_id, tx: &tx, log: &mut log, images: &images,
+            };
+
+            if use_emulator {
+                generate_with_emulated_tools(&mut gen_ctx, code_mode_enabled)
+            } else {
+                generate_with_native_tools(&mut gen_ctx, &oai_messages_json,
+                                           full_tools_json.as_deref(),
+                                           compact_tools.as_deref())
+            }
+        });
+
+        // [6] Wrap mpsc::Receiver as a Stream
+        Ok(Box::pin(try_stream! {
+            while let Some(result) = rx.recv().await {
+                yield result?;
+            }
+        }))
+    }
+}
+
+// load_model_sync — invoked once per model per process (until evicted)
+fn load_model_sync(
+    runtime: &InferenceRuntime,
+    model_id: &str,
+    settings: &ModelSettings,
+) -> Result<LoadedModel, ProviderError> {
+    let resolved = resolve_model_path(model_id)?;
+    let model_path = resolved.model_path;
+
+    if !model_path.exists() {
+        return Err(ProviderError::ExecutionError(format!(
+            "Model not downloaded: {}. Please download it from Settings > Local Inference.",
+            model_id
+        )));
+    }
+
+    let backend = runtime.backend();
+
+    let mut params = LlamaModelParams::default();
+    if let Some(n_gpu_layers) = settings.n_gpu_layers {
+        params = params.with_n_gpu_layers(n_gpu_layers);   // Metal layers
+    }
+    if settings.use_mlock {
+        params = params.with_use_mlock(true);              // pin in RAM, no swap
+    }
+
+    // ── THE ACTUAL DISK → MEMORY → GPU LOAD ──
+    let model = LlamaModel::load_from_file(backend, &model_path, &params)?;
+
+    // Read embedded Jinja chat template, fallback chatml
+    let template = model.chat_template(None)
+        .or_else(|_| LlamaChatTemplate::new("chatml"))?;
+
+    // Vision encoder (mmproj) if applicable
+    let mtmd_ctx = Self::init_mtmd_context(&model, &resolved.mmproj_path, settings);
+
+    Ok(LoadedModel { model, template, mtmd_ctx })
+}

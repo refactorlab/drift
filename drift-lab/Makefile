@@ -46,7 +46,8 @@ RESET  := \033[0m
         install install-js install-rust install-tauri-cli check-rust \
         icons \
         compile compile-mac compile-linux \
-        open trust updater-keys clean distclean help
+        open trust updater-keys clean distclean help \
+        warnings lint
 
 # === Tier 1 — the 3 commands ================================================
 
@@ -103,8 +104,10 @@ install-tauri-cli: ## cargo install tauri-cli (~3-5 min the first time)
 
 # === Frontend-only dev =======================================================
 
-ui: install-js ## Run just the React UI in a browser (uses mock Tauri IPC)
-	@printf "$(BLUE)▶$(RESET) vite dev server with mock IPC — http://localhost:1420\n"
+ui: install-js ## Run just the React UI in a browser (no backend — IPC calls will fail)
+	@printf "$(BLUE)▶$(RESET) vite dev server — http://localhost:1420\n"
+	@printf "$(YELLOW)!$(RESET) no Tauri runtime: anything that calls the Rust backend will throw.\n"
+	@printf "    use $(BLUE)make dev$(RESET) for end-to-end work.\n"
 	@cd $(UI_DIR) && npm run dev
 
 # === Icons ===================================================================
@@ -195,6 +198,18 @@ else
 	@printf "$(YELLOW)!$(RESET) make trust is macOS-only (Gatekeeper is a macOS feature)\n"; exit 1
 endif
 
+# === Lint / warnings =========================================================
+
+warnings: check-rust ## Show all rustc warnings (forces re-check so cache can't hide them)
+	@printf "$(BLUE)▶$(RESET) running cargo check on $(TAURI_DIR) (all targets)\n"
+	@cd $(TAURI_DIR) && cargo clean -p drift-lab --quiet 2>/dev/null || true
+	@cd $(TAURI_DIR) && cargo check --all-targets --color always
+
+lint: check-rust ## Show all clippy warnings (forces re-check so cache can't hide them)
+	@printf "$(BLUE)▶$(RESET) running cargo clippy on $(TAURI_DIR) (all targets)\n"
+	@cd $(TAURI_DIR) && cargo clean -p drift-lab --quiet 2>/dev/null || true
+	@cd $(TAURI_DIR) && cargo clippy --all-targets --color always
+
 # === Cleanup =================================================================
 
 clean: ## Remove build outputs (keeps node_modules + cargo cache)
@@ -222,6 +237,9 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(BLUE)%-18s$(RESET) %s\n", $$1, $$2}'
 	@printf "\n  $(GREEN)Compile variants$(RESET)\n"
 	@grep -hE '^(compile-mac|compile-linux):.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(BLUE)%-18s$(RESET) %s\n", $$1, $$2}'
+	@printf "\n  $(GREEN)Lint / warnings$(RESET)\n"
+	@grep -hE '^(warnings|lint):.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(BLUE)%-18s$(RESET) %s\n", $$1, $$2}'
 	@printf "\n  $(GREEN)Launch / cleanup$(RESET)\n"
 	@grep -hE '^(open|trust|clean|distclean|help):.*?## .*$$' $(MAKEFILE_LIST) | \

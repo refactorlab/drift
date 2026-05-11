@@ -4,10 +4,17 @@ interface Props {
   issuesFound: number;
   criticalCount: number;
   onView: () => void;
+  onRerun: () => void;
   onReset: () => void;
 }
 
-export default function DoneState({ issuesFound, criticalCount, onView, onReset }: Props) {
+export default function DoneState({
+  issuesFound,
+  criticalCount,
+  onView,
+  onRerun,
+  onReset,
+}: Props) {
   return (
     <div className="done-state">
       <div className="done-icon">
@@ -19,13 +26,18 @@ export default function DoneState({ issuesFound, criticalCount, onView, onReset 
           {issuesFound} performance {issuesFound === 1 ? "issue" : "issues"} detected · {criticalCount} critical
         </div>
       </div>
-      <button type="button" className="view-btn" onClick={onView}>
-        View report
-        <ArrowRightIcon />
-      </button>
-      <button type="button" className="ghost-btn" onClick={onReset}>
-        Run another
-      </button>
+      <div className="done-actions">
+        <button type="button" className="view-btn" onClick={onView}>
+          View report
+          <ArrowRightIcon />
+        </button>
+        <button type="button" className="ghost-btn" onClick={onRerun}>
+          ↻ Rerun
+        </button>
+        <button type="button" className="ghost-btn" onClick={onReset}>
+          Run another
+        </button>
+      </div>
     </div>
   );
 }

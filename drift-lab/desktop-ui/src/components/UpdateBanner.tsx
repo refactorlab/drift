@@ -34,6 +34,11 @@ export default function UpdateBanner({ autoCheck = true, compact = false }: Prop
   useEffect(() => {
     if (!autoCheck || startedAt.current) return;
     startedAt.current = true;
+    // Skip the auto-check during `tauri dev`: dev builds aren't signed and
+    // there's nothing to update to, but the plugin still logs an ERROR line
+    // when the endpoint returns 404. Settings → Updates still triggers a
+    // manual check if the user clicks it.
+    if (import.meta.env.DEV) return;
     // Silent on auto-check: a 404 / unconfigured endpoint shouldn't pop a
     // banner at every launch. Real errors surface when the user explicitly
     // clicks Check / Retry below.

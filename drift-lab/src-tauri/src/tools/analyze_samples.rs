@@ -149,7 +149,7 @@ pub async fn run(args: Args) -> Result<Output> {
     }
 
     let mut sorted: Vec<(String, FrameStats)> = frames.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.self_samples.cmp(&a.1.self_samples));
+    sorted.sort_by_key(|s| std::cmp::Reverse(s.1.self_samples));
 
     let top_n = args.top_n.unwrap_or(10);
     let mut issues = Vec::with_capacity(top_n);

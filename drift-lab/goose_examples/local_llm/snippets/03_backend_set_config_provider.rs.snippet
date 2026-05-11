@@ -1,0 +1,57 @@
+// =============================================================================
+// SNIPPET 3 — Backend handler: POST /config/set_provider
+// Source: routes/config_management.rs:720-739
+// =============================================================================
+//
+// Writes the user's chosen provider+model into goose's persistent config
+// (~/Library/Application Support/Block/goose/config.yaml on macOS).
+//
+// Crucially: also calls `create_with_default_model(...)` as a validation
+// step. This actually instantiates the provider — for "local", that means
+// hitting `LocalInferenceProvider::from_env`, which calls
+// `InferenceRuntime::get_or_init`, which initializes the LlamaBackend.
+//
+// If the model isn't downloaded, this still succeeds — the GGUF check
+// happens later, on first chat. set_config_provider only validates "is
+// this provider name valid and can it construct".
+
+#[utoipa::path(
+    post,
+    path = "/config/set_provider",
+    request_body = SetProviderRequest,
+    responses(
+        (status = 200, description = "Provider set successfully"),
+        (status = 400, description = "Invalid provider")
+    )
+)]
+pub async fn set_config_provider(
+    Json(SetProviderRequest { provider, model }): Json<SetProviderRequest>,
+) -> Result<(), ErrorResponse> {
+    // [1] Validate that the provider is registered and can be created
+    //     with no extensions. For provider="local", this constructs a
+    //     LocalInferenceProvider and runs LlamaBackend::init() if not already done.
+    create_with_default_model(&provider, Vec::new())
+        .await
+        .and_then(|_| {
+            // [2] Persist the choice to the YAML config
+            let config = Config::global();
+            config
+                .set_goose_provider(provider.clone())
+                .and_then(|_| config.set_goose_model(model.clone()))
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .map_err(|err| {
+            ErrorResponse::bad_request(format!(
+                "Failed to set provider to '{}' with model '{}': {}",
+                provider, model, err
+            ))
+        })?;
+    Ok(())
+}
+
+// SetProviderRequest is the JSON body shape:
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetProviderRequest {
+    pub provider: String,    // e.g. "local"
+    pub model: String,       // e.g. "unsloth/gemma-4-26B-A4B-it-GGUF:Q4_K_M"
+}

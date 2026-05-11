@@ -1,8 +1,27 @@
 /**
- * Thin wrapper around the Tauri 2 API. When running in a plain browser (e.g.
- * `npm run dev` outside of `tauri dev`), every command falls back to a local
- * mock so the UI is fully exercisable without the Rust side built.
+ * Thin wrapper around the Tauri 2 IPC. Every call goes straight to the Rust
+ * backend via `invoke` / `listen` — there is no browser-mode fallback. The UI
+ * is always shipped inside Tauri; running pure vite (`make ui`) will fail any
+ * call that touches the backend, by design.
+ *
+ * Why no mocks: the scan flow is end-to-end agent-driven. Fake step timers
+ * shadow the real `agent::workflow` event stream and let regressions hide.
+ * If you need to iterate on layout without the backend, work in components
+ * that don't touch this module.
  */
+
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  return tauriInvoke<T>(cmd, args);
+}
+
+async function listen<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+  return tauriListen<T>(event, (e) => cb(e.payload));
+}
+
+// ---------- Run timeline events ----------
 
 type StepStatus = "pending" | "active" | "done" | "error";
 
@@ -25,161 +44,129 @@ export interface RunError {
   message: string;
 }
 
-export const isTauri = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-// ---------- Tauri-backed implementation ----------
-async function realInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<T>(cmd, args);
-}
-
-async function realListen<T>(
-  event: string,
-  cb: (payload: T) => void,
-): Promise<() => void> {
-  const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen<T>(event, (e) => cb(e.payload));
-  return unlisten;
-}
-
-// ---------- Mock implementation (browser dev mode) ----------
-const MOCK_STEPS: { detail: string; doneDetail: string; duration: number }[] = [
-  { detail: "Scanning project for Dockerfile…",       doneDetail: "Found checkout-service:latest (247 MB)", duration: 1200 },
-  { detail: "Inspecting image layers…",                doneDetail: "Python 3.11 · FastAPI · uvicorn",         duration: 1400 },
-  { detail: "Injecting py-spy into container…",        doneDetail: "py-spy v0.3.14 installed",                duration: 1700 },
-  { detail: "Driving load · 50 RPS for 60s…",          doneDetail: "3,047 samples captured",                  duration: 2400 },
-  { detail: "Building flame graph & ranking issues…",  doneDetail: "7 issues detected",                       duration: 1400 },
-];
-
-type Listener<T> = (p: T) => void;
-const mockListeners: Record<string, Set<Listener<unknown>>> = {};
-
-function mockEmit<T>(event: string, payload: T) {
-  mockListeners[event]?.forEach((cb) => cb(payload as unknown));
-}
-
-function mockListen<T>(event: string, cb: (payload: T) => void): () => void {
-  const set = (mockListeners[event] ??= new Set());
-  const wrapped: Listener<unknown> = (p) => cb(p as T);
-  set.add(wrapped);
-  return () => set.delete(wrapped);
-}
-
-async function mockStartRun(_path: string): Promise<string> {
-  const runId = crypto.randomUUID();
-  // Fire steps with the same cadence as the example.
-  let cumulative = 350;
-  MOCK_STEPS.forEach((s, index) => {
-    setTimeout(
-      () => mockEmit<StepUpdate>("run://step", { runId, index, status: "active", detail: s.detail }),
-      cumulative,
-    );
-    cumulative += s.duration;
-    setTimeout(
-      () => mockEmit<StepUpdate>("run://step", { runId, index, status: "done", detail: s.doneDetail, durationMs: s.duration }),
-      cumulative,
-    );
-  });
-  setTimeout(
-    () => mockEmit<RunComplete>("run://complete", { runId, issuesFound: 7, criticalCount: 3 }),
-    cumulative + 600,
-  );
-  return runId;
-}
-
-async function mockSelectPath(): Promise<string | null> {
-  // No native dialog in browser; just echo a fake path.
-  return "/Users/jdoe/projects/checkout-service";
-}
-
-// ---------- Public surface ----------
 export async function selectProjectPath(): Promise<string | null> {
-  if (!isTauri()) return mockSelectPath();
   const { open } = await import("@tauri-apps/plugin-dialog");
   const result = await open({ directory: true, multiple: false, title: "Choose project" });
   if (result === null) return null;
   return Array.isArray(result) ? (result[0] ?? null) : result;
 }
 
-export async function startRun(projectPath: string): Promise<string> {
-  if (!isTauri()) return mockStartRun(projectPath);
-  return realInvoke<string>("start_run", { projectPath });
+// ---------- Agent-driven scan ----------
+
+/** Permission mode for the iterative agent. `auto` runs every tool without
+ *  prompting (the user has explicitly opted in by starting a scan); `default`
+ *  asks for approval before destructive steps; `read_only` refuses them. */
+export type AgentMode = "auto" | "default" | "read_only";
+
+export interface PromptPreset {
+  label: string;
+  prompt: string;
+}
+
+/** Server-side list of canned scan goals. UI augments with an Other slot
+ *  that submits free text as `goalPrompt`. */
+export async function listPromptPresets(): Promise<PromptPreset[]> {
+  return invoke<PromptPreset[]>("list_prompt_presets");
+}
+
+/**
+ * Start an agent-driven scan. Returns the `run_id` immediately; the agent
+ * loop runs in a Tokio task and emits `run://step`, `run://complete`, and
+ * `run://error` events tagged with that id. This split — POST-and-return,
+ * events on a separate channel — mirrors goosed's session-event bus.
+ *
+ * `goalPrompt` is `undefined` to use the default recipe prompt (see
+ * `agent::workflow::default_goal_prompt`); pass a string from
+ * `listPromptPresets` or free text for an "Other" goal.
+ */
+export async function startAgentRun(
+  projectPath: string,
+  options: { mode?: AgentMode; goalPrompt?: string } = {},
+): Promise<string> {
+  return invoke<string>("start_agent_run", {
+    projectPath,
+    mode: options.mode ?? "auto",
+    goalPrompt: options.goalPrompt ?? null,
+  });
 }
 
 export async function onStepUpdate(cb: (u: StepUpdate) => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("run://step", cb);
-  return realListen<StepUpdate>("run://step", cb);
+  return listen<StepUpdate>("run://step", cb);
 }
 
 export async function onRunComplete(cb: (c: RunComplete) => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("run://complete", cb);
-  return realListen<RunComplete>("run://complete", cb);
+  return listen<RunComplete>("run://complete", cb);
 }
 
 export async function onRunError(cb: (e: RunError) => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("run://error", cb);
-  return realListen<RunError>("run://error", cb);
+  return listen<RunError>("run://error", cb);
+}
+
+/**
+ * Streaming `AgentEvent` mirror — the Rust workflow forwards every event the
+ * iterative loop produced (text deltas, tool dispatch / completion, usage,
+ * errors) so the UI can render a "live reasoning + tool log" panel.
+ *
+ * Variants match `crate::agent::agent_loop::AgentEvent` (serde tag = "kind",
+ * snake_case). Keep this union in sync with the Rust enum — it ships over
+ * the wire as JSON, so a missing variant becomes an `unknown` at runtime.
+ */
+export type AgentEvent =
+  | { kind: "text_delta"; text: string }
+  | { kind: "assistant_message"; message: unknown }
+  | {
+      kind: "tool_dispatched";
+      id: string;
+      name: string;
+      arguments: unknown;
+    }
+  | { kind: "tool_completed"; id: string; content: string; is_error: boolean }
+  | {
+      kind: "tool_needs_approval";
+      id: string;
+      name: string;
+      arguments: unknown;
+    }
+  | { kind: "usage"; [extra: string]: unknown }
+  | { kind: "turn_budget_exceeded"; max_turns: number }
+  | { kind: "error"; message: string }
+  | { kind: "done" };
+
+export async function onAgentEvent(
+  cb: (event: AgentEvent) => void,
+): Promise<() => void> {
+  return listen<AgentEvent>("agent:event", cb);
 }
 
 // ---------- LLM agent backend ----------
 
-export type ModelBackendConfig =
-  | {
-      mode: "api";
-      base_url: string;
-      api_key: string;
-      model: string;
-    }
-  | {
-      mode: "local";
-      /** `repo_id:quant`, e.g. `unsloth/gemma-3-1b-it-GGUF:Q4_K_M`. */
-      spec: string;
-      port: number;
-    };
+/** Every supported runtime — cloud or local — speaks OpenAI-compatible HTTP,
+ *  so a single shape works for all of them. Local runtimes (Ollama, LM Studio,
+ *  Docker Model Runner, vLLM, llama-server) are discovered via
+ *  {@link probeLocalRuntimes} and saved as an `api` config pointing at their
+ *  loopback base URL. */
+export type ModelBackendConfig = {
+  mode: "api";
+  base_url: string;
+  api_key: string;
+  model: string;
+};
 
 export async function configureBackend(config: ModelBackendConfig): Promise<void> {
-  if (!isTauri()) {
-    mockSavedConfig = config;
-    mockBackendConfigured = true;
-    mockSetStatus(
-      config.mode === "api"
-        ? { kind: "ready", mode: "api", model: config.model }
-        : { kind: "ready", mode: "local", model: config.spec },
-    );
-    return;
-  }
-  return realInvoke<void>("configure_backend", { config });
+  return invoke<void>("configure_backend", { config });
 }
 
 /** Persist the config without resolving (download / spawn happens on first chat). */
 export async function saveBackendConfig(config: ModelBackendConfig): Promise<void> {
-  if (!isTauri()) {
-    mockSavedConfig = config;
-    mockBackendConfigured = true;
-    mockSetStatus(
-      config.mode === "api"
-        ? { kind: "idle", mode: "api", model: config.model }
-        : { kind: "idle", mode: "local", model: config.spec },
-    );
-    return;
-  }
-  return realInvoke<void>("save_backend_config", { config });
+  return invoke<void>("save_backend_config", { config });
 }
 
 export async function loadBackendConfig(): Promise<ModelBackendConfig | null> {
-  if (!isTauri()) return mockSavedConfig;
-  return realInvoke<ModelBackendConfig | null>("load_backend_config");
+  return invoke<ModelBackendConfig | null>("load_backend_config");
 }
 
 export async function clearBackend(): Promise<void> {
-  if (!isTauri()) {
-    mockSavedConfig = null;
-    mockBackendConfigured = false;
-    mockSetStatus({ kind: "unconfigured" });
-    return;
-  }
-  return realInvoke<void>("clear_backend");
+  return invoke<void>("clear_backend");
 }
 
 /**
@@ -189,21 +176,18 @@ export async function clearBackend(): Promise<void> {
 export type BackendStatus =
   | { kind: "unconfigured" }
   | { kind: "idle"; mode: string; model: string }
-  | { kind: "downloading"; file: string }
   | { kind: "starting" }
   | { kind: "ready"; mode: string; model: string }
   | { kind: "error"; message: string };
 
 export async function getBackendStatus(): Promise<BackendStatus> {
-  if (!isTauri()) return mockStatus;
-  return realInvoke<BackendStatus>("get_backend_status");
+  return invoke<BackendStatus>("get_backend_status");
 }
 
 export async function onBackendStatus(
   cb: (status: BackendStatus) => void,
 ): Promise<() => void> {
-  if (!isTauri()) return mockListen("backend:status", cb);
-  return realListen<BackendStatus>("backend:status", cb);
+  return listen<BackendStatus>("backend:status", cb);
 }
 
 /**
@@ -211,59 +195,24 @@ export async function onBackendStatus(
  * `chat:done`; errors via `chat:error`. Returns once the request is queued.
  */
 export async function chat(message: string, preamble?: string): Promise<void> {
-  if (!isTauri()) return mockChat(message);
-  return realInvoke<void>("chat", { message, preamble });
+  return invoke<void>("chat", { message, preamble });
 }
 
 /** Non-streaming variant — returns the full response as a string. */
 export async function chatOneshot(message: string, preamble?: string): Promise<string> {
-  if (!isTauri()) return mockChatOneshot(message);
-  return realInvoke<string>("chat_oneshot", { message, preamble });
+  return invoke<string>("chat_oneshot", { message, preamble });
 }
 
 export async function onChatToken(cb: (token: string) => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("chat:token", cb);
-  return realListen<string>("chat:token", cb);
+  return listen<string>("chat:token", cb);
 }
 
 export async function onChatDone(cb: () => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("chat:done", () => cb());
-  return realListen<unknown>("chat:done", () => cb());
+  return listen<unknown>("chat:done", () => cb());
 }
 
 export async function onChatError(cb: (msg: string) => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("chat:error", cb);
-  return realListen<string>("chat:error", cb);
-}
-
-// ---------- Mock chat (browser dev) ----------
-let mockBackendConfigured = false;
-let mockSavedConfig: ModelBackendConfig | null = null;
-let mockStatus: BackendStatus = { kind: "unconfigured" };
-
-function mockSetStatus(s: BackendStatus) {
-  mockStatus = s;
-  mockEmit("backend:status", s);
-}
-
-async function mockChat(message: string): Promise<void> {
-  if (!mockBackendConfigured) {
-    setTimeout(() => mockEmit("chat:error", "backend not configured (mock)"), 50);
-    setTimeout(() => mockEmit("chat:done", null), 60);
-    return;
-  }
-  const reply = `(mock) you said: ${message}`;
-  let cumulative = 50;
-  for (const word of reply.split(" ")) {
-    setTimeout(() => mockEmit("chat:token", word + " "), cumulative);
-    cumulative += 80;
-  }
-  setTimeout(() => mockEmit("chat:done", null), cumulative + 50);
-}
-
-async function mockChatOneshot(message: string): Promise<string> {
-  if (!mockBackendConfigured) throw new Error("backend not configured (mock)");
-  return `(mock) you said: ${message}`;
+  return listen<string>("chat:error", cb);
 }
 
 // ---------- Multi-provider config (Phase 1.5) ----------
@@ -284,31 +233,6 @@ export interface ProviderPreset {
   description: string;
 }
 
-export interface LocalModelPreset {
-  spec: string;
-  name: string;
-  sizeGb: number;
-  description: string;
-  tags: string[];
-}
-
-export interface HfModelHit {
-  repoId: string;
-  author: string | null;
-  downloads: number;
-  likes: number;
-  lastModified: string | null;
-  tags: string[];
-}
-
-export interface HfQuantFile {
-  filename: string;
-  /** e.g. `Q4_K_M`, `IQ3_M`, `F16`. `null` if not parseable. */
-  quant: string | null;
-  /** Bytes, when HuggingFace reports it. */
-  size: number | null;
-}
-
 export interface SavedProvider {
   id: string;
   name: string;
@@ -322,24 +246,44 @@ export interface AppConfig {
   providers: SavedProvider[];
 }
 
-export async function listPresets(): Promise<ProviderPreset[]> {
-  if (!isTauri()) return MOCK_PRESETS;
-  return realInvoke<ProviderPreset[]>("list_presets");
+/** One local runtime detected on the user's machine via `probeLocalRuntimes`.
+ *  Plug-and-play: whichever runtime (Ollama, LM Studio, Docker Model Runner)
+ *  the user already has installed shows up here. */
+export interface DiscoveredRuntime {
+  presetId: string;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  /** Set when models were detected via a sidechannel (e.g. `docker model list`)
+   *  but the HTTP endpoint isn't reachable. UI should disable activation and
+   *  show this string. */
+  note?: string;
 }
 
-export async function listLocalPresets(): Promise<LocalModelPreset[]> {
-  if (!isTauri()) return MOCK_LOCAL_PRESETS;
-  return realInvoke<LocalModelPreset[]>("list_local_presets");
+export async function listPresets(): Promise<ProviderPreset[]> {
+  return invoke<ProviderPreset[]>("list_presets");
+}
+
+/** Probe every curated local OpenAI-compatible runtime in parallel with a
+ *  hard 800ms per-runtime timeout. Returns only the ones that responded.
+ *  Also writes the result to the SQLite cache. */
+export async function probeLocalRuntimes(): Promise<DiscoveredRuntime[]> {
+  return invoke<DiscoveredRuntime[]>("probe_local_runtimes");
+}
+
+/** Read last-known runtimes from the SQLite cache without doing a network
+ *  probe. Call this on mount for an instant first paint; then call
+ *  {@link probeLocalRuntimes} in the background to refresh. */
+export async function cachedLocalRuntimes(): Promise<DiscoveredRuntime[]> {
+  return invoke<DiscoveredRuntime[]>("cached_local_runtimes");
 }
 
 export async function getAppConfig(): Promise<AppConfig> {
-  if (!isTauri()) return mockAppConfig;
-  return realInvoke<AppConfig>("get_app_config");
+  return invoke<AppConfig>("get_app_config");
 }
 
 export async function testProvider(config: ModelBackendConfig): Promise<void> {
-  if (!isTauri()) return;
-  return realInvoke<void>("test_provider", { config });
+  return invoke<void>("test_provider", { config });
 }
 
 export async function saveProvider(
@@ -347,91 +291,20 @@ export async function saveProvider(
   config: ModelBackendConfig,
   activate: boolean,
 ): Promise<SavedProvider> {
-  if (!isTauri()) {
-    const provider: SavedProvider = {
-      id: crypto.randomUUID(),
-      name,
-      config,
-      createdAt: Math.floor(Date.now() / 1000),
-    };
-    mockAppConfig.providers.push(provider);
-    if (activate) {
-      mockAppConfig.activeProviderId = provider.id;
-      mockAppConfig.onboardingComplete = true;
-    }
-    return provider;
-  }
-  return realInvoke<SavedProvider>("save_provider", { name, config, activate });
+  return invoke<SavedProvider>("save_provider", { name, config, activate });
 }
 
 export async function activateProvider(id: string): Promise<void> {
-  if (!isTauri()) {
-    mockAppConfig.activeProviderId = id;
-    return;
-  }
-  return realInvoke<void>("activate_provider", { id });
+  return invoke<void>("activate_provider", { id });
 }
 
 export async function deleteProvider(id: string): Promise<void> {
-  if (!isTauri()) {
-    mockAppConfig.providers = mockAppConfig.providers.filter((p) => p.id !== id);
-    if (mockAppConfig.activeProviderId === id) mockAppConfig.activeProviderId = null;
-    return;
-  }
-  return realInvoke<void>("delete_provider", { id });
+  return invoke<void>("delete_provider", { id });
 }
 
 export async function resetAllConfig(): Promise<void> {
-  if (!isTauri()) {
-    mockAppConfig = {
-      onboardingComplete: false,
-      activeProviderId: null,
-      providers: [],
-    };
-    return;
-  }
-  return realInvoke<void>("reset_all_config");
+  return invoke<void>("reset_all_config");
 }
-
-// Mocks for browser dev mode
-const MOCK_PRESETS: ProviderPreset[] = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    models: ["gpt-4o", "gpt-4o-mini"],
-    apiKeyUrl: "https://platform.openai.com/api-keys",
-    requiresApiKey: true,
-    description: "OpenAI's hosted API. Bring your own key.",
-  },
-  {
-    id: "ollama",
-    name: "Ollama (local)",
-    baseUrl: "http://localhost:11434/v1",
-    models: [],
-    apiKeyUrl: "https://ollama.com",
-    requiresApiKey: false,
-    description: "Runs models on this machine.",
-  },
-  {
-    id: "custom",
-    name: "Custom (OpenAI-compatible)",
-    baseUrl: "http://localhost:8080/v1",
-    models: [],
-    apiKeyUrl: "",
-    requiresApiKey: false,
-    description: "Any OpenAI-compatible HTTP endpoint.",
-  },
-];
-const MOCK_LOCAL_PRESETS: LocalModelPreset[] = [
-  {
-    spec: "unsloth/gemma-4-26B-A4B-it-GGUF:Q4_K_M",
-    name: "Gemma 4 26B A4B",
-    sizeGb: 15.8,
-    description: "Mixture-of-experts. Strong general + vision.",
-    tags: ["Recommended", "Vision"],
-  },
-];
 
 // ---------- Generic helpers ----------
 
@@ -451,30 +324,7 @@ export function withTimeout<T>(p: Promise<T>, ms: number, label = "operation"): 
   ]);
 }
 
-// ---------- Local-server pre-flight ----------
-
-/**
- * Returns the `llama-server --version` string when the binary is on PATH,
- * or throws with an install hint when it isn't. UI calls this before
- * attempting to activate a Local model so we fail fast instead of leaving
- * the user staring at a stuck button.
- */
-export async function checkLlamaServer(): Promise<string> {
-  if (!isTauri()) return "mock";
-  return realInvoke<string>("check_llama_server");
-}
-
 // ---------- Live model discovery ----------
-
-export async function searchHfModels(query: string): Promise<HfModelHit[]> {
-  if (!isTauri()) return [];
-  return realInvoke<HfModelHit[]>("search_hf_models", { query });
-}
-
-export async function listHfQuants(repoId: string): Promise<HfQuantFile[]> {
-  if (!isTauri()) return [];
-  return realInvoke<HfQuantFile[]>("list_hf_quants", { repoId });
-}
 
 /** Probe an OpenAI-compatible endpoint (cloud or local) for its model list.
  *  Throws if unreachable or non-OpenAI-shaped response. */
@@ -482,17 +332,11 @@ export async function listModelsFromEndpoint(
   baseUrl: string,
   apiKey?: string,
 ): Promise<string[]> {
-  if (!isTauri()) return [];
-  return realInvoke<string[]>("list_models_from_endpoint", {
+  return invoke<string[]>("list_models_from_endpoint", {
     baseUrl,
     apiKey: apiKey || null,
   });
 }
-let mockAppConfig: AppConfig = {
-  onboardingComplete: false,
-  activeProviderId: null,
-  providers: [],
-};
 
 // ---------- Auto-update ----------
 
@@ -510,11 +354,8 @@ export type UpdateProgress =
 
 /**
  * Check the configured updater endpoint. Returns the available update or null.
- * In browser dev mode (`make ui`) this always returns null — the updater plugin
- * isn't reachable without the Tauri shell.
  */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
-  if (!isTauri()) return null;
   const { check } = await import("@tauri-apps/plugin-updater");
   const update = await check();
   if (!update || !update.available) return null;
@@ -534,7 +375,6 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
 export async function downloadAndInstallUpdate(
   onProgress?: (p: UpdateProgress) => void,
 ): Promise<void> {
-  if (!isTauri()) throw new Error("updater unavailable outside Tauri");
   const { check } = await import("@tauri-apps/plugin-updater");
   const update = await check();
   if (!update || !update.available) throw new Error("no update available");
@@ -562,7 +402,6 @@ export async function downloadAndInstallUpdate(
 
 /** App version pulled from the Tauri config — no network round-trip. */
 export async function getAppVersion(): Promise<string> {
-  if (!isTauri()) return "dev";
   const { getVersion } = await import("@tauri-apps/api/app");
   return getVersion();
 }
@@ -591,39 +430,31 @@ export interface ConversationSummary {
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
-  if (!isTauri()) return [];
-  return realInvoke<ConversationSummary[]>("list_conversations");
+  return invoke<ConversationSummary[]>("list_conversations");
 }
 
 export async function loadConversation(id: string): Promise<Conversation> {
-  if (!isTauri())
-    return { id, title: "Mock", messages: [], updatedAt: Math.floor(Date.now() / 1000) };
-  return realInvoke<Conversation>("load_conversation", { id });
+  return invoke<Conversation>("load_conversation", { id });
 }
 
 export async function newConversation(): Promise<void> {
-  if (!isTauri()) return;
-  return realInvoke<void>("new_conversation");
+  return invoke<void>("new_conversation");
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  if (!isTauri()) return;
-  return realInvoke<void>("delete_conversation", { id });
+  return invoke<void>("delete_conversation", { id });
 }
 
 export async function getCurrentConversation(): Promise<Conversation | null> {
-  if (!isTauri()) return null;
-  return realInvoke<Conversation | null>("get_current_conversation");
+  return invoke<Conversation | null>("get_current_conversation");
 }
 
 export async function cancelChat(): Promise<void> {
-  if (!isTauri()) return;
-  return realInvoke<void>("cancel_chat");
+  return invoke<void>("cancel_chat");
 }
 
 export async function onChatCancelled(cb: () => void): Promise<() => void> {
-  if (!isTauri()) return mockListen("chat:cancelled", () => cb());
-  return realListen<unknown>("chat:cancelled", () => cb());
+  return listen<unknown>("chat:cancelled", () => cb());
 }
 
 /**

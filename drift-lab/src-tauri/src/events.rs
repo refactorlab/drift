@@ -3,6 +3,10 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepStatus {
+    // Part of the StepStatus wire contract consumed by the frontend; the backend
+    // never emits Pending (steps start as Active), but the variant must exist so
+    // the serde representation stays in sync with desktop-ui's StepStatus type.
+    #[allow(dead_code)]
     Pending,
     Active,
     Done,
@@ -42,6 +46,10 @@ pub mod topic {
     pub const ERROR: &str = "run://error";
 
     pub const BACKEND_STATUS: &str = "backend:status";
+
+    /// Iterative-agent stream events (see `agent` module). One event per
+    /// `AgentEvent` variant — payload is the serialised enum.
+    pub const AGENT_EVENT: &str = "agent:event";
 }
 
 /// Coarse lifecycle of the LLM backend, broadcast as `backend:status` events.
@@ -50,11 +58,9 @@ pub mod topic {
 pub enum BackendStatus {
     /// No persisted config — the welcome path.
     Unconfigured,
-    /// Config persisted but the runtime (client / llama-server) hasn't been resolved yet.
+    /// Config persisted but the OpenAI-compatible client hasn't been built yet.
     Idle { mode: String, model: String },
-    /// Pulling a GGUF from HuggingFace.
-    Downloading { file: String },
-    /// llama-server spawned, waiting for the OpenAI-compatible endpoint to come up.
+    /// Resolving the client (building HTTP client, validating URL).
     Starting,
     /// Ready to take chat requests.
     Ready { mode: String, model: String },

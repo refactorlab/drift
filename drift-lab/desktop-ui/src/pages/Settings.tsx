@@ -1,35 +1,30 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { ModelTag } from "../components/Onboarding";
 import Orbs from "../components/Orbs";
 import {
   AppConfig,
   BackendStatus,
-  HfModelHit,
-  HfQuantFile,
-  LocalModelPreset,
+  DiscoveredRuntime,
   ModelBackendConfig,
   ProviderPreset,
   SavedProvider,
   UpdateInfo,
   UpdateProgress,
   activateProvider,
+  cachedLocalRuntimes,
   checkForUpdate,
-  checkLlamaServer,
   deleteProvider,
   downloadAndInstallUpdate,
   getAppConfig,
   getAppVersion,
   getBackendStatus,
-  listHfQuants,
-  listLocalPresets,
   listModelsFromEndpoint,
   listPresets,
   onBackendStatus,
+  probeLocalRuntimes,
   resetAllConfig,
   saveProvider,
-  searchHfModels,
   testProvider,
   withTimeout,
 } from "../lib/tauri";
@@ -79,7 +74,7 @@ export default function SettingsPage() {
             Models
           </TabButton>
           <TabButton active={tab === "local"} onClick={() => switchTab("local")}>
-            Local Inference
+            Local Runtimes
           </TabButton>
           <TabButton active={tab === "providers"} onClick={() => switchTab("providers")}>
             Providers
@@ -92,7 +87,7 @@ export default function SettingsPage() {
         {config && tab === "models" && (
           <ModelsTab config={config} status={status} refresh={refresh} switchTab={switchTab} />
         )}
-        {config && tab === "local" && <LocalTab config={config} refresh={refresh} />}
+        {config && tab === "local" && <LocalRuntimesTab refresh={refresh} />}
         {config && tab === "providers" && (
           <ProvidersTab config={config} refresh={refresh} />
         )}
@@ -140,10 +135,9 @@ function ModelsTab({
     <>
       {active ? (
         <section className="settings-card">
-          <div className="settings-card-title">{labelFor(active.config)}</div>
+          <div className="settings-card-title">{active.config.model}</div>
           <div className="settings-card-sub">
-            {active.name} · {active.config.mode === "api" ? "Cloud API" : "Local Inference"} ·{" "}
-            <StatusBadge status={status} />
+            {active.name} · <StatusBadge status={status} />
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
             <button type="button" className="primary-btn" onClick={() => switchTab("providers")}>
@@ -152,9 +146,9 @@ function ModelsTab({
             <button
               type="button"
               className="ghost-btn"
-              onClick={() => switchTab(active.config.mode === "api" ? "providers" : "local")}
+              onClick={() => switchTab("local")}
             >
-              Configure providers
+              Detected local runtimes
             </button>
           </div>
         </section>
@@ -162,8 +156,8 @@ function ModelsTab({
         <div className="settings-section">
           <h2>No model active</h2>
           <p className="muted">
-            Add a provider in <strong>Providers</strong> or pick a local model in{" "}
-            <strong>Local Inference</strong>.
+            Pick a detected local runtime in <strong>Local Runtimes</strong> or add a
+            cloud API key in <strong>Providers</strong>.
           </p>
         </div>
       )}
@@ -193,24 +187,211 @@ function ModelsTab({
   );
 }
 
-function labelFor(c: ModelBackendConfig): string {
-  return c.mode === "api" ? c.model : c.spec;
-}
-
 function StatusBadge({ status }: { status: BackendStatus }) {
   const label =
     status.kind === "unconfigured"
       ? "Not configured"
       : status.kind === "idle"
         ? "Idle"
-        : status.kind === "downloading"
-          ? `Downloading ${status.file}`
-          : status.kind === "starting"
-            ? "Starting…"
-            : status.kind === "ready"
-              ? "Ready"
-              : `Error: ${status.message}`;
+        : status.kind === "starting"
+          ? "Starting…"
+          : status.kind === "ready"
+            ? "Ready"
+            : `Error: ${status.message}`;
   return <span className={`status-badge status-${status.kind}`}>{label}</span>;
+}
+
+// ---------- Local Runtimes tab ----------
+//
+// Plug-and-play: probes every curated local OpenAI-compatible runtime
+// (Ollama, LM Studio, Docker Model Runner) in parallel and shows whichever
+// one the user already has installed and running. One click on a model
+// saves it as an Api provider pointed at the runtime's loopback URL.
+function LocalRuntimesTab({ refresh }: { refresh: () => Promise<void> }) {
+  const [runtimes, setRuntimes] = useState<DiscoveredRuntime[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [activating, setActivating] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  async function rescan() {
+    setError(null);
+    setScanning(true);
+    try {
+      setRuntimes(await probeLocalRuntimes());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  useEffect(() => {
+    // Instant first paint from the SQLite cache, then a fresh probe in the
+    // background. If cache is empty (first launch), the spinner shows until
+    // the probe returns.
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await cachedLocalRuntimes();
+        if (!cancelled && cached.length > 0) setRuntimes(cached);
+      } catch {
+        // Cache miss is fine — fall through to the probe.
+      }
+      if (!cancelled) await rescan();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function activate(rt: DiscoveredRuntime, modelId: string) {
+    setError(null);
+    if (rt.note) {
+      // Surface the runtime's setup hint instead of silently failing to
+      // connect — e.g. Docker Model Runner detected via CLI but host-side
+      // TCP support is off. The user needs to act on the hint first.
+      setError(rt.note);
+      return;
+    }
+    setActivating(`${rt.presetId}:${modelId}`);
+    try {
+      const config: ModelBackendConfig = {
+        mode: "api",
+        base_url: rt.baseUrl,
+        api_key: "not-needed",
+        model: modelId,
+      };
+      await saveProvider(`${rt.name} · ${modelId}`, config, true);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActivating(null);
+    }
+  }
+
+  return (
+    <section className="settings-card">
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 12,
+        }}
+      >
+        <div>
+          <div className="settings-card-title" style={{ fontSize: 16 }}>
+            Detected local runtimes
+          </div>
+          <p className="muted" style={{ marginTop: 4, marginBottom: 0 }}>
+            drift-lab probes <code>localhost:11434</code> (Ollama),{" "}
+            <code>localhost:1234</code> (LM Studio), and{" "}
+            <code>localhost:12434</code> (Docker Model Runner) in parallel. Install
+            any one of them, run a model, and it shows up here.
+          </p>
+        </div>
+        <button type="button" className="ghost-btn" onClick={rescan} disabled={scanning}>
+          {scanning ? "Scanning…" : "↻ Re-scan"}
+        </button>
+      </div>
+
+      {error && <div className="onboarding-error" style={{ marginTop: 14 }}>{error}</div>}
+
+      {runtimes === null && (
+        <p className="muted" style={{ marginTop: 14 }}>Probing…</p>
+      )}
+
+      {runtimes !== null && runtimes.length === 0 && (
+        <div className="info-banner" style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 500, marginBottom: 4 }}>
+            No local runtime detected
+          </div>
+          <p className="muted" style={{ marginTop: 0, marginBottom: 8, fontSize: 13 }}>
+            Install any one of these, then re-scan:
+          </p>
+          <ul className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+            <li>
+              <strong>Ollama</strong> ·{" "}
+              <a href="https://ollama.com" target="_blank" rel="noreferrer">
+                ollama.com
+              </a>
+            </li>
+            <li>
+              <strong>LM Studio</strong> ·{" "}
+              <a href="https://lmstudio.ai" target="_blank" rel="noreferrer">
+                lmstudio.ai
+              </a>
+            </li>
+            <li>
+              <strong>Docker Model Runner</strong> ·{" "}
+              <a
+                href="https://docs.docker.com/ai/model-runner/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Docker Desktop 4.40+
+              </a>{" "}
+              (enable in Settings → AI)
+            </li>
+          </ul>
+        </div>
+      )}
+
+      {runtimes !== null &&
+        runtimes.map((rt) => (
+          <div key={rt.presetId} style={{ marginTop: 20 }}>
+            <div className="settings-card-title" style={{ fontSize: 14 }}>
+              {rt.name}{" "}
+              <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
+                · {rt.baseUrl}
+              </span>
+            </div>
+            {rt.note && (
+              <div className="info-banner" style={{ marginTop: 8 }}>
+                <p className="muted" style={{ marginTop: 0, marginBottom: 0, fontSize: 13 }}>
+                  {rt.note}
+                </p>
+              </div>
+            )}
+            {rt.models.length === 0 ? (
+              <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+                Up but no models loaded. Pull one (e.g.{" "}
+                <code>ollama pull llama3.2:1b</code> or{" "}
+                <code>docker model pull ai/smollm2</code>) and re-scan.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+                {rt.models.map((m) => {
+                  const key = `${rt.presetId}:${m}`;
+                  const blocked = !!rt.note;
+                  return (
+                    <div key={m} className="provider-row">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 500, wordBreak: "break-all" }}>{m}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="primary-btn"
+                        onClick={() => activate(rt, m)}
+                        disabled={activating === key}
+                        title={blocked ? rt.note : undefined}
+                      >
+                        {activating === key
+                          ? "Activating…"
+                          : blocked
+                            ? "Setup needed"
+                            : "Use this model"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ))}
+    </section>
+  );
 }
 
 // ---------- Providers tab ----------
@@ -295,7 +476,7 @@ function ProviderRow({
           {isActive && <span className="status-badge status-ready">Active</span>}
         </div>
         <div className="muted" style={{ fontSize: 12, wordBreak: "break-all" }}>
-          {labelFor(provider.config)}
+          {provider.config.model}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -502,330 +683,6 @@ function AddProviderForm({
   );
 }
 
-/** Calm, copy-paste-friendly install nudge. Local inference is optional —
- *  Cloud API mode is a working alternative — so this is informational, not
- *  an error. */
-function LlamaServerMissingBanner() {
-  const [copied, setCopied] = useState(false);
-  const cmd =
-    typeof navigator !== "undefined" && /Mac/.test(navigator.platform)
-      ? "brew install llama.cpp"
-      : "# See https://github.com/ggml-org/llama.cpp/releases";
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(cmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // Clipboard blocked — fall through; the command is visible inline.
-    }
-  };
-
-  return (
-    <div className="info-banner" style={{ marginBottom: 14 }}>
-      <div style={{ fontWeight: 500, marginBottom: 4 }}>
-        Local inference needs <code>llama-server</code> on this machine
-      </div>
-      <p className="muted" style={{ marginTop: 0, marginBottom: 10, fontSize: 13 }}>
-        Local Inference is optional. Install <code>llama-server</code> to download
-        and run open-source models, or skip this tab and use a Cloud API
-        provider — Ollama, Docker Model Runner, OpenAI, etc. all work without
-        any extra install.
-      </p>
-      <div className="install-cmd-row">
-        <code className="install-cmd">{cmd}</code>
-        <button type="button" className="ghost-btn" onClick={copy}>
-          {copied ? "Copied!" : "Copy"}
-        </button>
-      </div>
-      <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
-        Other platforms: see{" "}
-        <a
-          href="https://github.com/ggml-org/llama.cpp/releases"
-          target="_blank"
-          rel="noreferrer"
-        >
-          llama.cpp releases
-        </a>
-        .
-      </p>
-    </div>
-  );
-}
-
-// ---------- Local Inference tab ----------
-function LocalTab({
-  config,
-  refresh,
-}: {
-  config: AppConfig;
-  refresh: () => Promise<void>;
-}) {
-  const [presets, setPresets] = useState<LocalModelPreset[]>([]);
-  const [activating, setActivating] = useState<string | null>(null);
-  const [activateError, setActivateError] = useState<string | null>(null);
-  const [llamaCheck, setLlamaCheck] = useState<{
-    ok: boolean;
-    msg: string;
-  } | null>(null);
-
-  useEffect(() => {
-    listLocalPresets().then(setPresets);
-    // Run the pre-flight on mount so users see the install hint *before*
-    // they click anything that depends on llama-server.
-    checkLlamaServer()
-      .then((v) => setLlamaCheck({ ok: true, msg: v }))
-      .catch((e) =>
-        setLlamaCheck({
-          ok: false,
-          msg: e instanceof Error ? e.message : String(e),
-        }),
-      );
-  }, []);
-
-  // Local providers already saved (so we know which presets are "downloaded")
-  const savedSpecs = new Set(
-    config.providers
-      .filter((p) => p.config.mode === "local")
-      .map((p) => (p.config as Extract<ModelBackendConfig, { mode: "local" }>).spec),
-  );
-
-  async function activate(preset: LocalModelPreset) {
-    setActivateError(null);
-    if (llamaCheck && !llamaCheck.ok) {
-      setActivateError(llamaCheck.msg);
-      return;
-    }
-    setActivating(preset.spec);
-    try {
-      const existing = config.providers.find(
-        (p) => p.config.mode === "local" && p.config.spec === preset.spec,
-      );
-      if (existing) {
-        await activateProvider(existing.id);
-      } else {
-        const cfg: ModelBackendConfig = { mode: "local", spec: preset.spec, port: 8080 };
-        await saveProvider(preset.name, cfg, true);
-      }
-      // The Rust side resolves the backend in a background task and emits
-      // `backend:status` events. We refresh immediately to flip the UI to
-      // "Active"; the parent SettingsPage already subscribes to status.
-      await refresh();
-    } catch (e) {
-      setActivateError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setActivating(null);
-    }
-  }
-
-  return (
-    <section className="settings-card">
-      <div className="settings-card-title" style={{ fontSize: 16 }}>
-        Local Inference Models
-      </div>
-      <p className="muted" style={{ marginTop: 4, marginBottom: 14 }}>
-        Curated GGUF models. <code>llama-server</code> downloads them on first activation
-        — the first run of a multi-GB model can take several minutes.
-      </p>
-
-      {/* Pre-flight: surface install instructions calmly. Local inference is
-          optional — Cloud API providers (Ollama / Docker / OpenAI) are a
-          fully working alternative that needs no extra install. */}
-      {llamaCheck && !llamaCheck.ok && <LlamaServerMissingBanner />}
-      {llamaCheck && llamaCheck.ok && (
-        <div className="muted" style={{ fontSize: 12, marginBottom: 14 }}>
-          Detected: {llamaCheck.msg}
-        </div>
-      )}
-
-      {/* Inline error from the most recent activation attempt. */}
-      {activateError && (
-        <div className="onboarding-error" style={{ marginBottom: 14 }}>
-          {activateError}
-        </div>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {presets.map((p) => {
-          const isSaved = savedSpecs.has(p.spec);
-          const activeProvider = config.providers.find(
-            (sp) => sp.id === config.activeProviderId,
-          );
-          const isActive =
-            activeProvider?.config.mode === "local" &&
-            activeProvider.config.spec === p.spec;
-          return (
-            <div key={p.spec} className="provider-row">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500 }}>
-                  {p.name}{" "}
-                  <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
-                    · {p.sizeGb} GB
-                  </span>
-                  {p.tags.map((t) => (
-                    <ModelTag key={t} tag={t} />
-                  ))}
-                  {isActive && <span className="status-badge status-ready">Active</span>}
-                </div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {p.description}
-                </div>
-                <div className="muted" style={{ fontSize: 11, wordBreak: "break-all" }}>
-                  {p.spec}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {!isActive && (
-                  <button
-                    type="button"
-                    className="primary-btn"
-                    onClick={() => activate(p)}
-                    disabled={activating === p.spec}
-                  >
-                    {activating === p.spec
-                      ? "Activating…"
-                      : isSaved
-                        ? "Activate"
-                        : "Download & activate"}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <HfSearch
-        onActivate={async (spec, label) => {
-          const cfg: ModelBackendConfig = { mode: "local", spec, port: 8080 };
-          await saveProvider(label, cfg, true);
-          await refresh();
-        }}
-      />
-    </section>
-  );
-}
-
-// ---------- HuggingFace search section ----------
-function HfSearch({
-  onActivate,
-}: {
-  onActivate: (spec: string, label: string) => Promise<void>;
-}) {
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<HfModelHit[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [quants, setQuants] = useState<Record<string, HfQuantFile[]>>({});
-
-  async function runSearch() {
-    if (!query.trim()) return;
-    setSearching(true);
-    setError(null);
-    try {
-      setHits(await searchHfModels(query));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function expand(repoId: string) {
-    setExpanded(expanded === repoId ? null : repoId);
-    if (!quants[repoId]) {
-      try {
-        const q = await listHfQuants(repoId);
-        setQuants((prev) => ({ ...prev, [repoId]: q }));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    }
-  }
-
-  return (
-    <div style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
-      <div className="settings-card-title" style={{ fontSize: 16 }}>
-        Search HuggingFace
-      </div>
-      <p className="muted" style={{ marginTop: 4, marginBottom: 12 }}>
-        Find any GGUF model on HuggingFace and pick a quant.
-      </p>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") runSearch();
-          }}
-          placeholder="gemma, llama, qwen, deepseek…"
-          className="onboarding-input"
-        />
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={runSearch}
-          disabled={searching || !query.trim()}
-        >
-          {searching ? "…" : "Search"}
-        </button>
-      </div>
-      {error && <div className="onboarding-error">{error}</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-        {hits.map((h) => (
-          <div key={h.repoId} className="provider-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500, wordBreak: "break-all" }}>{h.repoId}</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  ↓ {h.downloads.toLocaleString()} · ♥ {h.likes.toLocaleString()}
-                </div>
-              </div>
-              <button type="button" className="ghost-btn" onClick={() => expand(h.repoId)}>
-                {expanded === h.repoId ? "Hide quants" : "Pick quant"}
-              </button>
-            </div>
-            {expanded === h.repoId && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-                {!quants[h.repoId] ? (
-                  <div className="muted">Loading…</div>
-                ) : quants[h.repoId].length === 0 ? (
-                  <div className="muted">No GGUF files in this repo.</div>
-                ) : (
-                  quants[h.repoId].map((q) => (
-                    <div key={q.filename} className="provider-row" style={{ background: "var(--bg-soft)" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 500 }}>{q.quant ?? "?"}</div>
-                        <div className="muted" style={{ fontSize: 11, wordBreak: "break-all" }}>
-                          {q.filename}
-                          {q.size && ` · ${(q.size / 1_000_000_000).toFixed(2)} GB`}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        disabled={!q.quant}
-                        onClick={() =>
-                          q.quant && onActivate(`${h.repoId}:${q.quant}`, h.repoId)
-                        }
-                      >
-                        Download & activate
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ---------- Updates tab ----------
 type UpdatePhase =
   | "idle"
@@ -834,15 +691,9 @@ type UpdatePhase =
   | "available"
   | "downloading"
   | "installing"
-  | "not-configured" // updater disabled or release pipeline not live yet
+  | "not-configured"
   | "error";
 
-/** Recognise errors that mean "the updater isn't set up yet" — distinct from
- *  real failures we'd want to bug the user about. Matches:
- *  - the plugin saying it's disabled (`active: false`)
- *  - reqwest network errors for the release JSON
- *  - GitHub returning 404 for missing releases
- *  - Tauri "no manifest" / "invalid signature" / placeholder-pubkey states */
 function isUnconfiguredUpdaterError(msg: string): boolean {
   const m = msg.toLowerCase();
   return (
@@ -875,9 +726,6 @@ function UpdatesTab() {
     setErrorMsg(null);
     setInfo(null);
     try {
-      // 8s ceiling — well under the OS-level connect timeout. If the update
-      // endpoint is dead/slow/disabled, the UI fails to "not configured"
-      // instead of leaving the user staring at a Checking… spinner.
       const next = await withTimeout(checkForUpdate(), 8000, "Update check");
       if (!next) {
         setPhase("uptodate");
@@ -983,8 +831,6 @@ function UpdatesTab() {
   );
 }
 
-/** Calm, informative replacement for the raw HTTP error. Renders when the
- *  updater plugin is disabled OR the release pipeline isn't live yet. */
 function NotConfiguredPanel({ detail }: { detail?: string }) {
   const [showDetail, setShowDetail] = useState(false);
   return (
@@ -1019,12 +865,6 @@ function NotConfiguredPanel({ detail }: { detail?: string }) {
         >
           {detail ?? "(no details)"}
         </pre>
-        <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-          To enable: publish a GitHub release with a <code>latest.json</code>{" "}
-          asset, replace <code>pubkey</code> with your Tauri signer key, and
-          set <code>plugins.updater.active</code> back to <code>true</code> in{" "}
-          <code>src-tauri/tauri.conf.json</code>.
-        </p>
       </details>
     </div>
   );

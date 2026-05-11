@@ -1,0 +1,140 @@
+// =============================================================================
+// SNIPPET 7 — Inside generate_with_native_tools / generate_with_emulated_tools
+// Source: providers/local_inference/inference_engine.rs:368-411
+//         providers/local_inference/inference_emulated_tools.rs:352-453
+//         providers/local_inference/inference_native_tools.rs (Jinja path)
+// =============================================================================
+//
+// This is the actual token-by-token generation. Runs on a blocking thread
+// inside spawn_blocking, communicates back via mpsc::Sender<Result<(Option<Message>, ...)>>.
+
+// === The shared generation_loop (inference_engine.rs) ===
+pub(super) fn generation_loop(
+    model: &LlamaModel,
+    ctx: &mut LlamaContext,
+    settings: &ModelSettings,
+    prompt_token_count: usize,
+    effective_ctx: usize,
+    mut on_piece: impl FnMut(&str) -> Result<TokenAction, ProviderError>,
+) -> Result<i32, ProviderError> {
+    let mut sampler = build_sampler(settings);
+    let mut generated = 0;
+    let mut decoder = encoding_rs::UTF_8.new_decoder();
+
+    loop {
+        // [1] Sample the next token from logits
+        let token = sampler.sample(ctx, -1);
+        sampler.accept(token);
+
+        // [2] End-of-generation token? Stop.
+        if model.is_eog(token) { break; }
+
+        // [3] Convert token id to UTF-8 piece (handles multi-byte chars)
+        let piece = model.token_to_piece(token, &mut decoder, true, None)?;
+
+        // [4] Hand to caller. Caller decides:
+        //       Continue — emit and keep going
+        //       Stop     — early-exit (e.g. emulator detected a tool call)
+        match on_piece(&piece)? {
+            TokenAction::Continue => {}
+            TokenAction::Stop => break,
+        }
+
+        // [5] Token budget check
+        if let Some(max) = settings.max_output_tokens {
+            if generated as usize >= max { break; }
+        }
+        if prompt_token_count + generated as usize >= effective_ctx {
+            return Err(ProviderError::ContextLengthExceeded(...));
+        }
+
+        // [6] Decode the just-emitted token to advance the KV cache
+        let mut next_batch = LlamaBatch::new(1, 1);
+        next_batch.add(token, prompt_token_count + generated as usize, &[0], true)?;
+        ctx.decode(&mut next_batch)?;
+        generated += 1;
+    }
+    Ok(generated)
+}
+
+// === NATIVE PATH (Gemma — uses Jinja template tool calling) ===
+// inference_native_tools.rs
+pub(super) fn generate_with_native_tools(
+    ctx: &mut GenerationContext<'_>,
+    oai_messages_json: &Option<String>,
+    full_tools_json: Option<&str>,
+    compact_tools: Option<&str>,
+) -> Result<(), ProviderError> {
+    // Apply chat template with TOOL DEFINITIONS embedded (Jinja sees them)
+    let prompt = ctx.loaded.model.apply_chat_template_with_tools_oaicompat(
+        &ctx.loaded.template,
+        ctx.chat_messages,
+        full_tools_json,
+        None,
+        true,
+    )?.prompt;
+
+    // ... prefill, then generation_loop with on_piece that:
+    //   - accumulates the assistant text
+    //   - at EOS, asks the chat template's tool-call extractor whether
+    //     the response contains a structured tool call
+    //   - emits MessageContent::ToolRequest if so, else MessageContent::Text
+}
+
+// === EMULATED PATH (Llama 3.2, Mistral — text-protocol detection) ===
+// inference_emulated_tools.rs:352
+pub(super) fn generate_with_emulated_tools(
+    ctx: &mut GenerationContext<'_>,
+    code_mode_enabled: bool,
+) -> Result<(), ProviderError> {
+    // No tools in the prompt — just text + the system prompt teaching $ syntax
+    let prompt = ctx.loaded.model.apply_chat_template_with_tools_oaicompat(
+        &ctx.loaded.template,
+        ctx.chat_messages,
+        None,                              // ← no tools
+        None,
+        true,
+    )?.prompt;
+
+    let mut emulator_parser = StreamingEmulatorParser::new(code_mode_enabled);
+    let mut tool_call_emitted = false;
+
+    let output_token_count = generation_loop(&model, &mut llama_ctx, settings,
+        prompt_token_count, effective_ctx,
+        |piece| {
+            // Feed the streaming parser. It buffers a few characters
+            // (HOLD_BACK_SHELL_ONLY = 2) so it can detect "\n$" without
+            // emitting the "\n" prematurely.
+            let actions = emulator_parser.process_chunk(piece);
+            for action in actions {
+                match action {
+                    EmulatorAction::Text(t) =>
+                        send_text_chunk(t, message_id, tx),
+                    EmulatorAction::ShellCommand(cmd) => {
+                        // ← Convert to MessageContent::ToolRequest
+                        send_tool_request(SHELL_TOOL, json!({"command": cmd}), tx);
+                        tool_call_emitted = true;
+                    }
+                    EmulatorAction::ExecuteCode(code) => {
+                        send_tool_request(CODE_EXECUTION_TOOL, json!({"code": code}), tx);
+                        tool_call_emitted = true;
+                    }
+                }
+            }
+            // First tool call wins — stop generation, let agent dispatch it
+            if tool_call_emitted { Ok(TokenAction::Stop) }
+            else { Ok(TokenAction::Continue) }
+        }
+    )?;
+
+    let provider_usage = finalize_usage(...);
+    let _ = ctx.tx.blocking_send(Ok((None, Some(provider_usage))));
+    Ok(())
+}
+
+// === The "user is using gemma-4-26B with tools" specific path ===
+// gemma-4-26B has native_tool_calling=true (FEATURED_MODELS table at
+// local_model_registry.rs:174-181), so the NATIVE path is taken. Tools
+// definitions are passed to apply_chat_template_with_tools_oaicompat.
+// The Jinja template emits a structured tool-call section that
+// llama-cpp-2 recognizes and translates back to a tool_call object.

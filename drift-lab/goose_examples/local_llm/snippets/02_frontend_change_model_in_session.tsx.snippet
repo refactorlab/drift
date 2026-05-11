@@ -1,0 +1,78 @@
+// =============================================================================
+// SNIPPET 2 — User changes model from inside an active chat (bottom bar)
+// Source: ModelAndProviderContext.tsx:66-128
+// =============================================================================
+//
+// When the user picks a model from the chat-window dropdown, both the
+// session AND the global config get updated (or just the session, if a
+// session_id is supplied — see the dual-call below).
+//
+// This is a different code path from `selectModel` in the settings tab:
+//   selectModel    → POST /config/set_provider           (global only)
+//   changeModel    → POST /agent/update_provider         (session only)
+//                  + POST /config/set_provider           (if no session_id)
+//
+// Why two endpoints? Live sessions cache the Provider instance in memory
+// for performance; updating only the global config wouldn't switch the
+// running agent. update_provider rebuilds the in-memory provider and
+// model state for that specific session.
+
+import { updateAgentProvider, setConfigProvider } from './api/sdk.gen';
+
+const changeModel = useCallback(
+  async (sessionId: string | null, model: Model) => {
+    const modelName = model.name;
+    const providerName = model.provider;
+    let phase = 'agent';
+
+    try {
+      // [1] If we're inside an active chat, update its agent
+      if (sessionId) {
+        const response = await updateAgentProvider({
+          body: {
+            session_id: sessionId,
+            provider: providerName,         // e.g. "local"
+            model: modelName,                // e.g. "unsloth/gemma-4-26B-A4B-it-GGUF:Q4_K_M"
+            context_limit: model.context_limit,
+            request_params: model.request_params,
+          },
+        });
+        if (response.error) {
+          throw new Error(`Failed to update agent provider: ${response.error}`);
+        }
+      }
+
+      // [2] If we're in settings (no session), update the global default
+      //     so future new sessions inherit this choice
+      if (!sessionId) {
+        phase = 'config';
+        await setConfigProvider({
+          body: {
+            provider: providerName,
+            model: modelName,
+          },
+          throwOnError: true,
+        });
+
+        // Reflect the change in React state
+        setCurrentProvider(providerName);
+        setCurrentModel(modelName);
+      }
+
+      toastSuccess({
+        title: i18n.modelChangedTitle,
+        msg: `Switched to ${model.alias ?? modelName} (${model.subtext ?? providerName})`,
+      });
+      return true;
+    } catch (error) {
+      console.error(`Failed at ${phase} step — ${modelName} ${providerName}`);
+      toastError({
+        title: i18n.modelChangeFailed,
+        msg: `${error}`,
+        traceback: errorMessage(error),
+      });
+      return false;
+    }
+  },
+  [intl]
+);

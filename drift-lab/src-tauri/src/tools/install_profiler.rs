@@ -102,6 +102,9 @@ fn default_profiler(lang: Language) -> Option<Profiler> {
         Language::Java => Some(Profiler::AsyncProfiler),
         Language::Go => Some(Profiler::Perf),
         Language::Node => Some(Profiler::NodeClinic),
+        // Clinic doesn't target bun reliably; sample the bun binary with
+        // Linux `perf` instead. Matches `detect_runtime::profiler_for(Bun)`.
+        Language::Bun => Some(Profiler::Perf),
         Language::Ruby => Some(Profiler::Rbspy),
         Language::Dotnet => Some(Profiler::Dotrace),
         Language::Unknown => None,
@@ -209,6 +212,22 @@ async fn install_perf(container_id: &str, log: &mut String) -> Result<(String, O
     Ok((binary_path, version))
 }
 
+async fn exec_version(container_id: &str, binary: &str, flag: &str) -> Option<String> {
+    let out = exec_in_container::run(exec_in_container::Args {
+        container_id: container_id.to_string(),
+        cmd: vec![binary.into(), flag.into()],
+        user: None,
+        workdir: None,
+        env: vec![],
+        detach: false,
+        timeout_secs: Some(15),
+    })
+    .await
+    .ok()?;
+    let v = out.stdout.trim();
+    if v.is_empty() { None } else { Some(v.to_string()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,20 +289,4 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("not yet implemented"));
     }
-}
-
-async fn exec_version(container_id: &str, binary: &str, flag: &str) -> Option<String> {
-    let out = exec_in_container::run(exec_in_container::Args {
-        container_id: container_id.to_string(),
-        cmd: vec![binary.into(), flag.into()],
-        user: None,
-        workdir: None,
-        env: vec![],
-        detach: false,
-        timeout_secs: Some(15),
-    })
-    .await
-    .ok()?;
-    let v = out.stdout.trim();
-    if v.is_empty() { None } else { Some(v.to_string()) }
 }

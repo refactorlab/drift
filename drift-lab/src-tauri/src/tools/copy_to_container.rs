@@ -119,9 +119,9 @@ fn build_single_entry_tar(name: &str, contents: &[u8], mode: u32) -> Result<Vec<
     out.extend_from_slice(&header);
     out.extend_from_slice(contents);
     let pad = (512 - contents.len() % 512) % 512;
-    out.extend(std::iter::repeat(0u8).take(pad));
+    out.extend(std::iter::repeat_n(0u8, pad));
     // Two trailing zero blocks marking end of archive.
-    out.extend(std::iter::repeat(0u8).take(1024));
+    out.extend(std::iter::repeat_n(0u8, 1024));
     Ok(out)
 }
 

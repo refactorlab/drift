@@ -4,31 +4,21 @@ use rig::client::CompletionClient;
 use rig::completion::Prompt;
 use rig::message::Message;
 use rig::streaming::{StreamedAssistantContent, StreamingChat};
-use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
+    agent::{self as agent_loop, Agent, OpenAiProvider},
     agent_tools::{self, Toolset},
     app_config::{self, AppConfig, SavedProvider},
     backend,
     events::{topic, BackendStatus},
     history::{self, Conversation, ConversationSummary},
     model_config::ModelBackend,
-    persisted,
     state::AppState,
     workflow,
 };
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentRun {
-    pub run_id: String,
-    pub project_path: String,
-    pub created_at: String,
-    pub issues_found: Option<u32>,
-}
 
 #[tauri::command]
 pub async fn start_run<R: Runtime>(
@@ -53,12 +43,6 @@ pub async fn start_run<R: Runtime>(
 pub async fn cancel_run(_run_id: String) -> Result<(), String> {
     // TODO: wire cancellation token registry once long-running stages exist.
     Ok(())
-}
-
-#[tauri::command]
-pub async fn list_recent_runs<R: Runtime>(_app: AppHandle<R>) -> Result<Vec<RecentRun>, String> {
-    // TODO: read from sqlite once the schema exists.
-    Ok(vec![])
 }
 
 // ============================================================================
@@ -91,19 +75,17 @@ fn idle_status(config: &ModelBackend) -> BackendStatus {
 fn describe(config: &ModelBackend) -> (String, String) {
     match config {
         ModelBackend::Api { model, .. } => ("api".to_string(), model.clone()),
-        ModelBackend::Local { spec, .. } => ("local".to_string(), spec.clone()),
     }
 }
 
-/// Save the config to disk, drop any live runtime, and emit a fresh status.
-/// The actual download / spawn happens lazily on the next `chat()` call.
+/// Save the config in memory + AppConfig store and drop any live runtime.
+/// Resolve happens lazily on the next chat.
 #[tauri::command]
 pub async fn save_backend_config<R: Runtime>(
     config: ModelBackend,
     state: State<'_, AppState>,
     app: AppHandle<R>,
 ) -> Result<(), String> {
-    persisted::save(&app, &config).map_err(|e| e.to_string())?;
     *state.config.lock().await = Some(config.clone());
     *state.backend.lock().await = None;
     set_status(&app, &state, idle_status(&config)).await;
@@ -119,15 +101,14 @@ pub async fn load_backend_config(
     Ok(state.config.lock().await.clone())
 }
 
-/// Clear persisted config + drop the live runtime.
+/// Clear the in-memory config + drop the live runtime.
 #[tauri::command]
 pub async fn clear_backend<R: Runtime>(
     state: State<'_, AppState>,
     app: AppHandle<R>,
 ) -> Result<(), String> {
-    persisted::clear(&app).map_err(|e| e.to_string())?;
     *state.config.lock().await = None;
-    *state.backend.lock().await = None; // drop kills llama-server via kill_on_drop
+    *state.backend.lock().await = None;
     set_status(&app, &state, BackendStatus::Unconfigured).await;
     Ok(())
 }
@@ -137,17 +118,14 @@ pub async fn get_backend_status(state: State<'_, AppState>) -> Result<BackendSta
     Ok(state.status.lock().await.clone())
 }
 
-/// Eager configure: save, then resolve immediately. Useful when the UI wants
-/// to block on download/spawn (e.g. clicking "Activate" on a downloaded
-/// model). Equivalent to `save_backend_config` followed by a chat-triggered
-/// resolve, but surfaces errors synchronously.
+/// Eager configure: store the config + resolve immediately so the caller
+/// blocks on connection errors instead of seeing them on first chat.
 #[tauri::command]
 pub async fn configure_backend<R: Runtime>(
     config: ModelBackend,
     state: State<'_, AppState>,
     app: AppHandle<R>,
 ) -> Result<(), String> {
-    persisted::save(&app, &config).map_err(|e| e.to_string())?;
     *state.config.lock().await = Some(config.clone());
     *state.backend.lock().await = None;
 
@@ -165,20 +143,7 @@ async fn resolve_with_status<R: Runtime>(
 ) -> anyhow::Result<()> {
     let (mode, model) = describe(&config);
 
-    // Coarse pre-resolve status. Local mode passes through Downloading/Starting
-    // implicitly via download::ensure_model + local_server::spawn_llama_server,
-    // but we don't have a hook for those yet — that's Phase D.
-    set_status(
-        app,
-        state,
-        match &config {
-            ModelBackend::Local { spec, .. } => BackendStatus::Downloading {
-                file: spec.clone(),
-            },
-            ModelBackend::Api { .. } => BackendStatus::Starting,
-        },
-    )
-    .await;
+    set_status(app, state, BackendStatus::Starting).await;
 
     match backend::resolve(config, app).await {
         Ok(resolved) => {
@@ -361,6 +326,210 @@ pub async fn chat_oneshot<R: Runtime>(
 }
 
 // ============================================================================
+// Iterative agent (goose-style outer/inner loop)
+// ============================================================================
+
+/// Tauri-side `WorkflowSink` — forwards each captured event onto the
+/// existing `run://*` topics so the existing `Steps.tsx` UI Just Works.
+struct TauriWorkflowSink<R: Runtime> {
+    app: AppHandle<R>,
+}
+
+impl<R: Runtime> crate::agent::workflow::WorkflowSink for TauriWorkflowSink<R> {
+    fn emit_step(&self, update: crate::events::StepUpdate) {
+        let _ = self.app.emit(topic::STEP, update);
+    }
+    fn emit_complete(&self, complete: crate::events::RunComplete) {
+        let _ = self.app.emit(topic::COMPLETE, complete);
+    }
+    fn emit_error(&self, error: crate::events::RunError) {
+        let _ = self.app.emit(topic::ERROR, error);
+    }
+    fn emit_agent_event(&self, event: &crate::agent::agent_loop::AgentEvent) {
+        // Mirror the raw AgentEvent to the UI so the `ReasoningLog` panel
+        // can render the streaming thoughts + tool dispatches.
+        let _ = self.app.emit(topic::AGENT_EVENT, event);
+    }
+}
+
+/// LLM-driven scan. Replaces the deterministic [`workflow::execute`] simulator
+/// with a real agent run. Emits the same `run://step / run://complete /
+/// run://error` events so existing UI listeners keep working — but the step
+/// `detail` field is now the model's prose, not a hardcoded string.
+///
+/// `mode` defaults to `auto` because a scan is the user's explicit ask;
+/// they're consenting to the destructive stages (install_profiler etc.).
+#[derive(Debug, serde::Serialize)]
+pub struct PromptPreset {
+    pub label: &'static str,
+    pub prompt: &'static str,
+}
+
+/// List the canned scan goals the UI shows above the "start scan" button.
+/// `Other` is implicit — the UI lets the user type a free-text prompt, which
+/// is passed verbatim as `goal_prompt` to `start_agent_run`.
+#[tauri::command]
+pub fn list_prompt_presets() -> Vec<PromptPreset> {
+    crate::agent::workflow::PROMPT_PRESETS
+        .iter()
+        .map(|(label, prompt)| PromptPreset { label, prompt })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn start_agent_run<R: Runtime>(
+    project_path: String,
+    mode: Option<String>,
+    goal_prompt: Option<String>,
+    state: State<'_, AppState>,
+    app: AppHandle<R>,
+) -> Result<String, String> {
+    ensure_resolved(&app, &state).await?;
+
+    let config = state
+        .config
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "backend not configured".to_string())?;
+    let (base_url, api_key, model) = match config {
+        ModelBackend::Api {
+            base_url,
+            api_key,
+            model,
+        } => (base_url, api_key, model),
+    };
+
+    let mode = match mode.as_deref() {
+        Some("default") => crate::agent::tools::Mode::Default,
+        Some("read_only") => crate::agent::tools::Mode::ReadOnly,
+        _ => crate::agent::tools::Mode::Auto,
+    };
+
+    let run_id = Uuid::new_v4().to_string();
+
+    // Every scan starts from scratch. If a previous run is still in flight,
+    // cancel it first — its task holds a clone of the OLD token, so just
+    // overwriting the slot wouldn't stop it. Cancelling the old token
+    // signals the previous workflow to break out of its `select!` loop;
+    // the next allocation below installs the fresh token for the new run.
+    let token = {
+        let mut slot = state.cancel_token.lock().await;
+        if let Some(prev) = slot.take() {
+            prev.cancel();
+            tracing::info!(run_id = %run_id, "cancelled previous in-flight scan");
+        }
+        let token = CancellationToken::new();
+        *slot = Some(token.clone());
+        token
+    };
+
+    let app_for_task = app.clone();
+    let run_id_for_task = run_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let provider = std::sync::Arc::new(OpenAiProvider::new(base_url, api_key, model));
+        let sink = TauriWorkflowSink {
+            app: app_for_task.clone(),
+        };
+        let req = crate::agent::workflow::RunRequest {
+            run_id: run_id_for_task.clone(),
+            project_path,
+            provider,
+            mode,
+            goal_prompt,
+        };
+        tracing::info!(run_id = %run_id_for_task, "scan workflow starting");
+        if let Err(e) = crate::agent::workflow::run(req, &sink, token).await {
+            tracing::error!(run_id = %run_id_for_task, "agent workflow failed: {e}");
+        }
+        tracing::info!(run_id = %run_id_for_task, "scan workflow completed");
+    });
+
+    Ok(run_id)
+}
+
+/// One-shot iterative-agent invocation. Streams `agent:event` events to the UI
+/// (TextDelta / AssistantMessage / ToolDispatched / ToolCompleted / Done /
+/// Error). The same `cancel_chat` command interrupts this loop.
+///
+/// Mode controls the permission gate:
+///   - `default` (default): read-only tools auto-approved, others denied with
+///     a synthesised tool response so the model can pivot.
+///   - `auto`: every tool runs without prompting. Opt-in for autonomous runs.
+///   - `read_only`: like default but never auto-approves anything destructive.
+#[tauri::command]
+pub async fn agent_chat<R: Runtime>(
+    message: String,
+    preamble: Option<String>,
+    mode: Option<String>,
+    state: State<'_, AppState>,
+    app: AppHandle<R>,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+
+    ensure_resolved(&app, &state).await?;
+
+    // Pull the active provider config so we can stand up our own
+    // `OpenAiProvider`. All runtimes (cloud or local) speak OpenAI-compat HTTP.
+    let config = state
+        .config
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "backend not configured".to_string())?;
+    let (base_url, api_key, model) = match config {
+        ModelBackend::Api {
+            base_url,
+            api_key,
+            model,
+        } => (base_url, api_key, model),
+    };
+
+    let provider = std::sync::Arc::new(OpenAiProvider::new(base_url, api_key, model));
+    let mode = match mode.as_deref() {
+        Some("auto") => agent_loop::Mode::Auto,
+        Some("read_only") => agent_loop::Mode::ReadOnly,
+        _ => agent_loop::Mode::Default,
+    };
+
+    let agent = Agent::new(
+        provider,
+        preamble.unwrap_or_else(|| {
+            "You are Drift Lab's profiling agent. Use the available tools to \
+             investigate the user's project, run a profile, and report findings."
+                .to_string()
+        }),
+    )
+    .with_mode(mode);
+
+    let token = CancellationToken::new();
+    *state.cancel_token.lock().await = Some(token.clone());
+
+    let mut stream = Box::pin(agent.reply(message, vec![], token.clone()));
+    while let Some(item) = stream.next().await {
+        let event = match item {
+            Ok(e) => e,
+            Err(e) => agent_loop::AgentEvent::Error {
+                message: e.to_string(),
+            },
+        };
+        let _ = app.emit(topic::AGENT_EVENT, &event);
+        // Stop streaming once we hit a terminal event.
+        if matches!(
+            event,
+            agent_loop::AgentEvent::Done
+                | agent_loop::AgentEvent::Error { .. }
+                | agent_loop::AgentEvent::TurnBudgetExceeded { .. }
+        ) {
+            break;
+        }
+    }
+
+    *state.cancel_token.lock().await = None;
+    Ok(())
+}
+
+// ============================================================================
 // Multi-provider config (Phase 1.5)
 // ============================================================================
 
@@ -371,9 +540,8 @@ pub async fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, Str
     Ok(state.app_config.lock().await.clone())
 }
 
-/// Probe a candidate provider config. For API mode, sends a 1-token request
-/// to verify the URL + key + model triple. For Local, only validates the spec
-/// shape — actually spawning llama-server happens via `save_provider`.
+/// Probe a candidate provider config. Sends a 1-token request to verify the
+/// URL + key + model triple speaks OpenAI-compat HTTP.
 #[tauri::command]
 pub async fn test_provider(config: ModelBackend) -> Result<(), String> {
     match &config {
@@ -398,12 +566,6 @@ pub async fn test_provider(config: ModelBackend) -> Result<(), String> {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 return Err(format!("HTTP {status}: {body}"));
-            }
-            Ok(())
-        }
-        ModelBackend::Local { spec, .. } => {
-            if !spec.contains('/') || !spec.contains(':') {
-                return Err("Local spec must look like `repo_id:quant`".into());
             }
             Ok(())
         }
@@ -529,9 +691,7 @@ pub async fn reset_all_config<R: Runtime>(
 }
 
 /// Hydrate `AppConfig` from `tauri-plugin-store` and, if there's an active
-/// provider, kick a background resolve so chat is hot when the UI reaches it.
-/// Falls back to legacy single-config (`backend.json`) if no AppConfig exists
-/// yet — one-time migration for installs that pre-date Phase 1.5.
+/// provider, seed `state.config` so chat is ready to go without an extra round trip.
 pub async fn hydrate_app_config_on_startup<R: Runtime>(app: &AppHandle<R>, state: &AppState) {
     let cfg = match app_config::load(app) {
         Ok(c) => c,
@@ -541,33 +701,8 @@ pub async fn hydrate_app_config_on_startup<R: Runtime>(app: &AppHandle<R>, state
         }
     };
 
-    // Migration path: if no providers but a legacy single config exists, fold
-    // it into the new shape so the user doesn't lose their settings.
-    let cfg = if cfg.providers.is_empty() {
-        match persisted::load(app) {
-            Ok(Some(legacy)) => {
-                let mut migrated = AppConfig::default();
-                let provider = SavedProvider::new("Imported".to_string(), legacy);
-                migrated.active_provider_id = Some(provider.id.clone());
-                migrated.onboarding_complete = true;
-                migrated.providers.push(provider);
-                if let Err(e) = app_config::save(app, &migrated) {
-                    tracing::warn!("migrating legacy backend.json: {e:?}");
-                }
-                let _ = persisted::clear(app); // best-effort cleanup
-                migrated
-            }
-            _ => cfg,
-        }
-    } else {
-        cfg
-    };
-
     *state.app_config.lock().await = cfg.clone();
 
-    // If there's an active provider, also seed the legacy `state.config` slot
-    // and emit `idle` status so the existing Settings UI shows the right thing
-    // until it migrates.
     if let Some(active) = cfg
         .active_provider_id
         .as_ref()
