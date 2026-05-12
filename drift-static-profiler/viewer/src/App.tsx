@@ -64,7 +64,10 @@ export function App() {
   useEffect(() => {
     setError(null);
     setSelected(null);
-    fetch(fixture.json)
+    // cache: 'no-store' so re-runs of `make scan` are picked up immediately
+    // (browser/proxy caches would otherwise serve a stale fixture JSON even
+    // after the Vite watcher triggers a reload).
+    fetch(fixture.json, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then((data: Report) => {
         // Sort entry points by subtree size, biggest first.

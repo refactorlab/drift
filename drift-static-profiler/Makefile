@@ -250,17 +250,28 @@ SCAN_PATH  ?=
 ENTRY      ?=
 NAME       ?= custom
 
-scan: $(BIN) ## Analyze any folder and write it as viewer/public/fixtures/<NAME>.json
+scan: $(BIN) ## Analyze any folder and write it as viewer/public/fixtures/<NAME>.json (auto-discovers roots if ENTRY is omitted)
 	@if [ -z "$(SCAN_PATH)" ]; then \
-	  printf "$(YELLOW)!$(RESET) usage: make scan /abs/path ENTRY=symName [NAME=fixture_name]\n"; \
-	  printf "          or: make scan SCAN_PATH=/abs/path ENTRY=symName [NAME=fixture_name]\n"; \
+	  printf "$(YELLOW)!$(RESET) usage: make scan /abs/path [ENTRY=symName] [NAME=fixture_name]\n"; \
+	  printf "          or: make scan SCAN_PATH=/abs/path [ENTRY=symName] [NAME=fixture_name]\n"; \
 	  printf "   tip: ENTRY=\"foo bar baz\" passes multiple entry points\n"; \
+	  printf "   tip: omit ENTRY to auto-discover all root entry points (recommended)\n"; \
 	  exit 1; \
 	fi
 	@ENTRIES=""; \
 	  for e in $(ENTRY); do ENTRIES="$$ENTRIES --entry $$e"; done; \
-	  printf "$(BLUE)▶$(RESET) scanning $(SCAN_PATH) → $(FIXTURE_OUT)/$(NAME).json\n"; \
-	  $(BIN) scan "$(SCAN_PATH)" $$ENTRIES --name "$(NAME)" --out-dir "$(FIXTURE_OUT)" --no-accessors
+	  if [ -z "$$ENTRIES" ]; then \
+	    printf "$(BLUE)▶$(RESET) auto-discovering roots in $(SCAN_PATH) → $(FIXTURE_OUT)/$(NAME).json\n"; \
+	    $(BIN) analyze-root "$(SCAN_PATH)" \
+	      --name "$(NAME)" \
+	      --out-dir "$(FIXTURE_OUT)" \
+	      --min-reach $(MIN_REACH) \
+	      --max-roots $(MAX_ROOTS) \
+	      --no-accessors; \
+	  else \
+	    printf "$(BLUE)▶$(RESET) scanning $(SCAN_PATH) (entry: $(ENTRY)) → $(FIXTURE_OUT)/$(NAME).json\n"; \
+	    $(BIN) scan "$(SCAN_PATH)" $$ENTRIES --name "$(NAME)" --out-dir "$(FIXTURE_OUT)" --no-accessors; \
+	  fi
 
 # Root-level profile: auto-discover every plausible entry point in a folder
 # (symbols with no in-graph caller, ranked by transitive reach) and profile

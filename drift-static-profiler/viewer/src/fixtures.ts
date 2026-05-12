@@ -47,12 +47,6 @@ export const FIXTURES: FixtureSpec[] = [
     key: 'custom',
     label: 'Custom Scan',
     json: '/fixtures/custom.json',
-    description: 'Output of `make scan PATH=… ENTRY=…` — pick after running it',
-  },
-  {
-    key: 'roots',
-    label: 'Root Profile (auto-discovered)',
-    json: '/fixtures/roots.json',
-    description: 'Output of `make scan-roots SCAN_PATH=…` — every plausible entry ranked by reach',
+    description: 'Output of `make scan /path` — auto-discovers roots if ENTRY is omitted; viewer auto-reloads when the file changes',
   },
 ];

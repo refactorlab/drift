@@ -113,56 +113,56 @@
         "file": "tests/fixtures/javascript-express/src/repository.js",
         "line": 4,
         "parent_class": "OrderRepository",
-        "score": 0.12010025631539492
+        "score": 0.12010025631539493
       },
       {
         "name": "buildOrder",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 14,
         "parent_class": "OrderService",
-        "score": 0.12010025631539492
+        "score": 0.12010025631539493
       },
       {
         "name": "validate",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 22,
         "parent_class": "OrderService",
-        "score": 0.12010025631539492
+        "score": 0.12010025631539493
       },
       {
         "name": "findById",
         "file": "tests/fixtures/javascript-express/src/repository.js",
         "line": 8,
         "parent_class": "OrderRepository",
-        "score": 0.09196032350198471
+        "score": 0.09196032350198473
       },
       {
         "name": "notifyDownstream",
         "file": "tests/fixtures/javascript-express/src/routes.js",
         "line": 14,
         "parent_class": null,
-        "score": 0.09196032350198471
+        "score": 0.09196032350198473
       },
       {
         "name": "OrderService",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 3,
         "parent_class": null,
-        "score": 0.09196032350198471
+        "score": 0.09196032350198473
       },
       {
         "name": "constructor",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 4,
         "parent_class": "OrderService",
-        "score": 0.09196032350198471
+        "score": 0.09196032350198473
       },
       {
         "name": "createOrder",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 8,
         "parent_class": "OrderService",
-        "score": 0.09196032350198471
+        "score": 0.09196032350198473
       }
     ],
     "recursive_symbols": [],
@@ -216,7 +216,7 @@
       "is_async": true,
       "call_site_count": 0,
       "is_recursive": false,
-      "pagerank": 0.09196032350198471,
+      "pagerank": 0.09196032350198473,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,
