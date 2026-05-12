@@ -1,0 +1,581 @@
+{
+  "language": "go",
+  "generated_at": "2026-05-12T13:42:38Z",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "sources": [
+    "seed/go_otel",
+    "seed/go_stdlib",
+    "otel-registry/instrumentation-*.yml"
+  ],
+  "count": 112,
+  "entries": [
+    {
+      "module": "github.com/go-redis/redis",
+      "category": "cache",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/redis/go-redis",
+      "category": "cache",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "go-redis",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-go-go-redis.yml"
+    },
+    {
+      "module": "go.redis",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-go-go-redis.yml"
+    },
+    {
+      "module": "go_redis",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-go-go-redis.yml"
+    },
+    {
+      "module": "splunkredigo",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-go-splunkredigo.yml"
+    },
+    {
+      "module": "host",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-go-host.yml"
+    },
+    {
+      "module": "mcp",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-go-mcp.yml"
+    },
+    {
+      "module": "runtime",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-go-runtime.yml"
+    },
+    {
+      "module": "database/sql",
+      "category": "db",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/jackc/pgx",
+      "category": "db",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/jmoiron/sqlx",
+      "category": "db",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "go-pg",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-go-pg.yml"
+    },
+    {
+      "module": "go.mongodb.org/mongo-driver",
+      "category": "db",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "go.pg",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-go-pg.yml"
+    },
+    {
+      "module": "go_pg",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-go-pg.yml"
+    },
+    {
+      "module": "gorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-gorm.yml"
+    },
+    {
+      "module": "graphql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-graphql.yml"
+    },
+    {
+      "module": "mongodb",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-mongodb.yml"
+    },
+    {
+      "module": "neo4j",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-neo4j.yml"
+    },
+    {
+      "module": "nhatthm-otelsql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-nhatthm-otelsql.yml"
+    },
+    {
+      "module": "nhatthm.otelsql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-nhatthm-otelsql.yml"
+    },
+    {
+      "module": "nhatthm_otelsql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-nhatthm-otelsql.yml"
+    },
+    {
+      "module": "otelpgx",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-otelpgx.yml"
+    },
+    {
+      "module": "otelsqlx",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-otelsqlx.yml"
+    },
+    {
+      "module": "splunkbuntdb",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkbuntdb.yml"
+    },
+    {
+      "module": "splunkelastic",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkelastic.yml"
+    },
+    {
+      "module": "splunkgorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkgorm.yml"
+    },
+    {
+      "module": "splunkleveldb",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkleveldb.yml"
+    },
+    {
+      "module": "splunkmysql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkmysql.yml"
+    },
+    {
+      "module": "splunkpgx",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkpgx.yml"
+    },
+    {
+      "module": "splunkpq",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunkpq.yml"
+    },
+    {
+      "module": "splunksql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunksql.yml"
+    },
+    {
+      "module": "splunksqlx",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-splunksqlx.yml"
+    },
+    {
+      "module": "uptrace-gorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-uptrace-gorm.yml"
+    },
+    {
+      "module": "uptrace-otelsql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-uptrace-otelsql.yml"
+    },
+    {
+      "module": "uptrace.gorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-uptrace-gorm.yml"
+    },
+    {
+      "module": "uptrace.otelsql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-uptrace-otelsql.yml"
+    },
+    {
+      "module": "uptrace_gorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-uptrace-gorm.yml"
+    },
+    {
+      "module": "uptrace_otelsql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-uptrace-otelsql.yml"
+    },
+    {
+      "module": "xsam-database-sql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-xsam-database-sql.yml"
+    },
+    {
+      "module": "xsam.database.sql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-xsam-database-sql.yml"
+    },
+    {
+      "module": "xsam_database_sql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-go-xsam-database-sql.yml"
+    },
+    {
+      "module": "bufio",
+      "category": "io",
+      "source": "seed/go_stdlib"
+    },
+    {
+      "module": "io",
+      "category": "io",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "io/fs",
+      "category": "io",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "io/ioutil",
+      "category": "io",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "os",
+      "category": "io",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "path/filepath",
+      "category": "io",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/rs/zerolog",
+      "category": "log",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/sirupsen/logrus",
+      "category": "log",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "go.uber.org/zap",
+      "category": "log",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "log",
+      "category": "log",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "log/slog",
+      "category": "log",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "logrus",
+      "category": "log",
+      "source": "otel-registry/instrumentation-go-logrus.yml"
+    },
+    {
+      "module": "zap",
+      "category": "log",
+      "source": "otel-registry/instrumentation-go-zap.yml"
+    },
+    {
+      "module": "cloudwego",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-cloudwego.yml"
+    },
+    {
+      "module": "connect-rpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-connect-rpc.yml"
+    },
+    {
+      "module": "connect.rpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-connect-rpc.yml"
+    },
+    {
+      "module": "connect_rpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-connect-rpc.yml"
+    },
+    {
+      "module": "echo",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-echo.yml"
+    },
+    {
+      "module": "fiber",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-fiber.yml"
+    },
+    {
+      "module": "gin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-gin.yml"
+    },
+    {
+      "module": "github.com/aws/aws-sdk-go-v2",
+      "category": "network",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "go-resty",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-go-resty.yml"
+    },
+    {
+      "module": "go.resty",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-go-resty.yml"
+    },
+    {
+      "module": "go_resty",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-go-resty.yml"
+    },
+    {
+      "module": "google.golang.org/grpc",
+      "category": "network",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "gqlgen",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-gqlgen.yml"
+    },
+    {
+      "module": "grpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc-metrics",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-metrics.yml"
+    },
+    {
+      "module": "grpc-plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc.metrics",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-metrics.yml"
+    },
+    {
+      "module": "grpc.plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc_metrics",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-metrics.yml"
+    },
+    {
+      "module": "grpc_plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-grpc-plugin.yml"
+    },
+    {
+      "module": "http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-http.yml"
+    },
+    {
+      "module": "labstack",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-labstack.yml"
+    },
+    {
+      "module": "mux",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-mux.yml"
+    },
+    {
+      "module": "net",
+      "category": "network",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "net/http",
+      "category": "network",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "net/rpc",
+      "category": "network",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "otelaws",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-otelaws.yml"
+    },
+    {
+      "module": "otellambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-otellambda.yml"
+    },
+    {
+      "module": "restful",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-restful.yml"
+    },
+    {
+      "module": "riandyrn-go-chi-chi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-riandyrn-go-chi-chi.yml"
+    },
+    {
+      "module": "riandyrn.go.chi.chi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-riandyrn-go-chi-chi.yml"
+    },
+    {
+      "module": "riandyrn_go_chi_chi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-riandyrn-go-chi-chi.yml"
+    },
+    {
+      "module": "splunkchi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkchi.yml"
+    },
+    {
+      "module": "splunkclient-go",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkclient-go.yml"
+    },
+    {
+      "module": "splunkclient.go",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkclient-go.yml"
+    },
+    {
+      "module": "splunkclient_go",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkclient-go.yml"
+    },
+    {
+      "module": "splunkdns",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkdns.yml"
+    },
+    {
+      "module": "splunkgraphql",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkgraphql.yml"
+    },
+    {
+      "module": "splunkhttp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkhttp.yml"
+    },
+    {
+      "module": "splunkhttprouter",
+      "category": "network",
+      "source": "otel-registry/instrumentation-go-splunkhttprouter.yml"
+    },
+    {
+      "module": "github.com/IBM/sarama",
+      "category": "queue",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/Shopify/sarama",
+      "category": "queue",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/nats-io/nats.go",
+      "category": "queue",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/rabbitmq/amqp091-go",
+      "category": "queue",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/segmentio/kafka-go",
+      "category": "queue",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "github.com/streadway/amqp",
+      "category": "queue",
+      "source": "seed/go_otel"
+    },
+    {
+      "module": "ibm-sarama",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-ibm-sarama.yml"
+    },
+    {
+      "module": "ibm.sarama",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-ibm-sarama.yml"
+    },
+    {
+      "module": "ibm_sarama",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-ibm-sarama.yml"
+    },
+    {
+      "module": "ibmmq",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-ibmmq.yml"
+    },
+    {
+      "module": "kafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-kafka.yml"
+    },
+    {
+      "module": "kotel-franz-go",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-kotel-franz-go.yml"
+    },
+    {
+      "module": "kotel.franz.go",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-kotel-franz-go.yml"
+    },
+    {
+      "module": "kotel_franz_go",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-kotel-franz-go.yml"
+    },
+    {
+      "module": "splunkkafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-splunkkafka.yml"
+    },
+    {
+      "module": "sqs",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-go-sqs.yml"
+    }
+  ]
+}

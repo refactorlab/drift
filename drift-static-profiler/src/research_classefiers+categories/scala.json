@@ -1,0 +1,104 @@
+{
+  "language": "scala",
+  "generated_at": "2026-05-12T13:21:39Z",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "sources": [
+    "seed/scala"
+  ],
+  "count": 17,
+  "entries": [
+    {
+      "module": "anorm",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "doobie",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "io.getquill",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "org.mongodb.scala",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "reactivemongo",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "scalikejdbc",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "slick",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "slick.jdbc",
+      "category": "db",
+      "source": "seed/scala"
+    },
+    {
+      "module": "com.typesafe.scalalogging",
+      "category": "log",
+      "source": "seed/scala"
+    },
+    {
+      "module": "org.log4s",
+      "category": "log",
+      "source": "seed/scala"
+    },
+    {
+      "module": "akka.http",
+      "category": "network",
+      "source": "seed/scala"
+    },
+    {
+      "module": "com.softwaremill.sttp",
+      "category": "network",
+      "source": "seed/scala"
+    },
+    {
+      "module": "org.http4s",
+      "category": "network",
+      "source": "seed/scala"
+    },
+    {
+      "module": "play.api.libs.ws",
+      "category": "network",
+      "source": "seed/scala"
+    },
+    {
+      "module": "sttp",
+      "category": "network",
+      "source": "seed/scala"
+    },
+    {
+      "module": "akka.kafka",
+      "category": "queue",
+      "source": "seed/scala"
+    },
+    {
+      "module": "fs2.kafka",
+      "category": "queue",
+      "source": "seed/scala"
+    }
+  ]
+}

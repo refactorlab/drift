@@ -1,0 +1,54 @@
+# Auto-derived from OpenTelemetry contrib repos.
+# Refresh by running the generator with network access against
+# https://github.com/open-telemetry/opentelemetry-*-contrib trees,
+# or by editing this file manually.
+language: python
+entries:
+  - { module: pymemcache, category: cache }
+  - { module: redis, category: cache }
+  - { module: openai, category: compute }
+  - { module: MySQLdb, category: db }
+  - { module: aiopg, category: db }
+  - { module: asyncpg, category: db }
+  - { module: cassandra, category: db }
+  - { module: elasticsearch, category: db }
+  - { module: mysql.connector, category: db }
+  - { module: psycopg, category: db }
+  - { module: psycopg2, category: db }
+  - { module: pymongo, category: db }
+  - { module: pymssql, category: db }
+  - { module: pymysql, category: db }
+  - { module: sqlalchemy, category: db }
+  - { module: sqlite3, category: db }
+  - { module: tortoise, category: db }
+  - { module: io, category: io }
+  - { module: os, category: io }
+  - { module: os.path, category: io }
+  - { module: pathlib, category: io }
+  - { module: shutil, category: io }
+  - { module: logging, category: log }
+  - { module: aiohttp, category: network }
+  - { module: asgiref, category: network }
+  - { module: boto, category: network }
+  - { module: boto3, category: network }
+  - { module: botocore, category: network }
+  - { module: django, category: network }
+  - { module: falcon, category: network }
+  - { module: fastapi, category: network }
+  - { module: flask, category: network }
+  - { module: grpcio, category: network }
+  - { module: httpx, category: network }
+  - { module: pyramid, category: network }
+  - { module: requests, category: network }
+  - { module: socket, category: network }
+  - { module: starlette, category: network }
+  - { module: tornado, category: network }
+  - { module: urllib, category: network }
+  - { module: urllib3, category: network }
+  - { module: aio_pika, category: queue }
+  - { module: aiokafka, category: queue }
+  - { module: celery, category: queue }
+  - { module: confluent_kafka, category: queue }
+  - { module: kafka, category: queue }
+  - { module: pika, category: queue }
+  - { module: remoulade, category: queue }

@@ -1,0 +1,18 @@
+# Node.js built-in modules (and the `node:` prefixed forms).
+language: javascript
+entries:
+  - { module: http, category: network }
+  - { module: https, category: network }
+  - { module: net, category: network }
+  - { module: dgram, category: network }
+  - { module: fs, category: io }
+  - { module: fs/promises, category: io }
+  - { module: path, category: io }
+  - { module: stream, category: io }
+  - { module: "node:fs", category: io }
+  - { module: "node:fs/promises", category: io }
+  - { module: "node:path", category: io }
+  - { module: "node:http", category: network }
+  - { module: "node:https", category: network }
+  - { module: "node:net", category: network }
+  - { module: "node:stream", category: io }

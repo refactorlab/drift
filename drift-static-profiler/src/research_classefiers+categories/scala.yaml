@@ -1,0 +1,22 @@
+# Hand-curated seed for Scala.
+# Rationale: no upstream OTel project covers Scala specifically.
+# Seeded from the canonical Scala stack (Typelevel + Akka + Play).
+language: scala
+entries:
+  - { module: slick, category: db }
+  - { module: "slick.jdbc", category: db }
+  - { module: doobie, category: db }
+  - { module: "io.getquill", category: db }
+  - { module: scalikejdbc, category: db }
+  - { module: anorm, category: db }
+  - { module: reactivemongo, category: db }
+  - { module: "org.mongodb.scala", category: db }
+  - { module: "akka.http", category: network }
+  - { module: "play.api.libs.ws", category: network }
+  - { module: sttp, category: network }
+  - { module: "com.softwaremill.sttp", category: network }
+  - { module: "org.http4s", category: network }
+  - { module: "akka.kafka", category: queue }
+  - { module: "fs2.kafka", category: queue }
+  - { module: "org.log4s", category: log }
+  - { module: "com.typesafe.scalalogging", category: log }

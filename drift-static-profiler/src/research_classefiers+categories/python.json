@@ -1,0 +1,651 @@
+{
+  "language": "python",
+  "generated_at": "2026-05-12T13:36:44Z",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "sources": [
+    "seed/python_otel",
+    "seed/python_stdlib",
+    "otel-registry/instrumentation-*.yml"
+  ],
+  "count": 126,
+  "entries": [
+    {
+      "module": "pymemcache",
+      "category": "cache",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "redis",
+      "category": "cache",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "anthropic",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-anthropic.yml"
+    },
+    {
+      "module": "asyncio",
+      "category": "compute",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "bedrock",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-bedrock.yml"
+    },
+    {
+      "module": "cohere",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-cohere.yml"
+    },
+    {
+      "module": "concurrent.futures",
+      "category": "compute",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "dspy",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-dspy.yml"
+    },
+    {
+      "module": "haystack",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-haystack.yml"
+    },
+    {
+      "module": "haystack-openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-haystack-openinference.yml"
+    },
+    {
+      "module": "haystack.openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-haystack-openinference.yml"
+    },
+    {
+      "module": "haystack_openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-haystack-openinference.yml"
+    },
+    {
+      "module": "langchain",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-langchain.yml"
+    },
+    {
+      "module": "langchain-openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-langchain-openinference.yml"
+    },
+    {
+      "module": "langchain.openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-langchain-openinference.yml"
+    },
+    {
+      "module": "langchain_openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-langchain-openinference.yml"
+    },
+    {
+      "module": "llamaindex",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-llamaindex.yml"
+    },
+    {
+      "module": "llamaindex-openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-llamaindex-openinference.yml"
+    },
+    {
+      "module": "llamaindex.openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-llamaindex-openinference.yml"
+    },
+    {
+      "module": "llamaindex_openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-llamaindex-openinference.yml"
+    },
+    {
+      "module": "mistral",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-mistral.yml"
+    },
+    {
+      "module": "mistralai-openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-mistralai-openinference.yml"
+    },
+    {
+      "module": "mistralai.openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-mistralai-openinference.yml"
+    },
+    {
+      "module": "mistralai_openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-mistralai-openinference.yml"
+    },
+    {
+      "module": "multiprocessing",
+      "category": "compute",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "ollama",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-ollama.yml"
+    },
+    {
+      "module": "openai",
+      "category": "compute",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "openai-openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-openai-openinference.yml"
+    },
+    {
+      "module": "openai.openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-openai-openinference.yml"
+    },
+    {
+      "module": "openai_openinference",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-openai-openinference.yml"
+    },
+    {
+      "module": "replicate",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-replicate.yml"
+    },
+    {
+      "module": "system-metrics",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-system-metrics.yml"
+    },
+    {
+      "module": "system.metrics",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-system-metrics.yml"
+    },
+    {
+      "module": "system_metrics",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-system-metrics.yml"
+    },
+    {
+      "module": "threading",
+      "category": "compute",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "traceverde",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-traceverde.yml"
+    },
+    {
+      "module": "transformers",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-transformers.yml"
+    },
+    {
+      "module": "vertexai",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-vertexai.yml"
+    },
+    {
+      "module": "watsonx",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-python-watsonx.yml"
+    },
+    {
+      "module": "MySQLdb",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "aiopg",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "asyncpg",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "cassandra",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "chromadb",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-chromadb.yml"
+    },
+    {
+      "module": "dbapi",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-dbapi.yml"
+    },
+    {
+      "module": "elasticsearch",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "elasticsearch-client",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-elasticsearch-client.yml"
+    },
+    {
+      "module": "elasticsearch.client",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-elasticsearch-client.yml"
+    },
+    {
+      "module": "elasticsearch_client",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-elasticsearch-client.yml"
+    },
+    {
+      "module": "milvus",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-milvus.yml"
+    },
+    {
+      "module": "mysql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-mysql.yml"
+    },
+    {
+      "module": "mysql.connector",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "mysqlclient",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-mysqlclient.yml"
+    },
+    {
+      "module": "pinecone",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-pinecone.yml"
+    },
+    {
+      "module": "psycopg",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "psycopg2",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "pymongo",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "pymssql",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "pymysql",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "qdrant",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-qdrant.yml"
+    },
+    {
+      "module": "sqlalchemy",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "sqlite3",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "tortoise",
+      "category": "db",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "tortoiseorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-tortoiseorm.yml"
+    },
+    {
+      "module": "weaviate",
+      "category": "db",
+      "source": "otel-registry/instrumentation-python-weaviate.yml"
+    },
+    {
+      "module": "io",
+      "category": "io",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "os",
+      "category": "io",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "os.path",
+      "category": "io",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "pathlib",
+      "category": "io",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "shutil",
+      "category": "io",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "tempfile",
+      "category": "io",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "logging",
+      "category": "log",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "aiohttp",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "aiohttp-client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aiohttp-client.yml"
+    },
+    {
+      "module": "aiohttp.client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aiohttp-client.yml"
+    },
+    {
+      "module": "aiohttp_client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aiohttp-client.yml"
+    },
+    {
+      "module": "aiohttpserver",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aiohttpserver.yml"
+    },
+    {
+      "module": "asgi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-asgi.yml"
+    },
+    {
+      "module": "asgiref",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "aws-lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aws-lambda.yml"
+    },
+    {
+      "module": "aws.lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aws-lambda.yml"
+    },
+    {
+      "module": "aws_lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-aws-lambda.yml"
+    },
+    {
+      "module": "azure-sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-azure-sdk.yml"
+    },
+    {
+      "module": "azure.sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-azure-sdk.yml"
+    },
+    {
+      "module": "azure_sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-azure-sdk.yml"
+    },
+    {
+      "module": "boto",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "boto3",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "botocore",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "django",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "falcon",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "fastapi",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "flask",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "grpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc-plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc.plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc_plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-grpc-plugin.yml"
+    },
+    {
+      "module": "grpcio",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "http",
+      "category": "network",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "http.client",
+      "category": "network",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "http.server",
+      "category": "network",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "httpx",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "pyramid",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "requests",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "socket",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "starlette",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "tornado",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "urllib",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "urllib.parse",
+      "category": "network",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "urllib.request",
+      "category": "network",
+      "source": "seed/python_stdlib"
+    },
+    {
+      "module": "urllib3",
+      "category": "network",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "wsgi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-python-wsgi.yml"
+    },
+    {
+      "module": "aio-pika",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-aio-pika.yml"
+    },
+    {
+      "module": "aio.pika",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-aio-pika.yml"
+    },
+    {
+      "module": "aio_pika",
+      "category": "queue",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "aiokafka",
+      "category": "queue",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "boto3sqs",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-boto3sqs.yml"
+    },
+    {
+      "module": "celery",
+      "category": "queue",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "confluent-kafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-confluent-kafka.yml"
+    },
+    {
+      "module": "confluent.kafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-confluent-kafka.yml"
+    },
+    {
+      "module": "confluent_kafka",
+      "category": "queue",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "kafka",
+      "category": "queue",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "kafka-python",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-kafka-python.yml"
+    },
+    {
+      "module": "kafka.python",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-kafka-python.yml"
+    },
+    {
+      "module": "kafka_python",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-python-kafka-python.yml"
+    },
+    {
+      "module": "pika",
+      "category": "queue",
+      "source": "seed/python_otel"
+    },
+    {
+      "module": "remoulade",
+      "category": "queue",
+      "source": "seed/python_otel"
+    }
+  ]
+}

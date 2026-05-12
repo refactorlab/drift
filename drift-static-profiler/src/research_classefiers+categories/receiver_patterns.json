@@ -1,0 +1,1007 @@
+{
+  "description": "Tier C receiver-name patterns. Matched against the lowercased receiver name exactly (no prefix match). Hand-curated; language-agnostic idiomatic naming.",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "patterns": [
+    {
+      "name": "cache",
+      "category": "cache"
+    },
+    {
+      "name": "ioredis",
+      "category": "cache"
+    },
+    {
+      "name": "jedis",
+      "category": "cache"
+    },
+    {
+      "name": "lettuce",
+      "category": "cache"
+    },
+    {
+      "name": "memcache",
+      "category": "cache"
+    },
+    {
+      "name": "memcached",
+      "category": "cache"
+    },
+    {
+      "name": "pymemcache",
+      "category": "cache"
+    },
+    {
+      "name": "redis",
+      "category": "cache"
+    },
+    {
+      "name": "rediscala",
+      "category": "cache"
+    },
+    {
+      "name": "redisson",
+      "category": "cache"
+    },
+    {
+      "name": "splunkredigo",
+      "category": "cache"
+    },
+    {
+      "name": "spymemcached",
+      "category": "cache"
+    },
+    {
+      "name": "anthropic",
+      "category": "compute"
+    },
+    {
+      "name": "asyncio",
+      "category": "compute"
+    },
+    {
+      "name": "bedrock",
+      "category": "compute"
+    },
+    {
+      "name": "cohere",
+      "category": "compute"
+    },
+    {
+      "name": "concurrent",
+      "category": "compute"
+    },
+    {
+      "name": "dspy",
+      "category": "compute"
+    },
+    {
+      "name": "executors",
+      "category": "compute"
+    },
+    {
+      "name": "extensionkotlin",
+      "category": "compute"
+    },
+    {
+      "name": "failsafe",
+      "category": "compute"
+    },
+    {
+      "name": "guava",
+      "category": "compute"
+    },
+    {
+      "name": "haystack",
+      "category": "compute"
+    },
+    {
+      "name": "hystrix",
+      "category": "compute"
+    },
+    {
+      "name": "langchain",
+      "category": "compute"
+    },
+    {
+      "name": "llamaindex",
+      "category": "compute"
+    },
+    {
+      "name": "mcp",
+      "category": "compute"
+    },
+    {
+      "name": "mistral",
+      "category": "compute"
+    },
+    {
+      "name": "ollama",
+      "category": "compute"
+    },
+    {
+      "name": "openai",
+      "category": "compute"
+    },
+    {
+      "name": "oshi",
+      "category": "compute"
+    },
+    {
+      "name": "pekko",
+      "category": "compute"
+    },
+    {
+      "name": "pekkoactor",
+      "category": "compute"
+    },
+    {
+      "name": "powerjob",
+      "category": "compute"
+    },
+    {
+      "name": "quartz",
+      "category": "compute"
+    },
+    {
+      "name": "reactor",
+      "category": "compute"
+    },
+    {
+      "name": "replicate",
+      "category": "compute"
+    },
+    {
+      "name": "runtimenode",
+      "category": "compute"
+    },
+    {
+      "name": "runtimetelemetry",
+      "category": "compute"
+    },
+    {
+      "name": "rxjava",
+      "category": "compute"
+    },
+    {
+      "name": "spark",
+      "category": "compute"
+    },
+    {
+      "name": "traceverde",
+      "category": "compute"
+    },
+    {
+      "name": "transformers",
+      "category": "compute"
+    },
+    {
+      "name": "vertexai",
+      "category": "compute"
+    },
+    {
+      "name": "watsonx",
+      "category": "compute"
+    },
+    {
+      "name": "xxljob",
+      "category": "compute"
+    },
+    {
+      "name": "zio",
+      "category": "compute"
+    },
+    {
+      "name": "aiopg",
+      "category": "db"
+    },
+    {
+      "name": "alibabadruid",
+      "category": "db"
+    },
+    {
+      "name": "apachedbcp",
+      "category": "db"
+    },
+    {
+      "name": "apachedubbo",
+      "category": "db"
+    },
+    {
+      "name": "apacheshenyu",
+      "category": "db"
+    },
+    {
+      "name": "asyncpg",
+      "category": "db"
+    },
+    {
+      "name": "c3p0",
+      "category": "db"
+    },
+    {
+      "name": "cassandra",
+      "category": "db"
+    },
+    {
+      "name": "chromadb",
+      "category": "db"
+    },
+    {
+      "name": "clickhouse",
+      "category": "db"
+    },
+    {
+      "name": "conn",
+      "category": "db"
+    },
+    {
+      "name": "connection",
+      "category": "db"
+    },
+    {
+      "name": "couchbase",
+      "category": "db"
+    },
+    {
+      "name": "cursor",
+      "category": "db"
+    },
+    {
+      "name": "dao",
+      "category": "db"
+    },
+    {
+      "name": "database",
+      "category": "db"
+    },
+    {
+      "name": "dataloader",
+      "category": "db"
+    },
+    {
+      "name": "db",
+      "category": "db"
+    },
+    {
+      "name": "dbapi",
+      "category": "db"
+    },
+    {
+      "name": "elasticsearch",
+      "category": "db"
+    },
+    {
+      "name": "em",
+      "category": "db"
+    },
+    {
+      "name": "engine",
+      "category": "db"
+    },
+    {
+      "name": "entitymanager",
+      "category": "db"
+    },
+    {
+      "name": "geode",
+      "category": "db"
+    },
+    {
+      "name": "graphql",
+      "category": "db"
+    },
+    {
+      "name": "hibernate",
+      "category": "db"
+    },
+    {
+      "name": "hikaricp",
+      "category": "db"
+    },
+    {
+      "name": "iceberg",
+      "category": "db"
+    },
+    {
+      "name": "influxdb",
+      "category": "db"
+    },
+    {
+      "name": "jdbc",
+      "category": "db"
+    },
+    {
+      "name": "jdbi",
+      "category": "db"
+    },
+    {
+      "name": "knex",
+      "category": "db"
+    },
+    {
+      "name": "milvus",
+      "category": "db"
+    },
+    {
+      "name": "model",
+      "category": "db"
+    },
+    {
+      "name": "mongo",
+      "category": "db"
+    },
+    {
+      "name": "mongodb",
+      "category": "db"
+    },
+    {
+      "name": "mongoose",
+      "category": "db"
+    },
+    {
+      "name": "mssql",
+      "category": "db"
+    },
+    {
+      "name": "mybatis",
+      "category": "db"
+    },
+    {
+      "name": "mysql",
+      "category": "db"
+    },
+    {
+      "name": "mysql2",
+      "category": "db"
+    },
+    {
+      "name": "mysqlclient",
+      "category": "db"
+    },
+    {
+      "name": "neo4j",
+      "category": "db"
+    },
+    {
+      "name": "opencensusshim",
+      "category": "db"
+    },
+    {
+      "name": "opensearch",
+      "category": "db"
+    },
+    {
+      "name": "oracledb",
+      "category": "db"
+    },
+    {
+      "name": "oracleucp",
+      "category": "db"
+    },
+    {
+      "name": "otelpgx",
+      "category": "db"
+    },
+    {
+      "name": "otelsqlx",
+      "category": "db"
+    },
+    {
+      "name": "pinecone",
+      "category": "db"
+    },
+    {
+      "name": "postgres",
+      "category": "db"
+    },
+    {
+      "name": "prisma",
+      "category": "db"
+    },
+    {
+      "name": "psycopg",
+      "category": "db"
+    },
+    {
+      "name": "psycopg2",
+      "category": "db"
+    },
+    {
+      "name": "pymongo",
+      "category": "db"
+    },
+    {
+      "name": "pymssql",
+      "category": "db"
+    },
+    {
+      "name": "pymysql",
+      "category": "db"
+    },
+    {
+      "name": "qdrant",
+      "category": "db"
+    },
+    {
+      "name": "querybuilder",
+      "category": "db"
+    },
+    {
+      "name": "queryrunner",
+      "category": "db"
+    },
+    {
+      "name": "r2dbc",
+      "category": "db"
+    },
+    {
+      "name": "repo",
+      "category": "db"
+    },
+    {
+      "name": "repository",
+      "category": "db"
+    },
+    {
+      "name": "sequelize",
+      "category": "db"
+    },
+    {
+      "name": "session",
+      "category": "db"
+    },
+    {
+      "name": "splunkbuntdb",
+      "category": "db"
+    },
+    {
+      "name": "splunkelastic",
+      "category": "db"
+    },
+    {
+      "name": "splunkgorm",
+      "category": "db"
+    },
+    {
+      "name": "splunkleveldb",
+      "category": "db"
+    },
+    {
+      "name": "splunkmysql",
+      "category": "db"
+    },
+    {
+      "name": "splunkpgx",
+      "category": "db"
+    },
+    {
+      "name": "splunkpq",
+      "category": "db"
+    },
+    {
+      "name": "splunksql",
+      "category": "db"
+    },
+    {
+      "name": "splunksqlx",
+      "category": "db"
+    },
+    {
+      "name": "sqlalchemy",
+      "category": "db"
+    },
+    {
+      "name": "sqlite3",
+      "category": "db"
+    },
+    {
+      "name": "statement",
+      "category": "db"
+    },
+    {
+      "name": "stmt",
+      "category": "db"
+    },
+    {
+      "name": "tedious",
+      "category": "db"
+    },
+    {
+      "name": "transaction",
+      "category": "db"
+    },
+    {
+      "name": "tx",
+      "category": "db"
+    },
+    {
+      "name": "typeorm",
+      "category": "db"
+    },
+    {
+      "name": "viburdbcp",
+      "category": "db"
+    },
+    {
+      "name": "weaviate",
+      "category": "db"
+    },
+    {
+      "name": "bunyan",
+      "category": "log"
+    },
+    {
+      "name": "javautillogging",
+      "category": "log"
+    },
+    {
+      "name": "jmxmetrics",
+      "category": "log"
+    },
+    {
+      "name": "log",
+      "category": "log"
+    },
+    {
+      "name": "log4j",
+      "category": "log"
+    },
+    {
+      "name": "logback",
+      "category": "log"
+    },
+    {
+      "name": "logger",
+      "category": "log"
+    },
+    {
+      "name": "logging",
+      "category": "log"
+    },
+    {
+      "name": "logrus",
+      "category": "log"
+    },
+    {
+      "name": "micrometer",
+      "category": "log"
+    },
+    {
+      "name": "pino",
+      "category": "log"
+    },
+    {
+      "name": "tracing",
+      "category": "log"
+    },
+    {
+      "name": "winston",
+      "category": "log"
+    },
+    {
+      "name": "zap",
+      "category": "log"
+    },
+    {
+      "name": "activejhttp",
+      "category": "network"
+    },
+    {
+      "name": "aiohttp",
+      "category": "network"
+    },
+    {
+      "name": "aiohttpserver",
+      "category": "network"
+    },
+    {
+      "name": "angular",
+      "category": "network"
+    },
+    {
+      "name": "asynchttpclient",
+      "category": "network"
+    },
+    {
+      "name": "axios",
+      "category": "network"
+    },
+    {
+      "name": "azurecore",
+      "category": "network"
+    },
+    {
+      "name": "botocore",
+      "category": "network"
+    },
+    {
+      "name": "client",
+      "category": "network"
+    },
+    {
+      "name": "cloudwego",
+      "category": "network"
+    },
+    {
+      "name": "connect",
+      "category": "network"
+    },
+    {
+      "name": "dns",
+      "category": "network"
+    },
+    {
+      "name": "dropwizard",
+      "category": "network"
+    },
+    {
+      "name": "fetch",
+      "category": "network"
+    },
+    {
+      "name": "fetcher",
+      "category": "network"
+    },
+    {
+      "name": "finaglehttp",
+      "category": "network"
+    },
+    {
+      "name": "finatra",
+      "category": "network"
+    },
+    {
+      "name": "gqlgen",
+      "category": "network"
+    },
+    {
+      "name": "grails",
+      "category": "network"
+    },
+    {
+      "name": "graphqljava",
+      "category": "network"
+    },
+    {
+      "name": "grizzly",
+      "category": "network"
+    },
+    {
+      "name": "grpc",
+      "category": "network"
+    },
+    {
+      "name": "gwt",
+      "category": "network"
+    },
+    {
+      "name": "helidon",
+      "category": "network"
+    },
+    {
+      "name": "http",
+      "category": "network"
+    },
+    {
+      "name": "httpclient",
+      "category": "network"
+    },
+    {
+      "name": "https",
+      "category": "network"
+    },
+    {
+      "name": "httpx",
+      "category": "network"
+    },
+    {
+      "name": "javahttpclient",
+      "category": "network"
+    },
+    {
+      "name": "jaxrs",
+      "category": "network"
+    },
+    {
+      "name": "jbosslogmanager",
+      "category": "network"
+    },
+    {
+      "name": "jenkins",
+      "category": "network"
+    },
+    {
+      "name": "jetty",
+      "category": "network"
+    },
+    {
+      "name": "jettyhttpclient",
+      "category": "network"
+    },
+    {
+      "name": "jfinal",
+      "category": "network"
+    },
+    {
+      "name": "joddhttp",
+      "category": "network"
+    },
+    {
+      "name": "jsf",
+      "category": "network"
+    },
+    {
+      "name": "jsp",
+      "category": "network"
+    },
+    {
+      "name": "kubernetes",
+      "category": "network"
+    },
+    {
+      "name": "labstack",
+      "category": "network"
+    },
+    {
+      "name": "liberty",
+      "category": "network"
+    },
+    {
+      "name": "nest",
+      "category": "network"
+    },
+    {
+      "name": "nestjs",
+      "category": "network"
+    },
+    {
+      "name": "netty",
+      "category": "network"
+    },
+    {
+      "name": "nextjs",
+      "category": "network"
+    },
+    {
+      "name": "okhttp",
+      "category": "network"
+    },
+    {
+      "name": "otelaws",
+      "category": "network"
+    },
+    {
+      "name": "otellambda",
+      "category": "network"
+    },
+    {
+      "name": "payara",
+      "category": "network"
+    },
+    {
+      "name": "pekkohttp",
+      "category": "network"
+    },
+    {
+      "name": "quarkus",
+      "category": "network"
+    },
+    {
+      "name": "ratpack",
+      "category": "network"
+    },
+    {
+      "name": "remix",
+      "category": "network"
+    },
+    {
+      "name": "requests",
+      "category": "network"
+    },
+    {
+      "name": "restclient",
+      "category": "network"
+    },
+    {
+      "name": "restful",
+      "category": "network"
+    },
+    {
+      "name": "restify",
+      "category": "network"
+    },
+    {
+      "name": "restlet",
+      "category": "network"
+    },
+    {
+      "name": "resttemplate",
+      "category": "network"
+    },
+    {
+      "name": "rmi",
+      "category": "network"
+    },
+    {
+      "name": "servlet",
+      "category": "network"
+    },
+    {
+      "name": "splunkchi",
+      "category": "network"
+    },
+    {
+      "name": "splunkdns",
+      "category": "network"
+    },
+    {
+      "name": "splunkgraphql",
+      "category": "network"
+    },
+    {
+      "name": "splunkhttp",
+      "category": "network"
+    },
+    {
+      "name": "splunkhttprouter",
+      "category": "network"
+    },
+    {
+      "name": "struts",
+      "category": "network"
+    },
+    {
+      "name": "sveltekit",
+      "category": "network"
+    },
+    {
+      "name": "tapestry",
+      "category": "network"
+    },
+    {
+      "name": "tide",
+      "category": "network"
+    },
+    {
+      "name": "tomcat",
+      "category": "network"
+    },
+    {
+      "name": "trillium",
+      "category": "network"
+    },
+    {
+      "name": "twilio",
+      "category": "network"
+    },
+    {
+      "name": "undertow",
+      "category": "network"
+    },
+    {
+      "name": "undici",
+      "category": "network"
+    },
+    {
+      "name": "urllib",
+      "category": "network"
+    },
+    {
+      "name": "urllib3",
+      "category": "network"
+    },
+    {
+      "name": "vaadin",
+      "category": "network"
+    },
+    {
+      "name": "webclient",
+      "category": "network"
+    },
+    {
+      "name": "wicket",
+      "category": "network"
+    },
+    {
+      "name": "aiokafka",
+      "category": "queue"
+    },
+    {
+      "name": "amqplib",
+      "category": "queue"
+    },
+    {
+      "name": "boto3sqs",
+      "category": "queue"
+    },
+    {
+      "name": "broker",
+      "category": "queue"
+    },
+    {
+      "name": "bullmq",
+      "category": "queue"
+    },
+    {
+      "name": "camel",
+      "category": "queue"
+    },
+    {
+      "name": "celery",
+      "category": "queue"
+    },
+    {
+      "name": "consumer",
+      "category": "queue"
+    },
+    {
+      "name": "ibmmq",
+      "category": "queue"
+    },
+    {
+      "name": "jms",
+      "category": "queue"
+    },
+    {
+      "name": "kafka",
+      "category": "queue"
+    },
+    {
+      "name": "kafkajs",
+      "category": "queue"
+    },
+    {
+      "name": "nats",
+      "category": "queue"
+    },
+    {
+      "name": "pika",
+      "category": "queue"
+    },
+    {
+      "name": "producer",
+      "category": "queue"
+    },
+    {
+      "name": "pulsar",
+      "category": "queue"
+    },
+    {
+      "name": "queue",
+      "category": "queue"
+    },
+    {
+      "name": "rabbit",
+      "category": "queue"
+    },
+    {
+      "name": "rabbitmq",
+      "category": "queue"
+    },
+    {
+      "name": "remoulade",
+      "category": "queue"
+    },
+    {
+      "name": "rocketmq",
+      "category": "queue"
+    },
+    {
+      "name": "splunkkafka",
+      "category": "queue"
+    },
+    {
+      "name": "sqs",
+      "category": "queue"
+    }
+  ],
+  "count": 248
+}

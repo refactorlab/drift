@@ -1,0 +1,45 @@
+# Auto-derived from OpenTelemetry contrib repos.
+# Refresh by running the generator with network access against
+# https://github.com/open-telemetry/opentelemetry-*-contrib trees,
+# or by editing this file manually.
+language: java
+entries:
+  - { module: io.lettuce, category: cache }
+  - { module: redis.clients.jedis, category: cache }
+  - { module: com.amazonaws.services.lambda, category: compute }
+  - { module: software.amazon.awssdk.services.lambda, category: compute }
+  - { module: co.elastic.clients, category: db }
+  - { module: com.alibaba.druid, category: db }
+  - { module: com.datastax.driver, category: db }
+  - { module: com.datastax.oss, category: db }
+  - { module: com.mongodb, category: db }
+  - { module: java.sql, category: db }
+  - { module: javax.sql, category: db }
+  - { module: org.elasticsearch.client, category: db }
+  - { module: org.hibernate, category: db }
+  - { module: org.mongodb, category: db }
+  - { module: org.springframework.jdbc, category: db }
+  - { module: java.io, category: io }
+  - { module: java.nio, category: io }
+  - { module: ch.qos.logback, category: log }
+  - { module: java.util.logging, category: log }
+  - { module: org.apache.logging.log4j, category: log }
+  - { module: org.slf4j, category: log }
+  - { module: com.amazonaws, category: network }
+  - { module: com.google.api.client.http, category: network }
+  - { module: com.squareup.okhttp, category: network }
+  - { module: com.sun.net.httpserver, category: network }
+  - { module: io.grpc, category: network }
+  - { module: java.net, category: network }
+  - { module: java.net.http, category: network }
+  - { module: okhttp3, category: network }
+  - { module: software.amazon.awssdk, category: network }
+  - { module: com.rabbitmq.client, category: queue }
+  - { module: jakarta.jms, category: queue }
+  - { module: javax.jms, category: queue }
+  - { module: org.apache.kafka, category: queue }
+  - { module: org.apache.kafka.clients, category: queue }
+  - { module: org.apache.kafka.streams, category: queue }
+  - { module: org.springframework.amqp, category: queue }
+  - { module: org.springframework.kafka, category: queue }
+  - { module: reactor.kafka, category: queue }

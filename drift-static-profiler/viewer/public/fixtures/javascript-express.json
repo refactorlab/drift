@@ -106,7 +106,7 @@
         "file": "tests/fixtures/javascript-express/src/repository.js",
         "line": 3,
         "parent_class": null,
-        "score": 0.17989761354389164
+        "score": 0.17989761354389158
       },
       {
         "name": "save",
@@ -134,35 +134,35 @@
         "file": "tests/fixtures/javascript-express/src/repository.js",
         "line": 8,
         "parent_class": "OrderRepository",
-        "score": 0.09196032350198473
+        "score": 0.09196032350198471
       },
       {
         "name": "notifyDownstream",
         "file": "tests/fixtures/javascript-express/src/routes.js",
         "line": 14,
         "parent_class": null,
-        "score": 0.09196032350198473
+        "score": 0.09196032350198471
       },
       {
         "name": "OrderService",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 3,
         "parent_class": null,
-        "score": 0.09196032350198473
+        "score": 0.09196032350198471
       },
       {
         "name": "constructor",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 4,
         "parent_class": "OrderService",
-        "score": 0.09196032350198473
+        "score": 0.09196032350198471
       },
       {
         "name": "createOrder",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 8,
         "parent_class": "OrderService",
-        "score": 0.09196032350198473
+        "score": 0.09196032350198471
       }
     ],
     "recursive_symbols": [],
@@ -216,7 +216,7 @@
       "is_async": true,
       "call_site_count": 0,
       "is_recursive": false,
-      "pagerank": 0.09196032350198473,
+      "pagerank": 0.09196032350198471,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,

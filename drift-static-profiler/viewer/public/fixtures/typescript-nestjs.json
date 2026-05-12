@@ -150,42 +150,42 @@
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.service.ts",
         "line": 10,
         "parent_class": "OrdersService",
-        "score": 0.1172175594345522
+        "score": 0.11721755943455224
       },
       {
         "name": "Order",
         "file": "tests/fixtures/typescript-nestjs/src/orders/order.entity.ts",
         "line": 4,
         "parent_class": null,
-        "score": 0.11441082541460029
+        "score": 0.1144108254146003
       },
       {
         "name": "create",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.controller.ts",
         "line": 10,
         "parent_class": "OrdersController",
-        "score": 0.08044000938436509
+        "score": 0.08044000938436512
       },
       {
         "name": "save",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.repository.ts",
         "line": 13,
         "parent_class": "OrdersRepository",
-        "score": 0.07746163026761438
+        "score": 0.0774616302676144
       },
       {
         "name": "buildOrder",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.service.ts",
         "line": 16,
         "parent_class": "OrdersService",
-        "score": 0.07746163026761438
+        "score": 0.0774616302676144
       },
       {
         "name": "validate",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.service.ts",
         "line": 24,
         "parent_class": "OrdersService",
-        "score": 0.07746163026761438
+        "score": 0.0774616302676144
       },
       {
         "name": "AppModule",
@@ -289,7 +289,7 @@
                   "is_async": false,
                   "call_site_count": 1,
                   "is_recursive": false,
-                  "pagerank": 0.11441082541460029,
+                  "pagerank": 0.1144108254146003,
                   "percent_total": 16.666666666666664,
                   "percent_parent": 50.0,
                   "n_plus_one_risk": false,
@@ -319,7 +319,7 @@
               "is_async": false,
               "call_site_count": 1,
               "is_recursive": false,
-              "pagerank": 0.07746163026761438,
+              "pagerank": 0.0774616302676144,
               "percent_total": 33.33333333333333,
               "percent_parent": 40.0,
               "n_plus_one_risk": false,
@@ -357,7 +357,7 @@
               "is_async": false,
               "call_site_count": 1,
               "is_recursive": false,
-              "pagerank": 0.07746163026761438,
+              "pagerank": 0.0774616302676144,
               "percent_total": 16.666666666666664,
               "percent_parent": 20.0,
               "n_plus_one_risk": false,
@@ -408,7 +408,7 @@
               "is_async": true,
               "call_site_count": 2,
               "is_recursive": false,
-              "pagerank": 0.07746163026761438,
+              "pagerank": 0.0774616302676144,
               "percent_total": 16.666666666666664,
               "percent_parent": 20.0,
               "n_plus_one_risk": false,
@@ -440,7 +440,7 @@
           "is_async": true,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.1172175594345522,
+          "pagerank": 0.11721755943455224,
           "percent_total": 83.33333333333334,
           "percent_parent": 83.33333333333334,
           "n_plus_one_risk": false,
@@ -472,7 +472,7 @@
       "is_async": true,
       "call_site_count": 1,
       "is_recursive": false,
-      "pagerank": 0.08044000938436509,
+      "pagerank": 0.08044000938436512,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,

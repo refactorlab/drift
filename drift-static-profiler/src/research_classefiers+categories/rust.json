@@ -1,0 +1,210 @@
+{
+  "language": "rust",
+  "generated_at": "2026-05-12T13:21:39Z",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "sources": [
+    "seed/rust",
+    "otel-registry/instrumentation-*.yml"
+  ],
+  "count": 38,
+  "entries": [
+    {
+      "module": "deadpool_redis",
+      "category": "cache",
+      "source": "seed/rust"
+    },
+    {
+      "module": "memcache",
+      "category": "cache",
+      "source": "seed/rust"
+    },
+    {
+      "module": "redis",
+      "category": "cache",
+      "source": "seed/rust"
+    },
+    {
+      "module": "clickhouse",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "diesel",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "mongodb",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "postgres",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "rusqlite",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "scylla",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "sea_orm",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "sqlx",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "tokio_postgres",
+      "category": "db",
+      "source": "seed/rust"
+    },
+    {
+      "module": "async_std::fs",
+      "category": "io",
+      "source": "seed/rust"
+    },
+    {
+      "module": "std::fs",
+      "category": "io",
+      "source": "seed/rust"
+    },
+    {
+      "module": "tokio::fs",
+      "category": "io",
+      "source": "seed/rust"
+    },
+    {
+      "module": "env_logger",
+      "category": "log",
+      "source": "seed/rust"
+    },
+    {
+      "module": "fern",
+      "category": "log",
+      "source": "seed/rust"
+    },
+    {
+      "module": "log",
+      "category": "log",
+      "source": "seed/rust"
+    },
+    {
+      "module": "slog",
+      "category": "log",
+      "source": "seed/rust"
+    },
+    {
+      "module": "tracing",
+      "category": "log",
+      "source": "seed/rust"
+    },
+    {
+      "module": "actix-web",
+      "category": "network",
+      "source": "otel-registry/instrumentation-rust-actix-web.yml"
+    },
+    {
+      "module": "actix.web",
+      "category": "network",
+      "source": "otel-registry/instrumentation-rust-actix-web.yml"
+    },
+    {
+      "module": "actix_web",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "axum",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "hyper",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "poem",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "reqwest",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "rocket",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "salvo",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "tide",
+      "category": "network",
+      "source": "otel-registry/instrumentation-rust-tide.yml"
+    },
+    {
+      "module": "tonic",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "tower_http",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "trillium",
+      "category": "network",
+      "source": "otel-registry/instrumentation-rust-trillium.yml"
+    },
+    {
+      "module": "warp",
+      "category": "network",
+      "source": "seed/rust"
+    },
+    {
+      "module": "async_nats",
+      "category": "queue",
+      "source": "seed/rust"
+    },
+    {
+      "module": "lapin",
+      "category": "queue",
+      "source": "seed/rust"
+    },
+    {
+      "module": "nats",
+      "category": "queue",
+      "source": "seed/rust"
+    },
+    {
+      "module": "rdkafka",
+      "category": "queue",
+      "source": "seed/rust"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# Go stdlib packages.
+language: go
+entries:
+  - { module: database/sql, category: db }
+  - { module: net/http, category: network }
+  - { module: net/rpc, category: network }
+  - { module: net, category: network }
+  - { module: os, category: io }
+  - { module: io, category: io }
+  - { module: io/fs, category: io }
+  - { module: io/ioutil, category: io }
+  - { module: path/filepath, category: io }
+  - { module: bufio, category: io }
+  - { module: log, category: log }
+  - { module: log/slog, category: log }

@@ -179,21 +179,21 @@
         "file": "tests/fixtures/python-fastapi/app/repositories.py",
         "line": 4,
         "parent_class": null,
-        "score": 0.0845574561849818
+        "score": 0.08455745618498178
       },
       {
         "name": "OrderService",
         "file": "tests/fixtures/python-fastapi/app/services.py",
         "line": 5,
         "parent_class": null,
-        "score": 0.0845574561849818
+        "score": 0.08455745618498178
       },
       {
         "name": "create_order",
         "file": "tests/fixtures/python-fastapi/app/services.py",
         "line": 9,
         "parent_class": "OrderService",
-        "score": 0.0845574561849818
+        "score": 0.08455745618498178
       },
       {
         "name": "get_session",
@@ -452,7 +452,7 @@
       "is_async": false,
       "call_site_count": 1,
       "is_recursive": false,
-      "pagerank": 0.0845574561849818,
+      "pagerank": 0.08455745618498178,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,
@@ -499,7 +499,7 @@
           "is_async": false,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.0845574561849818,
+          "pagerank": 0.08455745618498178,
           "percent_total": 12.5,
           "percent_parent": 12.5,
           "n_plus_one_risk": false,
@@ -537,7 +537,7 @@
           "is_async": false,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.0845574561849818,
+          "pagerank": 0.08455745618498178,
           "percent_total": 12.5,
           "percent_parent": 12.5,
           "n_plus_one_risk": false,
@@ -764,7 +764,7 @@
           "is_async": false,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.0845574561849818,
+          "pagerank": 0.08455745618498178,
           "percent_total": 62.5,
           "percent_parent": 62.5,
           "n_plus_one_risk": false,

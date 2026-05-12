@@ -1,0 +1,46 @@
+# Hand-curated seed for Rust crates.
+# Rationale: OTel-rust is sparse. These are the de-facto choices in the
+# Rust ecosystem (top by crates.io download count / GitHub stars / community
+# convention). Refresh when a new dominant crate emerges.
+language: rust
+entries:
+  # ── DB ─────────────────────────────────────────────────────────────
+  - { module: sqlx, category: db }
+  - { module: diesel, category: db }
+  - { module: sea_orm, category: db }
+  - { module: rusqlite, category: db }
+  - { module: tokio_postgres, category: db }
+  - { module: postgres, category: db }
+  - { module: mongodb, category: db }
+  - { module: scylla, category: db }
+  - { module: clickhouse, category: db }
+  # ── CACHE ──────────────────────────────────────────────────────────
+  - { module: redis, category: cache }
+  - { module: memcache, category: cache }
+  - { module: deadpool_redis, category: cache }
+  # ── NETWORK ────────────────────────────────────────────────────────
+  - { module: reqwest, category: network }
+  - { module: hyper, category: network }
+  - { module: axum, category: network }
+  - { module: actix_web, category: network }
+  - { module: rocket, category: network }
+  - { module: warp, category: network }
+  - { module: tonic, category: network }
+  - { module: tower_http, category: network }
+  - { module: poem, category: network }
+  - { module: salvo, category: network }
+  # ── IO ─────────────────────────────────────────────────────────────
+  - { module: "std::fs", category: io }
+  - { module: "tokio::fs", category: io }
+  - { module: "async_std::fs", category: io }
+  # ── QUEUE ──────────────────────────────────────────────────────────
+  - { module: rdkafka, category: queue }
+  - { module: lapin, category: queue }
+  - { module: nats, category: queue }
+  - { module: async_nats, category: queue }
+  # ── LOG ────────────────────────────────────────────────────────────
+  - { module: log, category: log }
+  - { module: tracing, category: log }
+  - { module: slog, category: log }
+  - { module: env_logger, category: log }
+  - { module: fern, category: log }

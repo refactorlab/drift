@@ -1,0 +1,11 @@
+# Java stdlib packages.
+language: java
+entries:
+  - { module: java.sql, category: db }
+  - { module: javax.sql, category: db }
+  - { module: java.net.http, category: network }
+  - { module: java.net, category: network }
+  - { module: java.io, category: io }
+  - { module: java.nio, category: io }
+  - { module: "java.nio.file", category: io }
+  - { module: java.util.logging, category: log }

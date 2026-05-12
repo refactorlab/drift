@@ -1,0 +1,33 @@
+# Auto-derived from OpenTelemetry contrib repos.
+# Refresh by running the generator with network access against
+# https://github.com/open-telemetry/opentelemetry-*-contrib trees,
+# or by editing this file manually.
+language: go
+entries:
+  - { module: 'github.com/go-redis/redis', category: cache }
+  - { module: 'github.com/redis/go-redis', category: cache }
+  - { module: 'database/sql', category: db }
+  - { module: 'github.com/jackc/pgx', category: db }
+  - { module: 'github.com/jmoiron/sqlx', category: db }
+  - { module: 'go.mongodb.org/mongo-driver', category: db }
+  - { module: io, category: io }
+  - { module: 'io/fs', category: io }
+  - { module: 'io/ioutil', category: io }
+  - { module: os, category: io }
+  - { module: 'path/filepath', category: io }
+  - { module: 'github.com/rs/zerolog', category: log }
+  - { module: 'github.com/sirupsen/logrus', category: log }
+  - { module: 'go.uber.org/zap', category: log }
+  - { module: log, category: log }
+  - { module: 'log/slog', category: log }
+  - { module: 'github.com/aws/aws-sdk-go-v2', category: network }
+  - { module: 'google.golang.org/grpc', category: network }
+  - { module: net, category: network }
+  - { module: 'net/http', category: network }
+  - { module: 'net/rpc', category: network }
+  - { module: 'github.com/IBM/sarama', category: queue }
+  - { module: 'github.com/Shopify/sarama', category: queue }
+  - { module: 'github.com/nats-io/nats.go', category: queue }
+  - { module: 'github.com/rabbitmq/amqp091-go', category: queue }
+  - { module: 'github.com/segmentio/kafka-go', category: queue }
+  - { module: 'github.com/streadway/amqp', category: queue }

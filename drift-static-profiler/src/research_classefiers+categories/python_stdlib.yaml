@@ -1,0 +1,24 @@
+# Python stdlib modules. OTel only catalogs third-party packages, so
+# these need a hand-curated supplement: every Python source file imports
+# from the stdlib all the time.
+language: python
+entries:
+  - { module: sqlite3, category: db }
+  - { module: urllib, category: network }
+  - { module: "urllib.request", category: network }
+  - { module: "urllib.parse", category: network }
+  - { module: socket, category: network }
+  - { module: http, category: network }
+  - { module: "http.client", category: network }
+  - { module: "http.server", category: network }
+  - { module: io, category: io }
+  - { module: pathlib, category: io }
+  - { module: os, category: io }
+  - { module: "os.path", category: io }
+  - { module: shutil, category: io }
+  - { module: tempfile, category: io }
+  - { module: logging, category: log }
+  - { module: asyncio, category: compute }
+  - { module: threading, category: compute }
+  - { module: multiprocessing, category: compute }
+  - { module: concurrent.futures, category: compute }

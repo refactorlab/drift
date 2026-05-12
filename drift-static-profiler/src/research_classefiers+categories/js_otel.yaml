@@ -1,0 +1,41 @@
+# Auto-derived from OpenTelemetry contrib repos.
+# Refresh by running the generator with network access against
+# https://github.com/open-telemetry/opentelemetry-*-contrib trees,
+# or by editing this file manually.
+language: javascript
+entries:
+  - { module: ioredis, category: cache }
+  - { module: memcached, category: cache }
+  - { module: redis, category: cache }
+  - { module: 'aws-lambda', category: compute }
+  - { module: 'cassandra-driver', category: db }
+  - { module: knex, category: db }
+  - { module: mongodb, category: db }
+  - { module: mongoose, category: db }
+  - { module: mysql, category: db }
+  - { module: mysql2, category: db }
+  - { module: pg, category: db }
+  - { module: tedious, category: db }
+  - { module: fs, category: io }
+  - { module: 'fs/promises', category: io }
+  - { module: 'node:fs', category: io }
+  - { module: 'node:fs/promises', category: io }
+  - { module: path, category: io }
+  - { module: stream, category: io }
+  - { module: bunyan, category: log }
+  - { module: pino, category: log }
+  - { module: winston, category: log }
+  - { module: '@grpc/grpc-js', category: network }
+  - { module: '@hapi/hapi', category: network }
+  - { module: '@nestjs/core', category: network }
+  - { module: 'aws-sdk', category: network }
+  - { module: express, category: network }
+  - { module: http, category: network }
+  - { module: https, category: network }
+  - { module: koa, category: network }
+  - { module: net, category: network }
+  - { module: socket.io, category: network }
+  - { module: undici, category: network }
+  - { module: ws, category: network }
+  - { module: amqplib, category: queue }
+  - { module: kafkajs, category: queue }

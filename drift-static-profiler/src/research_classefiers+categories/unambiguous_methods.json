@@ -1,0 +1,395 @@
+{
+  "description": "Tier D unambiguous method names. Matched case-sensitively against the method name exactly. Deliberately tight \u2014 generic verbs like save/add/find/get/delete/update are intentionally NOT here; they require Tier B or Tier C evidence.",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "methods": [
+    {
+      "name": "blpop",
+      "category": "cache"
+    },
+    {
+      "name": "brpop",
+      "category": "cache"
+    },
+    {
+      "name": "cas",
+      "category": "cache"
+    },
+    {
+      "name": "expire",
+      "category": "cache"
+    },
+    {
+      "name": "getex",
+      "category": "cache"
+    },
+    {
+      "name": "getset",
+      "category": "cache"
+    },
+    {
+      "name": "hgetall",
+      "category": "cache"
+    },
+    {
+      "name": "hincrby",
+      "category": "cache"
+    },
+    {
+      "name": "hincrbyfloat",
+      "category": "cache"
+    },
+    {
+      "name": "hmget",
+      "category": "cache"
+    },
+    {
+      "name": "hmset",
+      "category": "cache"
+    },
+    {
+      "name": "hset",
+      "category": "cache"
+    },
+    {
+      "name": "hsetnx",
+      "category": "cache"
+    },
+    {
+      "name": "lpop",
+      "category": "cache"
+    },
+    {
+      "name": "lpush",
+      "category": "cache"
+    },
+    {
+      "name": "lpushx",
+      "category": "cache"
+    },
+    {
+      "name": "lrange",
+      "category": "cache"
+    },
+    {
+      "name": "persist",
+      "category": "cache"
+    },
+    {
+      "name": "pexpire",
+      "category": "cache"
+    },
+    {
+      "name": "psetex",
+      "category": "cache"
+    },
+    {
+      "name": "pttl",
+      "category": "cache"
+    },
+    {
+      "name": "rpop",
+      "category": "cache"
+    },
+    {
+      "name": "rpush",
+      "category": "cache"
+    },
+    {
+      "name": "rpushx",
+      "category": "cache"
+    },
+    {
+      "name": "sadd",
+      "category": "cache"
+    },
+    {
+      "name": "setex",
+      "category": "cache"
+    },
+    {
+      "name": "setnx",
+      "category": "cache"
+    },
+    {
+      "name": "sismember",
+      "category": "cache"
+    },
+    {
+      "name": "smembers",
+      "category": "cache"
+    },
+    {
+      "name": "srem",
+      "category": "cache"
+    },
+    {
+      "name": "ttl",
+      "category": "cache"
+    },
+    {
+      "name": "zadd",
+      "category": "cache"
+    },
+    {
+      "name": "zincrby",
+      "category": "cache"
+    },
+    {
+      "name": "zrange",
+      "category": "cache"
+    },
+    {
+      "name": "zrangebyscore",
+      "category": "cache"
+    },
+    {
+      "name": "zrem",
+      "category": "cache"
+    },
+    {
+      "name": "zrevrange",
+      "category": "cache"
+    },
+    {
+      "name": "AutoMigrate",
+      "category": "db"
+    },
+    {
+      "name": "FirstOrCreate",
+      "category": "db"
+    },
+    {
+      "name": "aggregate",
+      "category": "db"
+    },
+    {
+      "name": "batchInsert",
+      "category": "db"
+    },
+    {
+      "name": "batchUpdate",
+      "category": "db"
+    },
+    {
+      "name": "beginTransaction",
+      "category": "db"
+    },
+    {
+      "name": "bulkWrite",
+      "category": "db"
+    },
+    {
+      "name": "commitTransaction",
+      "category": "db"
+    },
+    {
+      "name": "createConnection",
+      "category": "db"
+    },
+    {
+      "name": "createQueryBuilder",
+      "category": "db"
+    },
+    {
+      "name": "createQueryRunner",
+      "category": "db"
+    },
+    {
+      "name": "create_engine",
+      "category": "db"
+    },
+    {
+      "name": "deleteMany",
+      "category": "db"
+    },
+    {
+      "name": "deleteOne",
+      "category": "db"
+    },
+    {
+      "name": "executeBatch",
+      "category": "db"
+    },
+    {
+      "name": "executeQuery",
+      "category": "db"
+    },
+    {
+      "name": "executeUpdate",
+      "category": "db"
+    },
+    {
+      "name": "execute_query",
+      "category": "db"
+    },
+    {
+      "name": "findAndModify",
+      "category": "db"
+    },
+    {
+      "name": "findByIdAndDelete",
+      "category": "db"
+    },
+    {
+      "name": "findByIdAndUpdate",
+      "category": "db"
+    },
+    {
+      "name": "findOneAndDelete",
+      "category": "db"
+    },
+    {
+      "name": "findOneAndReplace",
+      "category": "db"
+    },
+    {
+      "name": "findOneAndUpdate",
+      "category": "db"
+    },
+    {
+      "name": "getConnection",
+      "category": "db"
+    },
+    {
+      "name": "getRepository",
+      "category": "db"
+    },
+    {
+      "name": "insertMany",
+      "category": "db"
+    },
+    {
+      "name": "insertOne",
+      "category": "db"
+    },
+    {
+      "name": "prepareCall",
+      "category": "db"
+    },
+    {
+      "name": "prepareStatement",
+      "category": "db"
+    },
+    {
+      "name": "queryRunner",
+      "category": "db"
+    },
+    {
+      "name": "rawQuery",
+      "category": "db"
+    },
+    {
+      "name": "releaseConnection",
+      "category": "db"
+    },
+    {
+      "name": "replaceOne",
+      "category": "db"
+    },
+    {
+      "name": "rollbackTransaction",
+      "category": "db"
+    },
+    {
+      "name": "sessionmaker",
+      "category": "db"
+    },
+    {
+      "name": "updateMany",
+      "category": "db"
+    },
+    {
+      "name": "updateOne",
+      "category": "db"
+    },
+    {
+      "name": "getSignedUrl",
+      "category": "network"
+    },
+    {
+      "name": "getSignedUrlPromise",
+      "category": "network"
+    },
+    {
+      "name": "httplib2Request",
+      "category": "network"
+    },
+    {
+      "name": "invokeAsync",
+      "category": "network"
+    },
+    {
+      "name": "sendAsync",
+      "category": "network"
+    },
+    {
+      "name": "urlopen",
+      "category": "network"
+    },
+    {
+      "name": "urlretrieve",
+      "category": "network"
+    },
+    {
+      "name": "acknowledgeMessage",
+      "category": "queue"
+    },
+    {
+      "name": "basicAck",
+      "category": "queue"
+    },
+    {
+      "name": "basicConsume",
+      "category": "queue"
+    },
+    {
+      "name": "basicNack",
+      "category": "queue"
+    },
+    {
+      "name": "basicPublish",
+      "category": "queue"
+    },
+    {
+      "name": "basicReject",
+      "category": "queue"
+    },
+    {
+      "name": "consumeMessage",
+      "category": "queue"
+    },
+    {
+      "name": "createConsumer",
+      "category": "queue"
+    },
+    {
+      "name": "createProducer",
+      "category": "queue"
+    },
+    {
+      "name": "nackMessage",
+      "category": "queue"
+    },
+    {
+      "name": "publishMessage",
+      "category": "queue"
+    },
+    {
+      "name": "sendOffsetsToTransaction",
+      "category": "queue"
+    },
+    {
+      "name": "subscribeTopic",
+      "category": "queue"
+    }
+  ],
+  "count": 95
+}

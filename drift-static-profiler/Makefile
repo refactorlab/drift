@@ -54,7 +54,20 @@ RESET  := \033[0m
         viewer-bun viewer-stop viewer-install viewer-build \
         scan scan-roots \
         diff-demo schema-validate \
+        refresh-catalogs extend-catalogs verify-catalogs list-uncategorized \
+        sync-otel-registry refresh-from-upstream \
         watch clean distclean help
+
+CATALOG_DIR    := src/research_classefiers+categories
+CATALOG_SCRIPT := $(CATALOG_DIR)/build_otel_registry.py
+CATALOG_FILES  := $(CATALOG_DIR)/python.json \
+                  $(CATALOG_DIR)/javascript.json \
+                  $(CATALOG_DIR)/java.json \
+                  $(CATALOG_DIR)/go.json \
+                  $(CATALOG_DIR)/rust.json \
+                  $(CATALOG_DIR)/scala.json \
+                  $(CATALOG_DIR)/receiver_patterns.json \
+                  $(CATALOG_DIR)/unambiguous_methods.json
 
 ### Tier 1 (the 3 you'll use)
 
@@ -308,6 +321,93 @@ ok = True; \
     print(f'  ✗ {f}: {len(errors)} error(s)'), [print(f'      • {\"/\".join(str(p) for p in e.path) or \"(root)\"}: {e.message}') for e in errors[:5]], (ok := False) \
   ) or print(f'  ✓ {f}')) for f in files]; \
 sys.exit(0 if ok else 1)"
+
+### Classification catalogs
+#
+# The classifier in src/categories.rs is data-driven: it loads JSONs from
+# src/research_classefiers+categories/ at compile time (`include_str!`).
+# Those JSONs are extended in place by `build_otel_registry.py`, which
+# scans the 488 YAML files in src/categories-opentelemetry-classefiers/
+# (the OpenTelemetry registry snapshot) and merges new module → category
+# entries, deduping by module name. Existing entries always win on
+# conflict — the script is strictly additive.
+#
+# Where to add a new data source:
+#
+#   1. More YAMLs (same `instrumentation-<lang>-<lib>.yml` naming):
+#        make extend-catalogs SRC=/abs/path/to/your-yaml-dir
+#      The script merges those into the per-lang JSONs alongside the
+#      default OTel registry.
+#
+#   2. Direct module → category pairs (no YAML wrapping):
+#        edit src/research_classefiers+categories/module_overrides.json
+#      Rebuild the crate to pick them up. This file is for cross-language
+#      hand-curated entries; per-language JSONs are for OTel-derived data.
+#
+#   3. Receiver patterns / unambiguous methods:
+#        edit receiver_patterns.json / unambiguous_methods.json directly,
+#      or extend the CURATED_METHODS dict in build_otel_registry.py and
+#      re-run `make refresh-catalogs`.
+
+refresh-catalogs: ## Merge default OTel registry YAMLs into per-lang catalogs (idempotent)
+	@printf "$(BLUE)▶$(RESET) merging OTel registry → $(CATALOG_DIR)/*.json\n"
+	@cd $(CATALOG_DIR) && python3 build_otel_registry.py
+
+# Usage: make extend-catalogs SRC=/abs/path/to/yaml-dir
+extend-catalogs: ## Also merge from SRC=<dir of instrumentation-*.yml files>
+	@if [ -z "$(SRC)" ]; then \
+	  printf "$(YELLOW)!$(RESET) usage: make extend-catalogs SRC=/abs/path/to/yaml-dir\n"; \
+	  printf "          (the dir should contain instrumentation-<lang>-<lib>.yml files)\n"; \
+	  exit 1; fi
+	@if [ ! -d "$(SRC)" ]; then \
+	  printf "$(YELLOW)!$(RESET) not a directory: $(SRC)\n"; exit 1; fi
+	@printf "$(BLUE)▶$(RESET) merging default OTel + $(SRC) → $(CATALOG_DIR)/*.json\n"
+	@cd $(CATALOG_DIR) && python3 build_otel_registry.py --source "$(SRC)"
+
+verify-catalogs: ## Run script twice; second pass must add 0 (idempotency proof)
+	@printf "$(BLUE)▶$(RESET) idempotency check — running script twice\n"
+	@cd $(CATALOG_DIR) && python3 build_otel_registry.py > /tmp/drift-catalog-run1.log 2>&1
+	@cd $(CATALOG_DIR) && python3 build_otel_registry.py > /tmp/drift-catalog-run2.log 2>&1
+	@if grep -q "GRAND_TOTAL_ADDED=0" /tmp/drift-catalog-run2.log; then \
+	  printf "$(GREEN)✓$(RESET) idempotent — second run added 0\n"; \
+	  tail -8 /tmp/drift-catalog-run2.log; \
+	else \
+	  printf "$(YELLOW)!$(RESET) NOT idempotent — second run added entries:\n"; \
+	  grep "GRAND_TOTAL_ADDED\|added=" /tmp/drift-catalog-run2.log; \
+	  exit 1; fi
+
+OTEL_REGISTRY_DIR := src/categories-opentelemetry-classefiers
+SYNC_SCRIPT       := $(CATALOG_DIR)/sync_otel_registry.py
+
+# Optional knobs (override on the command line):
+#   make sync-otel-registry PRUNE=1     # also delete local files not upstream
+#   make sync-otel-registry DRY=1       # show changes without writing
+#   make sync-otel-registry BRANCH=v1.2 # sync from a non-main branch
+#   make sync-otel-registry LIMIT=20    # only fetch first 20 (testing)
+PRUNE  ?=
+DRY    ?=
+BRANCH ?= main
+LIMIT  ?=
+
+sync-otel-registry: ## Re-download OTel registry YAMLs from upstream (PRUNE=1 DRY=1 BRANCH=... LIMIT=N)
+	@printf "$(BLUE)▶$(RESET) syncing OTel registry → $(OTEL_REGISTRY_DIR)\n"
+	@python3 $(SYNC_SCRIPT) \
+	  $(if $(PRUNE),--prune,) \
+	  $(if $(DRY),--dry-run,) \
+	  $(if $(BRANCH),--branch $(BRANCH),) \
+	  $(if $(LIMIT),--limit $(LIMIT),)
+
+refresh-from-upstream: sync-otel-registry refresh-catalogs ## sync OTel registry + re-merge into catalogs
+	@printf "$(GREEN)✓$(RESET) catalogs refreshed from upstream OTel registry\n"
+
+list-uncategorized: ## Show every OTel library the script couldn't categorize (dry-run)
+	@cd $(CATALOG_DIR) && OUT=$$(python3 build_otel_registry.py --list-uncategorized --dry-run); \
+	  if printf "%s" "$$OUT" | grep -q "Uncategorized libraries"; then \
+	    printf "%s\n" "$$OUT" | sed -n '/Uncategorized libraries/,$$p'; \
+	  else \
+	    UNCAT=$$(printf "%s" "$$OUT" | sed -n 's/.*uncategorized: *//p' | head -1); \
+	    printf "$(GREEN)✓$(RESET) all libraries categorized (uncategorized=$$UNCAT)\n"; \
+	  fi
 
 ### Misc
 

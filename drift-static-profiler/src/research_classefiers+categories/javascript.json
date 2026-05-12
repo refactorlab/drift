@@ -1,0 +1,681 @@
+{
+  "language": "javascript",
+  "generated_at": "2026-05-12T13:36:44Z",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "sources": [
+    "seed/js_otel",
+    "seed/js_stdlib",
+    "otel-registry/instrumentation-*.yml"
+  ],
+  "count": 132,
+  "entries": [
+    {
+      "module": "ioredis",
+      "category": "cache",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "lru-memoizer",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-lru-memoizer.yml"
+    },
+    {
+      "module": "lru.memoizer",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-lru-memoizer.yml"
+    },
+    {
+      "module": "lru_memoizer",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-lru-memoizer.yml"
+    },
+    {
+      "module": "memcached",
+      "category": "cache",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "node-cache",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-node-cache.yml"
+    },
+    {
+      "module": "node.cache",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-node-cache.yml"
+    },
+    {
+      "module": "node_cache",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-node-cache.yml"
+    },
+    {
+      "module": "redis",
+      "category": "cache",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "redis-4",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-redis-4.yml"
+    },
+    {
+      "module": "redis.4",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-redis-4.yml"
+    },
+    {
+      "module": "redis_4",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-js-redis-4.yml"
+    },
+    {
+      "module": "aws-lambda",
+      "category": "compute",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "host-metrics",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-js-host-metrics.yml"
+    },
+    {
+      "module": "host.metrics",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-js-host-metrics.yml"
+    },
+    {
+      "module": "host_metrics",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-js-host-metrics.yml"
+    },
+    {
+      "module": "langchain",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-js-langchain.yml"
+    },
+    {
+      "module": "openai",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-js-openai.yml"
+    },
+    {
+      "module": "runtimenode",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-js-runtimenode.yml"
+    },
+    {
+      "module": "cassandra",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-cassandra-driver.yml"
+    },
+    {
+      "module": "cassandra-driver",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "cassandra.driver",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-cassandra-driver.yml"
+    },
+    {
+      "module": "cassandra_driver",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-cassandra-driver.yml"
+    },
+    {
+      "module": "dataloader",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-dataloader.yml"
+    },
+    {
+      "module": "elasticsearch",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-elasticsearch.yml"
+    },
+    {
+      "module": "generic-pool",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-generic-pool.yml"
+    },
+    {
+      "module": "generic.pool",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-generic-pool.yml"
+    },
+    {
+      "module": "generic_pool",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-generic-pool.yml"
+    },
+    {
+      "module": "knex",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "mongodb",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "mongoose",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "mongoose-instrumentation",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-mongoose-instrumentation.yml"
+    },
+    {
+      "module": "mongoose.instrumentation",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-mongoose-instrumentation.yml"
+    },
+    {
+      "module": "mongoose_instrumentation",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-mongoose-instrumentation.yml"
+    },
+    {
+      "module": "mssql",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-mssql.yml"
+    },
+    {
+      "module": "mysql",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "mysql2",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "neo4j",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-neo4j.yml"
+    },
+    {
+      "module": "oracledb",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-oracledb.yml"
+    },
+    {
+      "module": "pg",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "postgres",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-postgres.yml"
+    },
+    {
+      "module": "prisma",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-prisma.yml"
+    },
+    {
+      "module": "sequelize",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-sequelize.yml"
+    },
+    {
+      "module": "tedious",
+      "category": "db",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "typeorm",
+      "category": "db",
+      "source": "otel-registry/instrumentation-js-typeorm.yml"
+    },
+    {
+      "module": "fs",
+      "category": "io",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "fs/promises",
+      "category": "io",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "node:fs",
+      "category": "io",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "node:fs/promises",
+      "category": "io",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "node:path",
+      "category": "io",
+      "source": "seed/js_stdlib"
+    },
+    {
+      "module": "node:stream",
+      "category": "io",
+      "source": "seed/js_stdlib"
+    },
+    {
+      "module": "path",
+      "category": "io",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "stream",
+      "category": "io",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "bunyan",
+      "category": "log",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "pino",
+      "category": "log",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "winston",
+      "category": "log",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "@grpc/grpc-js",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "@hapi/hapi",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "@nestjs/core",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "angular",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-angular.yml"
+    },
+    {
+      "module": "autotelic-fastify",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-autotelic-fastify.yml"
+    },
+    {
+      "module": "autotelic.fastify",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-autotelic-fastify.yml"
+    },
+    {
+      "module": "autotelic_fastify",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-autotelic-fastify.yml"
+    },
+    {
+      "module": "aws-sdk",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "aws.lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-aws-lambda.yml"
+    },
+    {
+      "module": "aws_lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-aws-lambda.yml"
+    },
+    {
+      "module": "azure-sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-azure-sdk.yml"
+    },
+    {
+      "module": "azure.sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-azure-sdk.yml"
+    },
+    {
+      "module": "azure_sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-azure-sdk.yml"
+    },
+    {
+      "module": "browser-navigation",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-browser-navigation.yml"
+    },
+    {
+      "module": "browser.navigation",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-browser-navigation.yml"
+    },
+    {
+      "module": "browser_navigation",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-browser-navigation.yml"
+    },
+    {
+      "module": "connect",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-connect.yml"
+    },
+    {
+      "module": "dgram",
+      "category": "network",
+      "source": "seed/js_stdlib"
+    },
+    {
+      "module": "dns",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-dns.yml"
+    },
+    {
+      "module": "document-load",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-document-load.yml"
+    },
+    {
+      "module": "document.load",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-document-load.yml"
+    },
+    {
+      "module": "document_load",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-document-load.yml"
+    },
+    {
+      "module": "express",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "fastify-otel",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-fastify-otel.yml"
+    },
+    {
+      "module": "fastify.otel",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-fastify-otel.yml"
+    },
+    {
+      "module": "fastify_otel",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-fastify-otel.yml"
+    },
+    {
+      "module": "fetch",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-fetch.yml"
+    },
+    {
+      "module": "graphql",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-graphql.yml"
+    },
+    {
+      "module": "grpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-grpc.yml"
+    },
+    {
+      "module": "hapi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-hapi.yml"
+    },
+    {
+      "module": "http",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "https",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "koa",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "long-task",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-long-task.yml"
+    },
+    {
+      "module": "long.task",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-long-task.yml"
+    },
+    {
+      "module": "long_task",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-long-task.yml"
+    },
+    {
+      "module": "nest",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-nest.yml"
+    },
+    {
+      "module": "nestjs",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-nestjs.yml"
+    },
+    {
+      "module": "nestjs-core",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-nestjs-core.yml"
+    },
+    {
+      "module": "nestjs.core",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-nestjs-core.yml"
+    },
+    {
+      "module": "nestjs_core",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-nestjs-core.yml"
+    },
+    {
+      "module": "net",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "nextjs",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-nextjs.yml"
+    },
+    {
+      "module": "node:http",
+      "category": "network",
+      "source": "seed/js_stdlib"
+    },
+    {
+      "module": "node:https",
+      "category": "network",
+      "source": "seed/js_stdlib"
+    },
+    {
+      "module": "node:net",
+      "category": "network",
+      "source": "seed/js_stdlib"
+    },
+    {
+      "module": "pillarjs-router",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-pillarjs-router.yml"
+    },
+    {
+      "module": "pillarjs.router",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-pillarjs-router.yml"
+    },
+    {
+      "module": "pillarjs_router",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-pillarjs-router.yml"
+    },
+    {
+      "module": "pragmaticivan-nestjs",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-pragmaticivan-nestjs.yml"
+    },
+    {
+      "module": "pragmaticivan.nestjs",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-pragmaticivan-nestjs.yml"
+    },
+    {
+      "module": "pragmaticivan_nestjs",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-pragmaticivan-nestjs.yml"
+    },
+    {
+      "module": "remix",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-remix.yml"
+    },
+    {
+      "module": "restify",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-restify.yml"
+    },
+    {
+      "module": "router",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-router.yml"
+    },
+    {
+      "module": "socket.io",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "sveltekit",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-sveltekit.yml"
+    },
+    {
+      "module": "undici",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "user-interaction",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-user-interaction.yml"
+    },
+    {
+      "module": "user.interaction",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-user-interaction.yml"
+    },
+    {
+      "module": "user_interaction",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-user-interaction.yml"
+    },
+    {
+      "module": "web-exception",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-web-exception.yml"
+    },
+    {
+      "module": "web.exception",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-web-exception.yml"
+    },
+    {
+      "module": "web_exception",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-web-exception.yml"
+    },
+    {
+      "module": "ws",
+      "category": "network",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "xml-http-request",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-xml-http-request.yml"
+    },
+    {
+      "module": "xml.http.request",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-xml-http-request.yml"
+    },
+    {
+      "module": "xml_http_request",
+      "category": "network",
+      "source": "otel-registry/instrumentation-js-xml-http-request.yml"
+    },
+    {
+      "module": "amqplib",
+      "category": "queue",
+      "source": "seed/js_otel"
+    },
+    {
+      "module": "aws.sdk",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-js-aws-sdk.yml"
+    },
+    {
+      "module": "aws_sdk",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-js-aws-sdk.yml"
+    },
+    {
+      "module": "bullmq",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-js-bullmq.yml"
+    },
+    {
+      "module": "confluent-kafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-js-confluent-kafka.yml"
+    },
+    {
+      "module": "confluent.kafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-js-confluent-kafka.yml"
+    },
+    {
+      "module": "confluent_kafka",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-js-confluent-kafka.yml"
+    },
+    {
+      "module": "kafkajs",
+      "category": "queue",
+      "source": "seed/js_otel"
+    }
+  ]
+}

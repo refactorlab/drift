@@ -175,7 +175,7 @@ export const TIPS: Record<string, string> = {
   // ── App brand + toolbar ───────────────────────────────────────────────
   brand:
     'drift static profiler — language-agnostic static call-tree analyzer. ' +
-    'Parses Python / Java / TypeScript / JavaScript / Go / Rust / Scala with tree-sitter, ' +
+    'Supports Python / Java / TypeScript / JavaScript / Go / Rust / Scala, ' +
     'builds a per-project call graph, classifies external calls (db / network / io / cache / queue / log), ' +
     'and surfaces hot paths and smells without running the code.',
   toolbar_fixture:

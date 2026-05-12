@@ -1,0 +1,1086 @@
+{
+  "language": "java",
+  "generated_at": "2026-05-12T13:36:44Z",
+  "category_set": [
+    "db",
+    "network",
+    "io",
+    "cache",
+    "queue",
+    "log",
+    "compute"
+  ],
+  "sources": [
+    "seed/java_otel",
+    "seed/java_stdlib",
+    "otel-registry/instrumentation-*.yml"
+  ],
+  "count": 213,
+  "entries": [
+    {
+      "module": "io.lettuce",
+      "category": "cache",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "jedis",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-java-jedis.yml"
+    },
+    {
+      "module": "lettuce",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-java-lettuce.yml"
+    },
+    {
+      "module": "redis.clients.jedis",
+      "category": "cache",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "rediscala",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-java-rediscala.yml"
+    },
+    {
+      "module": "redisson",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-java-redisson.yml"
+    },
+    {
+      "module": "spymemcached",
+      "category": "cache",
+      "source": "otel-registry/instrumentation-java-spymemcached.yml"
+    },
+    {
+      "module": "com.amazonaws.services.lambda",
+      "category": "compute",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "concurrent",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-concurrent.yml"
+    },
+    {
+      "module": "executors",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-executors.yml"
+    },
+    {
+      "module": "extensionkotlin",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-extensionkotlin.yml"
+    },
+    {
+      "module": "failsafe",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-failsafe.yml"
+    },
+    {
+      "module": "guava",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-guava.yml"
+    },
+    {
+      "module": "hystrix",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-hystrix.yml"
+    },
+    {
+      "module": "kotlinx-coroutines",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-kotlinx-coroutines.yml"
+    },
+    {
+      "module": "kotlinx.coroutines",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-kotlinx-coroutines.yml"
+    },
+    {
+      "module": "kotlinx_coroutines",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-kotlinx-coroutines.yml"
+    },
+    {
+      "module": "openai",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-openai.yml"
+    },
+    {
+      "module": "oshi",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-oshi.yml"
+    },
+    {
+      "module": "pekko",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-pekko.yml"
+    },
+    {
+      "module": "pekkoactor",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-pekkoactor.yml"
+    },
+    {
+      "module": "powerjob",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-powerjob.yml"
+    },
+    {
+      "module": "quartz",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-quartz.yml"
+    },
+    {
+      "module": "reactor",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-reactor.yml"
+    },
+    {
+      "module": "runtimetelemetry",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-runtimetelemetry.yml"
+    },
+    {
+      "module": "rxjava",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-rxjava.yml"
+    },
+    {
+      "module": "scala-fork-join",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-scala-fork-join.yml"
+    },
+    {
+      "module": "scala.fork.join",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-scala-fork-join.yml"
+    },
+    {
+      "module": "scala_fork_join",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-scala-fork-join.yml"
+    },
+    {
+      "module": "software.amazon.awssdk.services.lambda",
+      "category": "compute",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "spark",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-spark.yml"
+    },
+    {
+      "module": "xxljob",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-xxljob.yml"
+    },
+    {
+      "module": "zio",
+      "category": "compute",
+      "source": "otel-registry/instrumentation-java-zio.yml"
+    },
+    {
+      "module": "alibabadruid",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-alibabadruid.yml"
+    },
+    {
+      "module": "apachedbcp",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-apachedbcp.yml"
+    },
+    {
+      "module": "apachedubbo",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-apachedubbo.yml"
+    },
+    {
+      "module": "apacheshenyu",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-apacheshenyu.yml"
+    },
+    {
+      "module": "c3p0",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-c3p0.yml"
+    },
+    {
+      "module": "cassandra",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-cassandra.yml"
+    },
+    {
+      "module": "clickhouse",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-clickhouse.yml"
+    },
+    {
+      "module": "co.elastic.clients",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.alibaba.druid",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.datastax.driver",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.datastax.oss",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.mongodb",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "couchbase",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-couchbase.yml"
+    },
+    {
+      "module": "elasticsearch",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-elasticsearch-client.yml"
+    },
+    {
+      "module": "elasticsearch-client",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-elasticsearch-client.yml"
+    },
+    {
+      "module": "elasticsearch.client",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-elasticsearch-client.yml"
+    },
+    {
+      "module": "elasticsearch_client",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-elasticsearch-client.yml"
+    },
+    {
+      "module": "geode",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-geode.yml"
+    },
+    {
+      "module": "hibernate",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-hibernate.yml"
+    },
+    {
+      "module": "hikaricp",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-hikaricp.yml"
+    },
+    {
+      "module": "iceberg",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-iceberg.yml"
+    },
+    {
+      "module": "influxdb",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-influxdb.yml"
+    },
+    {
+      "module": "java.sql",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "javax.sql",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "jdbc",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-jdbc.yml"
+    },
+    {
+      "module": "jdbi",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-jdbi.yml"
+    },
+    {
+      "module": "mongo",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-mongo.yml"
+    },
+    {
+      "module": "mybatis",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-mybatis.yml"
+    },
+    {
+      "module": "opencensusshim",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-opencensusshim.yml"
+    },
+    {
+      "module": "opensearch",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-opensearch.yml"
+    },
+    {
+      "module": "oracleucp",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-oracleucp.yml"
+    },
+    {
+      "module": "org.elasticsearch.client",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.hibernate",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.mongodb",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.springframework.jdbc",
+      "category": "db",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "r2dbc",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-r2dbc.yml"
+    },
+    {
+      "module": "viburdbcp",
+      "category": "db",
+      "source": "otel-registry/instrumentation-java-viburdbcp.yml"
+    },
+    {
+      "module": "java.io",
+      "category": "io",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "java.nio",
+      "category": "io",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "java.nio.file",
+      "category": "io",
+      "source": "seed/java_stdlib"
+    },
+    {
+      "module": "ch.qos.logback",
+      "category": "log",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "java.util.logging",
+      "category": "log",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "javautillogging",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-javautillogging.yml"
+    },
+    {
+      "module": "jmxmetrics",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-jmxmetrics.yml"
+    },
+    {
+      "module": "log4j",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-log4j.yml"
+    },
+    {
+      "module": "logback",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-logback.yml"
+    },
+    {
+      "module": "micrometer",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-micrometer.yml"
+    },
+    {
+      "module": "micrometer-tracing",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-micrometer-tracing.yml"
+    },
+    {
+      "module": "micrometer.tracing",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-micrometer-tracing.yml"
+    },
+    {
+      "module": "micrometer_tracing",
+      "category": "log",
+      "source": "otel-registry/instrumentation-java-micrometer-tracing.yml"
+    },
+    {
+      "module": "org.apache.logging.log4j",
+      "category": "log",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.slf4j",
+      "category": "log",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "activejhttp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-activejhttp.yml"
+    },
+    {
+      "module": "akka-actor",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-actor.yml"
+    },
+    {
+      "module": "akka-actor-fork-join",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-actor-fork-join.yml"
+    },
+    {
+      "module": "akka-http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-http.yml"
+    },
+    {
+      "module": "akka.actor",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-actor.yml"
+    },
+    {
+      "module": "akka.actor.fork.join",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-actor-fork-join.yml"
+    },
+    {
+      "module": "akka.http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-http.yml"
+    },
+    {
+      "module": "akka_actor",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-actor.yml"
+    },
+    {
+      "module": "akka_actor_fork_join",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-actor-fork-join.yml"
+    },
+    {
+      "module": "akka_http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-akka-http.yml"
+    },
+    {
+      "module": "apache-dubbo",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-dubbo.yml"
+    },
+    {
+      "module": "apache-httpasyncclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-httpasyncclient.yml"
+    },
+    {
+      "module": "apache-httpclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-httpclient.yml"
+    },
+    {
+      "module": "apache.dubbo",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-dubbo.yml"
+    },
+    {
+      "module": "apache.httpasyncclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-httpasyncclient.yml"
+    },
+    {
+      "module": "apache.httpclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-httpclient.yml"
+    },
+    {
+      "module": "apache_dubbo",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-dubbo.yml"
+    },
+    {
+      "module": "apache_httpasyncclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-httpasyncclient.yml"
+    },
+    {
+      "module": "apache_httpclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-apache-httpclient.yml"
+    },
+    {
+      "module": "armeria",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-armeria.yml"
+    },
+    {
+      "module": "asynchttpclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-asynchttpclient.yml"
+    },
+    {
+      "module": "aws-lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-aws-lambda.yml"
+    },
+    {
+      "module": "aws.lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-aws-lambda.yml"
+    },
+    {
+      "module": "aws_lambda",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-aws-lambda.yml"
+    },
+    {
+      "module": "azure-sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-azure-sdk.yml"
+    },
+    {
+      "module": "azure.sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-azure-sdk.yml"
+    },
+    {
+      "module": "azure_sdk",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-azure-sdk.yml"
+    },
+    {
+      "module": "azurecore",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-azurecore.yml"
+    },
+    {
+      "module": "com.amazonaws",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.google.api.client.http",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.squareup.okhttp",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "com.sun.net.httpserver",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "dropwizard",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-dropwizard.yml"
+    },
+    {
+      "module": "finaglehttp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-finaglehttp.yml"
+    },
+    {
+      "module": "finatra",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-finatra.yml"
+    },
+    {
+      "module": "google-http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-google-http-client.yml"
+    },
+    {
+      "module": "google-http-client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-google-http-client.yml"
+    },
+    {
+      "module": "google.http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-google-http-client.yml"
+    },
+    {
+      "module": "google.http.client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-google-http-client.yml"
+    },
+    {
+      "module": "google_http",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-google-http-client.yml"
+    },
+    {
+      "module": "google_http_client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-google-http-client.yml"
+    },
+    {
+      "module": "grails",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-grails.yml"
+    },
+    {
+      "module": "graphqljava",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-graphqljava.yml"
+    },
+    {
+      "module": "grizzly",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-grizzly.yml"
+    },
+    {
+      "module": "grpc",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc-plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc.plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-grpc-plugin.yml"
+    },
+    {
+      "module": "grpc_plugin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-grpc-plugin.yml"
+    },
+    {
+      "module": "gwt",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-gwt.yml"
+    },
+    {
+      "module": "helidon",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-helidon.yml"
+    },
+    {
+      "module": "http-url-connection",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-http-url-connection.yml"
+    },
+    {
+      "module": "http.url.connection",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-http-url-connection.yml"
+    },
+    {
+      "module": "http_url_connection",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-http-url-connection.yml"
+    },
+    {
+      "module": "io.grpc",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "java.net",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "java.net.http",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "javahttpclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-javahttpclient.yml"
+    },
+    {
+      "module": "javalin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-javalin.yml"
+    },
+    {
+      "module": "jax-ws",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jax-ws.yml"
+    },
+    {
+      "module": "jax.ws",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jax-ws.yml"
+    },
+    {
+      "module": "jax_ws",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jax-ws.yml"
+    },
+    {
+      "module": "jaxrs",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jaxrs-client.yml"
+    },
+    {
+      "module": "jaxrs-client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jaxrs-client.yml"
+    },
+    {
+      "module": "jaxrs.client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jaxrs-client.yml"
+    },
+    {
+      "module": "jaxrs_client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jaxrs-client.yml"
+    },
+    {
+      "module": "jbosslogmanager",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jbosslogmanager.yml"
+    },
+    {
+      "module": "jenkins",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jenkins.yml"
+    },
+    {
+      "module": "jetty",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jetty.yml"
+    },
+    {
+      "module": "jettyhttpclient",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jettyhttpclient.yml"
+    },
+    {
+      "module": "jfinal",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jfinal.yml"
+    },
+    {
+      "module": "joddhttp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-joddhttp.yml"
+    },
+    {
+      "module": "jsf",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jsf.yml"
+    },
+    {
+      "module": "jsp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-jsp.yml"
+    },
+    {
+      "module": "ktor",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-ktor.yml"
+    },
+    {
+      "module": "kubernetes",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-kubernetes-client.yml"
+    },
+    {
+      "module": "kubernetes-client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-kubernetes-client.yml"
+    },
+    {
+      "module": "kubernetes.client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-kubernetes-client.yml"
+    },
+    {
+      "module": "kubernetes_client",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-kubernetes-client.yml"
+    },
+    {
+      "module": "liberty",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-liberty.yml"
+    },
+    {
+      "module": "netty",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-netty.yml"
+    },
+    {
+      "module": "okhttp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-okhttp.yml"
+    },
+    {
+      "module": "okhttp3",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "payara",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-payara.yml"
+    },
+    {
+      "module": "pekkohttp",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-pekkohttp.yml"
+    },
+    {
+      "module": "play",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-play.yml"
+    },
+    {
+      "module": "quarkus",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-quarkus.yml"
+    },
+    {
+      "module": "quarkusresteasyreactive",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-quarkusresteasyreactive.yml"
+    },
+    {
+      "module": "ratpack",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-ratpack.yml"
+    },
+    {
+      "module": "restlet",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-restlet.yml"
+    },
+    {
+      "module": "rmi",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-rmi.yml"
+    },
+    {
+      "module": "servlet",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-servlet.yml"
+    },
+    {
+      "module": "software.amazon.awssdk",
+      "category": "network",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "spring",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-spring.yml"
+    },
+    {
+      "module": "struts",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-struts.yml"
+    },
+    {
+      "module": "tapestry",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-tapestry.yml"
+    },
+    {
+      "module": "tomcat",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-tomcat.yml"
+    },
+    {
+      "module": "twilio",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-twilio.yml"
+    },
+    {
+      "module": "undertow",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-undertow.yml"
+    },
+    {
+      "module": "vaadin",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-vaadin.yml"
+    },
+    {
+      "module": "vertx",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-vertx.yml"
+    },
+    {
+      "module": "vertx-reactive",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-vertx-reactive.yml"
+    },
+    {
+      "module": "vertx.reactive",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-vertx-reactive.yml"
+    },
+    {
+      "module": "vertx_reactive",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-vertx-reactive.yml"
+    },
+    {
+      "module": "wicket",
+      "category": "network",
+      "source": "otel-registry/instrumentation-java-wicket.yml"
+    },
+    {
+      "module": "aws-sdk",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-aws-sdk.yml"
+    },
+    {
+      "module": "aws.sdk",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-aws-sdk.yml"
+    },
+    {
+      "module": "aws_sdk",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-aws-sdk.yml"
+    },
+    {
+      "module": "camel",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-camel.yml"
+    },
+    {
+      "module": "com.rabbitmq.client",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "jakarta.jms",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "javax.jms",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "jms",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-jms.yml"
+    },
+    {
+      "module": "kafka-clients",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-kafka-clients.yml"
+    },
+    {
+      "module": "kafka-streams",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-kafka-streams.yml"
+    },
+    {
+      "module": "kafka.clients",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-kafka-clients.yml"
+    },
+    {
+      "module": "kafka.streams",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-kafka-streams.yml"
+    },
+    {
+      "module": "kafka_clients",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-kafka-clients.yml"
+    },
+    {
+      "module": "kafka_streams",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-kafka-streams.yml"
+    },
+    {
+      "module": "nats",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-nats.yml"
+    },
+    {
+      "module": "org.apache.kafka",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.apache.kafka.clients",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.apache.kafka.streams",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.springframework.amqp",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "org.springframework.kafka",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "pulsar",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-pulsar.yml"
+    },
+    {
+      "module": "rabbitmq",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-rabbitmq.yml"
+    },
+    {
+      "module": "reactor.kafka",
+      "category": "queue",
+      "source": "seed/java_otel"
+    },
+    {
+      "module": "rocketmq",
+      "category": "queue",
+      "source": "otel-registry/instrumentation-java-rocketmq.yml"
+    }
+  ]
+}
