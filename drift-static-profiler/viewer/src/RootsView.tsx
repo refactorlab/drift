@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { CATEGORY_COLORS } from './types';
 import { Help } from './Help';
 import { TIPS } from './tooltips';
+import { ResizeHandle, useResizableColumns, type ColumnDef } from './useResizableColumns';
 import type { CallTreeNode, Category } from './types';
 
 interface Props {
@@ -13,6 +14,21 @@ interface Props {
 type SortKey = 'reach' | 'complexity' | 'pagerank' | 'name' | 'smells';
 type SortDir = 'asc' | 'desc';
 
+// All column widths in pixels. Flex behavior is gone in favor of explicit
+// widths so drag-to-resize works uniformly across the table. Kind was
+// bumped from 64 → 80 so "FUNCTION" fits at the default zoom.
+const COLUMNS: ColumnDef[] = [
+  { id: 'rank',       defaultWidth: 36,  minWidth: 28 },
+  { id: 'name',       defaultWidth: 280, minWidth: 100 },
+  { id: 'file',       defaultWidth: 220, minWidth: 80 },
+  { id: 'kind',       defaultWidth: 80,  minWidth: 48 },
+  { id: 'reach',      defaultWidth: 64,  minWidth: 40 },
+  { id: 'cx',         defaultWidth: 48,  minWidth: 32 },
+  { id: 'categories', defaultWidth: 180, minWidth: 80 },
+  { id: 'smells',     defaultWidth: 62,  minWidth: 40 },
+  { id: 'pr',         defaultWidth: 56,  minWidth: 40 },
+];
+
 // Mirrors the static-analysis "root view" pattern from Chrome DevTools'
 // Top-Down (root activities), pprof's `top -cum`, Speedscope's Sandwich,
 // and IntelliJ's Method List: a sortable table of entry-point symbols
@@ -21,6 +37,7 @@ type SortDir = 'asc' | 'desc';
 export function RootsView({ roots, activeRootId, onSelect }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('reach');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const cols = useResizableColumns('drift.rootsView.cols', COLUMNS);
 
   const sorted = useMemo(() => {
     const rows = roots.map(r => ({
@@ -60,32 +77,45 @@ export function RootsView({ roots, activeRootId, onSelect }: Props) {
   const arrow = (k: SortKey) =>
     sortKey === k ? (sortDir === 'asc' ? '▲' : '▼') : '';
 
+  const w = cols.widths;
+  const headCell = (id: string, extra: React.CSSProperties = {}): React.CSSProperties => ({
+    ...cellStyle,
+    width: w[id],
+    color: '#7e8189',
+    position: 'relative',
+    ...extra,
+  });
+
   return (
     <div style={containerStyle}>
       <div style={hintStyle}>
         Auto-discovered root entry points (symbols with no in-graph caller). Click a row to
         drill into its flame graph and call tree. Ranked like pprof's <code style={codeInlineStyle}>top -cum</code>{' '}
-        and Chrome DevTools' Top-Down view. <Help text={TIPS.tab_roots} />
+        and Chrome DevTools' Top-Down view. <Help text={TIPS.tab_roots} /> <span style={{ color: '#5f626a' }}>· drag column edges to resize</span>
       </div>
       <div style={tableStyle}>
         <div style={headRowStyle}>
-          <div style={{ ...cellStyle, width: 36 }}>
+          <div style={headCell('rank')}>
             <Help text={TIPS.col_rank}>#</Help>
+            <ResizeHandle onMouseDown={cols.startResize('rank')} onReset={() => cols.resetColumn('rank')} />
           </div>
-          <Th label="Name" sortable onClick={() => flip('name')} arrow={arrow('name')} flex={2} title="Function or method name (parent class prefixed when applicable). Click to sort alphabetically." />
-          <div style={{ ...cellStyle, flex: 1.4, color: '#7e8189' }}>
+          <Th id="name" w={w.name} sortable onClick={() => flip('name')} arrow={arrow('name')} title="Function or method name (parent class prefixed when applicable). Click to sort alphabetically." label="Name" cols={cols} />
+          <div style={headCell('file')}>
             <Help text={TIPS.col_file_line}>File</Help>
+            <ResizeHandle onMouseDown={cols.startResize('file')} onReset={() => cols.resetColumn('file')} />
           </div>
-          <div style={{ ...cellStyle, width: 64, color: '#7e8189' }}>
+          <div style={headCell('kind')}>
             <Help text={TIPS.col_kind}>Kind</Help>
+            <ResizeHandle onMouseDown={cols.startResize('kind')} onReset={() => cols.resetColumn('kind')} />
           </div>
-          <Th label="Reach" sortable onClick={() => flip('reach')} arrow={arrow('reach')} width={64} title={TIPS.col_reach} />
-          <Th label="Cx" sortable onClick={() => flip('complexity')} arrow={arrow('complexity')} width={48} title={TIPS.col_cx} />
-          <div style={{ ...cellStyle, flex: 1.1, color: '#7e8189' }}>
+          <Th id="reach" w={w.reach} sortable onClick={() => flip('reach')} arrow={arrow('reach')} label="Reach" title={TIPS.col_reach} cols={cols} />
+          <Th id="cx" w={w.cx} sortable onClick={() => flip('complexity')} arrow={arrow('complexity')} label="Cx" title={TIPS.col_cx} cols={cols} />
+          <div style={headCell('categories')}>
             <Help text={TIPS.col_categories}>Categories</Help>
+            <ResizeHandle onMouseDown={cols.startResize('categories')} onReset={() => cols.resetColumn('categories')} />
           </div>
-          <Th label="Smells" sortable onClick={() => flip('smells')} arrow={arrow('smells')} width={62} title={TIPS.col_smells} />
-          <Th label="PR" sortable onClick={() => flip('pagerank')} arrow={arrow('pagerank')} width={56} title={TIPS.col_pr} />
+          <Th id="smells" w={w.smells} sortable onClick={() => flip('smells')} arrow={arrow('smells')} label="Smells" title={TIPS.col_smells} cols={cols} />
+          <Th id="pr" w={w.pr} sortable onClick={() => flip('pagerank')} arrow={arrow('pagerank')} label="PR" title={TIPS.col_pr} cols={cols} />
         </div>
         <div style={bodyStyle}>
           {sorted.map((row, i) => {
@@ -99,8 +129,8 @@ export function RootsView({ roots, activeRootId, onSelect }: Props) {
                 onClick={() => onSelect(r.id)}
                 title={`Click to focus the flame graph + call tree on ${fullName}. (${r.file}:${r.line})`}
               >
-                <div style={{ ...cellStyle, width: 36, color: '#7e8189' }} title={`Rank #${i + 1} after sorting.`}>{i + 1}</div>
-                <div style={{ ...cellStyle, flex: 2, fontFamily: 'ui-monospace, monospace' }} title={fullName}>
+                <div style={{ ...cellStyle, width: w.rank, color: '#7e8189' }} title={`Rank #${i + 1} after sorting.`}>{i + 1}</div>
+                <div style={{ ...cellStyle, width: w.name, fontFamily: 'ui-monospace, monospace' }} title={fullName}>
                   <span style={nameStyle}>{fullName}</span>
                   {r.is_async && (
                     <span
@@ -112,39 +142,39 @@ export function RootsView({ roots, activeRootId, onSelect }: Props) {
                   )}
                 </div>
                 <div
-                  style={{ ...cellStyle, flex: 1.4, color: '#9ca0a8', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+                  style={{ ...cellStyle, width: w.file, color: '#9ca0a8', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
                   title={`${r.file}:${r.line} — ${TIPS.col_file_line}`}
                 >
                   {r.file}:{r.line}
                 </div>
-                <div style={{ ...cellStyle, width: 64 }}>
+                <div style={{ ...cellStyle, width: w.kind }}>
                   <span style={kindStyle(r.kind)} title={TIPS[`kind_${r.kind.toLowerCase()}`] ?? TIPS.col_kind}>
                     {r.kind.toLowerCase()}
                   </span>
                 </div>
                 <div
-                  style={{ ...cellStyle, width: 64, fontVariantNumeric: 'tabular-nums' }}
+                  style={{ ...cellStyle, width: w.reach, fontVariantNumeric: 'tabular-nums' }}
                   title={`Reach = ${r.subtree_size} transitively reachable symbols (deduped). ${TIPS.col_reach}`}
                 >
                   {r.subtree_size}
                 </div>
                 <div
-                  style={{ ...cellStyle, width: 48, fontVariantNumeric: 'tabular-nums', color: cxColor(r.complexity) }}
+                  style={{ ...cellStyle, width: w.cx, fontVariantNumeric: 'tabular-nums', color: cxColor(r.complexity) }}
                   title={`Cx = ${r.complexity} (cyclomatic complexity). ${TIPS.col_cx}`}
                 >
                   {r.complexity}
                 </div>
-                <div style={{ ...cellStyle, flex: 1.1 }} title={TIPS.col_categories}>
+                <div style={{ ...cellStyle, width: w.categories }} title={TIPS.col_categories}>
                   <CategoryChips reached={r.categories_reached} />
                 </div>
                 <div
-                  style={{ ...cellStyle, width: 62, fontVariantNumeric: 'tabular-nums' }}
+                  style={{ ...cellStyle, width: w.smells, fontVariantNumeric: 'tabular-nums' }}
                   title={row.smells === 0 ? 'No smells in this subtree.' : `${row.smells} smell(s) detected. ${TIPS.col_smells}`}
                 >
                   <SmellBadge count={row.smells} />
                 </div>
                 <div
-                  style={{ ...cellStyle, width: 56, fontVariantNumeric: 'tabular-nums', color: '#9ca0a8' }}
+                  style={{ ...cellStyle, width: w.pr, fontVariantNumeric: 'tabular-nums', color: '#9ca0a8' }}
                   title={r.pagerank ? `PR = ${r.pagerank.toFixed(4)} (PageRank). ${TIPS.col_pr}` : `PageRank not available. ${TIPS.col_pr}`}
                 >
                   {r.pagerank ? r.pagerank.toFixed(3) : '—'}
@@ -181,35 +211,37 @@ function countSmells(root: CallTreeNode): number {
   return n;
 }
 
-function Th(props: {
+interface ThProps {
+  id: string;
+  w: number;
   label: string;
   sortable: boolean;
   onClick: () => void;
   arrow: string;
-  width?: number;
-  flex?: number;
   title?: string;
-}) {
-  const { label, onClick, arrow, width, flex, title } = props;
-  // The Help component wraps just the LABEL text so users see a dotted
-  // underline on the column name itself. The outer div still owns the
-  // click-to-sort handler and the cursor:pointer styling — clicks on the
-  // label bubble up to the div.
+  cols: ReturnType<typeof useResizableColumns>;
+}
+
+function Th({ id, w, label, onClick, arrow, title, cols }: ThProps) {
   return (
     <div
       style={{
         ...cellStyle,
-        ...(width !== undefined ? { width } : {}),
-        ...(flex !== undefined ? { flex } : {}),
+        width: w,
         cursor: 'pointer',
         userSelect: 'none',
         color: '#9ca0a8',
         fontWeight: 600,
+        position: 'relative',
       }}
       onClick={onClick}
     >
       {title ? <Help text={title}>{label}</Help> : label}{' '}
       <span style={{ color: '#5b8def' }}>{arrow}</span>
+      <ResizeHandle
+        onMouseDown={cols.startResize(id)}
+        onReset={() => cols.resetColumn(id)}
+      />
     </div>
   );
 }
@@ -297,7 +329,7 @@ const tableStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   flex: 1,
-  overflow: 'hidden',
+  overflow: 'auto',  // horizontal scroll when columns total > viewport width
 };
 const headRowStyle: React.CSSProperties = {
   display: 'flex',
@@ -310,10 +342,17 @@ const headRowStyle: React.CSSProperties = {
   letterSpacing: 0.5,
   fontWeight: 700,
   flexShrink: 0,
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  width: 'fit-content',
+  minWidth: '100%',
 };
 const bodyStyle: React.CSSProperties = {
   flex: 1,
-  overflowY: 'auto',
+  // body width matches header so columns align even when scrolled
+  width: 'fit-content',
+  minWidth: '100%',
 };
 const rowStyle: React.CSSProperties = {
   display: 'flex',
@@ -326,10 +365,15 @@ const activeRowStyle: React.CSSProperties = {
   background: '#2b3a5a',
 };
 const cellStyle: React.CSSProperties = {
-  padding: '0 6px',
+  // Padding-right is generous (10px) so the resize-handle line at the
+  // cell's right edge doesn't visually crowd the text. Padding-left
+  // stays tight (6px) since text aligns left and there's no handle on
+  // the left edge.
+  padding: '0 10px 0 6px',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+  boxSizing: 'border-box',
 };
 const nameStyle: React.CSSProperties = {
   color: '#d7d9dc',

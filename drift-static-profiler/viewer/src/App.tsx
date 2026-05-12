@@ -11,6 +11,7 @@ import { RootsView } from './RootsView';
 import { subtreeWeight } from './transform';
 import { TIPS } from './tooltips';
 import { Help } from './Help';
+import { Splitter, useResizablePanel } from './useResizableColumns';
 import type { CallTreeNode, Report } from './types';
 
 type FlameMode = 'kind' | 'category' | 'complexity' | 'smells';
@@ -31,6 +32,19 @@ export function App() {
   const [flameMode, setFlameMode] = useState<FlameMode>('kind');
   const [bottomTab, setBottomTab] = useState<BottomTab>('tree');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  // Layout sizes — persisted to localStorage, dragged via Splitter components.
+  // Defaults match the prior hard-coded grid (`1fr 340px` body, even vertical split).
+  const [sidebarWidth, setSidebarWidth] = useResizablePanel(
+    'drift.layout.sidebarWidth', 340, { min: 220, max: 900 },
+  );
+  const [bottomHeight, setBottomHeight] = useResizablePanel(
+    'drift.layout.bottomHeight', 360, { min: 140, max: 1200 },
+  );
+  // Snapshot starting size at drag begin so onDrag deltas are applied to a
+  // stable baseline instead of an already-updated value.
+  const sidebarStart = useRef(sidebarWidth);
+  const bottomStart = useRef(bottomHeight);
 
   const fixture = FIXTURES.find(f => f.key === fixtureKey)!;
 
@@ -141,8 +155,20 @@ export function App() {
         activeCategory={categoryFilter}
         onToggleCategory={(c) => setCategoryFilter(prev => (prev === c ? null : c))}
       />
-      <div style={bodyStyle}>
-        <div style={mainStyle}>
+      <div
+        style={{
+          ...bodyStyle,
+          // 1fr | splitter | sidebarWidthpx — drag splitter to resize the right pane.
+          gridTemplateColumns: `1fr 6px ${sidebarWidth}px`,
+        }}
+      >
+        <div
+          style={{
+            ...mainStyle,
+            // toolbar(auto) | flame(1fr) | tabs(auto) | bottomSplitter(6px) | bottom(bottomHeightpx)
+            gridTemplateRows: `auto 1fr auto 6px ${bottomHeight}px`,
+          }}
+        >
           <div style={paneHeaderStyle}>
             <Help text={TIPS.flame_graph}>FLAME GRAPH</Help>
             <span style={{ marginLeft: 12, color: '#6e717a', fontWeight: 400 }}>
@@ -202,6 +228,14 @@ export function App() {
               Statistics
             </Tab>
           </div>
+          <Splitter
+            orientation="horizontal"
+            onDragStart={() => { bottomStart.current = bottomHeight; }}
+            onDrag={(dy) => {
+              // Drag handle DOWN (dy > 0) → bottom panel shrinks → height decreases.
+              setBottomHeight(bottomStart.current - dy);
+            }}
+          />
           <div style={bottomPanelStyle}>
             {bottomTab === 'tree' && activeRoot && (
               <CallTreeView
@@ -229,6 +263,15 @@ export function App() {
             )}
           </div>
         </div>
+        <Splitter
+          orientation="vertical"
+          onDragStart={() => { sidebarStart.current = sidebarWidth; }}
+          onDrag={(dx) => {
+            // Drag handle LEFT (dx < 0) → sidebar GROWS toward the left.
+            // Drag handle RIGHT (dx > 0) → sidebar shrinks.
+            setSidebarWidth(sidebarStart.current - dx);
+          }}
+        />
         <div style={sidebarStyle}>
           <DetailsPane node={selected ?? activeRoot} onJumpTo={jumpTo} onJumpExternal={(file, line) => jump({ file, line })} />
         </div>

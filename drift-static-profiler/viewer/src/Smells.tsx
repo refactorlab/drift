@@ -1,5 +1,6 @@
 import { TIPS } from './tooltips';
 import { Help } from './Help';
+import { ResizeHandle, useResizableColumns, type ColumnDef } from './useResizableColumns';
 import type { CallTreeNode } from './types';
 
 interface Props {
@@ -27,7 +28,19 @@ const KIND_META = {
   is_recursive: { label: 'RECURSIVE', color: '#d09bd1', detail: TIPS.smell_recursive },
 };
 
+// `<colgroup>` + `tableLayout: fixed` is how a real HTML table accepts
+// per-column widths. The evidence column gets the lion's share by
+// default since it wraps to multi-line.
+const COLUMNS: ColumnDef[] = [
+  { id: 'smell',    defaultWidth: 170, minWidth: 100 },
+  { id: 'symbol',   defaultWidth: 260, minWidth: 100 },
+  { id: 'location', defaultWidth: 190, minWidth: 90 },
+  { id: 'evidence', defaultWidth: 520, minWidth: 150 },
+];
+
 export function Smells({ root, onSelect }: Props) {
+  const cols = useResizableColumns('drift.smells.cols', COLUMNS);
+  const w = cols.widths;
   if (!root) return null;
   const items: Smell[] = [];
   collect(root, items);
@@ -43,19 +56,33 @@ export function Smells({ root, onSelect }: Props) {
     );
   }
 
+  const headerCell = (id: string, label: string, tip: string) => (
+    <th style={{ ...thStyle, position: 'relative', width: w[id] }}>
+      <Help text={tip}>{label}</Help>
+      <ResizeHandle onMouseDown={cols.startResize(id)} onReset={() => cols.resetColumn(id)} />
+    </th>
+  );
+
   return (
     <div style={containerStyle}>
       <div style={summaryRowStyle}>
         Found <strong>{items.length}</strong> symbol(s) with smells. Click a row to inspect.
-        <Help text="Each row is one antipattern detected in the entry's subtree. Hover the smell badge for the definition + how to fix it." />
+        <Help text="Each row is one antipattern detected in the entry's subtree. Hover the smell badge for the definition + how to fix it." />{' '}
+        <span style={{ color: '#5f626a' }}>· drag column edges to resize</span>
       </div>
       <table style={tableStyle}>
+        <colgroup>
+          <col style={{ width: w.smell }} />
+          <col style={{ width: w.symbol }} />
+          <col style={{ width: w.location }} />
+          <col style={{ width: w.evidence }} />
+        </colgroup>
         <thead>
           <tr style={theadStyle}>
-            <th style={thStyle}><Help text={TIPS.smells_col_smell}>smell</Help></th>
-            <th style={thStyle}><Help text={TIPS.smells_col_symbol}>symbol</Help></th>
-            <th style={thStyle}><Help text={TIPS.smells_col_location}>location</Help></th>
-            <th style={thStyle}><Help text={TIPS.smells_col_evidence}>evidence</Help></th>
+            {headerCell('smell', 'smell', TIPS.smells_col_smell)}
+            {headerCell('symbol', 'symbol', TIPS.smells_col_symbol)}
+            {headerCell('location', 'location', TIPS.smells_col_location)}
+            {headerCell('evidence', 'evidence', TIPS.smells_col_evidence)}
           </tr>
         </thead>
         <tbody>
@@ -126,7 +153,9 @@ const summaryRowStyle: React.CSSProperties = {
 };
 const tableStyle: React.CSSProperties = {
   borderCollapse: 'collapse',
-  width: '100%',
+  tableLayout: 'fixed',
+  width: 'max-content',
+  minWidth: '100%',
   fontFamily: 'ui-monospace, monospace',
 };
 const theadStyle: React.CSSProperties = {
@@ -141,14 +170,27 @@ const thStyle: React.CSSProperties = {
   padding: '6px 10px',
   borderBottom: '1px solid #3f4147',
   fontWeight: 700,
+  boxSizing: 'border-box',
 };
 const trStyle: React.CSSProperties = {
   borderBottom: '1px solid #2f3136',
   cursor: 'pointer',
 };
-const tdStyle: React.CSSProperties = { padding: '6px 10px', verticalAlign: 'top' };
+const tdStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  verticalAlign: 'top',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  boxSizing: 'border-box',
+};
 const tdLocStyle: React.CSSProperties = { ...tdStyle, color: '#7e8189', fontSize: 11, whiteSpace: 'nowrap' };
-const tdEvidenceStyle: React.CSSProperties = { ...tdStyle, color: '#d7d9dc', fontSize: 11 };
+const tdEvidenceStyle: React.CSSProperties = {
+  ...tdStyle,
+  color: '#d7d9dc',
+  fontSize: 11,
+  whiteSpace: 'normal',  // evidence wraps to multi-line
+  wordBreak: 'break-word',
+};
 const codeStyle: React.CSSProperties = { background: '#26282c', padding: '2px 5px', borderRadius: 3, color: '#d7d9dc' };
 const badgeStyle: React.CSSProperties = {
   display: 'inline-block',
