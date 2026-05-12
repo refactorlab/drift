@@ -23,7 +23,7 @@ export function CallTreeView({ root, search, selectedId, onSelect }: Props) {
 function HeaderRow() {
   return (
     <div style={headerRowStyle}>
-      <span style={{ flex: 1 }}>symbol</span>
+      <span style={{ flex: 1 }}><Help text={TIPS.col_symbol}>symbol</Help></span>
       <span style={{ ...colStyle, width: 56 }}><Help text={TIPS.percent_total}>%total</Help></span>
       <span style={{ ...colStyle, width: 50 }}><Help text={TIPS.percent_parent}>%par</Help></span>
       <span style={{ ...colStyle, width: 36 }}><Help text={TIPS.complexity}>cplx</Help></span>
@@ -35,7 +35,9 @@ function HeaderRow() {
       <span style={{ ...colStyle, width: 80 }}>
         <Help text="Detected static smells (N+1, blocking I/O, recursion). Each is a known antipattern.">smells</Help>
       </span>
-      <span style={{ ...colStyle, width: 180, textAlign: 'left', paddingLeft: 8 }}>file:line</span>
+      <span style={{ ...colStyle, width: 180, textAlign: 'left', paddingLeft: 8 }}>
+        <Help text={TIPS.col_file_line}>file:line</Help>
+      </span>
     </div>
   );
 }
@@ -81,7 +83,7 @@ function TreeRow({ node, depth, search, selectedId, onSelect, initiallyOpen }: R
         {node.is_async && <AsyncBadge />}
         {node.category_self && (
           <span
-            title={`self: ${node.category_self}`}
+            title={`Self category: ${node.category_self}. This symbol DIRECTLY makes a ${node.category_self} call (vs. just reaching one transitively).\n\n${TIPS[`category_${node.category_self}`] ?? ''}`}
             style={{
               display: 'inline-block',
               width: 8,
@@ -95,7 +97,7 @@ function TreeRow({ node, depth, search, selectedId, onSelect, initiallyOpen }: R
         <span style={{ ...nameStyle(isMatch), flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {node.parent_class ? <span style={parentStyle}>{node.parent_class}.</span> : null}
           {node.name}
-          {reachesDb && <span style={dbTagStyle} title="this subtree reaches a DB call">·db</span>}
+          {reachesDb && <span style={dbTagStyle} title={TIPS.reaches_db_dot}>·db</span>}
         </span>
         <span style={{ ...colStyle, width: 56 }}>{fmtPct(node.percent_total)}</span>
         <span style={{ ...colStyle, width: 50 }}>{fmtPct(node.percent_parent)}</span>
@@ -132,11 +134,13 @@ function TreeRow({ node, depth, search, selectedId, onSelect, initiallyOpen }: R
 }
 
 function Smells({ node }: { node: CallTreeNode }) {
+  // Each badge's title explains the abbreviation AND the antipattern, so the
+  // user doesn't need to guess what "N+1" / "BLK" / "REC" mean.
   const items: { label: string; color: string; title: string }[] = [];
   if (node.n_plus_one_risk) items.push({ label: 'N+1', color: '#e26d6d', title: TIPS.smell_n_plus_one });
-  if (node.blocking_in_async) items.push({ label: 'BLK', color: '#ff7e7e', title: TIPS.smell_blocking });
-  if (node.is_recursive) items.push({ label: 'REC', color: '#d09bd1', title: TIPS.smell_recursive });
-  if (items.length === 0) return <span style={{ color: '#3f4147' }}>—</span>;
+  if (node.blocking_in_async) items.push({ label: 'BLK', color: '#ff7e7e', title: `BLK = blocking-in-async.\n\n${TIPS.smell_blocking}` });
+  if (node.is_recursive) items.push({ label: 'REC', color: '#d09bd1', title: `REC = recursive.\n\n${TIPS.smell_recursive}` });
+  if (items.length === 0) return <span style={{ color: '#3f4147' }} title="No smells detected in this symbol's own body.">—</span>;
   return (
     <span style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
       {items.map((i) => (
@@ -147,6 +151,7 @@ function Smells({ node }: { node: CallTreeNode }) {
           borderRadius: 2,
           background: i.color,
           color: '#0a0a14',
+          cursor: 'help',
         }}>{i.label}</span>
       ))}
     </span>
@@ -164,7 +169,14 @@ function KindBadge({ kind }: { kind: SymbolKind }) {
 }
 
 function AsyncBadge() {
-  return <span title={TIPS.kind_async_marker} style={{ ...badgeStyle, background: '#7e6ff0', cursor: 'help' }}>α</span>;
+  return (
+    <span
+      title={`α = async. ${TIPS.kind_async_marker}`}
+      style={{ ...badgeStyle, background: '#7e6ff0', cursor: 'help' }}
+    >
+      α
+    </span>
+  );
 }
 
 function fmtPct(p: number | undefined): string {

@@ -150,21 +150,21 @@
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.service.ts",
         "line": 10,
         "parent_class": "OrdersService",
-        "score": 0.11721755943455217
+        "score": 0.1172175594345522
       },
       {
         "name": "Order",
         "file": "tests/fixtures/typescript-nestjs/src/orders/order.entity.ts",
         "line": 4,
         "parent_class": null,
-        "score": 0.11441082541460028
+        "score": 0.11441082541460029
       },
       {
         "name": "create",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.controller.ts",
         "line": 10,
         "parent_class": "OrdersController",
-        "score": 0.0804400093843651
+        "score": 0.08044000938436509
       },
       {
         "name": "save",
@@ -289,7 +289,7 @@
                   "is_async": false,
                   "call_site_count": 1,
                   "is_recursive": false,
-                  "pagerank": 0.11441082541460028,
+                  "pagerank": 0.11441082541460029,
                   "percent_total": 16.666666666666664,
                   "percent_parent": 50.0,
                   "n_plus_one_risk": false,
@@ -440,7 +440,7 @@
           "is_async": true,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.11721755943455217,
+          "pagerank": 0.1172175594345522,
           "percent_total": 83.33333333333334,
           "percent_parent": 83.33333333333334,
           "n_plus_one_risk": false,
@@ -472,7 +472,7 @@
       "is_async": true,
       "call_site_count": 1,
       "is_recursive": false,
-      "pagerank": 0.0804400093843651,
+      "pagerank": 0.08044000938436509,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,

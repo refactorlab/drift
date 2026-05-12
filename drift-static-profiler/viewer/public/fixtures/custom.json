@@ -4,15 +4,15 @@
   "generator": {
     "tool": "drift-static-profiler",
     "version": "0.1.0",
-    "source_root": "tests/fixtures/javascript-express"
+    "source_root": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements"
   },
   "summary": {
     "languages": [
-      "javascript"
+      "typescript"
     ],
-    "files": 4,
-    "symbols": 9,
-    "edges": 4,
+    "files": 103,
+    "symbols": 373,
+    "edges": 446,
     "categories": {
       "cache": 0,
       "compute": 0,
@@ -24,297 +24,1468 @@
     },
     "top_callers": [
       {
-        "name": "OrderRepository",
-        "file": "tests/fixtures/javascript-express/src/repository.js",
-        "line": 3,
-        "parent_class": null,
-        "count": 1
+        "name": "get",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 31,
+        "parent_class": "InMemoryStorageClient",
+        "count": 19
       },
       {
-        "name": "buildOrder",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 14,
-        "parent_class": "OrderService",
-        "count": 1
+        "name": "get",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 34,
+        "parent_class": "RedisStorageClient",
+        "count": 19
       },
       {
-        "name": "save",
-        "file": "tests/fixtures/javascript-express/src/repository.js",
-        "line": 4,
-        "parent_class": "OrderRepository",
-        "count": 1
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 37,
+        "parent_class": "InMemoryStorageClient",
+        "count": 19
       },
       {
-        "name": "validate",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 22,
-        "parent_class": "OrderService",
-        "count": 1
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 97,
+        "parent_class": "InMemoryStoragePipeline",
+        "count": 19
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 40,
+        "parent_class": "RedisStorageClient",
+        "count": 19
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 97,
+        "parent_class": "RedisStoragePipeline",
+        "count": 19
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 56,
+        "parent_class": "InMemoryStorageClient",
+        "count": 7
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 102,
+        "parent_class": "InMemoryStoragePipeline",
+        "count": 6
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 67,
+        "parent_class": "RedisStorageClient",
+        "count": 6
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 102,
+        "parent_class": "RedisStoragePipeline",
+        "count": 6
       }
     ],
     "top_callees": [
       {
-        "name": "createOrder",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 8,
-        "parent_class": "OrderService",
-        "count": 3
+        "name": "insertPastOrders",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/repository/EnrichmentRepository.ts",
+        "line": 164,
+        "parent_class": "EnrichmentClientRepository",
+        "count": 12
       },
       {
-        "name": "constructor",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 4,
-        "parent_class": "OrderService",
-        "count": 1
+        "name": "insertPastOrders",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/repository/enrichment-repository.test.ts",
+        "line": 49,
+        "parent_class": "TestEnrichmentClientRepository",
+        "count": 12
+      },
+      {
+        "name": "processOrderBatch",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/service/shopify-sync-same-address-orders-service.ts",
+        "line": 258,
+        "parent_class": "ShopifySyncSameAddressOrdersService",
+        "count": 9
+      },
+      {
+        "name": "execute",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/service/shopify-sync-same-address-orders-service.ts",
+        "line": 31,
+        "parent_class": "ShopifySyncSameAddressOrdersService",
+        "count": 8
+      },
+      {
+        "name": "mapPastOrder",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/service/mapper/shopify-past-orders-mapper.ts",
+        "line": 276,
+        "parent_class": null,
+        "count": 8
+      },
+      {
+        "name": "createMockGraphQLClientInstance",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 25,
+        "parent_class": null,
+        "count": 7
+      },
+      {
+        "name": "runEnrichment",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/EnrichmentOrchestrator.ts",
+        "line": 33,
+        "parent_class": "EnrichmentOrchestrator",
+        "count": 7
+      },
+      {
+        "name": "toInvoice",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/stripe/StripeInvoiceMapper.ts",
+        "line": 194,
+        "parent_class": null,
+        "count": 7
+      },
+      {
+        "name": "createMockShopifyAPI",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 231,
+        "parent_class": null,
+        "count": 6
+      },
+      {
+        "name": "getCollection",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 12,
+        "parent_class": "InMemoryStorageClient",
+        "count": 6
       }
     ],
     "hot_paths": [],
     "dead_code": [
       {
-        "name": "findById",
-        "file": "tests/fixtures/javascript-express/src/repository.js",
-        "line": 8,
-        "parent_class": "OrderRepository",
+        "name": "publishToRmq",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/automation-enrichements-server.ts",
+        "line": 33,
+        "parent_class": null,
         "count": 0
       },
       {
-        "name": "notifyDownstream",
-        "file": "tests/fixtures/javascript-express/src/routes.js",
+        "name": "submitCronWorkflow",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/cronjob.ts",
+        "line": 180,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createStripeOrchestrator",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/invoice-enrichment-factory.test.ts",
+        "line": 17,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createNonStripeOrchestrator",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/invoice-enrichment-factory.test.ts",
+        "line": 27,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockOrchestrator",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/invoice-enrichment-rpc-handler.test.ts",
+        "line": 24,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getSize",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryInvoiceEnrichmentRepository.ts",
+        "line": 39,
+        "parent_class": "InMemoryInvoiceEnrichmentRepository",
+        "count": 0
+      },
+      {
+        "name": "createTestInvoiceEnrichmentRepository",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryInvoiceEnrichmentRepository.ts",
+        "line": 48,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "delete",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 49,
+        "parent_class": "InMemoryStorageClient",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 95,
+        "parent_class": "InMemoryStoragePipeline",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockInvoiceRetrievalService.ts",
+        "line": 84,
+        "parent_class": "MockInvoiceRetrievalService",
+        "count": 0
+      },
+      {
+        "name": "setProcessor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockPaymentProcessorRepository.ts",
+        "line": 15,
+        "parent_class": "MockPaymentProcessorRepository",
+        "count": 0
+      },
+      {
+        "name": "setPaymentIntent",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockStripeClient.ts",
+        "line": 52,
+        "parent_class": "MockStripeClient",
+        "count": 0
+      },
+      {
+        "name": "setInvoice",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockStripeClient.ts",
+        "line": 56,
+        "parent_class": "MockStripeClient",
+        "count": 0
+      },
+      {
+        "name": "setAccount",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockStripeClient.ts",
+        "line": 60,
+        "parent_class": "MockStripeClient",
+        "count": 0
+      },
+      {
+        "name": "setError",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockStripeClient.ts",
+        "line": 64,
+        "parent_class": "MockStripeClient",
+        "count": 0
+      },
+      {
+        "name": "createMockStripePaymentIntent",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/stripe-fixtures.ts",
+        "line": 6,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockStripePaymentIntentWithoutInvoice",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/stripe-fixtures.ts",
+        "line": 16,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockStripeInvoice",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/stripe-fixtures.ts",
+        "line": 23,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockStripeAccount",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/stripe-fixtures.ts",
+        "line": 105,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "describeRedis",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/redis-storage-client.integration.test.ts",
+        "line": 17,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "col",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/redis-storage-client.integration.test.ts",
+        "line": 30,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockTransport",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/rmq-rpc-server-factory.test.ts",
+        "line": 16,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockTransport",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/rpc-server.test.ts",
+        "line": 13,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "expectedAmount",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/stripe-deep-integration.test.ts",
+        "line": 50,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/infra/messaging/RabbitMqRpcTransport.ts",
+        "line": 11,
+        "parent_class": "RabbitMqRpcTransport",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/infra/rpc/RpcServer.ts",
+        "line": 5,
+        "parent_class": "RpcServer",
+        "count": 0
+      },
+      {
+        "name": "main",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/main.ts",
+        "line": 4,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/repositories/InvoiceEnrichmentRepository.ts",
+        "line": 26,
+        "parent_class": "InvoiceEnrichmentRepository",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/repositories/PaymentProcessorRepository.ts",
+        "line": 16,
+        "parent_class": "PaymentProcessorRepository",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/EnrichmentOrchestrator.ts",
+        "line": 19,
+        "parent_class": "EnrichmentOrchestrator",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/StorageService.ts",
+        "line": 49,
+        "parent_class": "StorageService",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/StripeInvoiceRetrievalService.ts",
+        "line": 45,
+        "parent_class": "StripeInvoiceRetrievalService",
+        "count": 0
+      },
+      {
+        "name": "resetStripeRetrievalService",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/StripeInvoiceRetrievalService.ts",
+        "line": 235,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "resetInvoiceEnrichmentRepository",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/services/repository-singleton.ts",
+        "line": 26,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "testInvoiceEnrichment",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/test-rpc-client.ts",
+        "line": 34,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "instrumentFetch",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/otel/instrument-fetch.ts",
+        "line": 26,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "instrumentRoutes",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/otel/instrument-routes.ts",
+        "line": 85,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "initOtel",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/otel/sdk.ts",
+        "line": 25,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "tracedFetch",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/otel/traced-fetch.ts",
+        "line": 19,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/api/shopify.ts",
+        "line": 350,
+        "parent_class": "GraphQLPaginator",
+        "count": 0
+      },
+      {
+        "name": "fetchAllNodes",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/api/shopify.ts",
+        "line": 423,
+        "parent_class": "GraphQLPaginator",
+        "count": 0
+      },
+      {
+        "name": "mapGraphQLOrderToRest",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/api/shopify.ts",
+        "line": 466,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/api/shopify.ts",
+        "line": 550,
+        "parent_class": "ShopifyAPI",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/api/stripe.ts",
+        "line": 13,
+        "parent_class": "StripeAPI",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/error/retryable-error.ts",
+        "line": 4,
+        "parent_class": "RetryableError",
+        "count": 0
+      },
+      {
+        "name": "processPastOrdersLinkingLogic",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/processPastOrdersLinkingLogic.ts",
+        "line": 35,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureHandler",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/processPastOrdersLinkingLogic.ts",
+        "line": 74,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "resetHandler",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/processPastOrdersLinkingLogic.ts",
+        "line": 81,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/repository/EnrichmentRepository.ts",
+        "line": 38,
+        "parent_class": "EnrichmentRepositoryImpl",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/repository/EnrichmentRepository.ts",
+        "line": 121,
+        "parent_class": "EnrichmentClientRepository",
+        "count": 0
+      },
+      {
+        "name": "resetEnrichmentRepository",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/repository/EnrichmentRepository.ts",
+        "line": 234,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/service/shopify-sync-same-address-orders-service.ts",
+        "line": 24,
+        "parent_class": "ShopifySyncSameAddressOrdersService",
+        "count": 0
+      },
+      {
+        "name": "getStripePaymentIntent",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/fixtures/index.ts",
+        "line": 367,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getDisputeRepositoryResult",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/fixtures/index.ts",
+        "line": 513,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getShopRepositoryResult",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/fixtures/index.ts",
+        "line": 550,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 38,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 50,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withChargeflowId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 55,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withShopId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 60,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withShopName",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 65,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withOrderId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 70,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withCustomerId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 75,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withAddress1",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 80,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withoutAddress",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 85,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withEmptyAddress",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 90,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withTransactionLast4",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 95,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "withDisputeReason",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 100,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "build",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 105,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "buildRepositoryResult",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 133,
+        "parent_class": "DisputeBuilder",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 155,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "withId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 163,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "withName",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 168,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "withChargeflowId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 173,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "withAccessToken",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 178,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "withoutAccessToken",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 183,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "withScope",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 188,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "build",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 193,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "buildRepositoryResult",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 205,
+        "parent_class": "ShopBuilder",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 228,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 243,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withCustomerId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 248,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withAddress1",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 253,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withCreatedAt",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 258,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withTotalPrice",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 263,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withCurrency",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 268,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withFinancialStatus",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 273,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withFulfillmentStatus",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 278,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withEmail",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 283,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withBrowserIp",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 288,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "withCustomerName",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 293,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "build",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 299,
+        "parent_class": "ShopifyOrderBuilder",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 378,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 392,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withOrderId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 397,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withKind",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 402,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withStatus",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 407,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withGateway",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 412,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "asStripeTransaction",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 417,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "asShopifyPaymentsTransaction",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 422,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "asDeclined",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 427,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withAuthorization",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 433,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withAmount",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 438,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "withLast4",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 443,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "build",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 448,
+        "parent_class": "TransactionBuilder",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 529,
+        "parent_class": "PaymentIntentBuilder",
+        "count": 0
+      },
+      {
+        "name": "withId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 536,
+        "parent_class": "PaymentIntentBuilder",
+        "count": 0
+      },
+      {
+        "name": "withCreated",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 541,
+        "parent_class": "PaymentIntentBuilder",
+        "count": 0
+      },
+      {
+        "name": "withLast4",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 546,
+        "parent_class": "PaymentIntentBuilder",
+        "count": 0
+      },
+      {
+        "name": "withBrand",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 551,
+        "parent_class": "PaymentIntentBuilder",
+        "count": 0
+      },
+      {
+        "name": "build",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 556,
+        "parent_class": "PaymentIntentBuilder",
+        "count": 0
+      },
+      {
+        "name": "aDispute",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 589,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "aShop",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 593,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "aShopifyOrder",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 597,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "aTransaction",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 601,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "aPaymentIntent",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/data-builders.ts",
+        "line": 605,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/helpers/mock-object-id.ts",
+        "line": 4,
+        "parent_class": "MockObjectId",
+        "count": 0
+      },
+      {
+        "name": "main",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/integration/get-shopify-token.ts",
+        "line": 11,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureDispute",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 20,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureDisputeByOrderId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 24,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureShop",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 28,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureStripeAccount",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 32,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureFindOrderIdsNotInStorageResult",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 36,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "configureExistingPastOrders",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 40,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getSavedOrders",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 44,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getExistingPastOrders",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 48,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getAllPastOrders",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 52,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getFindOrderIdsCalls",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 56,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getAddDisputeAssociationCalls",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 60,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "resetPersistenceMock",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 64,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getClientRepository",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 163,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "getRepository",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 167,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 176,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "buildGraphQLCustomersSearchResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 73,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "buildGraphQLCustomerOrdersResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 87,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "buildGraphQLOrderTransactionsResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 103,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "mapRestOrderToGraphQL",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 113,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "mapRestTransactionToGraphQL",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 177,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createShopifyAPIWithMockClient",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 203,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createCustomerSearchResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 297,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createCustomerOrdersResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 304,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createOrderTransactionsResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 311,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockShopifyClient",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-api.mock.ts",
+        "line": 315,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMockShopifyClient",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-client.mock.ts",
+        "line": 25,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createCustomerSearchResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-client.mock.ts",
+        "line": 87,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createCustomerOrdersResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-client.mock.ts",
+        "line": 107,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createOrderTransactionsResponse",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/shopify-client.mock.ts",
+        "line": 125,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createTestRepository",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/repository/enrichment-repository.test.ts",
         "line": 14,
         "parent_class": null,
         "count": 0
       },
       {
         "name": "constructor",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 4,
-        "parent_class": "OrderService",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/repository/enrichment-repository.test.ts",
+        "line": 16,
+        "parent_class": "TestEnrichmentClientRepository",
+        "count": 0
+      },
+      {
+        "name": "createTestDispute",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/repository/enrichment-repository.test.ts",
+        "line": 79,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createPastOrder",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/repository/enrichment-repository.test.ts",
+        "line": 94,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "createMapperInput",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/service/mapper/shopify-past-orders-mapper.unit.test.ts",
+        "line": 44,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 32,
+        "parent_class": "RedisStorageClient",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 95,
+        "parent_class": "RedisStoragePipeline",
+        "count": 0
+      },
+      {
+        "name": "closeRedis",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/redis.ts",
+        "line": 39,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "resetRedis",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/redis.ts",
+        "line": 49,
+        "parent_class": null,
+        "count": 0
+      },
+      {
+        "name": "resetStorageClient",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/storage-client-factory.ts",
+        "line": 34,
+        "parent_class": null,
         "count": 0
       }
     ],
     "pagerank_top": [
       {
-        "name": "OrderRepository",
-        "file": "tests/fixtures/javascript-express/src/repository.js",
-        "line": 3,
-        "parent_class": null,
-        "score": 0.1798976135438916
+        "name": "get",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 34,
+        "parent_class": "RedisStorageClient",
+        "score": 0.12694380766147345
       },
       {
-        "name": "save",
-        "file": "tests/fixtures/javascript-express/src/repository.js",
-        "line": 4,
-        "parent_class": "OrderRepository",
-        "score": 0.12010025631539493
+        "name": "get",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 31,
+        "parent_class": "InMemoryStorageClient",
+        "score": 0.12694380766147256
       },
       {
-        "name": "buildOrder",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 14,
-        "parent_class": "OrderService",
-        "score": 0.12010025631539493
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 37,
+        "parent_class": "InMemoryStorageClient",
+        "score": 0.047823043968878036
       },
       {
-        "name": "validate",
-        "file": "tests/fixtures/javascript-express/src/service.js",
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 97,
+        "parent_class": "InMemoryStoragePipeline",
+        "score": 0.04509376162005521
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 40,
+        "parent_class": "RedisStorageClient",
+        "score": 0.0450937616200552
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 97,
+        "parent_class": "RedisStoragePipeline",
+        "score": 0.04509376162005514
+      },
+      {
+        "name": "getSet",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 21,
+        "parent_class": "InMemoryStorageClient",
+        "score": 0.016071148771790895
+      },
+      {
+        "name": "getCollection",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 12,
+        "parent_class": "InMemoryStorageClient",
+        "score": 0.011541527417716805
+      },
+      {
+        "name": "clear",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockPaymentProcessorRepository.ts",
         "line": 22,
-        "parent_class": "OrderService",
-        "score": 0.12010025631539493
+        "parent_class": "MockPaymentProcessorRepository",
+        "score": 0.00840338165439076
       },
       {
-        "name": "findById",
-        "file": "tests/fixtures/javascript-express/src/repository.js",
-        "line": 8,
-        "parent_class": "OrderRepository",
-        "score": 0.0919603235019847
-      },
-      {
-        "name": "notifyDownstream",
-        "file": "tests/fixtures/javascript-express/src/routes.js",
-        "line": 14,
-        "parent_class": null,
-        "score": 0.0919603235019847
-      },
-      {
-        "name": "OrderService",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 3,
-        "parent_class": null,
-        "score": 0.0919603235019847
-      },
-      {
-        "name": "constructor",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 4,
-        "parent_class": "OrderService",
-        "score": 0.0919603235019847
-      },
-      {
-        "name": "createOrder",
-        "file": "tests/fixtures/javascript-express/src/service.js",
-        "line": 8,
-        "parent_class": "OrderService",
-        "score": 0.0919603235019847
+        "name": "clear",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryInvoiceEnrichmentRepository.ts",
+        "line": 32,
+        "parent_class": "InMemoryInvoiceEnrichmentRepository",
+        "score": 0.00840338165439074
       }
     ],
-    "recursive_symbols": [],
+    "recursive_symbols": [
+      {
+        "name": "clear",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryInvoiceEnrichmentRepository.ts",
+        "line": 32,
+        "parent_class": "InMemoryInvoiceEnrichmentRepository",
+        "count": 1
+      },
+      {
+        "name": "getCollection",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 12,
+        "parent_class": "InMemoryStorageClient",
+        "count": 1
+      },
+      {
+        "name": "get",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 31,
+        "parent_class": "InMemoryStorageClient",
+        "count": 1
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 37,
+        "parent_class": "InMemoryStorageClient",
+        "count": 1
+      },
+      {
+        "name": "clear",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 86,
+        "parent_class": "InMemoryStorageClient",
+        "count": 1
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 97,
+        "parent_class": "InMemoryStoragePipeline",
+        "count": 1
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 102,
+        "parent_class": "InMemoryStoragePipeline",
+        "count": 1
+      },
+      {
+        "name": "sismember",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/InMemoryStorageClient.ts",
+        "line": 107,
+        "parent_class": "InMemoryStoragePipeline",
+        "count": 1
+      },
+      {
+        "name": "clear",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/mocks/MockPaymentProcessorRepository.ts",
+        "line": 22,
+        "parent_class": "MockPaymentProcessorRepository",
+        "count": 1
+      },
+      {
+        "name": "findDisputeByOrderId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/repository/EnrichmentRepository.ts",
+        "line": 53,
+        "parent_class": "EnrichmentRepositoryImpl",
+        "count": 1
+      },
+      {
+        "name": "findDisputeByOrderId",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/past-orders-linking-service/test/mocks/repositories/persistence-mock.ts",
+        "line": 137,
+        "parent_class": null,
+        "count": 1
+      },
+      {
+        "name": "get",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 34,
+        "parent_class": "RedisStorageClient",
+        "count": 1
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 40,
+        "parent_class": "RedisStorageClient",
+        "count": 1
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 67,
+        "parent_class": "RedisStorageClient",
+        "count": 1
+      },
+      {
+        "name": "sismember",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 72,
+        "parent_class": "RedisStorageClient",
+        "count": 1
+      },
+      {
+        "name": "set",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 97,
+        "parent_class": "RedisStoragePipeline",
+        "count": 1
+      },
+      {
+        "name": "sadd",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 102,
+        "parent_class": "RedisStoragePipeline",
+        "count": 1
+      },
+      {
+        "name": "sismember",
+        "file": "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/storage/StorageClient.ts",
+        "line": 107,
+        "parent_class": "RedisStoragePipeline",
+        "count": 1
+      }
+    ],
     "language_breakdown": [
       {
-        "language": "JavaScript",
-        "bytes": 1798,
-        "files": 4,
-        "percent": 100.0,
+        "language": "TypeScript",
+        "bytes": 945771,
+        "files": 103,
+        "percent": 99.80877664542315,
         "supported": true
+      },
+      {
+        "language": "Dockerfile",
+        "bytes": 1492,
+        "files": 2,
+        "percent": 0.15745322573326032,
+        "supported": false
+      },
+      {
+        "language": "Makefile",
+        "bytes": 320,
+        "files": 1,
+        "percent": 0.033770128843594704,
+        "supported": false
       }
     ],
-    "profiled_language": "JavaScript",
-    "profiled_language_percent": 100.0
+    "profiled_language": "TypeScript",
+    "profiled_language_percent": 99.80877664542315
   },
-  "entries": [
-    {
-      "id": "tests/fixtures/javascript-express/src/service.js::OrderService::createOrder",
-      "name": "createOrder",
-      "kind": "Method",
-      "file": "src/service.js",
-      "line": 8,
-      "depth": 0,
-      "parent_class": "OrderService",
-      "children": [
-        {
-          "id": "tests/fixtures/javascript-express/src/service.js::OrderService::buildOrder",
-          "name": "buildOrder",
-          "kind": "Method",
-          "file": "src/service.js",
-          "line": 14,
-          "depth": 1,
-          "parent_class": "OrderService",
-          "children": [],
-          "truncated_reason": null,
-          "callers": [
-            {
-              "id": "tests/fixtures/javascript-express/src/service.js::OrderService::createOrder",
-              "name": "createOrder",
-              "file": "src/service.js",
-              "line": 8,
-              "parent_class": "OrderService"
-            }
-          ],
-          "callers_count": 1,
-          "callees_count": 0,
-          "subtree_size": 1,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
-          "complexity": 2,
-          "loc": 7,
-          "nesting_depth": 0,
-          "parameter_count": 1,
-          "is_async": false,
-          "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.12010025631539493,
-          "percent_total": 25.0,
-          "percent_parent": 25.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
-        },
-        {
-          "id": "tests/fixtures/javascript-express/src/service.js::OrderService::validate",
-          "name": "validate",
-          "kind": "Method",
-          "file": "src/service.js",
-          "line": 22,
-          "depth": 1,
-          "parent_class": "OrderService",
-          "children": [],
-          "truncated_reason": null,
-          "callers": [
-            {
-              "id": "tests/fixtures/javascript-express/src/service.js::OrderService::createOrder",
-              "name": "createOrder",
-              "file": "src/service.js",
-              "line": 8,
-              "parent_class": "OrderService"
-            }
-          ],
-          "callers_count": 1,
-          "callees_count": 0,
-          "subtree_size": 1,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
-          "complexity": 4,
-          "loc": 8,
-          "nesting_depth": 1,
-          "parameter_count": 1,
-          "is_async": false,
-          "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.12010025631539493,
-          "percent_total": 25.0,
-          "percent_parent": 25.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
-        },
-        {
-          "id": "tests/fixtures/javascript-express/src/repository.js::OrderRepository::save",
-          "name": "save",
-          "kind": "Method",
-          "file": "src/repository.js",
-          "line": 4,
-          "depth": 1,
-          "parent_class": "OrderRepository",
-          "children": [],
-          "truncated_reason": null,
-          "callers": [
-            {
-              "id": "tests/fixtures/javascript-express/src/service.js::OrderService::createOrder",
-              "name": "createOrder",
-              "file": "src/service.js",
-              "line": 8,
-              "parent_class": "OrderService"
-            }
-          ],
-          "callers_count": 1,
-          "callees_count": 0,
-          "subtree_size": 1,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
-          "complexity": 1,
-          "loc": 3,
-          "nesting_depth": 0,
-          "parameter_count": 1,
-          "is_async": true,
-          "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.12010025631539493,
-          "percent_total": 25.0,
-          "percent_parent": 25.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
-        }
-      ],
-      "truncated_reason": null,
-      "callers": [],
-      "callers_count": 0,
-      "callees_count": 3,
-      "subtree_size": 4,
-      "category_self": null,
-      "categories_reached": {},
-      "external_calls": [],
-      "complexity": 1,
-      "loc": 5,
-      "nesting_depth": 0,
-      "parameter_count": 1,
-      "is_async": true,
-      "call_site_count": 0,
-      "is_recursive": false,
-      "pagerank": 0.0919603235019847,
-      "percent_total": 100.0,
-      "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false
-    }
-  ]
+  "entries": []
 }

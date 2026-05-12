@@ -159,13 +159,13 @@ export function App() {
                 </Help>
             </span>
             {categoryFilter && (
-              <span style={filterChipStyle}>
+              <span style={filterChipStyle} title={TIPS.toolbar_filter_chip}>
                 filter: {categoryFilter}
-                <button onClick={() => setCategoryFilter(null)} style={chipCloseStyle} title="clear filter">×</button>
+                <button onClick={() => setCategoryFilter(null)} style={chipCloseStyle} title="Clear the category filter (show all frames at full opacity).">×</button>
               </span>
             )}
             {selected && (
-              <button onClick={() => setSelected(activeRoot)} style={resetBtnStyle} title="show entry-point root in details">
+              <button onClick={() => setSelected(activeRoot)} style={resetBtnStyle} title={TIPS.toolbar_back_to_root}>
                 ← back to root
               </button>
             )}
@@ -186,17 +186,21 @@ export function App() {
             {!error && !activeRoot && <div style={emptyStyle}>no data</div>}
           </div>
           <div style={tabsStyle}>
-            <Tab active={bottomTab === 'tree'} onClick={() => setBottomTab('tree')}>Call Tree</Tab>
-            <Tab active={bottomTab === 'roots'} onClick={() => setBottomTab('roots')}>
+            <Tab active={bottomTab === 'tree'} onClick={() => setBottomTab('tree')} tip={TIPS.tab_call_tree}>
+              Call Tree
+            </Tab>
+            <Tab active={bottomTab === 'roots'} onClick={() => setBottomTab('roots')} tip={TIPS.tab_roots}>
               Roots{report?.entries.length ? ` (${report.entries.length})` : ''}
             </Tab>
-            <Tab active={bottomTab === 'hot'} onClick={() => setBottomTab('hot')}>
+            <Tab active={bottomTab === 'hot'} onClick={() => setBottomTab('hot')} tip={TIPS.tab_hot_paths}>
               Hot Paths{report?.summary.hot_paths.length ? ` (${report.summary.hot_paths.length})` : ''}
             </Tab>
-            <Tab active={bottomTab === 'smells'} onClick={() => setBottomTab('smells')}>
+            <Tab active={bottomTab === 'smells'} onClick={() => setBottomTab('smells')} tip={TIPS.tab_smells}>
               Smells{smellsCount(activeRoot) ? ` (${smellsCount(activeRoot)})` : ''}
             </Tab>
-            <Tab active={bottomTab === 'stats'} onClick={() => setBottomTab('stats')}>Statistics</Tab>
+            <Tab active={bottomTab === 'stats'} onClick={() => setBottomTab('stats')} tip={TIPS.tab_statistics}>
+              Statistics
+            </Tab>
           </div>
           <div style={bottomPanelStyle}>
             {bottomTab === 'tree' && activeRoot && (
@@ -271,20 +275,32 @@ function Toolbar(props: {
   const { fixtureKey, setFixtureKey, fixtureLabel, roots, activeRootId, setActiveRootId, search, setSearch, flameMode, setFlameMode, description } = props;
   return (
     <div style={toolbarStyle}>
-      <div style={brandStyle}>drift · static profiler</div>
-      <label style={labelStyle}>Fixture</label>
-      <select value={fixtureKey} onChange={e => setFixtureKey(e.target.value)} style={selectStyle}>
+      <div style={brandStyle}>
+        <Help text={TIPS.brand}>drift · static profiler</Help>
+      </div>
+      <label style={labelStyle}>
+        <Help text={TIPS.toolbar_fixture}>Fixture</Help>
+      </label>
+      <select
+        value={fixtureKey}
+        onChange={e => setFixtureKey(e.target.value)}
+        style={selectStyle}
+        title={TIPS.toolbar_fixture}
+      >
         {FIXTURES.map(f => (
-          <option key={f.key} value={f.key}>
+          <option key={f.key} value={f.key} title={f.description}>
             {f.key === fixtureKey ? fixtureLabel : f.label}
           </option>
         ))}
       </select>
-      <label style={labelStyle}>Entry</label>
+      <label style={labelStyle}>
+        <Help text={TIPS.toolbar_entry}>Entry</Help>
+      </label>
       <select
         value={activeRootId ?? ''}
         onChange={e => setActiveRootId(e.target.value)}
         style={{ ...selectStyle, minWidth: 280 }}
+        title={TIPS.toolbar_entry}
       >
         {roots.map(r => (
           <option key={r.id} value={r.id}>
@@ -292,8 +308,15 @@ function Toolbar(props: {
           </option>
         ))}
       </select>
-      <label style={labelStyle}>Color</label>
-      <select value={flameMode} onChange={e => setFlameMode(e.target.value as FlameMode)} style={selectStyle}>
+      <label style={labelStyle}>
+        <Help text={TIPS.toolbar_color}>Color</Help>
+      </label>
+      <select
+        value={flameMode}
+        onChange={e => setFlameMode(e.target.value as FlameMode)}
+        style={selectStyle}
+        title={TIPS.toolbar_color}
+      >
         <option value="kind" title={TIPS.flame_mode_kind}>by kind</option>
         <option value="category" title={TIPS.flame_mode_category}>by category</option>
         <option value="complexity" title={TIPS.flame_mode_complexity}>by complexity</option>
@@ -304,17 +327,29 @@ function Toolbar(props: {
         value={search}
         onChange={e => setSearch(e.target.value)}
         placeholder="search…"
+        title={TIPS.toolbar_search}
         style={inputStyle}
       />
-      <span style={descStyle}>{description}</span>
+      <span style={descStyle} title={description}>{description}</span>
     </div>
   );
 }
 
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function Tab({ active, onClick, children, tip }: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  tip?: string;
+}) {
+  // Wrap the visible label in <Help> so the user gets the same instant
+  // rich-popover affordance (dotted underline + styled tooltip) we use
+  // everywhere else. Native `title=` is too slow and invisible to be the
+  // primary discovery affordance on the main nav strip.
+  // The Help wrapper handles hover/focus to show the popover; the button's
+  // onClick still fires for normal navigation because clicks bubble up.
   return (
-    <button onClick={onClick} style={{ ...tabStyle, ...(active ? tabActiveStyle : {}) }}>
-      {children}
+    <button onClick={onClick} title={tip} style={{ ...tabStyle, ...(active ? tabActiveStyle : {}) }}>
+      {tip ? <Help text={tip}>{children}</Help> : children}
     </button>
   );
 }

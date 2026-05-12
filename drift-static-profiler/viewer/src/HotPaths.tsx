@@ -21,6 +21,17 @@ export function HotPaths({ paths, onJump }: Props) {
       <div style={hintStyle}>
         {TIPS.hot_path} <Help text={TIPS.hot_path} />
       </div>
+      <div style={headerRowStyle}>
+        <span style={{ ...headerCellStyle, minWidth: 60 }}>
+          <Help text={TIPS.hot_col_category}>category</Help>
+        </span>
+        <span style={{ ...headerCellStyle, minWidth: 60 }}>
+          <Help text={TIPS.hot_col_depth}>depth</Help>
+        </span>
+        <span style={headerCellStyle}>
+          <Help text={TIPS.hot_col_frames}>path (root → … → terminal)</Help>
+        </span>
+      </div>
       {paths.map((p, i) => (
         <div key={i} style={pathStyle}>
           <span
@@ -36,7 +47,7 @@ export function HotPaths({ paths, onJump }: Props) {
                 <code
                   style={onJump ? frameClickableStyle : frameStyle}
                   onClick={() => onJump?.(f)}
-                  title={onJump ? `jump to ${f}` : undefined}
+                  title={onJump ? `Click to jump to ${f} in the call tree / Details pane.` : undefined}
                 >
                   {f}
                 </code>
@@ -87,5 +98,22 @@ const frameClickableStyle: React.CSSProperties = {
 };
 const hintStyle: React.CSSProperties = {
   color: '#6e717a', fontSize: 10, fontStyle: 'italic', marginBottom: 6,
+};
+const headerRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '4px 0 6px 0',
+  borderBottom: '1px solid #3f4147',
+  marginBottom: 4,
+  fontSize: 10,
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  color: '#9ca0a8',
+  fontWeight: 700,
+};
+const headerCellStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
 };
 const arrowStyle: React.CSSProperties = { color: '#6e717a', margin: '0 4px' };

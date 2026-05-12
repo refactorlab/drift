@@ -16,111 +16,137 @@ export function Statistics({ summary, onJump }: Props) {
   return (
     <div style={containerStyle}>
       <div style={gridStyle}>
-        <Panel title={`top by PageRank · α=0.85`} tip={TIPS.pagerank_top}>
+        <Panel title={`top by PageRank · α=0.85`} tip={TIPS.pagerank_top} columns={['symbol', 'score', 'location']}>
           {summary.pagerank_top.length === 0 ? (
             <Empty />
           ) : (
             <ol style={listStyle}>
               {summary.pagerank_top.map((r, i) => (
-                <li key={i} style={liButtonStyle} onClick={() => clickItem(r)} title="jump to symbol">
-                  <code style={codeStyle}>
+                <li
+                  key={i}
+                  style={liButtonStyle}
+                  onClick={() => clickItem(r)}
+                  title={`Click to jump to ${(r.parent_class ? r.parent_class + '.' : '') + r.name}.`}
+                >
+                  <code style={codeStyle} title={TIPS.stats_col_symbol}>
                     {r.parent_class ? <span style={dimStyle}>{r.parent_class}.</span> : null}
                     {r.name}
                   </code>
-                  <span style={scoreStyle}>{r.score.toFixed(4)}</span>
-                  <span style={locStyle}>{r.file}:{r.line}</span>
+                  <span style={scoreStyle} title={TIPS.stats_col_score}>{r.score.toFixed(4)}</span>
+                  <span style={locStyle} title={TIPS.stats_col_location}>{r.file}:{r.line}</span>
                 </li>
               ))}
             </ol>
           )}
         </Panel>
 
-        <Panel title={`most-called symbols (fan-in)`} tip={TIPS.top_callers}>
+        <Panel title={`most-called symbols (fan-in)`} tip={TIPS.top_callers} columns={['symbol', 'fan-in', 'location']}>
           {summary.top_callers.length === 0 ? (
             <Empty msg="no inbound edges (single-file project?)" />
           ) : (
             <ol style={listStyle}>
               {summary.top_callers.map((r, i) => (
-                <li key={i} style={liButtonStyle} onClick={() => clickItem(r)} title="jump to symbol">
-                  <code style={codeStyle}>
+                <li
+                  key={i}
+                  style={liButtonStyle}
+                  onClick={() => clickItem(r)}
+                  title={`Click to jump to ${(r.parent_class ? r.parent_class + '.' : '') + r.name}.`}
+                >
+                  <code style={codeStyle} title={TIPS.stats_col_symbol}>
                     {r.parent_class ? <span style={dimStyle}>{r.parent_class}.</span> : null}
                     {r.name}
                   </code>
-                  <span style={countStyle}>×{r.count}</span>
-                  <span style={locStyle}>{r.file}:{r.line}</span>
+                  <span style={countStyle} title={`${TIPS.stats_col_fanin}\n\nThis symbol has ${r.count} unique caller(s).`}>×{r.count}</span>
+                  <span style={locStyle} title={TIPS.stats_col_location}>{r.file}:{r.line}</span>
                 </li>
               ))}
             </ol>
           )}
         </Panel>
 
-        <Panel title={`high-fan-out symbols (callees)`} tip={TIPS.top_callees}>
+        <Panel title={`high-fan-out symbols (callees)`} tip={TIPS.top_callees} columns={['symbol', 'fan-out', 'location']}>
           {summary.top_callees.length === 0 ? (
             <Empty />
           ) : (
             <ol style={listStyle}>
               {summary.top_callees.map((r, i) => (
-                <li key={i} style={liButtonStyle} onClick={() => clickItem(r)} title="jump to symbol">
-                  <code style={codeStyle}>
+                <li
+                  key={i}
+                  style={liButtonStyle}
+                  onClick={() => clickItem(r)}
+                  title={`Click to jump to ${(r.parent_class ? r.parent_class + '.' : '') + r.name}.`}
+                >
+                  <code style={codeStyle} title={TIPS.stats_col_symbol}>
                     {r.parent_class ? <span style={dimStyle}>{r.parent_class}.</span> : null}
                     {r.name}
                   </code>
-                  <span style={countStyle}>→{r.count}</span>
-                  <span style={locStyle}>{r.file}:{r.line}</span>
+                  <span style={countStyle} title={`${TIPS.stats_col_fanout}\n\nThis symbol directly calls ${r.count} distinct symbol(s).`}>→{r.count}</span>
+                  <span style={locStyle} title={TIPS.stats_col_location}>{r.file}:{r.line}</span>
                 </li>
               ))}
             </ol>
           )}
         </Panel>
 
-        <Panel title={`dead code · 0 callers, not pinned`} tip={TIPS.dead_code}>
+        <Panel title={`dead code · 0 callers, not pinned`} tip={TIPS.dead_code} columns={['symbol', 'location']}>
           {summary.dead_code.length === 0 ? (
             <Empty msg="no dead code detected" />
           ) : (
             <ol style={listStyle}>
               {summary.dead_code.map((r, i) => (
-                <li key={i} style={liButtonStyle} onClick={() => clickItem(r)} title="jump to symbol">
-                  <code style={codeStyle}>
+                <li
+                  key={i}
+                  style={liButtonStyle}
+                  onClick={() => clickItem(r)}
+                  title={`Click to jump to ${(r.parent_class ? r.parent_class + '.' : '') + r.name}.`}
+                >
+                  <code style={codeStyle} title={TIPS.stats_col_symbol}>
                     {r.parent_class ? <span style={dimStyle}>{r.parent_class}.</span> : null}
                     {r.name}
                   </code>
-                  <span style={locStyle}>{r.file}:{r.line}</span>
+                  <span style={locStyle} title={TIPS.stats_col_location}>{r.file}:{r.line}</span>
                 </li>
               ))}
             </ol>
           )}
         </Panel>
 
-        <Panel title={`recursive symbols · SCC > 1`} tip={TIPS.recursive_symbols}>
+        <Panel title={`recursive symbols · SCC > 1`} tip={TIPS.recursive_symbols} columns={['symbol', 'location']}>
           {summary.recursive_symbols.length === 0 ? (
             <Empty msg="no recursion cycles found" />
           ) : (
             <ol style={listStyle}>
               {summary.recursive_symbols.map((r, i) => (
-                <li key={i} style={liButtonStyle} onClick={() => clickItem(r)} title="jump to symbol">
-                  <code style={codeStyle}>
+                <li
+                  key={i}
+                  style={liButtonStyle}
+                  onClick={() => clickItem(r)}
+                  title={`Click to jump to ${(r.parent_class ? r.parent_class + '.' : '') + r.name}.`}
+                >
+                  <code style={codeStyle} title={TIPS.stats_col_symbol}>
                     {r.parent_class ? <span style={dimStyle}>{r.parent_class}.</span> : null}
                     {r.name}
                   </code>
-                  <span style={locStyle}>{r.file}:{r.line}</span>
+                  <span style={locStyle} title={TIPS.stats_col_location}>{r.file}:{r.line}</span>
                 </li>
               ))}
             </ol>
           )}
         </Panel>
 
-        <Panel title={`languages · files · edges`}>
+        <Panel title={`languages · files · edges`} tip={TIPS.stats_summary_panel}>
           <div style={{ padding: 8 }}>
-            <Row k="languages" v={summary.languages.join(', ')} />
-            <Row k="files" v={String(summary.files)} />
-            <Row k="symbols" v={String(summary.symbols)} />
-            <Row k="edges (calls)" v={String(summary.edges)} />
+            <Row k="languages" v={summary.languages.join(', ')} tip={TIPS.languages} />
+            <Row k="files" v={String(summary.files)} tip={TIPS.files} />
+            <Row k="symbols" v={String(summary.symbols)} tip={TIPS.symbols} />
+            <Row k="edges (calls)" v={String(summary.edges)} tip={TIPS.edges} />
             <Row
               k="categories"
               v={Object.entries(summary.categories)
                 .filter(([, n]) => n > 0)
                 .map(([c, n]) => `${c} ${n}`)
                 .join('  ·  ') || 'none'}
+              tip="Total external calls per resource category across the whole project."
             />
           </div>
         </Panel>
@@ -129,26 +155,69 @@ export function Statistics({ summary, onJump }: Props) {
   );
 }
 
-function Panel({ title, children, tip }: { title: string; children: React.ReactNode; tip?: string }) {
+function Panel({ title, children, tip, columns }: {
+  title: string;
+  children: React.ReactNode;
+  tip?: string;
+  columns?: string[];
+}) {
   return (
     <div style={panelStyle}>
       <div style={panelHeaderStyle}>
         {title}
         {tip && <Help text={tip} />}
       </div>
+      {columns && (
+        <div style={panelColumnsStyle}>
+          {columns.map((c) => (
+            <span key={c} style={panelColumnLabelStyle(c)}>
+              <Help text={tipForColumn(c)}>{c}</Help>
+            </span>
+          ))}
+        </div>
+      )}
       <div style={{ overflow: 'auto', maxHeight: 220 }}>{children}</div>
     </div>
   );
+}
+
+// Map a column-name string ("symbol" / "score" / "fan-in" / "fan-out" / "location")
+// to the right tooltip text from the central glossary.
+function tipForColumn(col: string): string {
+  switch (col) {
+    case 'symbol':   return TIPS.stats_col_symbol;
+    case 'score':    return TIPS.stats_col_score;
+    case 'fan-in':   return TIPS.stats_col_fanin;
+    case 'fan-out':  return TIPS.stats_col_fanout;
+    case 'location': return TIPS.stats_col_location;
+    default:         return col;
+  }
+}
+
+// Right-align numeric columns; left-align everything else. Width hints match
+// the row cells' min-widths (scoreStyle / countStyle / locStyle) so the
+// header label sits over its column.
+function panelColumnLabelStyle(col: string): React.CSSProperties {
+  if (col === 'score' || col === 'fan-in' || col === 'fan-out') {
+    return { minWidth: col === 'score' ? 60 : 40, textAlign: 'right', marginLeft: 'auto' };
+  }
+  if (col === 'location') {
+    return { marginLeft: 'auto' };
+  }
+  // symbol — fills remaining space on the left
+  return { flex: 1 };
 }
 
 function Empty({ msg }: { msg?: string }) {
   return <div style={{ padding: 14, color: '#7e8189', fontSize: 11, fontStyle: 'italic' }}>{msg ?? '—'}</div>;
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function Row({ k, v, tip }: { k: string; v: string; tip?: string }) {
   return (
-    <div style={{ display: 'flex', padding: '3px 0', borderBottom: '1px solid #2f3136', fontSize: 11 }}>
-      <span style={{ width: 100, color: '#7e8189' }}>{k}</span>
+    <div style={{ display: 'flex', padding: '3px 0', borderBottom: '1px solid #2f3136', fontSize: 11 }} title={tip}>
+      <span style={{ width: 100, color: '#7e8189' }}>
+        {tip ? <Help text={tip}>{k}</Help> : k}
+      </span>
       <span style={{ color: '#d7d9dc' }}>{v}</span>
     </div>
   );
@@ -180,6 +249,19 @@ const panelHeaderStyle: React.CSSProperties = {
   padding: '6px 10px',
   background: '#1e1f22',
   borderBottom: '1px solid #3f4147',
+};
+const panelColumnsStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '4px 10px',
+  background: '#26282c',
+  borderBottom: '1px solid #3f4147',
+  fontSize: 9,
+  textTransform: 'uppercase',
+  letterSpacing: 0.4,
+  fontWeight: 700,
+  color: '#7e8189',
 };
 const listStyle: React.CSSProperties = {
   margin: 0,

@@ -171,4 +171,144 @@ export const TIPS: Record<string, string> = {
   // ── Truncation reasons ────────────────────────────────────────────────
   truncated_cycle:    'We stopped descending because this node is already on the path (cycle).',
   truncated_maxdepth: 'We stopped descending because we hit the --max-depth limit.',
+
+  // ── App brand + toolbar ───────────────────────────────────────────────
+  brand:
+    'drift static profiler — language-agnostic static call-tree analyzer. ' +
+    'Parses Python / Java / TypeScript / JavaScript / Go / Rust / Scala with tree-sitter, ' +
+    'builds a per-project call graph, classifies external calls (db / network / io / cache / queue / log), ' +
+    'and surfaces hot paths and smells without running the code.',
+  toolbar_fixture:
+    'Which analyzed project to view. Each fixture is a JSON report produced by ' +
+    '`make refresh` (built-in fixtures), `make scan` (one-shot custom analysis), ' +
+    'or `make scan-roots` (auto-discovered entry points).',
+  toolbar_entry:
+    'Entry-point symbol whose call tree is shown above. One report can contain ' +
+    'multiple entries — use the Roots tab to compare them side-by-side.',
+  toolbar_color:
+    'How frames in the flame graph are colored. The default ("by kind") shows ' +
+    'function/method/class. Switch to "by category" to see which subtrees touch ' +
+    'the database, network, etc., to "by complexity" to spot risky code, or to ' +
+    '"smells only" to highlight just the antipatterns.',
+  toolbar_search:
+    'Filter the flame graph and call tree by symbol name (case-insensitive substring). ' +
+    'Non-matching frames are dimmed instead of removed so structure stays visible.',
+  toolbar_filter_chip:
+    'Active resource-category filter. Frames whose subtree never reaches this ' +
+    'category are dimmed. Click × to clear.',
+  toolbar_back_to_root:
+    'Reset the Details pane to show the current entry-point root.',
+
+  // ── Bottom tabs ───────────────────────────────────────────────────────
+  tab_call_tree:
+    'Indented call tree under the selected entry point. Each row is one symbol with ' +
+    'its %total, %parent, complexity, LOC, fan-in/out, PageRank, and smell flags. ' +
+    'Click any row to drill in via the Details pane.',
+  tab_roots:
+    'Sortable table of every auto-discovered entry point in this report. ' +
+    'Ranked by transitive reach (subtree size) like pprof\'s `top -cum` or ' +
+    'Speedscope\'s Sandwich view. Click a row to focus the flame graph + call tree ' +
+    'on that root.',
+  tab_hot_paths:
+    'Static "critical paths": chains from an entry point down to a categorized ' +
+    'resource call (db / network / io / cache / queue / log). Each row tells you ' +
+    '"this handler eventually hits the DB through these N hops".',
+  tab_smells:
+    'Antipatterns detected in the selected entry\'s subtree: N+1 queries (DB call ' +
+    'inside a loop), blocking I/O inside async code (without await), and recursion ' +
+    'cycles. Each row links to the offending symbol.',
+  tab_statistics:
+    'Project-wide rollups: top symbols by PageRank, fan-in, fan-out, dead code, ' +
+    'recursion cycles, plus a language/files/symbols/edges summary. Click any row ' +
+    'to jump to the symbol in the call tree.',
+
+  // ── CallTree column headers ───────────────────────────────────────────
+  col_symbol:
+    'The fully-qualified symbol name (Class.method or function). Click any row ' +
+    'to focus the Details pane on it.',
+  col_file_line:
+    'Source location: relative file path + line number of the symbol\'s definition.',
+
+  // ── RootsView column abbreviations ────────────────────────────────────
+  // The user-facing column header IS the abbreviation; the tooltip expands it.
+  col_rank:
+    'Rank (#) — position after sorting. The default sort is by reach (cumulative ' +
+    'subtree size), descending. Click any column header to re-sort.',
+  col_kind:
+    'Symbol kind — fn (function), method (member of a class), or class itself. ' +
+    'Different colors map to each kind in the flame graph.',
+  col_reach:
+    'Reach = transitive subtree size in the static call graph (deduped — cycles are ' +
+    'counted once). The static-analysis analog of "cumulative samples" in pprof: ' +
+    'how much code is reachable from this entry point.',
+  col_cx:
+    'Cx = cyclomatic complexity (McCabe, 1976) of THIS symbol\'s body — number of ' +
+    'decision points (if / for / while / case / catch / && / ||) + 1. ' +
+    'Rule of thumb: 1-4 simple, 5-9 moderate, 10-14 complex, 15+ untestable.',
+  col_categories:
+    'Resource categories this root\'s subtree eventually touches. ' +
+    'Example: a route handler that calls a service that calls a repository that ' +
+    'hits the DB would show "db:N" (N = count of reaching paths).',
+  col_smells:
+    'Number of smells anywhere in this root\'s subtree: N+1 risks + blocking-in-async ' +
+    '+ recursive symbols. 0 = clean. Yellow = 1-3, red = 4+.',
+  col_pr:
+    'PR = PageRank (Brin & Page, 1998) over the call graph, α = 0.85. ' +
+    'Higher = more central — symbols called by many heavily-called symbols. ' +
+    'Useful for picking the most-impactful refactor targets.',
+
+  // ── Smells table column headers ───────────────────────────────────────
+  smells_col_smell:
+    'Antipattern category. Hover the badge for the definition and the fix.',
+  smells_col_symbol:
+    'Function or method where the smell occurs.',
+  smells_col_location:
+    'file:line where the offending symbol is defined.',
+  smells_col_evidence:
+    'Why the analyzer flagged it: receiver + method names, in-loop / awaited flags ' +
+    'of the underlying external call(s).',
+
+  // ── Statistics summary panel ──────────────────────────────────────────
+  stats_summary_panel:
+    'Project totals: detected languages, files parsed, symbols extracted, and edges ' +
+    '("A calls B" relationships) in the call graph, plus how many calls fall into ' +
+    'each resource category.',
+
+  // ── Inline abbreviations / badges ─────────────────────────────────────
+  // Short labels that appear inside tree rows; users hover them to learn what
+  // the abbreviation expands to.
+  badge_n_plus_one_short: 'N+1 = N+1 query antipattern. Hover the row\'s smell badge for the full explanation.',
+  badge_blocking_short:   'BLK = blocking I/O inside async. Hover the row\'s smell badge for the full explanation.',
+  badge_recursive_short:  'REC = recursion cycle. Hover the row\'s smell badge for the full explanation.',
+  badge_async_short:      'α = async function (uses async/await).',
+
+  // ── Misc smaller affordances ──────────────────────────────────────────
+  reaches_db_dot:
+    'This subtree reaches a database call somewhere underneath. Click the row to expand and find the exact path.',
+
+  // ── HotPaths column headers ───────────────────────────────────────────
+  hot_col_category:
+    'Resource category of the LAST frame in this path (db / network / io / cache / queue / log). ' +
+    'Tells you what kind of external resource the chain ultimately touches.',
+  hot_col_depth:
+    'Number of call hops from the entry-point root to the categorized terminal frame. ' +
+    'Deeper = more abstraction layers between the request and the resource.',
+  hot_col_frames:
+    'The actual chain of frames, root → … → terminal. Click any frame to jump to it ' +
+    'in the call tree / Details pane.',
+
+  // ── Statistics row-level columns ──────────────────────────────────────
+  stats_col_symbol:
+    'Symbol name (Class.method or function). Click the row to jump to it in the call tree.',
+  stats_col_score:
+    'PageRank score for this symbol (Brin & Page 1998, α = 0.85). Sums to 1.0 across all symbols. ' +
+    'Higher = more central in the call graph.',
+  stats_col_fanin:
+    'Fan-in: how many DISTINCT functions call this symbol. High = depended on by many; ' +
+    'changing it is high-blast-radius.',
+  stats_col_fanout:
+    'Fan-out: how many DISTINCT symbols this function directly calls. High = orchestrator-style code; ' +
+    '>15 often signals a "god function".',
+  stats_col_location:
+    'file:line of the symbol\'s definition.',
 };

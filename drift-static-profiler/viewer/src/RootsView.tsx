@@ -65,19 +65,27 @@ export function RootsView({ roots, activeRootId, onSelect }: Props) {
       <div style={hintStyle}>
         Auto-discovered root entry points (symbols with no in-graph caller). Click a row to
         drill into its flame graph and call tree. Ranked like pprof's <code style={codeInlineStyle}>top -cum</code>{' '}
-        and Chrome DevTools' Top-Down view. <Help text={TIPS.subtree_size} />
+        and Chrome DevTools' Top-Down view. <Help text={TIPS.tab_roots} />
       </div>
       <div style={tableStyle}>
         <div style={headRowStyle}>
-          <div style={{ ...cellStyle, width: 36 }}>#</div>
-          <Th label="Name" sortable onClick={() => flip('name')} arrow={arrow('name')} flex={2} />
-          <div style={{ ...cellStyle, flex: 1.4, color: '#7e8189' }}>File</div>
-          <div style={{ ...cellStyle, width: 64, color: '#7e8189' }}>Kind</div>
-          <Th label="Reach" sortable onClick={() => flip('reach')} arrow={arrow('reach')} width={64} title={TIPS.subtree_size} />
-          <Th label="Cx" sortable onClick={() => flip('complexity')} arrow={arrow('complexity')} width={48} title={TIPS.complexity} />
-          <div style={{ ...cellStyle, flex: 1.1, color: '#7e8189' }}>Categories</div>
-          <Th label="Smells" sortable onClick={() => flip('smells')} arrow={arrow('smells')} width={62} title="N+1 + blocking-in-async + recursion counts in this root's subtree." />
-          <Th label="PR" sortable onClick={() => flip('pagerank')} arrow={arrow('pagerank')} width={56} title={TIPS.pagerank} />
+          <div style={{ ...cellStyle, width: 36 }}>
+            <Help text={TIPS.col_rank}>#</Help>
+          </div>
+          <Th label="Name" sortable onClick={() => flip('name')} arrow={arrow('name')} flex={2} title="Function or method name (parent class prefixed when applicable). Click to sort alphabetically." />
+          <div style={{ ...cellStyle, flex: 1.4, color: '#7e8189' }}>
+            <Help text={TIPS.col_file_line}>File</Help>
+          </div>
+          <div style={{ ...cellStyle, width: 64, color: '#7e8189' }}>
+            <Help text={TIPS.col_kind}>Kind</Help>
+          </div>
+          <Th label="Reach" sortable onClick={() => flip('reach')} arrow={arrow('reach')} width={64} title={TIPS.col_reach} />
+          <Th label="Cx" sortable onClick={() => flip('complexity')} arrow={arrow('complexity')} width={48} title={TIPS.col_cx} />
+          <div style={{ ...cellStyle, flex: 1.1, color: '#7e8189' }}>
+            <Help text={TIPS.col_categories}>Categories</Help>
+          </div>
+          <Th label="Smells" sortable onClick={() => flip('smells')} arrow={arrow('smells')} width={62} title={TIPS.col_smells} />
+          <Th label="PR" sortable onClick={() => flip('pagerank')} arrow={arrow('pagerank')} width={56} title={TIPS.col_pr} />
         </div>
         <div style={bodyStyle}>
           {sorted.map((row, i) => {
@@ -89,30 +97,56 @@ export function RootsView({ roots, activeRootId, onSelect }: Props) {
                 key={r.id}
                 style={{ ...rowStyle, ...(isActive ? activeRowStyle : {}) }}
                 onClick={() => onSelect(r.id)}
-                title={`Click to focus the flame graph + call tree on ${fullName}`}
+                title={`Click to focus the flame graph + call tree on ${fullName}. (${r.file}:${r.line})`}
               >
-                <div style={{ ...cellStyle, width: 36, color: '#7e8189' }}>{i + 1}</div>
-                <div style={{ ...cellStyle, flex: 2, fontFamily: 'ui-monospace, monospace' }}>
+                <div style={{ ...cellStyle, width: 36, color: '#7e8189' }} title={`Rank #${i + 1} after sorting.`}>{i + 1}</div>
+                <div style={{ ...cellStyle, flex: 2, fontFamily: 'ui-monospace, monospace' }} title={fullName}>
                   <span style={nameStyle}>{fullName}</span>
-                  {r.is_async && <span style={asyncBadgeStyle} title={TIPS.is_async}>async</span>}
+                  {r.is_async && (
+                    <span
+                      style={asyncBadgeStyle}
+                      title={`async — uses async/await. ${TIPS.is_async}`}
+                    >
+                      async
+                    </span>
+                  )}
                 </div>
-                <div style={{ ...cellStyle, flex: 1.4, color: '#9ca0a8', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+                <div
+                  style={{ ...cellStyle, flex: 1.4, color: '#9ca0a8', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+                  title={`${r.file}:${r.line} — ${TIPS.col_file_line}`}
+                >
                   {r.file}:{r.line}
                 </div>
                 <div style={{ ...cellStyle, width: 64 }}>
-                  <span style={kindStyle(r.kind)}>{r.kind.toLowerCase()}</span>
+                  <span style={kindStyle(r.kind)} title={TIPS[`kind_${r.kind.toLowerCase()}`] ?? TIPS.col_kind}>
+                    {r.kind.toLowerCase()}
+                  </span>
                 </div>
-                <div style={{ ...cellStyle, width: 64, fontVariantNumeric: 'tabular-nums' }}>{r.subtree_size}</div>
-                <div style={{ ...cellStyle, width: 48, fontVariantNumeric: 'tabular-nums', color: cxColor(r.complexity) }}>
+                <div
+                  style={{ ...cellStyle, width: 64, fontVariantNumeric: 'tabular-nums' }}
+                  title={`Reach = ${r.subtree_size} transitively reachable symbols (deduped). ${TIPS.col_reach}`}
+                >
+                  {r.subtree_size}
+                </div>
+                <div
+                  style={{ ...cellStyle, width: 48, fontVariantNumeric: 'tabular-nums', color: cxColor(r.complexity) }}
+                  title={`Cx = ${r.complexity} (cyclomatic complexity). ${TIPS.col_cx}`}
+                >
                   {r.complexity}
                 </div>
-                <div style={{ ...cellStyle, flex: 1.1 }}>
+                <div style={{ ...cellStyle, flex: 1.1 }} title={TIPS.col_categories}>
                   <CategoryChips reached={r.categories_reached} />
                 </div>
-                <div style={{ ...cellStyle, width: 62, fontVariantNumeric: 'tabular-nums' }}>
+                <div
+                  style={{ ...cellStyle, width: 62, fontVariantNumeric: 'tabular-nums' }}
+                  title={row.smells === 0 ? 'No smells in this subtree.' : `${row.smells} smell(s) detected. ${TIPS.col_smells}`}
+                >
                   <SmellBadge count={row.smells} />
                 </div>
-                <div style={{ ...cellStyle, width: 56, fontVariantNumeric: 'tabular-nums', color: '#9ca0a8' }}>
+                <div
+                  style={{ ...cellStyle, width: 56, fontVariantNumeric: 'tabular-nums', color: '#9ca0a8' }}
+                  title={r.pagerank ? `PR = ${r.pagerank.toFixed(4)} (PageRank). ${TIPS.col_pr}` : `PageRank not available. ${TIPS.col_pr}`}
+                >
                   {r.pagerank ? r.pagerank.toFixed(3) : '—'}
                 </div>
               </div>
@@ -157,6 +191,10 @@ function Th(props: {
   title?: string;
 }) {
   const { label, onClick, arrow, width, flex, title } = props;
+  // The Help component wraps just the LABEL text so users see a dotted
+  // underline on the column name itself. The outer div still owns the
+  // click-to-sort handler and the cursor:pointer styling — clicks on the
+  // label bubble up to the div.
   return (
     <div
       style={{
@@ -169,9 +207,9 @@ function Th(props: {
         fontWeight: 600,
       }}
       onClick={onClick}
-      title={title}
     >
-      {label} <span style={{ color: '#5b8def' }}>{arrow}</span>
+      {title ? <Help text={title}>{label}</Help> : label}{' '}
+      <span style={{ color: '#5b8def' }}>{arrow}</span>
     </div>
   );
 }

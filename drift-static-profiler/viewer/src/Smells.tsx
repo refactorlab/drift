@@ -52,10 +52,10 @@ export function Smells({ root, onSelect }: Props) {
       <table style={tableStyle}>
         <thead>
           <tr style={theadStyle}>
-            <th style={thStyle} title="The antipattern detected. Hover the badge to see the definition.">smell</th>
-            <th style={thStyle} title="The function/method where the smell occurs.">symbol</th>
-            <th style={thStyle} title="file:line of the symbol definition.">location</th>
-            <th style={thStyle} title="Why we flagged it — receiver + method names, in-loop/awaited flags.">evidence</th>
+            <th style={thStyle}><Help text={TIPS.smells_col_smell}>smell</Help></th>
+            <th style={thStyle}><Help text={TIPS.smells_col_symbol}>symbol</Help></th>
+            <th style={thStyle}><Help text={TIPS.smells_col_location}>location</Help></th>
+            <th style={thStyle}><Help text={TIPS.smells_col_evidence}>evidence</Help></th>
           </tr>
         </thead>
         <tbody>
