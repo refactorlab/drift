@@ -4,7 +4,8 @@
 # === The 3 commands you'll actually use ===
 #   make            # ASCII analyzer output across every fixture (no npm needed)
 #   make test       # run the integration test suite
-#   make viewer     # refresh fixtures, then launch the React viewer at :5180
+#   make viewer     # launch the React viewer at :5180 (run `make refresh` first
+#                   # if you've changed the profiler or fixture sources)
 #
 # Everything else (per-language demos/tests, fixture refresh, schema, cleanup)
 # is below; see `make help` for the full list.
@@ -77,7 +78,7 @@ test: check-rust ## ② Run the integration test suite
 	@printf "$(BLUE)▶$(RESET) cargo test --test integration\n"
 	@cargo test --test integration
 
-viewer: install refresh viewer-stop ## ③ Refresh fixtures, then start the React viewer at :5180
+viewer: install-viewer viewer-stop ## ③ Start the React viewer at :5180 (uses existing fixtures; `make refresh` to regenerate)
 	@printf "$(BLUE)▶$(RESET) Vite dev server (npm) → http://localhost:$(VIEWER_PORT)/\n"
 	@cd $(VIEWER_DIR) && npm run dev -- --port $(VIEWER_PORT)
 
@@ -202,7 +203,7 @@ viewer-data: refresh ## back-compat alias for `refresh`
 
 viewer-install: install-viewer ## back-compat alias for `install-viewer`
 
-viewer-bun: install-viewer refresh viewer-stop ## Start dev server with bun on http://localhost:5180/
+viewer-bun: install-viewer viewer-stop ## Start dev server with bun on http://localhost:5180/ (uses existing fixtures)
 	@command -v bun >/dev/null 2>&1 || { \
 		printf "$(YELLOW)!$(RESET) bun not installed — see https://bun.sh/install\n"; exit 1; }
 	@printf "$(BLUE)▶$(RESET) Vite dev server (bun) → http://localhost:$(VIEWER_PORT)/\n"
