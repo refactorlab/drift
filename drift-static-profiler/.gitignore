@@ -29,3 +29,7 @@ lcov.info
 perf.data
 perf.data.old
 flamegraph.svg
+
+# Local scan output — each contributor regenerates this against their own
+# workspace via `make scan`; not meant to be shared in git.
+viewer/public/fixtures/custom.json
