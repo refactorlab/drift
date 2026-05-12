@@ -67,3 +67,13 @@ custom-protocol = ["tauri/custom-protocol"]
 [dev-dependencies]
 # Mock HTTP server for the LLM stream / agent-turn integration test.
 wiremock = "0.6"
+
+# Known Dependabot alert: `glib 0.18.5` is pulled in transitively through
+# `tauri 2.11.1 → tray-icon/muda/tao → gtk 0.18.2 → glib ^0.18`. The fix
+# (`glib 0.20.0+`) cannot be applied here directly because `gtk 0.18`
+# hard-pins glib to the 0.18 series, and `tauri 2.x` (currently 2.11.1,
+# latest stable) is itself pinned to `gtk 0.18`. Bumping glib in isolation
+# is blocked until tauri upstream ships a release with `gtk 0.20+`. The
+# vulnerable code path (`glib::VariantStrIter` soundness) is also unreachable
+# from non-Linux targets — the gtk → glib chain is `cfg(target_os = "linux")`
+# only, so macOS/Windows builds don't compile it in.
