@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use drift_static_profiler::{
-    analyze, analyze_roots, compute_language_stats, tags::extract_tags, tree::render_ascii,
-    walker::discover_source_files, AnalyzeOptions, DiscoverOpts, LanguageStats,
+    analyze, analyze_roots, compute_language_stats, find_dockerfile_entrypoints,
+    tags::extract_tags, tree::render_ascii, walker::discover_source_files, AnalyzeOptions,
+    DiscoverOpts, LanguageStats,
 };
 use std::path::PathBuf;
 
@@ -262,9 +263,30 @@ fn run_scan(
     no_accessors: bool,
     print: bool,
 ) -> Result<()> {
+    // When no --entry flags were given, discover entry points from Dockerfiles
+    // in the project root so the scan starts from real application boundaries.
+    let resolved_entries: Vec<String> = if entries.is_empty() {
+        let docker = find_dockerfile_entrypoints(root);
+        if docker.is_empty() {
+            eprintln!("note: no --entry given and no Dockerfile entrypoints found");
+            eprintln!("      pass --entry <symbol> or add a Dockerfile with CMD/ENTRYPOINT");
+            return Ok(());
+        }
+        for d in &docker {
+            eprintln!(
+                "dockerfile: {} → {:?}",
+                d.dockerfile.display(),
+                d.symbols,
+            );
+        }
+        docker.into_iter().flat_map(|d| d.symbols).collect()
+    } else {
+        entries.to_vec()
+    };
+
     let outcome = analyze(
         root,
-        entries,
+        &resolved_entries,
         &AnalyzeOptions {
             max_depth,
             skip_accessors: no_accessors,

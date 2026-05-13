@@ -1,6 +1,7 @@
 pub mod api;
 pub mod categories;
 pub mod diff;
+pub mod dockerfile;
 pub mod graph;
 pub mod linguist;
 pub mod metrics;
@@ -12,6 +13,7 @@ pub mod tree;
 pub mod walker;
 
 pub use api::{analyze, analyze_roots, AnalyzeOptions, AnalyzeOutcome};
+pub use dockerfile::{find_dockerfile_entrypoints, DockerEntrypoint};
 pub use linguist::{compute_language_stats, LanguageStats};
 pub use roots::{discover_roots, DiscoverOpts, DiscoveredRoot};
 
