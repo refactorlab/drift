@@ -204,6 +204,11 @@ export const TIPS: Record<string, string> = {
     'Indented call tree under the selected entry point. Each row is one symbol with ' +
     'its %total, %parent, complexity, LOC, fan-in/out, PageRank, and smell flags. ' +
     'Click any row to drill in via the Details pane.',
+  tab_call_graph:
+    'Call graph: one box per symbol (deduped), arrows for caller → callee, ' +
+    'orthogonal layout with the selected entry at the top. Each box shows ×N (call sites), ' +
+    'Total reach + %, and the symbol\'s own LOC + complexity. Color bands reach: red ≥40%, ' +
+    'amber 5-40%, green <5%. Drag to pan, scroll to zoom, click any box to drill into Details.',
   tab_roots:
     'Sortable table of every auto-discovered entry point in this report. ' +
     'Ranked by transitive reach (subtree size) like pprof\'s `top -cum` or ' +

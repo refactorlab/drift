@@ -1,4 +1,5 @@
 use crate::categories::Category;
+use crate::docker::EntryDecl;
 use crate::graph::CallGraph;
 use crate::insights::{self, FindingTopRef, ImmediateFix, RefactorCandidate, RootOverview};
 use crate::linguist::{LanguageBreakdownEntry, LanguageStats};
@@ -67,6 +68,13 @@ pub struct Summary {
     /// Aggregated per-node.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refactor_candidates: Vec<RefactorCandidate>,
+    /// Container-deployment entry points discovered from Dockerfile +
+    /// docker-compose files at the project root. Each entry records the
+    /// declared command (CMD / ENTRYPOINT / compose `command` /
+    /// `entrypoint`) and, when we could resolve it, a back-link to the
+    /// in-graph symbol it most likely launches. See `docker.rs`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entry_declarations: Vec<EntryDecl>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +119,7 @@ impl Report {
         entries: Vec<CallTreeNode>,
         language_stats: &LanguageStats,
         source_root: Option<&Path>,
+        entry_declarations: Vec<EntryDecl>,
     ) -> Self {
         // Phase E2: cross-tree finding passes that need graph-wide info.
         // - attach_recursive_findings: SCC membership lives on the graph,
@@ -131,7 +140,7 @@ impl Report {
         // call graph — see pprof's red+thick = high-cum convention.
         insights::bump_severities_by_impact(&mut entries, pagerank_p90);
 
-        let summary = Summary::build(all_tags, graph, &entries, language_stats);
+        let summary = Summary::build(all_tags, graph, &entries, language_stats, entry_declarations);
         Self {
             schema_version: "1.0".into(),
             mode: "static".into(),
@@ -152,6 +161,7 @@ impl Summary {
         graph: &CallGraph,
         entries: &[CallTreeNode],
         language_stats: &LanguageStats,
+        entry_declarations: Vec<EntryDecl>,
     ) -> Self {
         let languages: Vec<String> = {
             let mut s: HashSet<&'static str> = HashSet::new();
@@ -355,6 +365,7 @@ impl Summary {
             roots_overview,
             immediate_fixes,
             refactor_candidates,
+            entry_declarations,
         }
     }
 }

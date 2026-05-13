@@ -1,13 +1,17 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   CATEGORY_COLORS,
+  ENTRY_KIND_LABEL,
   FINDING_KIND_LABEL,
   SEVERITY_COLORS,
+  entryFamily,
 } from './types';
 import type {
   CallTreeNode,
   Category,
+  EntryDecl,
+  EntryFamily,
   FindingKind,
   Report,
   Severity,
@@ -94,6 +98,11 @@ export function ScanReport({ report, onJump, onShowKind, onPickRoot }: Props) {
         <LanguagesCard languages={langBreakdown} />
         <HotZonesCard zones={topHotZones} onJump={onJump} />
         <EntryPointsCard entries={entries} onPickRoot={onPickRoot} />
+        <EntryDeclarationsCard
+          entryDecls={summary.entry_declarations ?? []}
+          callTreeEntries={entries}
+          onPickRoot={onPickRoot}
+        />
       </div>
     </div>
   );
@@ -413,6 +422,14 @@ function EntryPointsCard({
                 {e.parent_class ? <span style={{ color: '#7e8189' }}>{e.parent_class}.</span> : null}
                 {e.name}
               </code>
+              {e.entry_labels && e.entry_labels.length > 0 && (
+                <span
+                  style={entryInlineBadgeStyle}
+                  title={`Container entry point — ${e.entry_labels.join(', ')}`}
+                >
+                  docker
+                </span>
+              )}
               <span style={{ marginLeft: 'auto', color: '#7e8189', fontSize: 10 }}>
                 reach {e.subtree_size}
               </span>
@@ -424,6 +441,336 @@ function EntryPointsCard({
     </Panel>
   );
 }
+
+// ─── Entry declarations (container + language manifest) ─────────────────
+// Surfaces Dockerfile CMD/ENTRYPOINT, docker-compose command/entrypoint,
+// AND per-language package manifest entries (package.json scripts/bin/main,
+// pyproject.toml scripts, deno tasks, Cargo `[[bin]]`) alongside the
+// in-graph entry points. Each row shows kind, command, a confidence
+// badge, and — when the matcher could link it — the resolved symbol.
+// Rows with a resolved symbol that also exists in the call-tree entries
+// are clickable and jump into that root's tree.
+//
+// Search + family filter: the input matches against argv, service name,
+// resolved-symbol name, and source file, so a user can find any entry
+// they remember. Family chips (container / manifest) narrow the list
+// without having to memorize each kind.
+function EntryDeclarationsCard({
+  entryDecls,
+  callTreeEntries,
+  onPickRoot,
+}: {
+  entryDecls: EntryDecl[];
+  callTreeEntries: CallTreeNode[];
+  onPickRoot?: (id: string) => void;
+}) {
+  // Whether the resolved symbol_id corresponds to a CallTreeNode we have
+  // (so clicking it actually leads somewhere useful in the Tree tab).
+  const knownIds = useMemo(
+    () => new Set(callTreeEntries.map((e) => e.id)),
+    [callTreeEntries],
+  );
+
+  const [query, setQuery] = useState('');
+  // `null` = no family filter, otherwise restrict to that family.
+  const [familyFilter, setFamilyFilter] = useState<EntryFamily | null>(null);
+
+  const filtered = useMemo(
+    () => filterAndSortEntries(entryDecls, query, familyFilter),
+    [entryDecls, query, familyFilter],
+  );
+
+  const counts = useMemo(() => {
+    let container = 0;
+    let manifest = 0;
+    for (const e of entryDecls) {
+      if (entryFamily(e.kind) === 'container') container++;
+      else manifest++;
+    }
+    return { container, manifest };
+  }, [entryDecls]);
+
+  return (
+    <Panel
+      title={`entry declarations · ${entryDecls.length}`}
+      tip="Container-deployment declarations (Dockerfile/compose) AND language-manifest entries (package.json scripts/bin/main, pyproject.toml scripts, deno tasks, Cargo [[bin]]). The matcher links each to the in-graph symbol it likely launches when it can. Use search + family chips to narrow."
+    >
+      {entryDecls.length === 0 ? (
+        <Empty msg="no Dockerfile / compose / package manifest entries detected" />
+      ) : (
+        <>
+          <div style={entryFilterRowStyle}>
+            <input
+              type="search"
+              placeholder="filter by argv / service / symbol / file…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={entrySearchInputStyle}
+              aria-label="Filter entry declarations"
+            />
+            <FilterChip
+              active={familyFilter === null}
+              onClick={() => setFamilyFilter(null)}
+              tip="Show every declaration regardless of family"
+            >
+              all · {entryDecls.length}
+            </FilterChip>
+            <FilterChip
+              active={familyFilter === 'container'}
+              onClick={() => setFamilyFilter('container')}
+              tip="Only Dockerfile + docker-compose declarations"
+            >
+              container · {counts.container}
+            </FilterChip>
+            <FilterChip
+              active={familyFilter === 'manifest'}
+              onClick={() => setFamilyFilter('manifest')}
+              tip="Only language-manifest declarations (package.json, pyproject.toml, deno.json, Cargo.toml)"
+            >
+              manifest · {counts.manifest}
+            </FilterChip>
+          </div>
+          {filtered.length === 0 ? (
+            <Empty msg="no entries match the current filter" />
+          ) : (
+            <ul style={listStyle}>
+              {filtered.map((e, i) => {
+                const canJump = !!(e.matched && knownIds.has(e.matched.symbol_id));
+                return (
+                  <li
+                    key={`${e.file}:${e.line}:${i}`}
+                    style={canJump ? liButtonStyle : liStyle}
+                    onClick={canJump ? () => onPickRoot?.(e.matched!.symbol_id) : undefined}
+                    title={
+                      e.matched
+                        ? `Matched (${e.matched.confidence}) → ${e.matched.symbol_name} · ${e.matched.evidence}${
+                            canJump ? '' : ' · symbol not in current call-tree entries'
+                          }`
+                        : 'No in-graph symbol resolved — opaque command (e.g. `java -jar`, `./bin/server`, `pytest`)'
+                    }
+                  >
+                    <span style={entryKindBadgeStyle(e.kind)}>
+                      {ENTRY_KIND_LABEL[e.kind]}
+                      {e.service ? `:${e.service}` : ''}
+                    </span>
+                    <code style={entryRawStyle} title={e.raw}>
+                      {truncateMiddle(e.raw, 60)}
+                    </code>
+                    <span style={entrySpacerStyle}>
+                      <span style={entryConfBadgeStyle(e.matched?.confidence)}>
+                        {e.matched ? e.matched.confidence : 'unmatched'}
+                      </span>
+                      {e.matched && (
+                        <span style={entrySymbolStyle(canJump)}>
+                          → {e.matched.symbol_name}
+                        </span>
+                      )}
+                    </span>
+                    <span style={locStyle}>{e.file}:{e.line}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/// Apply search + family filter, then sort with matched entries first.
+/// Extracted so the dedicated ScanReportPage version (with `<Link>` rows)
+/// can reuse the exact same logic — no drift between the two surfaces.
+export function filterAndSortEntries(
+  entryDecls: EntryDecl[],
+  query: string,
+  familyFilter: EntryFamily | null,
+): EntryDecl[] {
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (e: EntryDecl) => {
+    if (!q) return true;
+    if (e.raw.toLowerCase().includes(q)) return true;
+    if (e.service?.toLowerCase().includes(q)) return true;
+    if (e.file.toLowerCase().includes(q)) return true;
+    if (e.matched?.symbol_name.toLowerCase().includes(q)) return true;
+    if (ENTRY_KIND_LABEL[e.kind].toLowerCase().includes(q)) return true;
+    return false;
+  };
+  const matchesFamily = (e: EntryDecl) =>
+    familyFilter === null || entryFamily(e.kind) === familyFilter;
+
+  // Stable ordering: matched first (exact → likely → unmatched), then by
+  // kind so related rows group together, then by file + line.
+  const rank = (e: EntryDecl) => {
+    const c = e.matched?.confidence;
+    if (c === 'exact') return 0;
+    if (c === 'likely') return 1;
+    return 2;
+  };
+  return entryDecls
+    .filter((e) => matchesFamily(e) && matchesQuery(e))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        a.kind.localeCompare(b.kind) ||
+        a.file.localeCompare(b.file) ||
+        a.line - b.line,
+    );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  tip,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  tip?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={tip}
+      style={{
+        ...entryFilterChipStyle,
+        background: active ? '#3b3f44' : 'transparent',
+        color: active ? '#d7d9dc' : '#9ca0a8',
+        borderColor: active ? '#5b8def' : '#3f4147',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Truncate-from-middle: long `["python","-m","app.main","--config","prod"]`
+// commands collapse to `["python","-m","app.…"--config","prod"]`. Keeps
+// both the program (head) and the trailing flag (tail) visible — the
+// parts a reader cares about. The full string is on the row's `title`.
+function truncateMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 1) / 2);
+  return `${s.slice(0, half)}…${s.slice(s.length - half)}`;
+}
+
+function entryKindBadgeStyle(kind: EntryDecl['kind']): React.CSSProperties {
+  // Reuse category palette so we don't introduce new theme colors.
+  // Dockerfile → network (CMD/ENTRYPOINT = "how this gets on the network").
+  // Compose    → cache   (multi-service orchestration, distinct color).
+  const color =
+    kind === 'dockerfile_cmd' || kind === 'dockerfile_entrypoint'
+      ? CATEGORY_COLORS.network
+      : CATEGORY_COLORS.cache;
+  return {
+    fontSize: 9,
+    color,
+    border: `1px solid ${color}`,
+    borderRadius: 2,
+    padding: '1px 5px',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+  };
+}
+
+function entryConfBadgeStyle(c?: 'exact' | 'likely' | 'unmatched'): React.CSSProperties {
+  // Same severity ramp as the rest of the report — gives the reader a
+  // visual cue identical to the one they already learned for findings.
+  const color =
+    c === 'exact'
+      ? SEVERITY_COLORS.high
+      : c === 'likely'
+        ? SEVERITY_COLORS.medium
+        : SEVERITY_COLORS.low;
+  return {
+    fontSize: 9,
+    color,
+    border: `1px solid ${color}`,
+    borderRadius: 2,
+    padding: '0 4px',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    flexShrink: 0,
+  };
+}
+
+function entrySymbolStyle(canJump: boolean): React.CSSProperties {
+  return {
+    color: canJump ? '#d7d9dc' : '#7e8189',
+    fontSize: 11,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    textDecoration: canJump ? 'underline dotted' : 'none',
+  };
+}
+
+const entryRawStyle: React.CSSProperties = {
+  background: '#1e1f22',
+  padding: '2px 6px',
+  borderRadius: 3,
+  color: '#d7d9dc',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  flexShrink: 1,
+  minWidth: 0,
+  maxWidth: '40%',
+};
+
+const entrySpacerStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+};
+
+const entryFilterRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '6px 4px',
+  borderBottom: '1px solid #2f3136',
+  flexWrap: 'wrap',
+};
+
+const entrySearchInputStyle: React.CSSProperties = {
+  flex: '1 1 200px',
+  minWidth: 0,
+  background: '#1e1f22',
+  color: '#d7d9dc',
+  border: '1px solid #3f4147',
+  borderRadius: 3,
+  padding: '4px 8px',
+  fontSize: 11,
+  fontFamily: 'inherit',
+  outline: 'none',
+};
+
+const entryFilterChipStyle: React.CSSProperties = {
+  fontSize: 10,
+  padding: '2px 8px',
+  borderRadius: 10,
+  border: '1px solid #3f4147',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  letterSpacing: 0.3,
+  flexShrink: 0,
+};
+
+const entryInlineBadgeStyle: React.CSSProperties = {
+  fontSize: 9,
+  color: CATEGORY_COLORS.network,
+  border: `1px solid ${CATEGORY_COLORS.network}`,
+  borderRadius: 2,
+  padding: '0 4px',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginLeft: 6,
+  flexShrink: 0,
+};
 
 // ─── Panel + shared bits ────────────────────────────────────────────────
 

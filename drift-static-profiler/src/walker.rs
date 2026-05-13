@@ -44,9 +44,18 @@ pub struct WalkOpts {
     pub skip_hidden: bool,
     /// Skip test/spec/mock files and the test-segment directories that
     /// hold them. Off by default — the scan walks tests. When on, both
-    /// path segments (e.g. `tests/`, `__tests__/`, `spec/`) AND filename
-    /// conventions (e.g. `*.test.ts`, `*_test.go`, `test_*.py`,
-    /// `*Test.java`) are filtered. See `is_test_path` for the full rule.
+    /// path segments AND filename conventions are filtered:
+    ///
+    /// - directories: case-insensitive `test`/`tests`/`__tests__`/
+    ///   `spec`/`specs`/`__mocks__`/`testdata` (so `/Test/` matches too)
+    /// - filenames: dot-separated (`*.test.ts`, `*.spec.js`,
+    ///   `*.mock.ts`), underscore-separated (`test_*.py`, `*_test.py`,
+    ///   `*_test.go`), dash-separated (`test-*`, `*-test`, `*-test-*`),
+    ///   PascalCase prefix (`Test<UPPER>...`), PascalCase suffix
+    ///   (`*Test`, `*Tests`, `*Spec`, `*Specs` across any extension).
+    ///
+    /// See [`is_test_path`] for the full rule; boundary handling avoids
+    /// false positives like `testimony.ts`, `contest.py`, `Tester.java`.
     pub exclude_tests: bool,
 }
 
@@ -65,59 +74,159 @@ impl Default for WalkOpts {
 /// Test-file recognition shared by walker filtering AND roots discovery
 /// so the definition of "test code" stays consistent across the two
 /// stages. Returns true for paths that are either:
-///   - inside a test/spec subdirectory (tests, test, __tests__, spec,
-///     specs, __mocks__, testdata, fixtures), OR
-///   - have a test-suffix filename per the language's convention:
-///       JS/TS  → `*.test.{ts,tsx,js,jsx}`, `*.spec.*`, `*.mock.*`
-///       Python → `test_*.py`, `*_test.py`
-///       Go     → `*_test.go`
-///       Java   → `*Test.java`, `*Tests.java`
-///       Scala  → `*Spec.scala`, `*Specs.scala`
+///
+/// - inside a test/spec subdirectory — case-insensitive: `test`,
+///   `tests`, `Test`, `TEST`, `__tests__`, `spec`, `specs`,
+///   `__mocks__`, `testdata` all qualify, OR
+/// - have a test-shaped filename per any of these conventions
+///   (see [`is_test_filename`] for the full grammar):
+///   - JS/TS/JS — `foo.test.ts`, `foo.spec.ts`, `foo.mock.ts`,
+///     `test-foo.ts`, `foo-test.ts`, `foo-test-bar.ts`
+///   - Python — `test_foo.py`, `foo_test.py`
+///   - Go — `foo_test.go`
+///   - Java/Kotlin — `FooTest.java`, `FooTests.kt`, `TestFoo.java`
+///   - Scala — `FooSpec.scala`, `FooSpecs.scala`
+///   - Generic — any stem that starts with `test` (followed by
+///     `_`/`-`/`.`/PascalCase) or ends with `test` (preceded by
+///     `_`/`-`/`.`/PascalCase).
+///
+/// Boundary rule (matters for the "contains test" cases): we never match
+/// "test" embedded in another word — `testimony.ts`, `contesting.ts`,
+/// `tester.java`, `protest.py` are NOT test files. The substring rule
+/// only fires when `test` is bounded by start/end-of-stem or by a
+/// non-alphanumeric character.
 ///
 /// `root` is used to strip the project-root prefix BEFORE checking path
 /// segments, so a project rooted at e.g. `tests/fixtures/foo/` is not
 /// itself misidentified as test code — only test directories *inside*
 /// the analyzed root count.
 pub fn is_test_path(path: &Path, root: &Path) -> bool {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    // Path segments (test/spec/mock/data buckets).
-    if rel.components().any(|c| {
-        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(
-            s.as_str(),
-            "tests" | "test" | "__tests__" | "spec" | "specs" | "__mocks__" | "testdata"
-        )
-    }) {
+    if has_test_directory_segment(path, root) {
         return true;
     }
-    // Filename conventions. We check name-as-given (case-sensitive) for
-    // Java/Scala suffixes (which depend on PascalCase), and a lowercased
-    // copy for the substring-style JS/TS/Python/Go patterns.
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    if name.ends_with("Test.java")
-        || name.ends_with("Tests.java")
-        || name.ends_with("Spec.scala")
-        || name.ends_with("Specs.scala")
-    {
-        return true;
+    is_test_filename(name)
+}
+
+/// True iff any path segment between `root` (exclusive) and the
+/// filename (also exclusive) is a recognized test bucket. Case-insensitive.
+/// The filename itself is checked separately by [`is_test_filename`].
+fn has_test_directory_segment(path: &Path, root: &Path) -> bool {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let total = rel.components().count();
+    // Skip the last component — that's the filename. Without this skip
+    // a file named `test.py` at the project root would match via the
+    // segment rule, hiding bugs in the filename rule (we want only one
+    // pass to handle filenames).
+    rel.components().take(total.saturating_sub(1)).any(|c| {
+        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            s.as_str(),
+            "test"
+                | "tests"
+                | "__tests__"
+                | "spec"
+                | "specs"
+                | "__mocks__"
+                | "testdata",
+        )
+    })
+}
+
+/// Decide whether a bare filename (no directory) names a test file.
+///
+/// Three orthogonal rules, in order; any one of them firing is enough:
+///   1. **PascalCase prefix** — `Test<UPPER>...` (case-sensitive). Catches
+///      `TestService.java`, `TestRepositoryImpl.kt`. Does NOT match
+///      `Tester.java` (lowercase `e` after `Test`) or `Testing.java`.
+///   2. **PascalCase suffix** — `<lower>Test`, `<lower>Tests`, `<lower>Spec`,
+///      `<lower>Specs` at the end of the stem. The lowercase-before
+///      boundary is what makes `MyTest.java` match but `attest.java`
+///      not. Plain `Test.java` / `Tests.kt` / `Spec.scala` also match
+///      (empty prefix). Language-agnostic — works for `.java`, `.kt`,
+///      `.cs`, `.rs`, anything.
+///   3. **Boundary-respecting `test` / `spec` / `mock` substring**
+///      (case-insensitive). The needle must sit between non-alphanumeric
+///      separators (`-`, `_`, `.`) or at start/end of the stem. Catches
+///      every shape the user listed: `test_foo`, `foo_test`,
+///      `test-foo`, `foo-test`, `foo-test-bar`, `foo.test.ts`,
+///      `e2e.test.ts`. Rejects `testimony`, `contesting`, `tester`.
+pub fn is_test_filename(name: &str) -> bool {
+    // Use the part before the final extension as the "stem". `foo.test.ts`
+    // → stem `foo.test`; `MyTest.java` → `MyTest`; `test.py` → `test`.
+    // We only strip ONE extension because compound conventions like
+    // `foo.test.ts` rely on the inner `.test.` surviving the strip.
+    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+
+    // Rule 1 — PascalCase prefix `Test<UPPER>...`
+    if let Some(rest) = stem.strip_prefix("Test") {
+        if rest
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false)
+        {
+            return true;
+        }
     }
-    let lname = name.to_ascii_lowercase();
-    if lname.contains(".test.")
-        || lname.contains(".spec.")
-        || lname.contains(".mock.")
-        || lname.contains("_test.")
-        || lname.contains("_spec.")
-        || lname.contains("_mock.")
-    {
-        return true;
+
+    // Rule 2 — PascalCase suffix `Test`/`Tests`/`Spec`/`Specs`.
+    // The prefix must be empty OR end with a lowercase letter, so the
+    // suffix sits on a PascalCase boundary (`MyTest` ✓, `attest` ✗).
+    for suf in ["Tests", "Specs", "Test", "Spec"] {
+        if let Some(prefix) = stem.strip_suffix(suf) {
+            if prefix.is_empty()
+                || prefix
+                    .chars()
+                    .next_back()
+                    .map(|c| c.is_ascii_lowercase())
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
     }
-    if lname.starts_with("test_") && lname.ends_with(".py") {
-        return true;
+
+    // Rule 3 — separator-bounded `test`/`spec`/`mock` substring.
+    // We run this on the FULL filename (not just the stem) so trailing
+    // extensions still count as separators — `foo.test.ts` matches
+    // because the `.` after `test` is a non-alnum boundary.
+    let lower = name.to_ascii_lowercase();
+    for needle in ["test", "spec", "mock"] {
+        if has_separator_bounded_substring(&lower, needle) {
+            return true;
+        }
     }
-    if lname.ends_with("_test.go") {
-        return true;
+
+    false
+}
+
+/// True iff `haystack` contains `needle` bounded by non-alphanumeric
+/// characters (or start / end of string). ASCII-only — fine for our
+/// case because the needles are pure ASCII keywords.
+///
+/// Examples for needle="test":
+///   - "test"          → match (both ends are string boundary)
+///   - "test_foo"      → match (`_` is non-alnum after)
+///   - "foo-test"      → match (`-` non-alnum before, end after)
+///   - "foo-test-bar"  → match
+///   - "foo.test.ts"   → match (`.` non-alnum on both sides)
+///   - "testimony"     → NO match (alnum `i` after)
+///   - "contesting"    → NO match (alnum `n` before)
+///   - "tester"        → NO match (alnum `e` after)
+fn has_separator_bounded_substring(haystack: &str, needle: &str) -> bool {
+    debug_assert!(needle.is_ascii());
+    debug_assert!(needle.bytes().all(|b| b.is_ascii_lowercase()));
+    let bytes = haystack.as_bytes();
+    let n = needle.len();
+    for (i, _) in haystack.match_indices(needle) {
+        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        let after_ok = i + n == bytes.len() || !bytes[i + n].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
     }
     false
 }
@@ -546,5 +655,155 @@ mod tests {
                 rel(&p, &files)
             );
         }
+    }
+
+    // ── is_test_filename — exhaustive grammar tests ────────────────────
+    //
+    // These are the unit tests for the file-name half of `is_test_path`.
+    // We keep them in walker.rs (not integration.rs) so they exercise the
+    // helper directly without touching the filesystem — fast, focused,
+    // and they pin down the exact grammar above.
+
+    #[test]
+    fn is_test_filename_dot_separated_conventions() {
+        // The classic JS/TS shape, plus its sibling .spec / .mock.
+        for name in [
+            "app.test.ts",
+            "app.test.tsx",
+            "app.test.js",
+            "app.spec.js",
+            "api.mock.ts",
+            "e2e.test.ts",
+            "deeply.nested.feature.test.tsx",
+        ] {
+            assert!(is_test_filename(name), "should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_filename_underscore_separated_conventions() {
+        // Python + Go classics. We accept both `test_X` and `X_test` for
+        // Python (pytest collects both); Go only blesses `_test.go`.
+        for name in [
+            "test_utils.py",
+            "utils_test.py",
+            "test_data_loader.py",
+            "util_test.go",
+            "user_test.go",
+        ] {
+            assert!(is_test_filename(name), "should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_filename_dash_separated_conventions() {
+        // New in this pass — dash-separated test naming is common in
+        // TS/JS/Deno repos but wasn't previously matched.
+        for name in [
+            "test-helper.ts",
+            "helper-test.ts",
+            "foo-test-bar.ts",
+            "spec-runner.ts",
+            "runner-spec.ts",
+            "mock-server.ts",
+        ] {
+            assert!(is_test_filename(name), "should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_filename_pascal_case_suffix_works_across_extensions() {
+        // PascalCase `*Test` / `*Tests` / `*Spec` / `*Specs` is no longer
+        // tied to `.java` / `.scala` — Kotlin, C#, Rust, etc. all qualify.
+        for name in [
+            "UserTest.java",
+            "UserTests.java",
+            "UserTest.kt",
+            "UserTests.kt",
+            "UserTest.cs",
+            "UserTest.rs",
+            "UserSpec.scala",
+            "UserSpecs.scala",
+            "IntegrationTest.java",   // multi-camel still works
+        ] {
+            assert!(is_test_filename(name), "should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_filename_pascal_case_prefix_test_x() {
+        // `Test<UPPER>...` — typical for the "Test*" Java/Kotlin style.
+        for name in [
+            "TestUserService.java",
+            "TestHelper.kt",
+            "TestUtils.java",
+            "TestRepository.scala",
+        ] {
+            assert!(is_test_filename(name), "should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_filename_bare_names_count() {
+        // Empty prefix / empty suffix is fine — a file literally named
+        // `Test.java`, `Spec.ts`, or `test.py` IS a test artifact.
+        for name in [
+            "Test.java",
+            "Tests.kt",
+            "Spec.scala",
+            "Specs.scala",
+            "Spec.ts",
+            "Test.ts",
+            "test.py",
+            "spec.rb",
+        ] {
+            assert!(is_test_filename(name), "should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_filename_rejects_words_that_merely_contain_test() {
+        // THE boundary rule is the heart of this matcher. None of these
+        // should fire, even though they textually contain "test" /
+        // "spec" / "mock".
+        for name in [
+            "app.py",                  // unrelated
+            "users.ts",
+            "handler.go",
+            "User.java",
+            "UserService.scala",
+            "testimony.py",            // alnum AFTER `test`
+            "testimonial.ts",
+            "contest.py",              // alnum BEFORE `test`
+            "contesting.ts",
+            "protester.go",
+            "Tester.java",             // PascalCase: `Test` + LOWERCASE `e` is the boundary fail
+            "Testing.java",
+            "MyTestUtil.java",         // PascalCase: `MyTest` + UPPERCASE `U` → util, not a test class
+            "inspector.ts",            // contains `spec` mid-word
+            "respect.ts",
+            "mockery.ts",              // `mock` + alnum `e` after
+            "smoke.ts",                // contains `mok` not `mock` — safety check
+        ] {
+            assert!(!is_test_filename(name), "should NOT match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn has_separator_bounded_substring_is_strict_about_alnum() {
+        // Direct unit tests for the boundary helper — these are the
+        // exact cases that determine our true/false above. Keeping them
+        // as their own assertions makes regressions obvious.
+        assert!(has_separator_bounded_substring("test", "test"));
+        assert!(has_separator_bounded_substring("test_x", "test"));
+        assert!(has_separator_bounded_substring("x_test", "test"));
+        assert!(has_separator_bounded_substring("x.test.y", "test"));
+        assert!(has_separator_bounded_substring("x-test-y", "test"));
+        assert!(has_separator_bounded_substring("a.b.test", "test"));
+        // Negatives — the substring exists but isn't bounded by non-alnum.
+        assert!(!has_separator_bounded_substring("testing", "test"));
+        assert!(!has_separator_bounded_substring("contest", "test"));
+        assert!(!has_separator_bounded_substring("attestation", "test"));
+        assert!(!has_separator_bounded_substring("attester", "test"));
     }
 }

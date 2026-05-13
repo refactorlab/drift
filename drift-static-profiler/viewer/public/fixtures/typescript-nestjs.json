@@ -213,7 +213,7 @@
         "file": "tests/fixtures/typescript-nestjs/src/orders/order.entity.ts",
         "line": 4,
         "parent_class": null,
-        "score": 0.08631583936421044
+        "score": 0.08631583936421046
       },
       {
         "name": "create",
@@ -227,21 +227,21 @@
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.repository.ts",
         "line": 13,
         "parent_class": "OrdersRepository",
-        "score": 0.061200649472721864
+        "score": 0.06120064947272186
       },
       {
         "name": "buildOrder",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.service.ts",
         "line": 16,
         "parent_class": "OrdersService",
-        "score": 0.061200649472721864
+        "score": 0.06120064947272186
       },
       {
         "name": "validate",
         "file": "tests/fixtures/typescript-nestjs/src/orders/orders.service.ts",
         "line": 24,
         "parent_class": "OrdersService",
-        "score": 0.061200649472721864
+        "score": 0.06120064947272186
       },
       {
         "name": "bootstrap",
@@ -255,21 +255,21 @@
         "file": "tests/fixtures/typescript-nestjs/src/app.module.ts",
         "line": 1,
         "parent_class": null,
-        "score": 0.02870983192859986
+        "score": 0.028709831928599862
       },
       {
         "name": "AppModule",
         "file": "tests/fixtures/typescript-nestjs/src/app.module.ts",
         "line": 18,
         "parent_class": null,
-        "score": 0.02870983192859986
+        "score": 0.028709831928599862
       },
       {
         "name": "<module>",
         "file": "tests/fixtures/typescript-nestjs/src/main.ts",
         "line": 1,
         "parent_class": null,
-        "score": 0.02870983192859986
+        "score": 0.028709831928599862
       }
     ],
     "recursive_symbols": [],
@@ -344,6 +344,53 @@
         "effort": "trivial",
         "message": "1 I/O call(s) in async `save` are not awaited: repo.save(). These block the event loop — defeating the point of `async`."
       }
+    ],
+    "entry_declarations": [
+      {
+        "file": "tests/fixtures/typescript-nestjs/package.json",
+        "line": 1,
+        "kind": "package_json_script",
+        "raw": "tsc -p tsconfig.json",
+        "argv": [
+          "tsc",
+          "-p",
+          "tsconfig.json"
+        ],
+        "service": "build"
+      },
+      {
+        "file": "tests/fixtures/typescript-nestjs/package.json",
+        "line": 1,
+        "kind": "package_json_script",
+        "raw": "bun run src/main.ts",
+        "argv": [
+          "bun",
+          "run",
+          "src/main.ts"
+        ],
+        "service": "start",
+        "matched": {
+          "confidence": "exact",
+          "symbol_id": "tests/fixtures/typescript-nestjs/src/main.ts::::bootstrap",
+          "symbol_name": "bootstrap",
+          "symbol_file": "tests/fixtures/typescript-nestjs/src/main.ts",
+          "symbol_line": 5,
+          "evidence": "argv token `src/main.ts` matches parsed file"
+        }
+      },
+      {
+        "file": "tests/fixtures/typescript-nestjs/package.json",
+        "line": 1,
+        "kind": "package_json_script",
+        "raw": "tsc -p tsconfig.json --noEmit",
+        "argv": [
+          "tsc",
+          "-p",
+          "tsconfig.json",
+          "--noEmit"
+        ],
+        "service": "typecheck"
+      }
     ]
   },
   "entries": [
@@ -406,7 +453,7 @@
                   "is_async": false,
                   "call_site_count": 1,
                   "is_recursive": false,
-                  "pagerank": 0.08631583936421044,
+                  "pagerank": 0.08631583936421046,
                   "percent_total": 16.666666666666664,
                   "percent_parent": 50.0,
                   "n_plus_one_risk": false,
@@ -436,7 +483,7 @@
               "is_async": false,
               "call_site_count": 1,
               "is_recursive": false,
-              "pagerank": 0.061200649472721864,
+              "pagerank": 0.06120064947272186,
               "percent_total": 33.33333333333333,
               "percent_parent": 40.0,
               "n_plus_one_risk": false,
@@ -474,7 +521,7 @@
               "is_async": false,
               "call_site_count": 1,
               "is_recursive": false,
-              "pagerank": 0.061200649472721864,
+              "pagerank": 0.06120064947272186,
               "percent_total": 16.666666666666664,
               "percent_parent": 20.0,
               "n_plus_one_risk": false,
@@ -525,7 +572,7 @@
               "is_async": true,
               "call_site_count": 2,
               "is_recursive": false,
-              "pagerank": 0.061200649472721864,
+              "pagerank": 0.06120064947272186,
               "percent_total": 16.666666666666664,
               "percent_parent": 20.0,
               "n_plus_one_risk": false,

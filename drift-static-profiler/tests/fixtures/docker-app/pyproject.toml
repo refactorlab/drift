@@ -1,0 +1,10 @@
+[project]
+name = "docker-app"
+version = "0.0.1"
+
+[project.scripts]
+docker-app = "app.main:main"
+docker-app-worker = "worker:run"
+
+[tool.poetry.scripts]
+legacy-cli = "app.main:main"

@@ -114,14 +114,14 @@
         "file": "tests/fixtures/scala-play/app/repos/OrdersRepository.scala",
         "line": 6,
         "parent_class": null,
-        "score": 0.21226366010978642
+        "score": 0.2122636601097864
       },
       {
         "name": "createOrder",
         "file": "tests/fixtures/scala-play/app/services/OrdersService.scala",
         "line": 8,
         "parent_class": "OrdersService",
-        "score": 0.12018996609014318
+        "score": 0.12018996609014317
       },
       {
         "name": "save",
@@ -149,35 +149,35 @@
         "file": "tests/fixtures/scala-play/app/controllers/OrdersController.scala",
         "line": 6,
         "parent_class": null,
-        "score": 0.06207836101229377
+        "score": 0.062078361012293755
       },
       {
         "name": "OrdersController",
         "file": "tests/fixtures/scala-play/app/controllers/OrdersController.scala",
         "line": 8,
         "parent_class": null,
-        "score": 0.06207836101229377
+        "score": 0.062078361012293755
       },
       {
         "name": "createOrder",
         "file": "tests/fixtures/scala-play/app/controllers/OrdersController.scala",
         "line": 10,
         "parent_class": "OrdersController",
-        "score": 0.06207836101229377
+        "score": 0.062078361012293755
       },
       {
         "name": "OrdersRepository",
         "file": "tests/fixtures/scala-play/app/repos/OrdersRepository.scala",
         "line": 8,
         "parent_class": null,
-        "score": 0.06207836101229377
+        "score": 0.062078361012293755
       },
       {
         "name": "findById",
         "file": "tests/fixtures/scala-play/app/repos/OrdersRepository.scala",
         "line": 16,
         "parent_class": "OrdersRepository",
-        "score": 0.06207836101229377
+        "score": 0.062078361012293755
       }
     ],
     "recursive_symbols": [],
@@ -313,7 +313,7 @@
                   "is_async": false,
                   "call_site_count": 2,
                   "is_recursive": false,
-                  "pagerank": 0.21226366010978642,
+                  "pagerank": 0.2122636601097864,
                   "percent_total": 16.666666666666664,
                   "percent_parent": 50.0,
                   "n_plus_one_risk": false,
@@ -464,7 +464,7 @@
           "is_async": false,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.12018996609014318,
+          "pagerank": 0.12018996609014317,
           "percent_total": 83.33333333333334,
           "percent_parent": 83.33333333333334,
           "n_plus_one_risk": false,
@@ -488,7 +488,7 @@
       "is_async": false,
       "call_site_count": 1,
       "is_recursive": false,
-      "pagerank": 0.06207836101229377,
+      "pagerank": 0.062078361012293755,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,
@@ -542,7 +542,7 @@
           "is_async": false,
           "call_site_count": 2,
           "is_recursive": false,
-          "pagerank": 0.21226366010978642,
+          "pagerank": 0.2122636601097864,
           "percent_total": 50.0,
           "percent_parent": 50.0,
           "n_plus_one_risk": false,
@@ -577,7 +577,7 @@
       "is_async": false,
       "call_site_count": 0,
       "is_recursive": false,
-      "pagerank": 0.06207836101229377,
+      "pagerank": 0.062078361012293755,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,

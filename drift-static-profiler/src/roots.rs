@@ -191,8 +191,11 @@ fn is_private(name: &str) -> bool {
 }
 
 /// Delegate to the shared `walker::is_test_path` so root-discovery
-/// agrees with walker filtering on what counts as "test code".
-/// Kept as a thin wrapper for readability at the call site.
+/// agrees with walker filtering on what counts as "test code". The
+/// recognized set is case-insensitive `test*` / `spec` / `__mocks__`
+/// directories AND any boundary-respecting `test` / `spec` / `mock`
+/// filename pattern (PascalCase `Test*`/`*Test`, dash/underscore/dot
+/// separated, etc.). See `walker::is_test_filename` for the full grammar.
 fn in_test_path(path: &Path, root_dir: &Path) -> bool {
     crate::walker::is_test_path(path, root_dir)
 }

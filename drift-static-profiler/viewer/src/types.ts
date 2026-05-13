@@ -89,6 +89,77 @@ export interface ImmediateFix {
   message: string;
 }
 
+// Closed-set of entry-declaration sources. Two families:
+//   - container deployment (Dockerfile + docker-compose)
+//   - language manifests (package.json, deno.json, pyproject.toml, Cargo.toml)
+// Older fixtures will only carry the first four; newer ones may carry any
+// of these, so consumers should treat unknown values as benign.
+export type EntryKind =
+  | 'dockerfile_cmd'
+  | 'dockerfile_entrypoint'
+  | 'compose_command'
+  | 'compose_entrypoint'
+  | 'package_json_main'
+  | 'package_json_module'
+  | 'package_json_bin'
+  | 'package_json_script'
+  | 'deno_task'
+  | 'pyproject_script'
+  | 'cargo_bin';
+
+export type EntryMatchConfidence = 'exact' | 'likely' | 'unmatched';
+
+export interface EntryMatch {
+  confidence: EntryMatchConfidence;
+  symbol_id: string;
+  symbol_name: string;
+  symbol_file: string;
+  symbol_line: number;
+  evidence: string;
+}
+
+export interface EntryDecl {
+  file: string;
+  line: number;
+  kind: EntryKind;
+  raw: string;
+  argv: string[];
+  service?: string | null;
+  workdir?: string | null;
+  matched?: EntryMatch;
+}
+
+export const ENTRY_KIND_LABEL: Record<EntryKind, string> = {
+  dockerfile_cmd:        'Dockerfile CMD',
+  dockerfile_entrypoint: 'Dockerfile ENTRYPOINT',
+  compose_command:       'compose command',
+  compose_entrypoint:    'compose entrypoint',
+  package_json_main:     'package.json main',
+  package_json_module:   'package.json module',
+  package_json_bin:      'package.json bin',
+  package_json_script:   'package.json script',
+  deno_task:             'deno task',
+  pyproject_script:      'pyproject script',
+  cargo_bin:             'Cargo [[bin]]',
+};
+
+// Coarse family grouping for the viewer's filter chips and color bucket.
+// `container` covers Dockerfile + docker-compose; `manifest` covers all the
+// per-language package configs. New kinds default to `manifest` if unknown.
+export type EntryFamily = 'container' | 'manifest';
+
+export function entryFamily(kind: EntryKind): EntryFamily {
+  switch (kind) {
+    case 'dockerfile_cmd':
+    case 'dockerfile_entrypoint':
+    case 'compose_command':
+    case 'compose_entrypoint':
+      return 'container';
+    default:
+      return 'manifest';
+  }
+}
+
 export interface RefactorCandidate {
   node_id: string;
   name: string;
@@ -167,6 +238,11 @@ export interface CallTreeNode {
 
   // Phase E — structured findings (optional; older fixtures omit it)
   findings?: Finding[];
+
+  // Entry-declaration labels — populated when this symbol is the resolved
+  // target of an `EntryDecl` (Dockerfile/compose, package.json scripts,
+  // pyproject scripts, deno tasks, Cargo bins). See Summary.entry_declarations.
+  entry_labels?: string[];
 }
 
 export interface TopSymbol {
@@ -226,6 +302,12 @@ export interface Summary {
   /// "Where do I need a full refactor?" — per-symbol aggregates with
   /// multiple findings, large effort, or god-function bodies.
   refactor_candidates?: RefactorCandidate[];
+
+  /// Declared entry points harvested from container-deployment files
+  /// (Dockerfile + docker-compose) AND per-language package manifests
+  /// (package.json scripts/bin/main, deno.json tasks, pyproject.toml
+  /// `[project.scripts]`, Cargo.toml `[[bin]]`).
+  entry_declarations?: EntryDecl[];
 }
 
 export interface Generator {

@@ -1,0 +1,13 @@
+{
+  "name": "docker-app",
+  "version": "0.0.1",
+  "main": "./app/main.py",
+  "bin": {
+    "docker-app": "./app/main.py"
+  },
+  "scripts": {
+    "start": "python -m app.main",
+    "worker": "python worker.py",
+    "test": "pytest"
+  }
+}

@@ -121,21 +121,21 @@
         "file": "tests/fixtures/insights-demo/app/orders.py",
         "line": 43,
         "parent_class": null,
-        "score": 0.36694536108165043
+        "score": 0.3669453610816505
       },
       {
         "name": "descend_children",
         "file": "tests/fixtures/insights-demo/app/orders.py",
         "line": 50,
         "parent_class": null,
-        "score": 0.3584882383982598
+        "score": 0.35848823839825994
       },
       {
         "name": "save_each",
         "file": "tests/fixtures/insights-demo/app/orders.py",
         "line": 21,
         "parent_class": "OrderRepository",
-        "score": 0.052824658585246834
+        "score": 0.05282465858524682
       },
       {
         "name": "<module>",
@@ -419,7 +419,7 @@
           "is_async": false,
           "call_site_count": 1,
           "is_recursive": false,
-          "pagerank": 0.052824658585246834,
+          "pagerank": 0.05282465858524682,
           "percent_total": 20.0,
           "percent_parent": 20.0,
           "n_plus_one_risk": true,
@@ -521,7 +521,7 @@
                   "is_async": false,
                   "call_site_count": 2,
                   "is_recursive": true,
-                  "pagerank": 0.36694536108165043,
+                  "pagerank": 0.3669453610816505,
                   "percent_total": 20.0,
                   "percent_parent": 50.0,
                   "n_plus_one_risk": false,
@@ -562,7 +562,7 @@
               "is_async": false,
               "call_site_count": 1,
               "is_recursive": true,
-              "pagerank": 0.3584882383982598,
+              "pagerank": 0.35848823839825994,
               "percent_total": 40.0,
               "percent_parent": 66.66666666666666,
               "n_plus_one_risk": false,
@@ -610,7 +610,7 @@
           "is_async": false,
           "call_site_count": 2,
           "is_recursive": true,
-          "pagerank": 0.36694536108165043,
+          "pagerank": 0.3669453610816505,
           "percent_total": 60.0,
           "percent_parent": 60.0,
           "n_plus_one_risk": false,

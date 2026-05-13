@@ -63,6 +63,21 @@ export function NodeDetailPage() {
         <span style={kindBadgeStyle}>{node.kind}</span>
         {node.is_async && <span style={{ ...kindBadgeStyle, marginLeft: 6 }}>async</span>}
         {node.is_recursive && <span style={{ ...miniBadgeStyle, marginLeft: 6, background: SEVERITY_COLORS.medium }}>recursive</span>}
+        {(node.entry_labels ?? []).map((l) => (
+          <span
+            key={l}
+            style={{
+              ...miniBadgeStyle,
+              marginLeft: 6,
+              background: 'transparent',
+              border: '1px solid #7e6ff0',
+              color: '#7e6ff0',
+            }}
+            title={`Container entry point — ${l}. See the scan report's docker panel for the source row.`}
+          >
+            {l}
+          </span>
+        ))}
       </div>
       <div style={fileLineStyle}>{node.file}:{node.line}</div>
 

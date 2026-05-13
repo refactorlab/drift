@@ -1,14 +1,18 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CATEGORY_COLORS,
+  ENTRY_KIND_LABEL,
   EFFORT_LABEL,
   FINDING_KIND_LABEL,
   SEVERITY_COLORS,
+  entryFamily,
 } from '../types';
 import type {
   CallTreeNode,
   Category,
+  EntryDecl,
+  EntryFamily,
   Effort,
   FindingKind,
   ImmediateFix,
@@ -16,6 +20,7 @@ import type {
   RootOverview,
   Severity,
 } from '../types';
+import { filterAndSortEntries } from '../ScanReport';
 import { flattenFindings, useReport } from './useReport';
 
 /**
@@ -73,6 +78,7 @@ export function ScanReportPage() {
   const rootsOverview = summary.roots_overview ?? [];
   const immediateFixes = summary.immediate_fixes ?? [];
   const refactorCandidates = summary.refactor_candidates ?? [];
+  const entryDecls = summary.entry_declarations ?? [];
 
   return (
     <div style={pageStyle}>
@@ -138,6 +144,11 @@ export function ScanReportPage() {
           fixtureKey={fixtureKey}
         />
         <EntryPointsCard entries={entries} fixtureKey={fixtureKey} />
+        <EntryDeclarationsCard
+          entryDecls={entryDecls}
+          callTreeEntries={entries}
+          fixtureKey={fixtureKey}
+        />
       </main>
 
       {/* Immediate Fixes: high-severity × trivial/small-effort findings.
@@ -749,6 +760,250 @@ function EntryPointsCard({
     </Card>
   );
 }
+
+// ─── Docker entry points ────────────────────────────────────────────────
+// Mirror of the in-tab `EntryDeclarationsCard` in `../ScanReport.tsx`,
+// but using react-router <Link>s so every clickable row is a deep URL
+// on this dedicated page (same pattern as the surrounding
+// `EntryPointsCard`). Filter logic is shared via `filterAndSortEntries`
+// so the two surfaces stay in lockstep.
+function EntryDeclarationsCard({
+  entryDecls, callTreeEntries, fixtureKey,
+}: {
+  entryDecls: EntryDecl[];
+  callTreeEntries: CallTreeNode[];
+  fixtureKey: string;
+}) {
+  const knownIds = useMemo(
+    () => new Set(callTreeEntries.map((e) => e.id)),
+    [callTreeEntries],
+  );
+  const [query, setQuery] = useState('');
+  const [familyFilter, setFamilyFilter] = useState<EntryFamily | null>(null);
+
+  const filtered = useMemo(
+    () => filterAndSortEntries(entryDecls, query, familyFilter),
+    [entryDecls, query, familyFilter],
+  );
+  const counts = useMemo(() => {
+    let container = 0;
+    let manifest = 0;
+    for (const e of entryDecls) {
+      if (entryFamily(e.kind) === 'container') container++;
+      else manifest++;
+    }
+    return { container, manifest };
+  }, [entryDecls]);
+
+  return (
+    <Card title={`entry declarations · ${entryDecls.length}`}
+      hint="Container-deployment declarations AND language-manifest entries (package.json scripts/bin/main, pyproject.toml scripts, deno tasks, Cargo [[bin]]). Rows with a resolved symbol link into that root's node-detail page.">
+      {entryDecls.length === 0 ? (
+        <Empty msg="no Dockerfile / compose / package manifest entries detected" />
+      ) : (
+        <div style={scrollListStyle}>
+          <div style={pageEntryFilterRowStyle}>
+            <input
+              type="search"
+              placeholder="filter by argv / service / symbol / file…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={pageEntrySearchInputStyle}
+              aria-label="Filter entry declarations"
+            />
+            <PageFilterChip active={familyFilter === null} onClick={() => setFamilyFilter(null)}>
+              all · {entryDecls.length}
+            </PageFilterChip>
+            <PageFilterChip
+              active={familyFilter === 'container'}
+              onClick={() => setFamilyFilter('container')}
+            >
+              container · {counts.container}
+            </PageFilterChip>
+            <PageFilterChip
+              active={familyFilter === 'manifest'}
+              onClick={() => setFamilyFilter('manifest')}
+            >
+              manifest · {counts.manifest}
+            </PageFilterChip>
+          </div>
+          {filtered.length === 0 ? (
+            <Empty msg="no entries match the current filter" />
+          ) : (
+            <ul style={listStyle}>
+              {filtered.map((e, i) => {
+                const canJump = !!(e.matched && knownIds.has(e.matched.symbol_id));
+                const row = (
+                  <li
+                    style={liStyle}
+                    title={
+                      e.matched
+                        ? `Matched (${e.matched.confidence}) → ${e.matched.symbol_name} · ${e.matched.evidence}`
+                        : 'No in-graph symbol resolved — opaque command (e.g. `java -jar`, `./bin/server`, `pytest`)'
+                    }
+                  >
+                    <span style={entryKindBadgeStyle(e.kind)}>
+                      {ENTRY_KIND_LABEL[e.kind]}
+                      {e.service ? `:${e.service}` : ''}
+                    </span>
+                    <code style={entryRawStyle} title={e.raw}>
+                      {truncateMiddle(e.raw, 60)}
+                    </code>
+                    <span style={entrySpacerStyle}>
+                      <span style={entryConfBadgeStyle(e.matched?.confidence)}>
+                        {e.matched ? e.matched.confidence : 'unmatched'}
+                      </span>
+                      {e.matched && (
+                        <span style={entrySymbolStyle(canJump)}>
+                          → {e.matched.symbol_name}
+                        </span>
+                      )}
+                    </span>
+                    <span style={locStyle}>{e.file}:{e.line}</span>
+                  </li>
+                );
+                const key = `${e.file}:${e.line}:${i}`;
+                return canJump ? (
+                  <Link
+                    key={key}
+                    to={`/scan/${fixtureKey}/node/${encodeURIComponent(e.matched!.symbol_id)}`}
+                    style={rowLinkStyle}
+                  >
+                    {row}
+                  </Link>
+                ) : (
+                  <div key={key}>{row}</div>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PageFilterChip({
+  active, onClick, children,
+}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        ...pageEntryFilterChipStyle,
+        background: active ? '#3b3f44' : 'transparent',
+        color: active ? '#d7d9dc' : '#9ca0a8',
+        borderColor: active ? '#5b8def' : '#3f4147',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+const pageEntryFilterRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '6px 4px',
+  borderBottom: '1px solid #2f3136',
+  flexWrap: 'wrap',
+};
+const pageEntrySearchInputStyle: React.CSSProperties = {
+  flex: '1 1 200px',
+  minWidth: 0,
+  background: '#1e1f22',
+  color: '#d7d9dc',
+  border: '1px solid #3f4147',
+  borderRadius: 3,
+  padding: '4px 8px',
+  fontSize: 11,
+  fontFamily: 'inherit',
+  outline: 'none',
+};
+const pageEntryFilterChipStyle: React.CSSProperties = {
+  fontSize: 10,
+  padding: '2px 8px',
+  borderRadius: 10,
+  border: '1px solid #3f4147',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  letterSpacing: 0.3,
+  flexShrink: 0,
+};
+
+function truncateMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 1) / 2);
+  return `${s.slice(0, half)}…${s.slice(s.length - half)}`;
+}
+
+function entryKindBadgeStyle(kind: EntryDecl['kind']): React.CSSProperties {
+  const color =
+    kind === 'dockerfile_cmd' || kind === 'dockerfile_entrypoint'
+      ? CATEGORY_COLORS.network
+      : CATEGORY_COLORS.cache;
+  return {
+    fontSize: 9,
+    color,
+    border: `1px solid ${color}`,
+    borderRadius: 2,
+    padding: '1px 5px',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+  };
+}
+
+function entryConfBadgeStyle(c?: 'exact' | 'likely' | 'unmatched'): React.CSSProperties {
+  const color =
+    c === 'exact'
+      ? SEVERITY_COLORS.high
+      : c === 'likely'
+        ? SEVERITY_COLORS.medium
+        : SEVERITY_COLORS.low;
+  return {
+    fontSize: 9,
+    color,
+    border: `1px solid ${color}`,
+    borderRadius: 2,
+    padding: '0 4px',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    flexShrink: 0,
+  };
+}
+
+function entrySymbolStyle(canJump: boolean): React.CSSProperties {
+  return {
+    color: canJump ? '#d7d9dc' : '#7e8189',
+    fontSize: 11,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    textDecoration: canJump ? 'underline dotted' : 'none',
+  };
+}
+
+const entryRawStyle: React.CSSProperties = {
+  background: '#1e1f22',
+  padding: '2px 6px',
+  borderRadius: 3,
+  color: '#d7d9dc',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  flexShrink: 1,
+  minWidth: 0,
+  maxWidth: '40%',
+};
+
+const entrySpacerStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+};
 
 // ─── Common: Card / Empty / Loading / Error ─────────────────────────────
 

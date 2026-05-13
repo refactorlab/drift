@@ -592,7 +592,7 @@ def helper():             # called by main_handler → NOT dead
         .unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let entry_node = tb.build(&entry_id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![entry_node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![entry_node], &Default::default(), None, Vec::new());
 
     let names: Vec<&str> = report.summary.dead_code.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"truly_unused"), "truly_unused should be in dead_code; got {names:?}");
@@ -635,7 +635,7 @@ def bulk_save(items, session: Session):
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let _report = Report::build(&[tags], &graph, vec![node.clone()], &Default::default(), None);
+    let _report = Report::build(&[tags], &graph, vec![node.clone()], &Default::default(), None, Vec::new());
 
     assert!(
         node.n_plus_one_risk,
@@ -672,7 +672,7 @@ def save_one(items, session):
     let id = graph.find_entry_points("save_one").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let _ = Report::build(&[tags], &graph, vec![node.clone()], &Default::default(), None);
+    let _ = Report::build(&[tags], &graph, vec![node.clone()], &Default::default(), None, Vec::new());
 
     assert!(
         !node.n_plus_one_risk,
@@ -1335,7 +1335,7 @@ def is_odd(n):
     let id = graph.find_entry_points("is_even").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     let root = &report.entries[0];
     assert!(root.is_recursive, "is_even should be in SCC of size 2");
@@ -1492,24 +1492,40 @@ fn is_test_path_recognizes_all_seven_language_conventions() {
     }
 
     // ─── Filename-pattern matches (per language convention) ─────────
+    // Each row is `(path, expected_match)`. Keep this list canonical —
+    // it's the source of truth for which conventions we honor.
     let cases = [
-        // JS/TS
+        // JS/TS — dot-separated
         ("/proj/src/app.test.ts", true),
         ("/proj/src/app.test.tsx", true),
         ("/proj/src/app.spec.js", true),
         ("/proj/src/api.mock.ts", true),
         ("/proj/src/util_test.js", true),
+        // JS/TS — dash-separated (new in this pass)
+        ("/proj/src/test-helper.ts", true),
+        ("/proj/src/helper-test.ts", true),
+        ("/proj/src/foo-test-bar.ts", true),
+        ("/proj/src/spec-runner.ts", true),
+        ("/proj/src/runner-spec.ts", true),
         // Python
         ("/proj/src/test_utils.py", true),
         ("/proj/src/utils_test.py", true),
         // Go
         ("/proj/pkg/util_test.go", true),
-        // Java
+        // Java/Kotlin — PascalCase, both ends, both extensions
         ("/proj/src/UserTest.java", true),
         ("/proj/src/UserTests.java", true),
+        ("/proj/src/TestUserService.java", true),  // PascalCase prefix
+        ("/proj/src/MyTest.kt", true),              // non-Java extension
+        ("/proj/src/TestHelper.kt", true),          // PascalCase prefix on Kotlin
+        ("/proj/src/Test.java", true),              // bare `Test.java`
         // Scala
         ("/proj/src/UserSpec.scala", true),
         ("/proj/src/UserSpecs.scala", true),
+        // Generic bare-name conventions — by design with the new rules
+        ("/proj/src/Spec.ts", true),                // bare Spec on non-Scala
+        ("/proj/src/Test.ts", true),
+        ("/proj/src/test.py", true),                // pure `test` stem
     ];
     for (p, expected) in cases {
         assert_eq!(
@@ -1520,21 +1536,44 @@ fn is_test_path_recognizes_all_seven_language_conventions() {
     }
 
     // ─── Production code must NOT match ─────────────────────────────
+    // The boundary rule is what saves these — `test`/`spec`/`mock`
+    // embedded in a word doesn't fire.
     for p in [
         "/proj/src/app.py",
         "/proj/src/users.ts",
         "/proj/src/handler.go",
         "/proj/src/User.java",
         "/proj/src/UserService.scala",
-        "/proj/Spec.ts",                   // bare 'Spec.ts' isn't *.spec.* or *Spec.scala
-        "/proj/src/contest.py",            // "test" substring inside an unrelated word
-        "/proj/src/protester.go",          // not _test.go
-        "/proj/src/test_data_loader.py",   // pytest sees this as test_*.py; we err on the side of YES
+        "/proj/src/contest.py",            // "test" embedded mid-word
+        "/proj/src/contesting.ts",         // ditto
+        "/proj/src/protester.go",          // not `_test.go`
+        "/proj/src/Tester.java",           // PascalCase boundary: `Test` + lowercase `e` → not a test class
+        "/proj/src/Testing.java",          // ditto
+        "/proj/src/testimony.py",          // alnum after `test` → no match
+        "/proj/src/inspector.ts",          // contains `spec` mid-word
+        "/proj/src/mockery.ts",            // contains `mock` mid-word
+        "/proj/src/MyTestUtil.java",       // `MyTest` followed by uppercase: util used by tests, not a test class itself
     ] {
-        let result = is_test_path(Path::new(p), &root);
-        let last = p.rsplit('/').next().unwrap();
-        let expected = last.starts_with("test_") && last.ends_with(".py");
-        assert_eq!(result, expected, "is_test_path({p:?}) wrong (expected {expected})");
+        assert!(
+            !is_test_path(Path::new(p), &root),
+            "is_test_path({p:?}) must be false",
+        );
+    }
+
+    // ─── Case-insensitive folder matching ────────────────────────────
+    // Folder names are matched case-insensitively per the user's request.
+    for p in [
+        "/proj/Test/foo.py",
+        "/proj/TEST/foo.py",
+        "/proj/Tests/foo.py",
+        "/proj/TESTS/foo.ts",
+        "/proj/Spec/foo.scala",
+        "/proj/SPEC/foo.scala",
+    ] {
+        assert!(
+            is_test_path(Path::new(p), &root),
+            "case-insensitive folder match failed for {p:?}",
+        );
     }
 
     // ─── Project-root strip: a project ROOTED inside a `tests/` dir
@@ -1719,7 +1758,7 @@ if __name__ == '__main__':
         .filter(|(id, _)| graph.callers_of(id).is_empty())
         .filter_map(|(id, _)| tb.build(id))
         .collect();
-    let report = Report::build(&[tags], &graph, entries, &Default::default(), None);
+    let report = Report::build(&[tags], &graph, entries, &Default::default(), None, Vec::new());
     assert!(
         !report
             .summary
@@ -1950,7 +1989,7 @@ fn synthetic_module_does_not_get_false_positive_findings() {
     // Build the tree + report, then verify <module> has NO findings.
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&module_id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     let module_node = report.entries.iter().find(|e| e.name == "<module>").unwrap();
     assert!(
@@ -2090,7 +2129,7 @@ def driver(xs):
     let id = graph.find_entry_points("driver").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     let mut found_score_caching = false;
     fn walk(
@@ -2156,7 +2195,7 @@ def driver(events):
     let id = graph.find_entry_points("driver").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     let mut hit = false;
     fn walk(
@@ -2202,7 +2241,7 @@ async def fetch_user_blocking(uid):
     let id = graph.find_entry_points("fetch_user_blocking").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     // 1. Every finding carries an effort.
     let bia = report.entries[0]
@@ -2251,7 +2290,7 @@ def bulk_save(items, session: Session):
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     let cluster = report
         .summary
@@ -2288,7 +2327,7 @@ def bulk_save(items, session: Session):
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     let roots = &report.summary.roots_overview;
     assert_eq!(roots.len(), 1, "expected one root in summary.roots_overview");
@@ -2330,7 +2369,7 @@ def bulk_save(items, session: Session):
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
-    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None);
+    let report = Report::build(&[tags], &graph, vec![node], &Default::default(), None, Vec::new());
 
     assert_eq!(
         report.summary.findings_by_kind.get("n_plus_one"),
@@ -2341,4 +2380,674 @@ def bulk_save(items, session: Session):
         report.summary.findings_top.iter().any(|t| matches!(t.kind, drift_static_profiler::insights::FindingKind::NPlusOne)),
         "findings_top should surface the n_plus_one finding",
     );
+}
+
+// ── Language-manifest entry points (package.json, pyproject.toml, etc.) ─
+//
+// Sibling of the `docker_tests` module below. Same data shape, same
+// matcher — the only thing that changes is the source manifest. We test
+// each parser in isolation against a known-good file, then a single
+// end-to-end check that the fixture's `entry_declarations` array carries
+// all four manifest families when present together.
+
+mod manifest_tests {
+    use super::*;
+    use drift_static_profiler::docker::{match_entries, EntryKind, MatchConfidence};
+    use drift_static_profiler::manifest::{
+        collect, parse_cargo_toml, parse_deno_json, parse_package_json, parse_pyproject_toml,
+    };
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn tmp_dir(label: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("drift-manifest-{label}-{pid}-{n}"));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).expect("mkdir tmp");
+        p
+    }
+
+    #[test]
+    fn package_json_emits_main_bin_and_scripts() {
+        let root = tmp_dir("pkgjson");
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "demo",
+              "main": "./index.js",
+              "module": "./esm/index.mjs",
+              "bin": { "demo": "./bin/demo.js", "demo-cli": "./bin/cli.js" },
+              "scripts": { "start": "node server.js", "build": "tsc" }
+            }"#,
+        )
+        .unwrap();
+        let entries = parse_package_json(&root.join("package.json"));
+
+        let by_kind: Vec<(EntryKind, Option<String>)> = entries
+            .iter()
+            .map(|e| (e.kind.clone(), e.service.clone()))
+            .collect();
+        assert!(by_kind.contains(&(EntryKind::PackageJsonMain, None)));
+        assert!(by_kind.contains(&(EntryKind::PackageJsonModule, None)));
+        assert!(by_kind.contains(&(EntryKind::PackageJsonBin, Some("demo".into()))));
+        assert!(by_kind.contains(&(EntryKind::PackageJsonBin, Some("demo-cli".into()))));
+        assert!(by_kind.contains(&(EntryKind::PackageJsonScript, Some("start".into()))));
+        assert!(by_kind.contains(&(EntryKind::PackageJsonScript, Some("build".into()))));
+
+        let start = entries
+            .iter()
+            .find(|e| e.service.as_deref() == Some("start"))
+            .unwrap();
+        assert_eq!(start.argv, vec!["node", "server.js"]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn deno_json_emits_tasks_and_strips_jsonc_comments() {
+        // deno.jsonc allows JS-style comments; the parser must strip them
+        // before handing the source to serde_json. If we don't, the
+        // entire file parses to None and tasks vanish.
+        let root = tmp_dir("denojson");
+        fs::write(
+            root.join("deno.jsonc"),
+            r#"{
+              // dev tasks
+              "tasks": {
+                /* run the server */
+                "start": "deno run --allow-net server.ts",
+                "test": "deno test"
+              }
+            }"#,
+        )
+        .unwrap();
+        let entries = parse_deno_json(&root.join("deno.jsonc"));
+        assert_eq!(entries.len(), 2);
+        let start = entries
+            .iter()
+            .find(|e| e.service.as_deref() == Some("start"))
+            .unwrap();
+        assert_eq!(start.kind, EntryKind::DenoTask);
+        assert_eq!(start.argv, vec!["deno", "run", "--allow-net", "server.ts"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pyproject_toml_emits_project_and_poetry_scripts() {
+        let root = tmp_dir("pyproject");
+        fs::write(
+            root.join("pyproject.toml"),
+            r#"
+              [project]
+              name = "demo"
+
+              [project.scripts]
+              cli = "demo.cli:main"
+
+              [tool.poetry.scripts]
+              legacy = "demo.legacy:run"
+            "#,
+        )
+        .unwrap();
+        let entries = parse_pyproject_toml(&root.join("pyproject.toml"));
+        assert_eq!(entries.len(), 2);
+        let cli = entries
+            .iter()
+            .find(|e| e.service.as_deref() == Some("cli"))
+            .unwrap();
+        assert_eq!(cli.kind, EntryKind::PyprojectScript);
+        assert_eq!(cli.argv, vec!["demo.cli:main"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cargo_toml_emits_explicit_and_conventional_bin_paths() {
+        let root = tmp_dir("cargo");
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+              [package]
+              name = "demo"
+              version = "0.1.0"
+              edition = "2021"
+
+              [[bin]]
+              name = "server"
+              path = "src/server.rs"
+
+              [[bin]]
+              name = "worker"
+            "#,
+        )
+        .unwrap();
+        let entries = parse_cargo_toml(&root.join("Cargo.toml"));
+        assert_eq!(entries.len(), 2);
+        let server = entries
+            .iter()
+            .find(|e| e.service.as_deref() == Some("server"))
+            .unwrap();
+        assert_eq!(server.argv, vec!["src/server.rs"]);
+        let worker = entries
+            .iter()
+            .find(|e| e.service.as_deref() == Some("worker"))
+            .unwrap();
+        assert_eq!(worker.argv, vec!["src/bin/worker.rs"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pyproject_pkg_mod_func_resolves_to_exact_named_symbol() {
+        // The matcher's pyproject branch must prefer the NAMED function
+        // (`:helper`) over the file's auto-picked entry (`main`). Same
+        // file has both — only the named one should win.
+        let root = tmp_dir("pyproject-match");
+        fs::create_dir_all(root.join("pkg")).unwrap();
+        fs::write(root.join("pkg/__init__.py"), "").unwrap();
+        fs::write(
+            root.join("pkg/cli.py"),
+            "def helper():\n    pass\n\ndef main():\n    helper()\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("pyproject.toml"),
+            "[project.scripts]\ncli = \"pkg.cli:helper\"\n",
+        )
+        .unwrap();
+
+        let files = discover_source_files(&root);
+        let all_tags: Vec<_> = files
+            .into_iter()
+            .filter_map(|(f, l)| extract_tags(&f, l).ok())
+            .collect();
+        let graph = CallGraph::build(&all_tags);
+
+        let mut entries = parse_pyproject_toml(&root.join("pyproject.toml"));
+        match_entries(&mut entries, &all_tags, &graph);
+        let m = entries[0].matched.as_ref().expect("should match");
+        assert_eq!(m.confidence, MatchConfidence::Exact);
+        assert_eq!(
+            m.symbol_name, "helper",
+            "explicit `pkg.cli:helper` must override the file's auto-pick of `main`",
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn end_to_end_docker_app_fixture_carries_all_manifest_families() {
+        use drift_static_profiler::{analyze_roots, AnalyzeOptions, DiscoverOpts};
+        let root = fixture("docker-app");
+        let outcome = analyze_roots(
+            &root,
+            &DiscoverOpts {
+                min_reach: 1,
+                skip_tests: true,
+                skip_private: false,
+                skip_accessors: true,
+                max_roots: 200,
+            },
+            &AnalyzeOptions::default(),
+        )
+        .expect("analyze_roots");
+
+        let kinds: std::collections::HashSet<_> = outcome
+            .report
+            .summary
+            .entry_declarations
+            .iter()
+            .map(|e| e.kind.clone())
+            .collect();
+        for want in &[
+            EntryKind::DockerfileEntrypoint,
+            EntryKind::ComposeCommand,
+            EntryKind::PackageJsonMain,
+            EntryKind::PackageJsonScript,
+            EntryKind::DenoTask,
+            EntryKind::PyprojectScript,
+        ] {
+            assert!(
+                kinds.contains(want),
+                "fixture should surface {:?}; kinds present = {:?}",
+                want,
+                kinds,
+            );
+        }
+
+        let main = outcome
+            .report
+            .entries
+            .iter()
+            .find(|n| n.name == "main")
+            .expect("main");
+        assert!(main.entry_labels.iter().any(|l| l.starts_with("Dockerfile ")));
+        assert!(main
+            .entry_labels
+            .iter()
+            .any(|l| l.starts_with("package.json:")));
+        assert!(main.entry_labels.iter().any(|l| l.starts_with("pyproject:")));
+    }
+
+    #[test]
+    fn manifest_collect_walks_root_honoring_default_ignores() {
+        // collect() must not pick up a package.json buried inside
+        // `node_modules/` — that's a vendored dependency's manifest,
+        // not the project's.
+        let root = tmp_dir("collect-ignores");
+        fs::create_dir_all(root.join("node_modules/typeorm")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{ "scripts": { "start": "node ." } }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("node_modules/typeorm/package.json"),
+            r#"{ "main": "./index.js", "scripts": { "test": "jest" } }"#,
+        )
+        .unwrap();
+
+        let entries = collect(&root);
+        assert!(
+            entries.iter().all(|e| !e.file.contains("node_modules")),
+            "node_modules manifests must be skipped; entries: {entries:#?}",
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+// ── Docker-deployment entry points (Dockerfile + docker-compose) ────────
+//
+// These exercise `drift_static_profiler::docker` end-to-end:
+//   1. Parsing — both Dockerfile syntactic flavors (JSON-array exec form
+//      `["python","app.py"]` and shell form `python app.py`) plus compose
+//      `command`/`entrypoint` in both YAML scalar AND YAML sequence form.
+//   2. Matching — `exact` (argv references a parsed file), `likely`
+//      (`python -m mod` heuristic), and the no-match case.
+//   3. Discovery — walker honors filename conventions (`Dockerfile`,
+//      `*.Dockerfile`, `compose.yml`, etc.) and skips ignored dirs.
+//   4. Labeling — `label_call_tree_entries` writes entry_labels onto the
+//      right `CallTreeNode` and is idempotent.
+//   5. The bundled `tests/fixtures/docker-app` fixture surfaces 4
+//      entries through the high-level `analyze_roots` API and labels two
+//      symbols in the report.
+
+mod docker_tests {
+    use super::*;
+    use drift_static_profiler::analyze_roots;
+    use drift_static_profiler::docker::{
+        collect, discover_docker_files, label_call_tree_entries, match_entries, parse_compose,
+        parse_dockerfile, EntryKind, MatchConfidence,
+    };
+    use drift_static_profiler::{AnalyzeOptions, DiscoverOpts};
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn tmp_dir(label: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("drift-docker-{label}-{pid}-{n}"));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).expect("mkdir tmp");
+        p
+    }
+
+    #[test]
+    fn parse_dockerfile_json_array_exec_form() {
+        // The "exec" / JSON-array form is the form Docker itself prefers
+        // (PID 1 ergonomics). We must split it into a real argv, not
+        // treat the whole `["a","b"]` literal as one string.
+        let root = tmp_dir("df-json");
+        let path = root.join("Dockerfile");
+        fs::write(
+            &path,
+            "FROM python:3.12\nWORKDIR /srv\nENTRYPOINT [\"python\", \"-m\", \"app.main\"]\nCMD [\"--prod\"]\n",
+        )
+        .unwrap();
+
+        let entries = parse_dockerfile(&path);
+        assert_eq!(entries.len(), 2, "ENTRYPOINT + CMD = 2 entries");
+
+        let ep = &entries[0];
+        assert_eq!(ep.kind, EntryKind::DockerfileEntrypoint);
+        assert_eq!(ep.argv, vec!["python", "-m", "app.main"]);
+        assert_eq!(ep.workdir.as_deref(), Some("/srv"));
+
+        let cmd = &entries[1];
+        assert_eq!(cmd.kind, EntryKind::DockerfileCmd);
+        assert_eq!(cmd.argv, vec!["--prod"]);
+        // WORKDIR set above ENTRYPOINT must propagate to CMD too.
+        assert_eq!(cmd.workdir.as_deref(), Some("/srv"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_dockerfile_shell_form_splits_on_whitespace() {
+        // Shell form: `CMD python app.py` should still produce a usable
+        // argv even though there are no quotes. We do NOT want to invoke
+        // a real shell — just split tokens and let the matcher pick the
+        // first file-shaped token.
+        let root = tmp_dir("df-shell");
+        let path = root.join("Dockerfile");
+        fs::write(&path, "FROM node:20\nCMD node server.js --port 8080\n").unwrap();
+
+        let entries = parse_dockerfile(&path);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, EntryKind::DockerfileCmd);
+        assert_eq!(entries[0].argv, vec!["node", "server.js", "--port", "8080"]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_compose_scalar_and_sequence_command_forms() {
+        // docker-compose accepts BOTH `command: "python app.py"` (string)
+        // and `command: [python, app.py]` (YAML sequence). Both must
+        // produce identical argv shape.
+        let root = tmp_dir("compose-forms");
+        let path = root.join("docker-compose.yml");
+        fs::write(
+            &path,
+            "services:\n  api:\n    command: \"python app/main.py --prod\"\n  worker:\n    command:\n      - python\n      - worker.py\n    working_dir: /srv\n    entrypoint: [tini, --]\n",
+        )
+        .unwrap();
+
+        let entries = parse_compose(&path);
+        // api.command + worker.command + worker.entrypoint = 3
+        assert_eq!(entries.len(), 3);
+
+        let api_cmd = entries
+            .iter()
+            .find(|e| e.service.as_deref() == Some("api"))
+            .unwrap();
+        assert_eq!(api_cmd.kind, EntryKind::ComposeCommand);
+        assert_eq!(api_cmd.argv, vec!["python", "app/main.py", "--prod"]);
+
+        let worker_cmd = entries
+            .iter()
+            .find(|e| {
+                e.service.as_deref() == Some("worker") && e.kind == EntryKind::ComposeCommand
+            })
+            .unwrap();
+        assert_eq!(worker_cmd.argv, vec!["python", "worker.py"]);
+        assert_eq!(worker_cmd.workdir.as_deref(), Some("/srv"));
+
+        let worker_ep = entries
+            .iter()
+            .find(|e| e.kind == EntryKind::ComposeEntrypoint)
+            .unwrap();
+        assert_eq!(worker_ep.argv, vec!["tini", "--"]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn matcher_exact_resolves_argv_filename_to_symbol() {
+        // `CMD python app.py` with an in-tree `app.py` that defines
+        // `main`. The matcher must pick `main` (preferred name) and
+        // mark it as Exact.
+        let root = tmp_dir("match-exact");
+        fs::write(
+            root.join("app.py"),
+            "def main():\n    pass\n\nif __name__ == '__main__':\n    main()\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("Dockerfile"),
+            "FROM python:3.12\nCMD [\"python\", \"app.py\"]\n",
+        )
+        .unwrap();
+
+        let files = discover_source_files(&root);
+        let all_tags: Vec<_> = files
+            .into_iter()
+            .filter_map(|(f, l)| extract_tags(&f, l).ok())
+            .collect();
+        let graph = CallGraph::build(&all_tags);
+
+        let mut entries = parse_dockerfile(&root.join("Dockerfile"));
+        match_entries(&mut entries, &all_tags, &graph);
+        assert_eq!(entries.len(), 1);
+        let m = entries[0].matched.as_ref().expect("should match");
+        assert_eq!(m.confidence, MatchConfidence::Exact);
+        assert_eq!(m.symbol_name, "main");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn matcher_likely_resolves_python_dash_m_module() {
+        // `python -m app.main` resolves via the dotted-module heuristic
+        // to `app/main.py`. Confidence is `likely` since we didn't see
+        // a literal file argument.
+        let root = tmp_dir("match-dash-m");
+        fs::create_dir_all(root.join("app")).unwrap();
+        fs::write(root.join("app/__init__.py"), "").unwrap();
+        fs::write(root.join("app/main.py"), "def main():\n    pass\n").unwrap();
+        fs::write(
+            root.join("Dockerfile"),
+            "FROM python:3.12\nENTRYPOINT [\"python\", \"-m\", \"app.main\"]\n",
+        )
+        .unwrap();
+
+        let files = discover_source_files(&root);
+        let all_tags: Vec<_> = files
+            .into_iter()
+            .filter_map(|(f, l)| extract_tags(&f, l).ok())
+            .collect();
+        let graph = CallGraph::build(&all_tags);
+
+        let mut entries = parse_dockerfile(&root.join("Dockerfile"));
+        match_entries(&mut entries, &all_tags, &graph);
+
+        let m = entries[0].matched.as_ref().expect("should match");
+        assert_eq!(m.confidence, MatchConfidence::Likely);
+        assert_eq!(m.symbol_name, "main");
+        assert!(
+            m.evidence.contains("python -m app.main"),
+            "evidence should explain the resolution path; got: {}",
+            m.evidence,
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn matcher_unmatched_for_opaque_commands() {
+        // `java -jar app.jar` and `./bin/server` are opaque to a static
+        // analyzer — we don't have a manifest reader or a binary parser.
+        // The matcher must NOT invent a match.
+        let root = tmp_dir("match-unmatched");
+        fs::write(
+            root.join("Dockerfile"),
+            "FROM eclipse-temurin:21\nCMD [\"java\", \"-jar\", \"app.jar\"]\n",
+        )
+        .unwrap();
+
+        let mut entries = parse_dockerfile(&root.join("Dockerfile"));
+        let graph = CallGraph::build(&[]);
+        match_entries(&mut entries, &[], &graph);
+        assert!(entries[0].matched.is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn discover_finds_dockerfile_and_compose_variants() {
+        let root = tmp_dir("discover");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("Dockerfile"), "FROM alpine\n").unwrap();
+        fs::write(root.join("Dockerfile.prod"), "FROM alpine\n").unwrap();
+        fs::write(root.join("api.Dockerfile"), "FROM alpine\n").unwrap();
+        fs::write(root.join("Containerfile"), "FROM alpine\n").unwrap();
+        fs::write(root.join("compose.yml"), "services: {}\n").unwrap();
+        fs::write(root.join("docker-compose.yaml"), "services: {}\n").unwrap();
+        // Default-ignored dir — must be skipped.
+        fs::create_dir_all(root.join("node_modules")).unwrap();
+        fs::write(root.join("node_modules/Dockerfile"), "FROM alpine\n").unwrap();
+
+        let (dockerfiles, composes) = discover_docker_files(&root);
+        let df_names: Vec<String> = dockerfiles
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        for want in [
+            "Dockerfile",
+            "Dockerfile.prod",
+            "api.Dockerfile",
+            "Containerfile",
+        ] {
+            assert!(
+                df_names.contains(&want.to_string()),
+                "expected {want:?} in discovered Dockerfiles; got {df_names:?}",
+            );
+        }
+        assert!(
+            !df_names.iter().any(|n| n.contains("node_modules")),
+            "node_modules must be skipped; got {df_names:?}",
+        );
+
+        let compose_names: Vec<String> = composes
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(compose_names.contains(&"compose.yml".to_string()));
+        assert!(compose_names.contains(&"docker-compose.yaml".to_string()));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn label_call_tree_entries_is_idempotent() {
+        // The Report builder calls `label_call_tree_entries` once per
+        // analyze; running it twice on the same tree must NOT duplicate
+        // labels — a node that already has `Dockerfile CMD` should
+        // remain at length 1.
+        let root = tmp_dir("label-idempotent");
+        fs::write(root.join("app.py"), "def main():\n    pass\n").unwrap();
+        fs::write(
+            root.join("Dockerfile"),
+            "FROM python:3.12\nCMD [\"python\", \"app.py\"]\n",
+        )
+        .unwrap();
+
+        let files = discover_source_files(&root);
+        let all_tags: Vec<_> = files
+            .into_iter()
+            .filter_map(|(f, l)| extract_tags(&f, l).ok())
+            .collect();
+        let graph = CallGraph::build(&all_tags);
+        let entry_declarations = collect(&root, &all_tags, &graph);
+        assert_eq!(entry_declarations.len(), 1);
+        assert!(entry_declarations[0].matched.is_some());
+
+        // Build the call tree for `main` (the matched symbol).
+        let id = graph.find_entry_points("main").into_iter().next().unwrap();
+        let tb = TreeBuilder::new(&graph, &root);
+        let mut roots = vec![tb.build(&id).unwrap()];
+
+        label_call_tree_entries(&entry_declarations, &mut roots);
+        assert_eq!(roots[0].entry_labels, vec!["Dockerfile CMD".to_string()]);
+
+        // Second pass must not duplicate.
+        label_call_tree_entries(&entry_declarations, &mut roots);
+        assert_eq!(roots[0].entry_labels, vec!["Dockerfile CMD".to_string()]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn end_to_end_docker_app_fixture_surfaces_docker_subset_with_expected_matches() {
+        // High-level integration: drive the same code path the CLI uses
+        // (`analyze_roots`) against the shipped fixture and assert on
+        // the Docker-family entries inside `Summary.entry_declarations`.
+        // The fixture now ALSO carries package.json/pyproject.toml/etc.
+        // — manifest-family expectations live in
+        // `manifest_tests::end_to_end_docker_app_fixture_carries_all_manifest_families`.
+        let root = fixture("docker-app");
+        let outcome = analyze_roots(
+            &root,
+            &DiscoverOpts {
+                min_reach: 1,
+                skip_tests: true,
+                skip_private: false,
+                skip_accessors: true,
+                max_roots: 200,
+            },
+            &AnalyzeOptions::default(),
+        )
+        .expect("analyze_roots");
+
+        let de = &outcome.report.summary.entry_declarations;
+        let docker_only: Vec<_> = de
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.kind,
+                    EntryKind::DockerfileCmd
+                        | EntryKind::DockerfileEntrypoint
+                        | EntryKind::ComposeCommand
+                        | EntryKind::ComposeEntrypoint,
+                )
+            })
+            .collect();
+        assert_eq!(
+            docker_only.len(),
+            4,
+            "fixture has 4 docker entries (1 ENTRYPOINT, 1 CMD, 2 compose); got {docker_only:#?}",
+        );
+
+        // Three of the four must resolve; only `CMD ["--prod"]` is opaque.
+        let matched: Vec<_> = docker_only.iter().filter(|e| e.matched.is_some()).collect();
+        assert_eq!(
+            matched.len(),
+            3,
+            "3 of 4 docker entries should match — only the `--prod` flag is opaque. got matched={matched:#?}",
+        );
+
+        // `main` must carry BOTH the Dockerfile ENTRYPOINT label AND the
+        // compose `api` command label — two independent declarations
+        // pointing at the same in-graph symbol.
+        let main_node = outcome
+            .report
+            .entries
+            .iter()
+            .find(|n| n.name == "main")
+            .expect("main symbol in entries");
+        assert!(
+            main_node
+                .entry_labels
+                .iter()
+                .any(|l| l == "Dockerfile ENTRYPOINT"),
+            "main should have Dockerfile ENTRYPOINT label; got {:?}",
+            main_node.entry_labels,
+        );
+        assert!(
+            main_node
+                .entry_labels
+                .iter()
+                .any(|l| l == "compose:api command"),
+            "main should have compose:api command label; got {:?}",
+            main_node.entry_labels,
+        );
+
+        let run_node = outcome
+            .report
+            .entries
+            .iter()
+            .find(|n| n.name == "run")
+            .expect("run symbol in entries");
+        assert!(
+            run_node
+                .entry_labels
+                .iter()
+                .any(|l| l == "compose:worker entrypoint"),
+            "run should have compose:worker entrypoint label; got {:?}",
+            run_node.entry_labels,
+        );
+    }
 }

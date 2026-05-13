@@ -44,6 +44,12 @@ export const FIXTURES: FixtureSpec[] = [
     description: 'POST /orders → OrdersService.createOrder → OrdersRepository.save (Slick db.run)',
   },
   {
+    key: 'docker-app',
+    label: 'Docker · CMD/ENTRYPOINT + compose',
+    json: '/fixtures/docker-app.json',
+    description: 'Python app + Dockerfile (ENTRYPOINT python -m app.main) + docker-compose (api/worker services). Demonstrates the entry_declarations panel with exact + likely matches.',
+  },
+  {
     key: 'insights-demo',
     label: 'Insights Demo',
     json: '/fixtures/insights-demo.json',

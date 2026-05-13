@@ -64,6 +64,14 @@ pub struct CallTreeNode {
     // values computed from this list so older consumers keep working.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
+
+    // ── Container-deployment labels ──
+    // Tagged when this node is the target of a Dockerfile CMD/ENTRYPOINT
+    // or a docker-compose service `command`/`entrypoint`. Populated by
+    // `docker::label_call_tree_entries` after the trees are built. Empty
+    // for nodes the matcher couldn't link.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entry_labels: Vec<String>,
 }
 
 pub struct TreeBuilder<'a> {
@@ -202,6 +210,7 @@ impl<'a> TreeBuilder<'a> {
             n_plus_one_risk,
             blocking_in_async,
             findings,
+            entry_labels: Vec::new(),
         };
 
         if is_cycle {

@@ -11,13 +11,14 @@ import { Statistics } from './Statistics';
 import { RootsView } from './RootsView';
 import { Insights } from './Insights';
 import { ScanReport } from './ScanReport';
+import { CallGraphView } from './CallGraphView';
 import { TIPS } from './tooltips';
 import { Help } from './Help';
 import { Splitter, useResizablePanel } from './useResizableColumns';
 import type { CallTreeNode, FindingKind, Report } from './types';
 
 type FlameMode = 'kind' | 'category' | 'complexity' | 'smells';
-type BottomTab = 'report' | 'tree' | 'roots' | 'hot' | 'smells' | 'insights' | 'stats';
+type BottomTab = 'report' | 'tree' | 'graph' | 'roots' | 'hot' | 'smells' | 'insights' | 'stats';
 
 export function App() {
   // Fixture identity now lives in the URL (`/scan/:fixtureKey`). The
@@ -256,6 +257,9 @@ export function App() {
             <Tab active={bottomTab === 'tree'} onClick={() => setBottomTab('tree')} tip={TIPS.tab_call_tree}>
               Call Tree
             </Tab>
+            <Tab active={bottomTab === 'graph'} onClick={() => setBottomTab('graph')} tip={TIPS.tab_call_graph}>
+              Call Graph
+            </Tab>
             <Tab active={bottomTab === 'roots'} onClick={() => setBottomTab('roots')} tip={TIPS.tab_roots}>
               Roots{report?.entries.length ? ` (${report.entries.length})` : ''}
             </Tab>
@@ -298,6 +302,14 @@ export function App() {
             )}
             {bottomTab === 'tree' && activeRoot && (
               <CallTreeView
+                root={activeRoot}
+                search={search}
+                selectedId={selected?.id ?? null}
+                onSelect={setSelected}
+              />
+            )}
+            {bottomTab === 'graph' && activeRoot && (
+              <CallGraphView
                 root={activeRoot}
                 search={search}
                 selectedId={selected?.id ?? null}

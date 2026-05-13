@@ -41,6 +41,21 @@ export function DetailsPane({ node, onJumpTo, onJumpExternal }: Props) {
         badges={reached.map(([c, n]) => ({ label: `${c} × ${n}`, color: CATEGORY_COLORS[c], tip: TIPS[`category_${c}`] }))}
       />
 
+      {node.entry_labels && node.entry_labels.length > 0 && (
+        <RowBadges
+          k="docker"
+          tip="This symbol is the resolved target of a Dockerfile CMD/ENTRYPOINT or a docker-compose service `command`/`entrypoint`. The label says which declaration; see the Scan Report's docker panel for the source row."
+          badges={node.entry_labels.map((l) => ({
+            label: l,
+            // Reuse the network category color so we don't introduce a new
+            // theme entry; container deployment is conceptually "how this
+            // process gets on the network".
+            color: CATEGORY_COLORS.network,
+            tip: l,
+          }))}
+        />
+      )}
+
       {/* Smells */}
       {(node.n_plus_one_risk || node.blocking_in_async || node.is_recursive) && (
         <div style={smellsRowStyle}>

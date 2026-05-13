@@ -139,6 +139,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/RootOverview" },
           "description": "Per-entry-point rollup: subtree share, categories reached, findings by severity, first callees, callers. Mirrors pprof's `top -cum` at root granularity."
+        },
+        "entry_declarations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EntryDecl" },
+          "description": "Declared entry points harvested from both container-deployment files (Dockerfile, docker-compose) and per-language package manifests (package.json scripts/bin/main, deno.json tasks, pyproject.toml `[project.scripts]`, Cargo.toml `[[bin]]`). Each entry is optionally linked back to the in-graph symbol it most likely launches. See `EntryKind` for the closed-set of source flavors."
         }
       }
     },
@@ -326,6 +331,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/Finding" },
           "description": "Structured, severity-scored findings attached to this node. Replaces (and supersedes) the per-node booleans above; the booleans stay populated as derived convenience values."
+        },
+        "entry_labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Human-readable entry-declaration labels (e.g. `Dockerfile CMD`, `compose:api command`, `package.json:scripts.start`, `pyproject:scripts.cli`) attached when this symbol is the resolved target of an `EntryDecl`. See `Summary.entry_declarations` for the source records."
         }
       }
     },
@@ -555,6 +565,61 @@
         "severity": { "$ref": "#/$defs/Severity" },
         "effort": { "$ref": "#/$defs/Effort" },
         "message": { "type": "string" }
+      }
+    },
+
+    "EntryDecl": {
+      "type": "object",
+      "description": "A declared entry point parsed from a container-deployment file (Dockerfile / docker-compose) or a language package manifest (package.json, deno.json, pyproject.toml, Cargo.toml). The profiler treats these as first-class roots alongside in-graph symbols because they ARE the processes the system actually launches.",
+      "required": ["file", "line", "kind", "raw", "argv"],
+      "properties": {
+        "file": { "type": "string", "description": "Path to the source manifest, relative to the analyzed root." },
+        "line": { "type": "integer", "minimum": 1 },
+        "kind": { "$ref": "#/$defs/EntryKind" },
+        "raw": { "type": "string", "description": "Joined argv / value as written in the source file." },
+        "argv": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Parsed argument list. JSON-array form is split per element; shell form is whitespace-split. Single-file manifests (`main`, `bin`, `[[bin]].path`) emit a single token."
+        },
+        "service": {
+          "type": ["string", "null"],
+          "description": "Logical name attached to this entry. For compose: the service name (`services.<name>`). For package.json `scripts`/`bin` (object form): the command name. For pyproject scripts: the script name. For Cargo `[[bin]]`: the binary `name`."
+        },
+        "workdir": { "type": ["string", "null"], "description": "Dockerfile `WORKDIR` or `services.<name>.working_dir`." },
+        "matched": { "$ref": "#/$defs/EntryMatch" }
+      }
+    },
+
+    "EntryKind": {
+      "type": "string",
+      "enum": [
+        "dockerfile_cmd",
+        "dockerfile_entrypoint",
+        "compose_command",
+        "compose_entrypoint",
+        "package_json_main",
+        "package_json_module",
+        "package_json_bin",
+        "package_json_script",
+        "deno_task",
+        "pyproject_script",
+        "cargo_bin"
+      ],
+      "description": "Closed-set tag identifying which manifest produced an `EntryDecl`. New variants are additive; older viewers ignore unknown values."
+    },
+
+    "EntryMatch": {
+      "type": "object",
+      "description": "Back-link from an `EntryDecl` to the in-graph symbol the matcher believes the entry point launches. `confidence`: `exact` (argv referenced a file we parsed, or pyproject `pkg.mod:func` resolved to a named function), `likely` (module/convention match like `python -m pkg.mod`).",
+      "required": ["confidence", "symbol_id", "symbol_name", "symbol_file", "symbol_line", "evidence"],
+      "properties": {
+        "confidence": { "type": "string", "enum": ["exact", "likely", "unmatched"] },
+        "symbol_id": { "type": "string", "description": "Matches `CallTreeNode.id` for cross-referencing." },
+        "symbol_name": { "type": "string" },
+        "symbol_file": { "type": "string" },
+        "symbol_line": { "type": "integer", "minimum": 1 },
+        "evidence": { "type": "string", "description": "Human-readable reason for the link." }
       }
     },
 

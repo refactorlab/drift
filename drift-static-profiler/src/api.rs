@@ -10,6 +10,7 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::{
+    docker::{self, EntryDecl},
     graph::CallGraph,
     linguist::{compute_language_stats, LanguageStats},
     report::Report,
@@ -69,6 +70,7 @@ struct GraphContext {
     graph: CallGraph,
     language_stats: LanguageStats,
     profiled_language: Option<Language>,
+    entry_declarations: Vec<EntryDecl>,
 }
 
 fn build_graph_context(root: &Path, opts: &AnalyzeOptions) -> GraphContext {
@@ -107,11 +109,24 @@ fn build_graph_context(root: &Path, opts: &AnalyzeOptions) -> GraphContext {
         }
     }
     let graph = CallGraph::build(&all_tags);
+    // 3. Walk container-deployment files (Dockerfile + docker-compose)
+    //    AND per-language manifests (package.json, pyproject.toml,
+    //    Cargo.toml, deno.json). Both families produce `EntryDecl` values
+    //    so the matcher can wire them to in-graph symbols uniformly.
+    //
+    //    Independent of profiled_language — a Java service can still
+    //    have its Dockerfile read, and a polyglot monorepo may have
+    //    manifests for several languages.
+    let mut entry_declarations = docker::collect(root, &all_tags, &graph);
+    let mut manifest_entries = crate::manifest::collect(root);
+    crate::docker::match_entries(&mut manifest_entries, &all_tags, &graph);
+    entry_declarations.extend(manifest_entries);
     GraphContext {
         all_tags,
         graph,
         language_stats,
         profiled_language,
+        entry_declarations,
     }
 }
 
@@ -146,8 +161,16 @@ pub fn analyze(root: &Path, entries: &[String], opts: &AnalyzeOptions) -> Result
         }
         entry_ids.extend(ids);
     }
-    let roots = build_trees_from_ids(&ctx, root, &entry_ids, opts);
-    let report = Report::build(&ctx.all_tags, &ctx.graph, roots, &ctx.language_stats, Some(root));
+    let mut roots = build_trees_from_ids(&ctx, root, &entry_ids, opts);
+    docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots);
+    let report = Report::build(
+        &ctx.all_tags,
+        &ctx.graph,
+        roots,
+        &ctx.language_stats,
+        Some(root),
+        ctx.entry_declarations,
+    );
     Ok(AnalyzeOutcome {
         report,
         unresolved_entries: unresolved,
@@ -174,8 +197,16 @@ pub fn analyze_roots(
     let ctx = build_graph_context(root, opts);
     let discovered = discover_roots(&ctx.graph, root, discover);
     let ids: Vec<_> = discovered.iter().map(|r| r.id.clone()).collect();
-    let roots = build_trees_from_ids(&ctx, root, &ids, opts);
-    let report = Report::build(&ctx.all_tags, &ctx.graph, roots, &ctx.language_stats, Some(root));
+    let mut roots = build_trees_from_ids(&ctx, root, &ids, opts);
+    docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots);
+    let report = Report::build(
+        &ctx.all_tags,
+        &ctx.graph,
+        roots,
+        &ctx.language_stats,
+        Some(root),
+        ctx.entry_declarations,
+    );
     Ok(AnalyzeOutcome {
         report,
         unresolved_entries: Vec::new(),

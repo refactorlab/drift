@@ -155,49 +155,49 @@
         "file": "tests/fixtures/javascript-express/src/repository.js",
         "line": 3,
         "parent_class": null,
-        "score": 0.12153807579439584
+        "score": 0.12153807579439585
       },
       {
         "name": "save",
         "file": "tests/fixtures/javascript-express/src/repository.js",
         "line": 4,
         "parent_class": "OrderRepository",
-        "score": 0.0873339562020986
+        "score": 0.08733395620209862
       },
       {
         "name": "buildOrder",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 14,
         "parent_class": "OrderService",
-        "score": 0.0873339562020986
+        "score": 0.08733395620209862
       },
       {
         "name": "validate",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 22,
         "parent_class": "OrderService",
-        "score": 0.0873339562020986
+        "score": 0.08733395620209862
       },
       {
         "name": "notifyDownstream",
         "file": "tests/fixtures/javascript-express/src/routes.js",
         "line": 14,
         "parent_class": null,
-        "score": 0.08134700514006968
+        "score": 0.08134700514006969
       },
       {
         "name": "OrderService",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 3,
         "parent_class": null,
-        "score": 0.08134700514006968
+        "score": 0.08134700514006969
       },
       {
         "name": "createOrder",
         "file": "tests/fixtures/javascript-express/src/service.js",
         "line": 8,
         "parent_class": "OrderService",
-        "score": 0.08134700514006968
+        "score": 0.08134700514006969
       },
       {
         "name": "<module>",
@@ -330,7 +330,7 @@
       "is_async": true,
       "call_site_count": 1,
       "is_recursive": false,
-      "pagerank": 0.08134700514006968,
+      "pagerank": 0.08134700514006969,
       "percent_total": 100.0,
       "percent_parent": 100.0,
       "n_plus_one_risk": false,

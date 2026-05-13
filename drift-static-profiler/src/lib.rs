@@ -1,7 +1,9 @@
 pub mod api;
 pub mod categories;
 pub mod diff;
+pub mod docker;
 pub mod graph;
+pub mod manifest;
 pub mod insights;
 pub mod linguist;
 pub mod metrics;

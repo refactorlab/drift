@@ -51,7 +51,7 @@ RESET  := \033[0m
         test-verbose test-python test-java test-ts list-tests \
         demo-python demo-java demo-ts demo-js \
         tags-python tags-java tags-ts tags-js \
-        refresh refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-insights-demo viewer-data \
+        refresh refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-insights-demo refresh-docker-app viewer-data \
         viewer-bun viewer-stop viewer-install viewer-build \
         scan scan-roots scan-no-tests scan-roots-no-tests \
         diff-demo schema-validate \
@@ -170,8 +170,17 @@ tags-js: $(BIN) ## Raw tree-sitter tags for the JavaScript fixture
 
 ### Refresh viewer fixtures
 
-refresh: refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-insights-demo ## Rerun ALL fixtures through the profiler
+refresh: refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-insights-demo refresh-docker-app ## Rerun ALL fixtures through the profiler
 	@printf "$(GREEN)✓$(RESET) all viewer fixtures regenerated from the profiler\n"
+
+refresh-docker-app: $(BIN) ## Regenerate the docker-app fixture (Dockerfile + docker-compose)
+	@mkdir -p $(FIXTURE_OUT)
+	@$(BIN) analyze-root tests/fixtures/docker-app \
+	  --name docker-app \
+	  --out-dir $(FIXTURE_OUT) \
+	  --include-private \
+	  --min-reach 1 > /dev/null
+	@printf "  $(BLUE)↻$(RESET) $(FIXTURE_OUT)/docker-app.json\n"
 
 refresh-insights-demo: $(BIN) ## Regenerate the synthetic insights-demo fixture (showcases findings)
 	@mkdir -p $(FIXTURE_OUT)

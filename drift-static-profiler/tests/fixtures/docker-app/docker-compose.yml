@@ -1,0 +1,10 @@
+services:
+  api:
+    build: .
+    command: ["python", "app/main.py"]
+    ports:
+      - "8000:8000"
+  worker:
+    build: .
+    working_dir: /srv
+    entrypoint: python worker.py
