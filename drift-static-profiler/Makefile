@@ -57,7 +57,7 @@ RESET  := \033[0m
         tags-python tags-java tags-ts tags-js \
         refresh refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-kotlin refresh-insights-demo refresh-docker-app viewer-data \
         viewer-bun viewer-stop viewer-install viewer-build \
-        scan scan-roots scan-no-tests scan-roots-no-tests scans-index \
+        scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt scans-index \
         diff-demo schema-validate \
         refresh-catalogs extend-catalogs verify-catalogs list-uncategorized \
         sync-otel-registry refresh-from-upstream \
@@ -297,8 +297,8 @@ viewer-build: install-viewer refresh ## Production build → viewer/dist/
 # `make scan-no-tests /abs/path`, etc. Treat any extra goals after scan/
 # scan-roots/scan-no-tests/scan-roots-no-tests as args: first one → SCAN_PATH,
 # and stub them out as no-op targets so make doesn't try to build them.
-ifneq ($(filter scan scan-roots scan-no-tests scan-roots-no-tests,$(MAKECMDGOALS)),)
-  SCAN_POSITIONAL := $(filter-out scan scan-roots scan-no-tests scan-roots-no-tests,$(MAKECMDGOALS))
+ifneq ($(filter scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt,$(MAKECMDGOALS)),)
+  SCAN_POSITIONAL := $(filter-out scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt,$(MAKECMDGOALS))
   ifneq ($(SCAN_POSITIONAL),)
     SCAN_PATH ?= $(firstword $(SCAN_POSITIONAL))
     $(eval $(SCAN_POSITIONAL):;@:)
@@ -424,6 +424,31 @@ scan-roots-no-tests: $(BIN) ## `make scan-roots` + walker-level filter for test/
 	  --no-tests \
 	  --print
 	@$(MAKE) --no-print-directory scans-index
+
+# Interactive root-pick scan. Walks the project (no tests by default),
+# discovers the top 10 root entry points, prints them with file/line
+# and caller info, and prompts for a selection. The resulting scan
+# contains only the chosen root's call tree.
+#
+# Pass INCLUDE_TESTS=1 to include test-file roots in the menu.
+#
+#   make scan-prompt /abs/path
+#   make scan-prompt SCAN_PATH=/abs/path NAME=myproj-focused
+#   make scan-prompt /abs/path INCLUDE_TESTS=1
+INCLUDE_TESTS ?=
+scan-prompt: $(BIN) ## Interactive scan: prompt to pick one of the top 10 roots, then analyze only that one.
+	@if [ -z "$(SCAN_PATH)" ]; then \
+	  printf "$(YELLOW)!$(RESET) usage: make scan-prompt /abs/path [NAME=fixture_name] [INCLUDE_TESTS=1]\n"; \
+	  printf "          or: make scan-prompt SCAN_PATH=/abs/path [NAME=fixture_name]\n"; \
+	  exit 1; \
+	fi
+	@mkdir -p $(SCANS_OUT)
+	@printf "$(BLUE)▶$(RESET) scan-prompt on $(SCAN_PATH) → pick one root, then write $(SCANS_OUT)/$(NAME).json\n"
+	@$(BIN) scan-prompt "$(SCAN_PATH)" \
+	  --name "$(NAME)" \
+	  --out-dir "$(SCANS_OUT)" \
+	  --no-accessors \
+	  $(if $(INCLUDE_TESTS),--include-tests,)
 
 # Rebuild scans/index.json from the current contents of scans/. The viewer
 # fetches this file at boot to discover user-run scans; browsers can't

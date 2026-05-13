@@ -18,8 +18,8 @@ pub mod tree;
 pub mod walker;
 
 pub use api::{
-    analyze, analyze_roots, analyze_roots_with_progress, analyze_with_progress, AnalyzeOptions,
-    AnalyzeOutcome,
+    analyze, analyze_picked_with_progress, analyze_roots, analyze_roots_with_progress,
+    analyze_with_progress, AnalyzeOptions, AnalyzeOutcome, PickerCaller, PickerRoot,
 };
 pub use progress::{CliProgress, NullProgress, Progress};
 pub use linguist::{compute_language_stats, LanguageStats};

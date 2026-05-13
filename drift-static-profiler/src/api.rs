@@ -331,3 +331,156 @@ pub fn analyze_roots_with_progress(
         discovered_roots: discovered,
     })
 }
+
+/// One row of display data for the interactive root picker — enough
+/// for the caller (e.g. a CLI prompt) to render a meaningful menu
+/// without needing to know about `CallGraph` or `GraphContext`.
+///
+/// `callers` is the resolved (name, file, line) for each in-graph
+/// caller of this root. For most genuine entry points the list is
+/// empty; for symbols called only by the synthetic `<module>` symbol
+/// (Python `if __name__`, module-top-level invocations) it contains
+/// that single entry.
+#[derive(Debug, Clone)]
+pub struct PickerRoot {
+    pub id: crate::graph::SymbolId,
+    pub name: String,
+    pub reach: usize,
+    /// File path relative to the scanned `root` directory.
+    pub file: String,
+    pub line: usize,
+    pub callers: Vec<PickerCaller>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PickerCaller {
+    pub name: String,
+    pub file: String,
+    pub line: usize,
+}
+
+/// Build the graph + discover roots + hand the top-N to a caller-supplied
+/// `pick` closure. If the closure returns `Some(index)`, build a focused
+/// report containing only the call tree of that root; if it returns
+/// `None`, abort cleanly without doing any tree work.
+///
+/// Design notes (Clean Code split):
+///   - All terminal I/O (prompt rendering, stdin parsing) lives in the
+///     `pick` closure — the library crate has no awareness of TTYs.
+///   - The closure receives pre-decorated `PickerRoot` rows, not the
+///     raw graph, so it can't accidentally mutate analyzer state.
+///   - We only build trees AFTER a selection is made. The expensive
+///     per-root expansion (max_depth recursion) is paid exactly once,
+///     for the one root the user actually wants.
+///
+/// `discover.max_roots` is honored: pass `10` (or whatever cap the UI
+/// wants) so the picker doesn't get handed thousands of rows.
+pub fn analyze_picked_with_progress<F>(
+    root: &Path,
+    discover: &DiscoverOpts,
+    opts: &AnalyzeOptions,
+    progress: &dyn Progress,
+    pick: F,
+) -> Result<Option<AnalyzeOutcome>>
+where
+    F: FnOnce(&[PickerRoot]) -> Option<usize>,
+{
+    let ctx = build_graph_context(root, opts, progress);
+    let discovered = crate::roots::discover_roots_with_progress(
+        &ctx.graph,
+        root,
+        discover,
+        progress,
+    );
+
+    // Empty-graph short-circuit: nothing to pick. The caller decides
+    // how to surface this; we just return None.
+    if discovered.is_empty() {
+        return Ok(None);
+    }
+
+    let rows = decorate_roots_for_picker(&ctx, root, &discovered);
+
+    let picked_idx = match pick(&rows) {
+        Some(i) if i < discovered.len() => i,
+        _ => return Ok(None),
+    };
+    let picked = &discovered[picked_idx];
+
+    // Single-entry build path: identical to `analyze_with_progress`
+    // beyond this point but with a 1-element `ids` slice.
+    let ids = vec![picked.id.clone()];
+    let mut roots = build_trees_from_ids(&ctx, root, &ids, opts, progress);
+    docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots);
+    let report = Report::build_with_progress(
+        &ctx.all_tags,
+        &ctx.graph,
+        roots,
+        &ctx.language_stats,
+        Some(root),
+        ctx.entry_declarations,
+        progress,
+    );
+    Ok(Some(AnalyzeOutcome {
+        report,
+        unresolved_entries: Vec::new(),
+        language_stats: ctx.language_stats,
+        profiled_language: ctx.profiled_language,
+        // Carry the discovered roots through so the caller can echo
+        // metadata about what was on the menu.
+        discovered_roots: discovered,
+    }))
+}
+
+/// Resolve each `DiscoveredRoot` to a `PickerRoot` carrying display
+/// fields. Path-stripping mirrors `tree::build_inner`'s convention:
+/// paths under the scanned root render relative; anything outside
+/// renders absolute.
+fn decorate_roots_for_picker(
+    ctx: &GraphContext,
+    root_dir: &Path,
+    discovered: &[crate::roots::DiscoveredRoot],
+) -> Vec<PickerRoot> {
+    discovered
+        .iter()
+        .filter_map(|r| {
+            let sym = ctx.graph.symbols.get(&r.id)?;
+            let file = sym
+                .file
+                .strip_prefix(root_dir)
+                .unwrap_or(&sym.file)
+                .display()
+                .to_string();
+            let callers = ctx
+                .graph
+                .callers
+                .get(&r.id)
+                .map(|cids| {
+                    cids.iter()
+                        .filter_map(|cid| {
+                            let s = ctx.graph.symbols.get(cid)?;
+                            Some(PickerCaller {
+                                name: s.name.clone(),
+                                file: s
+                                    .file
+                                    .strip_prefix(root_dir)
+                                    .unwrap_or(&s.file)
+                                    .display()
+                                    .to_string(),
+                                line: s.line,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(PickerRoot {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                reach: r.reach,
+                file,
+                line: sym.line,
+                callers,
+            })
+        })
+        .collect()
+}

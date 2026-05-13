@@ -154,6 +154,44 @@ enum Cmd {
         #[arg(long)]
         print: bool,
     },
+    /// Interactive scan: discover root entry points, show the top 10
+    /// by reach, prompt for a selection, then build a focused report
+    /// on just that one entry.
+    ///
+    /// Defaults invert the `scan` command's "everything" stance:
+    /// test/spec/mock files are excluded at the walker stage so the
+    /// menu shows production roots. Pass `--include-tests` to bring
+    /// test entry points back into the candidate list.
+    ///
+    /// The graph is built ONCE and reused for both discovery and the
+    /// focused analysis, so the prompt costs no extra parsing.
+    ///
+    /// Example:
+    ///   drift-static-profiler scan-prompt /Users/me/code/myproj
+    ScanPrompt {
+        /// Absolute or relative path to the project root to analyze
+        path: PathBuf,
+        /// Bring test/spec/mock files back into the walk. Off by default
+        /// (opposite of `scan`) — the prompt is for picking real entry
+        /// points, not test fixtures.
+        #[arg(long)]
+        include_tests: bool,
+        /// Fixture name (no extension). Defaults to the basename of `path`.
+        #[arg(long)]
+        name: Option<String>,
+        /// Output directory. Defaults to the viewer's scans fixture dir.
+        #[arg(long, default_value = "viewer/public/fixtures/scans")]
+        out_dir: PathBuf,
+        /// Max tree depth (default 12)
+        #[arg(long, default_value_t = 12)]
+        max_depth: usize,
+        /// Hide trivial getX/setX/isX accessors in the call tree.
+        #[arg(long)]
+        no_accessors: bool,
+        /// Minimum transitive reach for a symbol to appear on the menu.
+        #[arg(long, default_value_t = 2)]
+        min_reach: usize,
+    },
     /// Rebuild the scans index used by the viewer's landing page.
     ///
     /// Walks `<dir>` for `*.json` files (excluding `index.json` itself),
@@ -195,6 +233,23 @@ fn main() -> Result<()> {
         } => run_analyze(&path, &entry, json, max_depth, no_accessors, no_tests),
         Cmd::Tags { path } => run_tags(&path),
         Cmd::RegenScansIndex { dir } => run_regen_scans_index(&dir),
+        Cmd::ScanPrompt {
+            path,
+            include_tests,
+            name,
+            out_dir,
+            max_depth,
+            no_accessors,
+            min_reach,
+        } => run_scan_prompt(
+            &path,
+            include_tests,
+            name.as_deref(),
+            &out_dir,
+            max_depth,
+            no_accessors,
+            min_reach,
+        ),
         Cmd::Diff {
             baseline,
             current,
@@ -486,6 +541,173 @@ fn run_analyze_root(
         }
     }
     Ok(())
+}
+
+/// Interactive root-pick scan. See `Cmd::ScanPrompt`.
+///
+/// Pipeline:
+///   1. Build graph + discover top-N roots (excluding tests unless
+///      `include_tests`).
+///   2. Render the menu to stderr, read selection from stdin.
+///   3. If a root is picked: build a focused report for that one
+///      entry, write JSON, regenerate the scans index.
+///   4. If user quits or stdin is closed: exit cleanly with code 0.
+///
+/// We intentionally pin `--max-roots = 10` here so the menu is always
+/// bounded. If a user wants the full discovered list, `analyze-root`
+/// remains the right tool.
+#[allow(clippy::too_many_arguments)]
+fn run_scan_prompt(
+    path: &std::path::Path,
+    include_tests: bool,
+    name: Option<&str>,
+    out_dir: &std::path::Path,
+    max_depth: usize,
+    no_accessors: bool,
+    min_reach: usize,
+) -> Result<()> {
+    use drift_static_profiler::{analyze_picked_with_progress, AnalyzeOptions, DiscoverOpts};
+    use std::io::{IsTerminal, Write};
+
+    // Sanity: scan-prompt is interactive by design. Refuse early when
+    // stdin isn't a TTY so users in CI/pipes don't get a hanging read.
+    // The env-var escape hatch exists for testing only — exposes the
+    // same prompt-loop on a piped stdin so end-to-end smoke tests can
+    // verify the picker without needing a pty harness.
+    if !std::io::stdin().is_terminal()
+        && std::env::var("DRIFT_SCAN_PROMPT_ALLOW_PIPE").is_err()
+    {
+        anyhow::bail!(
+            "scan-prompt requires an interactive terminal — pipe or CI invocation detected.\n\
+             For non-interactive scanning use `analyze-root` (auto-discovers all roots).",
+        );
+    }
+
+    let progress = pick_progress();
+    let discover = DiscoverOpts {
+        min_reach,
+        skip_tests: !include_tests,
+        skip_private: true,
+        skip_accessors: true,
+        max_roots: 10,
+    };
+    let opts = AnalyzeOptions {
+        max_depth,
+        skip_accessors: no_accessors,
+        // include_tests=false → walker drops test files at the walk stage
+        // so they don't show up as callees or in dead_code either.
+        exclude_tests: !include_tests,
+    };
+
+    let outcome = analyze_picked_with_progress(
+        path,
+        &discover,
+        &opts,
+        progress.as_ref(),
+        |rows| pick_root_via_stdin(rows),
+    )?;
+    progress.finish();
+
+    let Some(outcome) = outcome else {
+        eprintln!("no root selected — nothing written.");
+        return Ok(());
+    };
+
+    // Resolve output filename: explicit --name wins, else basename of path.
+    let derived_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("scan")
+        .to_string();
+    let fixture_name = name.unwrap_or(&derived_name);
+
+    write_report_with_progress(&outcome, fixture_name, out_dir, progress.as_ref())?;
+
+    print_language_summary(&outcome.language_stats);
+    eprintln!(
+        "✓ wrote {}/{}.json ({} entries, {} symbols)",
+        out_dir.display(),
+        fixture_name,
+        outcome.report.entries.len(),
+        outcome.report.summary.symbols,
+    );
+
+    // Refresh scans/index.json so the viewer picks up the new scan
+    // on its next load. Matches the post-scan tail in `make scan`.
+    let _ = drift_static_profiler::scans_index::regen(out_dir);
+
+    // Flush stderr so the final summary lands before the shell prompt
+    // returns — otherwise the indicatif draw thread can interleave.
+    let _ = std::io::stderr().flush();
+    Ok(())
+}
+
+/// Render the picker menu to stderr and read a 1-based selection from
+/// stdin. Returns the zero-based index of the chosen row, or `None`
+/// for "user quit" / "EOF" / "no rows".
+///
+/// The prompt loop accepts:
+///   - `1`..`N` → pick that row (1-based for human ergonomics)
+///   - `q` / `quit` / empty line / EOF → abort
+///   - anything else → re-prompt with an error message
+fn pick_root_via_stdin(rows: &[drift_static_profiler::PickerRoot]) -> Option<usize> {
+    use std::io::{BufRead, Write};
+    if rows.is_empty() {
+        eprintln!("no root entry points discovered (try lowering --min-reach).");
+        return None;
+    }
+
+    eprintln!();
+    eprintln!("top {} roots by reach (descending):", rows.len());
+    eprintln!();
+    for (i, r) in rows.iter().enumerate() {
+        eprintln!(
+            "  {:>2}. {:<32} reach={:<5} {}:{}",
+            i + 1,
+            r.name,
+            r.reach,
+            r.file,
+            r.line,
+        );
+        if r.callers.is_empty() {
+            eprintln!("      callers: <none — entry point>");
+        } else {
+            let summary: Vec<String> = r
+                .callers
+                .iter()
+                .take(2)
+                .map(|c| format!("{} ({}:{})", c.name, c.file, c.line))
+                .collect();
+            let extra = if r.callers.len() > 2 {
+                format!(" +{} more", r.callers.len() - 2)
+            } else {
+                String::new()
+            };
+            eprintln!("      callers: {}{}", summary.join(", "), extra);
+        }
+    }
+    eprintln!();
+
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    loop {
+        eprint!("pick 1-{} (or 'q' to quit): ", rows.len());
+        let _ = std::io::stderr().flush();
+        line.clear();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => return None, // EOF
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit") {
+            return None;
+        }
+        match trimmed.parse::<usize>() {
+            Ok(n) if (1..=rows.len()).contains(&n) => return Some(n - 1),
+            _ => eprintln!("  ! not a valid choice (expected 1-{} or 'q'); try again.", rows.len()),
+        }
+    }
 }
 
 fn run_regen_scans_index(dir: &std::path::Path) -> Result<()> {
