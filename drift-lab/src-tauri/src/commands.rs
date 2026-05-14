@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::{
     agent::{self as agent_loop, Agent, OpenAiProvider},
     agent_tools::{self, Toolset},
-    app_config::{self, AppConfig, SavedProvider},
+    app_config::{self, AppConfig, SavedProvider, ScanFilters},
     backend,
     events::{topic, BackendStatus},
     history::{self, Conversation, ConversationSummary},
@@ -558,6 +558,22 @@ pub async fn agent_chat<R: Runtime>(
 #[tauri::command]
 pub async fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     Ok(state.app_config.lock().await.clone())
+}
+
+/// Persist a new set of scan-filter preferences. The Settings UI calls this
+/// when the user toggles a switch; the static-scan runner reads from the
+/// same `AppConfig.scan_filters` at scan kick-off, so a fresh toggle takes
+/// effect on the very next scan with no extra plumbing.
+#[tauri::command]
+pub async fn update_scan_filters<R: Runtime>(
+    filters: ScanFilters,
+    state: State<'_, AppState>,
+    app: AppHandle<R>,
+) -> Result<ScanFilters, String> {
+    let mut cfg = state.app_config.lock().await;
+    cfg.scan_filters = filters;
+    app_config::save(&app, &cfg).map_err(|e| e.to_string())?;
+    Ok(cfg.scan_filters)
 }
 
 /// Probe a candidate provider config. Sends a 1-token request to verify the

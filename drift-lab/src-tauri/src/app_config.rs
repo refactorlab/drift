@@ -44,6 +44,58 @@ pub struct AppConfig {
     pub onboarding_complete: bool,
     pub active_provider_id: Option<String>,
     pub providers: Vec<SavedProvider>,
+    /// User preferences for static-scan filtering. `#[serde(default)]` so
+    /// older config files (pre-scan-filters era) load with the sane defaults
+    /// instead of erroring out, and the new filter takes effect even for
+    /// users who never visit Settings after upgrade.
+    #[serde(default)]
+    pub scan_filters: ScanFilters,
+}
+
+/// User-toggleable scan-walker filters. Mirrors the relevant subset of
+/// `drift_static_profiler::AnalyzeOptions` so the Settings UI doesn't have
+/// to know the profiler's internal types — and so the profiler crate
+/// stays free of `serde-with-defaults`-style backwards-compat baggage.
+///
+/// Add a field here when:
+///   1. The profiler has a `WalkOpts` / `AnalyzeOptions` flag that
+///      meaningfully changes which files surface in entry-point picking.
+///   2. The flag has a sensible default for the 90% case and an
+///      "I know what I'm doing" override case worth a UI toggle.
+///
+/// Don't add: dev-only knobs, experimental flags, anything the user can't
+/// reason about without reading source code.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanFilters {
+    /// Skip directories named `static` / `assets` (see
+    /// `drift_static_profiler::walker::STATIC_ASSET_DIRS`). Default true:
+    /// these dirs nearly always hold vendored minified bundles that
+    /// hijack the entry-point ranking with synthetic top callers.
+    pub exclude_static_assets: bool,
+    /// Drop test/spec/mock files at the walker stage. Default **true** —
+    /// matches the CLI's `make scan-prompt` behavior. Test bundles
+    /// (e.g. a 10MB `web/public/main.test.js` from a vite build) can
+    /// otherwise flip the linguist breakdown to favor the wrong
+    /// language and leave the picker with zero application roots.
+    /// `#[serde(default = "default_true")]` so configs written before
+    /// this field existed load with the safe (filtering-on) default
+    /// instead of the bool-default `false`.
+    #[serde(default = "default_true")]
+    pub exclude_tests: bool,
+}
+
+impl Default for ScanFilters {
+    fn default() -> Self {
+        Self {
+            exclude_static_assets: true,
+            exclude_tests: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn load<R: Runtime>(app: &AppHandle<R>) -> Result<AppConfig> {

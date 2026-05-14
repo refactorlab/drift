@@ -349,6 +349,7 @@ fn run_analyze(
             max_depth,
             skip_accessors: no_accessors,
             exclude_tests: no_tests,
+            ..AnalyzeOptions::default()
         },
     )?;
     print_language_summary(&outcome.language_stats);
@@ -388,6 +389,7 @@ fn run_scan(
             max_depth,
             skip_accessors: no_accessors,
             exclude_tests: no_tests,
+            ..AnalyzeOptions::default()
         },
         progress.as_ref(),
     )?;
@@ -510,6 +512,7 @@ fn run_analyze_root(
             max_depth,
             skip_accessors: no_accessors,
             exclude_tests: no_tests,
+            ..AnalyzeOptions::default()
         },
         progress.as_ref(),
     )?;
@@ -597,6 +600,7 @@ fn run_scan_prompt(
         // include_tests=false → walker drops test files at the walk stage
         // so they don't show up as callees or in dead_code either.
         exclude_tests: !include_tests,
+        ..AnalyzeOptions::default()
     };
 
     let outcome = analyze_picked_with_progress(

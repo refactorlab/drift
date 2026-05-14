@@ -11,6 +11,7 @@ mod history;
 mod model_config;
 pub mod model_discovery;
 mod presets;
+pub mod patch;
 pub mod scan;
 mod scan_commands;
 #[allow(dead_code)] // Trait + file-backed impl. Kept as the swap path to a future KeychainSecretStore.
@@ -272,6 +273,7 @@ pub fn run() {
             commands::get_backend_status,
             // Multi-provider (Phase 1.5).
             commands::get_app_config,
+            commands::update_scan_filters,
             commands::test_provider,
             commands::save_provider,
             commands::activate_provider,
@@ -304,6 +306,10 @@ pub fn run() {
             scan_commands::load_static_scan,
             scan_commands::list_scan_entries,
             scan_commands::start_scan_suggestions,
+            scan_commands::stop_scan_suggestions,
+            // LLM-driven single-location patch (streaming → card → apply).
+            patch::commands::start_patch,
+            patch::commands::apply_patch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

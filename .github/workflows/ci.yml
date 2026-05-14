@@ -209,11 +209,37 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: cargo-tauri-2-${{ runner.os }}-${{ runner.arch }}
+          # v3 invalidates caches that captured a wrong binary at this path.
+          # Symptom of a poisoned cache: `cargo tauri build` fails in ~1s with
+          # `error: unexpected argument 'tauri' found / Usage: rustup-init[EXE]`,
+          # because cargo dispatched to `cargo-tauri` and found rustup-init's
+          # clap parser instead of the real CLI.
+          key: cargo-tauri-3-${{ runner.os }}-${{ runner.arch }}
 
-      - name: Install cargo-tauri (on cache miss)
-        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version "^2.0" --locked
+      - name: Ensure cargo-tauri is installed and usable
+        shell: bash
+        run: |
+          # Cache hits can deliver a wrong/corrupt binary (we've seen rustup-init
+          # turn up at this path — rustup-init *does* accept --version and exits 0,
+          # so an exit-code-only check would pass falsely). Verify both that the
+          # binary runs AND that its --version output mentions "tauri". Healthy
+          # cache: ~1s. Bad cache or first run: full `cargo install` (a few minutes).
+          bin="$HOME/.cargo/bin/cargo-tauri"
+          if [ -x "$bin" ] && "$bin" --version 2>&1 | grep -qi "tauri"; then
+            echo "cargo-tauri OK: $("$bin" --version)"
+          else
+            if [ -e "$bin" ]; then
+              echo "::warning::Cached binary at $bin is not cargo-tauri (got: $("$bin" --version 2>&1 | head -1 || echo '<unrunnable>')) — replacing"
+            else
+              echo "::notice::Installing cargo-tauri (cache miss)"
+            fi
+            rm -f "$bin"
+            cargo install tauri-cli --version "^2.0" --locked
+            # Sanity-check the freshly installed binary before continuing so the
+            # actual `cargo tauri build` step never has to debug this again.
+            "$bin" --version 2>&1 | grep -qi "tauri"
+            echo "cargo-tauri installed: $("$bin" --version)"
+          fi
 
       - name: Install frontend deps
         working-directory: drift-lab/desktop-ui

@@ -348,6 +348,24 @@ export interface AppConfig {
   onboardingComplete: boolean;
   activeProviderId: string | null;
   providers: SavedProvider[];
+  /** User-toggleable scan-walker filters. The Rust side serde-defaults this
+   *  when missing from older config files; the field always exists at
+   *  runtime, but is marked optional for forward-compat across future Rust
+   *  rollbacks. */
+  scanFilters: ScanFilters;
+}
+
+export interface ScanFilters {
+  /** Skip directories named `static` / `assets` during static analysis.
+   *  Default true — these almost always hold vendored minified JS that
+   *  dominates the entry-point picker with synthetic top callers. Users
+   *  analyzing a project where these dirs hold real source can disable. */
+  excludeStaticAssets: boolean;
+  /** Drop test/spec/mock files at the walker stage. Default true — a
+   *  heavy bundled test file (e.g. a vite-built `*.test.js`) can otherwise
+   *  flip the linguist breakdown to the wrong language and starve the
+   *  entry-point picker. Mirrors `make scan-prompt`'s default behavior. */
+  excludeTests: boolean;
 }
 
 /** One local runtime detected on the user's machine via `probeLocalRuntimes`.
@@ -384,6 +402,15 @@ export async function cachedLocalRuntimes(): Promise<DiscoveredRuntime[]> {
 
 export async function getAppConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("get_app_config");
+}
+
+/** Persist a new ScanFilters block. Returns the saved value so the UI can
+ *  reconcile against the canonical Rust-side state in case any field was
+ *  normalized server-side. */
+export async function updateScanFilters(
+  filters: ScanFilters,
+): Promise<ScanFilters> {
+  return invoke<ScanFilters>("update_scan_filters", { filters });
 }
 
 export async function testProvider(config: ModelBackendConfig): Promise<void> {
@@ -607,6 +634,33 @@ export interface ScanErrorPayload {
   message: string;
 }
 
+/** Row metadata, fired *before* the LLM stream opens. The UI uses this to
+ *  render an empty suggestion row with a streaming spinner, so the user sees
+ *  the badges + file:line immediately — same UX as a ChatGPT bubble that
+ *  appears before any text. */
+export interface ScanSuggestionStartPayload {
+  scanId: string;
+  index: number;
+  source: "immediate_fix" | "refactor_candidate" | "finding_top";
+  kind: string;
+  severity: string;
+  file: string;
+  line: number;
+  name: string;
+}
+
+/** One text fragment from the provider stream. Append to the row's body —
+ *  the backend guarantees fragments are sequential and non-overlapping. */
+export interface ScanSuggestionDeltaPayload {
+  scanId: string;
+  index: number;
+  delta: string;
+}
+
+/** Final settled body for one finding. The frontend uses this both to mark
+ *  the row no-longer-streaming and to reconcile its delta accumulator (Tauri
+ *  events are best-effort — reconciliation guarantees the row ends with the
+ *  exact text the backend captured). */
 export interface ScanSuggestionPayload {
   scanId: string;
   index: number;
@@ -669,6 +723,15 @@ export async function startScanSuggestions(scanId: string): Promise<void> {
   return invoke<void>("start_scan_suggestions", { scanId });
 }
 
+/** Stop the in-flight LLM suggestion driver for `scanId`. Idempotent —
+ *  returns `false` when no session was actually live to cancel. The driver
+ *  will still emit a final `scan://suggestion-done` so the UI's run-state
+ *  flag flips through the normal event path; the caller doesn't need to
+ *  re-derive it from the boolean. */
+export async function stopScanSuggestions(scanId: string): Promise<boolean> {
+  return invoke<boolean>("stop_scan_suggestions", { scanId });
+}
+
 export async function onScanProgress(
   cb: (p: ScanProgress) => void,
 ): Promise<() => void> {
@@ -691,6 +754,18 @@ export async function onScanError(
   cb: (p: ScanErrorPayload) => void,
 ): Promise<() => void> {
   return listen<ScanErrorPayload>("scan://error", cb);
+}
+
+export async function onScanSuggestionStart(
+  cb: (p: ScanSuggestionStartPayload) => void,
+): Promise<() => void> {
+  return listen<ScanSuggestionStartPayload>("scan://suggestion-start", cb);
+}
+
+export async function onScanSuggestionDelta(
+  cb: (p: ScanSuggestionDeltaPayload) => void,
+): Promise<() => void> {
+  return listen<ScanSuggestionDeltaPayload>("scan://suggestion-delta", cb);
 }
 
 export async function onScanSuggestion(

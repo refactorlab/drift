@@ -2010,6 +2010,11 @@ button { font-family: inherit; }
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
+  /* Override <button>'s default text-align:center — without this, on wide
+   * screens the name + meta inherit center alignment and float in the
+   * middle of the 1fr slot, leaving a huge gap between the rank and the
+   * content. Left-align so each row reads as a left-anchored list item. */
+  text-align: left;
   gap: 14px;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -2017,6 +2022,18 @@ button { font-family: inherit; }
   padding: 12px 14px;
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+/* The middle slot is a <span> wrapping the name+meta divs. Without
+ * min-width:0 a long path can stretch the slot beyond its 1fr budget; the
+ * truncation below clamps file:line lines that would otherwise wrap into
+ * two visual lines and break row rhythm. */
+.scan-picker-row > span:nth-child(2) {
+  min-width: 0;
+}
+.scan-picker-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .scan-picker-row:hover {
   border-color: var(--accent);
@@ -2232,4 +2249,623 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+/* ── Streaming LLM suggestions ───────────────────────────────────────── */
+/*
+ * Per-row streaming affordances. While a row is still receiving deltas:
+ *   - the row gets a subtle accent border on the left (visual "live" anchor)
+ *   - a small spinner sits in the meta header (right side, after badges)
+ *   - a blinking caret (▍) sits at the tail of the body, like a terminal
+ *     cursor in a streaming-shell — the universal "the model is typing" cue
+ *
+ * Why a blinking caret instead of a moving progress bar: when bodies are
+ * tens-of-tokens short, a bar can finish flashing before the user notices.
+ * A caret next to the actual growing text is the cheapest, clearest signal
+ * that "more text is on the way" — same affordance ChatGPT uses.
+ */
+.scan-suggestion-row.is-streaming {
+  border-left: 2px solid var(--accent);
+  padding-left: 14px;
+}
+.scan-suggestion-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  background: var(--accent);
+  animation: scan-caret-blink 1.05s steps(2, start) infinite;
+}
+@keyframes scan-caret-blink {
+  to { visibility: hidden; }
+}
+
+/* ─── Patch card (LLM suggested fix) ──────────────────────────────── */
+.patch-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+.patch-panel__prompt { display: grid; grid-template-columns: 1fr auto;
+                       grid-template-areas: "anchor anchor" "input button";
+                       gap: 0.4rem; }
+.patch-panel__prompt code { grid-area: anchor; font-size: 0.8rem; }
+.patch-panel__prompt textarea { grid-area: input; font-family: var(--mono, ui-monospace, Menlo, monospace);
+                                padding: 0.45rem; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; }
+.patch-panel__prompt button { grid-area: button; align-self: stretch; padding: 0 0.9rem;
+                              border: 0; border-radius: 6px; background: #2563eb; color: #fff;
+                              cursor: pointer; font-weight: 600; }
+.patch-panel__prompt button:disabled { background: #9ca3af; cursor: not-allowed; }
+.patch-panel__error, .patch-panel__err { color: #b91c1c; }
+.patch-panel__ok { color: #16a34a; }
+
+.patch-card { border: 1px solid var(--border, #e5e7eb); border-radius: 10px;
+              background: var(--surface, #fff); overflow: hidden; }
+.patch-card__head { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem 1rem;
+                    padding: 0.9rem 1rem; border-bottom: 1px solid var(--border, #e5e7eb);
+                    background: #f9fafb; }
+.patch-card__title { display: flex; align-items: center; gap: 0.5rem; grid-column: 1; }
+.patch-card__title h2 { font-size: 1rem; margin: 0; font-weight: 600; }
+.patch-card__meta { grid-column: 1; font-size: 0.85rem; }
+.patch-card__impact { grid-column: 2; grid-row: 1 / span 2; text-align: right; }
+.patch-card__impact-value { font-size: 1.1rem; font-weight: 600; color: #d62828; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot--critical { background: #d62828; }
+.dot--high     { background: #ef6c00; }
+.dot--medium   { background: #f4b400; }
+.dot--low      { background: #6aa84f; }
+
+.badge { font-size: 0.7rem; font-weight: 700; padding: 2px 6px;
+         border-radius: 4px; letter-spacing: 0.04em; }
+.badge--critical { background: #fde2e2; color: #b91c1c; }
+.badge--high     { background: #fef3c7; color: #b45309; }
+.badge--medium   { background: #fef9c3; color: #854d0e; }
+.badge--low      { background: #dcfce7; color: #166534; }
+
+.patch-card__section { padding: 0.9rem 1rem; border-bottom: 1px solid var(--border, #e5e7eb); }
+.patch-card__section:last-of-type { border-bottom: 0; }
+.patch-card__section h3 { font-size: 0.7rem; letter-spacing: 0.08em;
+                          color: #6b7280; margin: 0 0 0.4rem; font-weight: 700; }
+.patch-card__section-head { display: flex; align-items: baseline; gap: 0.6rem;
+                            margin-bottom: 0.4rem; }
+.patch-card__section-head h3 { margin: 0; }
+.patch-card__diffstat { margin-left: auto; font-family: var(--mono, ui-monospace, Menlo, monospace); }
+.patch-card__problem { margin: 0; color: #374151; line-height: 1.5; }
+.muted { color: #6b7280; font-size: 0.8rem; }
+
+.patch-card__footer { display: flex; gap: 0.6rem; padding: 0.8rem 1rem;
+                      background: #f0fdf4; border-top: 1px solid var(--border, #e5e7eb); }
+.patch-card__bolt { width: 24px; height: 24px; display: inline-flex;
+                    align-items: center; justify-content: center;
+                    background: #fb923c; border-radius: 6px; color: #fff; font-size: 14px; }
+
+.patch-card__actions { padding: 0.8rem 1rem; display: flex; justify-content: flex-end; }
+.btn--primary { background: #2563eb; color: white; border: 0; border-radius: 6px;
+                padding: 0.45rem 0.9rem; font-weight: 600; cursor: pointer; }
+.btn--primary:disabled { background: #9ca3af; cursor: not-allowed; }
+
+.code-lines { font-family: var(--mono, ui-monospace, Menlo, monospace);
+              font-size: 13px; line-height: 1.5; padding: 0.4rem 0;
+              overflow-x: auto; border-radius: 6px; border: 1px solid var(--border, #e5e7eb); }
+.code-line { display: grid; grid-template-columns: 3.2em 1fr; padding: 0 0.5em; }
+.code-line__num { color: #9aa0a6; text-align: right; padding-right: 1em; user-select: none; }
+.code-line__text { white-space: pre; }
+.code-line--remove { background: rgba(255, 87, 87, 0.10); }
+.code-line--remove .code-line__num { color: #d05656; }
+.code-line--add    { background: rgba(46, 160, 67, 0.12); }
+.code-line--add    .code-line__num { color: #2a8c43; }
+
+.skeleton { display: inline-block; width: 60%; height: 1em;
+            background: linear-gradient(90deg, #f3f4f6 0, #e5e7eb 50%, #f3f4f6 100%);
+            background-size: 200% 100%; animation: patch-shimmer 1.2s infinite;
+            border-radius: 4px; vertical-align: middle; }
+.skeleton--block { display: block; width: 100%; height: 4em; }
+@keyframes patch-shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+
+/* ── Entry-picker search ─────────────────────────────────────────────── */
+/*
+ * The static-scan picker now ships ALL entry candidates (up to 200) and
+ * filters client-side. The search box sits between the heading and the list
+ * — discoverable without dominating the visual hierarchy. Status line below
+ * tells the user "showing X of Y", so the default top-10 view doesn't feel
+ * like the only option.
+ *
+ * Visual register: matches the rest of the scan card — soft border, accent
+ * focus ring, monospace tabular numbers for the count. No drop shadow on
+ * focus (we're inside an already-elevated card; a second elevation would
+ * read as noisy).
+ */
+/* The wrapper is the focusable visual frame; the bare <input> inside is
+ * transparent and borderless so the leading magnifier icon and trailing
+ * "/" kbd hint / clear button sit flush within one rounded pill. Using
+ * :focus-within instead of styling the input directly keeps the icon and
+ * kbd from looking detached when the user clicks the input. */
+.scan-picker-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 6px 0 10px;
+  padding: 0 10px 0 12px;
+  border-radius: 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+.scan-picker-search-wrap:focus-within {
+  border-color: var(--accent);
+  background: var(--bg-card);
+  box-shadow: 0 0 0 3px rgba(255, 107, 61, 0.12);
+}
+.scan-picker-search-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.scan-picker-search-wrap:focus-within .scan-picker-search-icon {
+  color: var(--accent);
+}
+.scan-picker-search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 0;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.scan-picker-search::placeholder {
+  color: var(--text-faint);
+}
+/* Strip the browser's default ✕ on type="search" — we provide our own. */
+.scan-picker-search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+/* "/" hint pill — discoverable global-focus shortcut, fades when typing. */
+.scan-picker-search-kbd {
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  line-height: 1;
+}
+.scan-picker-search-wrap:focus-within .scan-picker-search-kbd {
+  opacity: 0;
+}
+.scan-picker-search-clear {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.scan-picker-search-clear:hover {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+
+.scan-picker-status {
+  margin: 0 2px 10px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Settings · scan filter toggles ──────────────────────────────────── */
+/*
+ * One row per filter — checkbox at left, label + hint at right. Big touch
+ * target (entire row), clear hierarchy: bold label, muted hint underneath.
+ * Hint is wide enough to render an example code-tag without wrapping mid-
+ * word. Don't apply spacing rules from `.provider-row` here — those are
+ * tuned for two affordances per row (label + action button), which this
+ * pattern doesn't have.
+ */
+.filter-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+.filter-toggle input[type="checkbox"] {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.filter-toggle input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.filter-toggle-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.filter-toggle-label {
+  font-weight: 500;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.filter-toggle-hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.filter-toggle-hint code {
+  background: var(--bg-soft);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+
+/* ── LLM suggestion · GitHub-PR diff view ────────────────────────────── */
+/*
+ * The model now emits unified diffs (red removed lines, green added lines)
+ * for code suggestions. Two surfaces live inside a suggestion row:
+ *
+ *   1. `.scan-suggestion-rationale` — the `Why:` sentence, sits above the
+ *      diff. Plain text, slightly muted, no monospace — it's prose, not
+ *      code.
+ *
+ *   2. `.diff-view` — the parsed diff. Each line is a flex row with a
+ *      18px-wide "prefix gutter" (the +/- glyph) and a content column.
+ *      Whole-row tinting + a colored gutter follows the GitHub diff
+ *      pattern: at a glance the user reads green vs red as add vs remove,
+ *      and the gutter glyph confirms it without relying on color alone
+ *      (accessible to red/green colorblind users).
+ *
+ * Streaming caret:
+ *   - In prose mode (before the ```diff fence), the caret blinks at the
+ *     tail of `.scan-suggestion-prose`, exactly where the model is typing.
+ *   - In diff mode, the caret moves to its own row at the bottom of
+ *     `.diff-view`, so the last visible diff line doesn't twitch in width.
+ */
+.scan-suggestion-prose {
+  white-space: pre-wrap;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg-soft);
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.scan-suggestion-rationale {
+  /* Prose lives in the "system font" register, not monospace — separates
+   * the explanation visually from the code below. */
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+  padding: 4px 2px 10px;
+}
+
+.diff-view {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.diff-row {
+  display: flex;
+  align-items: stretch;
+  /* Long lines scroll horizontally per-row; we don't wrap because that
+   * breaks the column alignment GitHub-style diffs depend on. */
+  white-space: nowrap;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+.diff-row:last-child {
+  border-bottom: none;
+}
+.diff-prefix {
+  flex: 0 0 28px;
+  text-align: center;
+  user-select: none;
+  font-weight: 700;
+  padding: 1px 0;
+  color: var(--text-faint);
+  background: rgba(0, 0, 0, 0.025);
+  border-right: 1px solid var(--border);
+}
+.diff-content {
+  flex: 1 1 auto;
+  padding: 1px 12px;
+  /* Preserve interior whitespace exactly — indentation MUST survive so the
+   * diff is a true patch the user could paste. */
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+}
+/* Removed lines — soft red, strong red glyph + slight background tint.
+ * Color values picked to match GitHub-light theme so users have an
+ * existing mental model and so the contrast clears WCAG AA on our
+ * #fafaf7 surface. */
+.diff-row-remove {
+  background: rgba(248, 81, 73, 0.08);
+}
+.diff-row-remove .diff-prefix {
+  background: rgba(248, 81, 73, 0.18);
+  color: #b32424;
+}
+.diff-row-remove .diff-content {
+  color: #6e1414;
+}
+/* Added lines — same family in green. */
+.diff-row-add {
+  background: rgba(46, 160, 67, 0.10);
+}
+.diff-row-add .diff-prefix {
+  background: rgba(46, 160, 67, 0.22);
+  color: #1a7f37;
+}
+.diff-row-add .diff-content {
+  color: #0f5d23;
+}
+/* Context lines — neutral, slightly muted text so eye drops onto the
+ * colored changes first. */
+.diff-row-context .diff-content {
+  color: var(--text-dim);
+}
+/* Hunk header (`@@ -34,7 +34,9 @@`) — a thin info bar; no gutter so the
+ * line numbers sit flush. */
+.diff-row-hunk {
+  background: rgba(99, 102, 241, 0.06);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+}
+.diff-row-hunk .diff-content {
+  padding: 4px 12px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-style: italic;
+}
+.diff-row-meta {
+  background: rgba(0, 0, 0, 0.03);
+}
+.diff-row-meta .diff-content {
+  padding: 2px 12px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+/* The streaming row at the bottom — caret only, transparent background so
+ * it doesn't read as another diff line. */
+.diff-row-streaming {
+  background: transparent;
+  border-bottom: none;
+}
+.diff-row-streaming .diff-prefix {
+  background: transparent;
+  border-right: none;
+}
+
+/* ── Scan report · loading + stop button + page entrance ─────────────── */
+/*
+ * Three modern affordances tied together by the same warm Drift Lab palette:
+ *
+ *   .scan-report-loading        — centered orb + caption shown while the
+ *                                 saved JSON is being fetched. The orb's
+ *                                 existing pulse animation does the heavy
+ *                                 visual lifting; the captions fade in so
+ *                                 the screen doesn't pop into view.
+ *
+ *   .scan-report-body           — the post-load content. Animates from
+ *                                 opacity 0 + translateY(8px) to its
+ *                                 settled position over 280ms (eased). The
+ *                                 result is "content rises into place" —
+ *                                 the standard subtle page-transition many
+ *                                 modern apps use after a fetch.
+ *
+ *   .scan-stop-btn              — replaces the Generate button while the
+ *                                 LLM is mid-stream. Red-tinged outline
+ *                                 (not a solid red — Stop is reversible,
+ *                                 not destructive) with a square "stop"
+ *                                 glyph rendered via ::before so the
+ *                                 component stays icon-library-free.
+ *
+ * Animations keep timings tight (<=300ms) per modern UI best practice —
+ * long enough to read as intentional, short enough that a returning user
+ * doesn't feel held back. Reduced-motion users get the result instantly.
+ */
+.scan-report-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 60px 20px 80px;
+  text-align: center;
+  animation: scan-fade-in 320ms ease-out both;
+}
+.scan-report-loading-label {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  margin-top: 6px;
+}
+.scan-report-loading-sub {
+  font-size: 12.5px;
+  max-width: 380px;
+  line-height: 1.5;
+}
+
+/* Post-load content rises into place. The 'both' fill mode pins the
+ * starting opacity so there's never a flash-of-content before the
+ * animation kicks in. */
+.scan-report-body {
+  animation: scan-rise-in 280ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes scan-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scan-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-report-loading,
+  .scan-report-body {
+    animation: none;
+  }
+}
+
+/* Stop button — outlined red, lives in the same row as the start button
+ * but visually distinct so a user mid-stream can find it without scanning.
+ * The little square is the "stop" glyph; spinner replaces it while we're
+ * waiting for the cancel round-trip to complete. */
+.scan-stop-btn {
+  padding: 12px 22px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  color: #c02525;
+  border: 1px solid rgba(192, 37, 37, 0.35);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+.scan-stop-btn:hover:not(:disabled) {
+  background: rgba(192, 37, 37, 0.06);
+  border-color: rgba(192, 37, 37, 0.55);
+  transform: translateY(-1px);
+}
+.scan-stop-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.scan-stop-btn-icon {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+  border-radius: 2px;
+}
+
+/* ── Entry-picker · responsive scroll + filter feedback ──────────────── */
+/*
+ * Two things this block solves:
+ *
+ *   1. **Responsive scroll.** Before this rule, the picker list grew
+ *      unbounded. On narrow / short windows the page itself scrolled,
+ *      pushing the search bar off the top of the viewport — exactly when
+ *      the user needed it most. Now the list IS the scroll container, with
+ *      a viewport-relative `max-height` so it adapts as the user resizes
+ *      the window. Search bar and status stay anchored.
+ *
+ *   2. **Filter feedback.** Client-side filtering is instant — there's
+ *      nothing to "load". But the user needs to *see* that their typing
+ *      did something, otherwise the screen feels frozen. Three signals:
+ *        - input border pulses to accent on focus and tints on each
+ *          keystroke (the `:focus` and the keyed remount of the list
+ *          combine to give a sub-second "yes, the filter ran" cue),
+ *        - the list fades-and-rises in on every query change (the parent
+ *          re-keys on `query` so React remounts, replaying this animation),
+ *        - matched substrings inside the name + file get a `<mark>` tint
+ *          so it's obvious which letters made the row qualify.
+ *
+ * Reduced-motion users get instant transitions instead of the keyframe.
+ */
+.scan-picker-list {
+  display: grid;
+  gap: 10px;
+  /* Viewport-relative cap. 320px reserves room for the orb / phase label
+   * / picker heading + search + status above. Tested at 600px tall
+   * windows — the list still has ~280px of scrollable area. */
+  max-height: calc(100vh - 320px);
+  /* Hard floor so very short windows still show ~3 rows before scrolling
+   * kicks in (rows are ~64px tall). */
+  min-height: 200px;
+  overflow-y: auto;
+  /* Reserve gutter space for the scrollbar so toggling between scrollable
+   * and not doesn't shift content horizontally. */
+  padding-right: 6px;
+  /* Replay the rise-in on every query change (parent uses `key={query}`). */
+  animation: scan-picker-list-rise 220ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes scan-picker-list-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Subtle warm-toned scrollbar that matches the off-white surfaces.
+ * WebKit-only — Firefox uses the OS default, which is fine. */
+.scan-picker-list::-webkit-scrollbar {
+  width: 8px;
+}
+.scan-picker-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scan-picker-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+}
+.scan-picker-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* Match-highlight tint inside name + file. Reuses the accent-soft token
+ * so it sits visually inside the existing palette and doesn't introduce
+ * a fifth distinct color. */
+.picker-match {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0 2px;
+  /* `mark` defaults to yellow + black on most browsers — override both. */
+  font-weight: 700;
+}
+
+/* Tighter input feedback. When the user types, the input keeps the
+ * accent border (already there via `:focus`) but additionally pulses
+ * its box-shadow briefly. Pure CSS — no React state needed. */
+.scan-picker-search:focus {
+  box-shadow: 0 0 0 3px rgba(255, 107, 61, 0.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-picker-list {
+    animation: none;
+  }
 }

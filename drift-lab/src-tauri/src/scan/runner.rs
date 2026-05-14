@@ -19,6 +19,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -28,15 +29,30 @@ use drift_static_profiler::{
 };
 use tauri::{AppHandle, Emitter, Runtime};
 
+use crate::app_config::ScanFilters;
+
 use super::progress_sink::TauriProgressSink;
 use super::storage;
 use super::types::{
     topic, ScanComplete, ScanEntriesReady, ScanError, ScanPickerCaller, ScanPickerRoot,
 };
 
-/// Maximum number of root entries we surface in the picker. The user
-/// specified "top 10".
-const PICKER_LIMIT: usize = 10;
+/// Maximum number of root entries we surface in the picker.
+///
+/// The UI shows the top 10 by reach by default and supports inline
+/// filtering over the full pool — so the backend's job is to deliver
+/// "everything the user could plausibly want to search through", not
+/// just the visible default slice. 200 is a generous ceiling:
+///   - The static analyzer ranks by reach, so the first 200 are the
+///     genuinely-relevant entry candidates on any realistic project.
+///   - Serialized payload stays well under 50 kB for 200 rows × ~250 B,
+///     trivial over Tauri's IPC.
+///   - Pathological codebases with tens of thousands of entry candidates
+///     don't waste IPC bandwidth or render a useless 10k-row dropdown.
+///
+/// If a project routinely needs more than 200, the right fix is a
+/// server-side fetch-on-search endpoint, not raising this constant.
+const PICKER_LIMIT: usize = 200;
 
 /// Per-scan handshake state. Holds the channel the analysis closure parks
 /// on while the user picks an entry from the UI. One slot per in-flight
@@ -86,6 +102,7 @@ pub fn start_scan<R: Runtime>(
     app: AppHandle<R>,
     scan_id: String,
     project_path: PathBuf,
+    filters: ScanFilters,
     registry: Arc<PickerRegistry>,
 ) {
     let app_for_task = app.clone();
@@ -93,7 +110,14 @@ pub fn start_scan<R: Runtime>(
     let pick_rx = registry.install(scan_id.clone());
 
     tauri::async_runtime::spawn_blocking(move || {
-        run_blocking(app_for_task, scan_id_for_task, project_path, pick_rx, registry);
+        run_blocking(
+            app_for_task,
+            scan_id_for_task,
+            project_path,
+            filters,
+            pick_rx,
+            registry,
+        );
     });
 }
 
@@ -101,6 +125,7 @@ fn run_blocking<R: Runtime>(
     app: AppHandle<R>,
     scan_id: String,
     project_path: PathBuf,
+    filters: ScanFilters,
     pick_rx: std::sync::mpsc::Receiver<Option<usize>>,
     registry: Arc<PickerRegistry>,
 ) {
@@ -109,14 +134,36 @@ fn run_blocking<R: Runtime>(
         max_roots: PICKER_LIMIT,
         ..DiscoverOpts::default()
     };
-    let opts = AnalyzeOptions::default();
+    // Translate user-facing scan filters into the profiler's AnalyzeOptions.
+    // Single point of mapping — if a new ScanFilters field is added, it gets
+    // a corresponding override here. Everything else inherits `default()`.
+    //
+    // exclude_tests is forwarded because a heavyweight test bundle (e.g. a
+    // 10MB vite-built `*.test.js`) can otherwise flip the dominant-language
+    // pick away from the application's real source files — the picker then
+    // returns zero candidate roots and the UI bottoms out on a generic
+    // "no entry selected" error with no actionable signal.
+    let opts = AnalyzeOptions {
+        exclude_static_assets: filters.exclude_static_assets,
+        exclude_tests: filters.exclude_tests,
+        ..AnalyzeOptions::default()
+    };
 
     // `pick_callback` runs synchronously on the blocking task. It emits the
     // picker rows then blocks on the registry channel until the UI sends
     // through `select_entry_and_scan(scan_id, index)`.
+    //
+    // `picker_invoked` lets the outer match disambiguate `Ok(None)` after
+    // the call: if it was set, the closure ran and the user picked nothing
+    // (cancel); if it stayed false, discovery yielded zero roots and the
+    // closure was never called. Two very different failure modes that the
+    // old error message conflated — the UI now gets a real reason.
     let app_for_picker = app.clone();
     let scan_id_for_picker = scan_id.clone();
+    let picker_invoked = Arc::new(AtomicBool::new(false));
+    let picker_invoked_for_callback = Arc::clone(&picker_invoked);
     let pick_callback = move |roots: &[drift_static_profiler::PickerRoot]| -> Option<usize> {
+        picker_invoked_for_callback.store(true, Ordering::SeqCst);
         let payload = ScanEntriesReady {
             scan_id: scan_id_for_picker.clone(),
             roots: roots.iter().enumerate().map(decorate).collect(),
@@ -145,14 +192,20 @@ fn run_blocking<R: Runtime>(
     match result {
         Ok(Some(outcome)) => finalize(app, scan_id, outcome),
         Ok(None) => {
-            // User cancelled or no roots discovered. Emit a friendly error
-            // so the UI can reset its picker state.
+            let message = if picker_invoked.load(Ordering::SeqCst) {
+                // Closure ran → user closed the picker without selecting.
+                "scan cancelled — no entry selected".to_string()
+            } else {
+                // Closure never ran → discovery returned an empty roots
+                // list. Surface a real, actionable diagnostic instead of
+                // the old catch-all.
+                no_roots_diagnostic(&project_path, &filters)
+            };
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
                     scan_id,
-                    message: "scan cancelled — no entry selected or no roots discovered"
-                        .into(),
+                    message,
                 },
             );
         }
@@ -166,6 +219,41 @@ fn run_blocking<R: Runtime>(
             );
         }
     }
+}
+
+/// Build a real "why did discovery return zero?" message that the UI can
+/// surface to the user. The desktop fail-fast philosophy: if we hit this
+/// branch, name the concrete reason and point at the lever to flip,
+/// not "no entry selected or no roots discovered" (which is what triggered
+/// this whole investigation).
+///
+/// We list the currently-applied walker filters so the user sees which
+/// ones might be over-eagerly hiding their code, and we point them at
+/// the CLI debug companion (`make scan-prompt-entries`) for the
+/// authoritative same-filters list.
+fn no_roots_diagnostic(project_path: &std::path::Path, filters: &ScanFilters) -> String {
+    let mut applied = Vec::new();
+    if filters.exclude_static_assets {
+        applied.push("static/assets dirs");
+    }
+    if filters.exclude_tests {
+        applied.push("test/spec/mock files");
+    }
+    let filters_line = if applied.is_empty() {
+        "no walker filters currently applied".to_string()
+    } else {
+        format!("currently filtering: {}", applied.join(", "))
+    };
+    format!(
+        "no entry roots discovered in {}.\n\n{filters_line}.\n\n\
+         next steps:\n\
+         • run `make scan-prompt-entries {}` to print the full discovery list \
+         under the same filters\n\
+         • try Settings → Scanning to toggle filters off if your project \
+         really keeps source under static/assets/ or tests/",
+        project_path.display(),
+        project_path.display(),
+    )
 }
 
 fn finalize<R: Runtime>(app: AppHandle<R>, scan_id: String, outcome: AnalyzeOutcome) {
