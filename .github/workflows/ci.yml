@@ -216,14 +216,44 @@ jobs:
           # clap parser instead of the real CLI.
           key: cargo-tauri-3-${{ runner.os }}-${{ runner.arch }}
 
-      - name: Ensure cargo-tauri is installed and usable
+      - name: Ensure rust toolchain and cargo-tauri are usable
         shell: bash
         run: |
-          # Cache hits can deliver a wrong/corrupt binary (we've seen rustup-init
-          # turn up at this path — rustup-init *does* accept --version and exits 0,
-          # so an exit-code-only check would pass falsely). Verify both that the
-          # binary runs AND that its --version output mentions "tauri". Healthy
-          # cache: ~1s. Bad cache or first run: full `cargo install` (a few minutes).
+          # ── Diagnose what's actually on PATH ───────────────────────────
+          # Print this unconditionally so any future failure has the runner
+          # state in the log without needing a re-run.
+          echo "PATH=$PATH"
+          echo "which cargo: $(command -v cargo || echo '<none>')"
+          echo "which rustc: $(command -v rustc || echo '<none>')"
+          echo "~/.cargo/bin contents:"
+          ls -la "$HOME/.cargo/bin/" 2>/dev/null || echo "  <missing>"
+
+          # ── Repair cargo if it's not actually cargo ────────────────────
+          # We've seen runner images where ~/.cargo/bin/cargo (and other proxies)
+          # are hardlinks to rustup-init instead of the rustup multi-call binary.
+          # Symptom: any `cargo <subcommand>` fails with rustup-init's clap parser
+          # ("unexpected argument 'install'", "unexpected argument 'tauri'", etc.).
+          # rustup-init *does* accept --version and exits 0, so detect by checking
+          # the output contains "cargo" (real cargo prints "cargo X.Y.Z (...)").
+          if ! command -v cargo >/dev/null || ! cargo --version 2>&1 | grep -qi "^cargo "; then
+            echo "::warning::cargo on PATH is broken or missing (got: $(cargo --version 2>&1 | head -1 || echo '<unrunnable>')) — reinstalling rust"
+            # Wipe the poisoned bin dir entirely; rustup-init recreates the proxies.
+            rm -rf "$HOME/.cargo/bin"
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path
+            # shellcheck disable=SC1091
+            source "$HOME/.cargo/env"
+            # Persist the repair into subsequent steps' PATH. Prepending (not
+            # appending) so we beat any other cargo elsewhere on the runner.
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            echo "Repaired cargo: $(cargo --version)"
+          fi
+
+          # ── Ensure cargo-tauri itself is real ──────────────────────────
+          # Same identity check applied to ~/.cargo/bin/cargo-tauri. A wipe of
+          # ~/.cargo/bin above also removes any prior cargo-tauri, so the
+          # install branch below covers both fresh-repair and ordinary
+          # cache-miss paths.
           bin="$HOME/.cargo/bin/cargo-tauri"
           if [ -x "$bin" ] && "$bin" --version 2>&1 | grep -qi "tauri"; then
             echo "cargo-tauri OK: $("$bin" --version)"
@@ -235,8 +265,6 @@ jobs:
             fi
             rm -f "$bin"
             cargo install tauri-cli --version "^2.0" --locked
-            # Sanity-check the freshly installed binary before continuing so the
-            # actual `cargo tauri build` step never has to debug this again.
             "$bin" --version 2>&1 | grep -qi "tauri"
             echo "cargo-tauri installed: $("$bin" --version)"
           fi
