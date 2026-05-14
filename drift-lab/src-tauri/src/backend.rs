@@ -41,5 +41,14 @@ pub async fn resolve<R: Runtime>(
                 .completions_api();
             Ok(ResolvedBackend { client, model })
         }
+        ModelBackend::Anthropic { .. } => {
+            // The legacy rig-based chat path only speaks OpenAI-compat HTTP.
+            // For Anthropic configs the agent loop (which has a native
+            // `ClaudeProvider`) is the only supported chat surface.
+            anyhow::bail!(
+                "Anthropic provider is not supported on the legacy chat path; \
+                 use the agent loop (agent_chat / scan / patch commands) instead"
+            )
+        }
     }
 }

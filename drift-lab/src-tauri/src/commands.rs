@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    agent::{self as agent_loop, Agent, OpenAiProvider, TokenLimitParam},
+    agent::{self as agent_loop, Agent, TokenLimitParam},
     agent_tools::{self, Toolset},
     app_config::{self, AppConfig, SavedProvider, ScanFilters},
     backend,
@@ -85,6 +85,7 @@ fn idle_status(config: &ModelBackend) -> BackendStatus {
 fn describe(config: &ModelBackend) -> (String, String) {
     match config {
         ModelBackend::Api { model, .. } => ("api".to_string(), model.clone()),
+        ModelBackend::Anthropic { model, .. } => ("anthropic".to_string(), model.clone()),
     }
 }
 
@@ -412,13 +413,6 @@ pub async fn start_agent_run<R: Runtime>(
         .await
         .clone()
         .ok_or_else(|| "backend not configured".to_string())?;
-    let (base_url, api_key, model) = match config {
-        ModelBackend::Api {
-            base_url,
-            api_key,
-            model,
-        } => (base_url, api_key, model),
-    };
 
     let mode = match mode.as_deref() {
         Some("default") => crate::agent::tools::Mode::Default,
@@ -447,7 +441,7 @@ pub async fn start_agent_run<R: Runtime>(
     let app_for_task = app.clone();
     let run_id_for_task = run_id.clone();
     tauri::async_runtime::spawn(async move {
-        let provider = std::sync::Arc::new(OpenAiProvider::new(base_url, api_key, model));
+        let provider = crate::agent::make_provider(config);
         let sink = TauriWorkflowSink {
             app: app_for_task.clone(),
         };
@@ -489,23 +483,17 @@ pub async fn agent_chat<R: Runtime>(
 
     ensure_resolved(&app, &state).await?;
 
-    // Pull the active provider config so we can stand up our own
-    // `OpenAiProvider`. All runtimes (cloud or local) speak OpenAI-compat HTTP.
+    // Pull the active provider config and stand up the matching provider
+    // (OpenAI-compat for cloud OpenAI / local runtimes; Anthropic for
+    // Claude). The factory keeps both paths in lockstep.
     let config = state
         .config
         .lock()
         .await
         .clone()
         .ok_or_else(|| "backend not configured".to_string())?;
-    let (base_url, api_key, model) = match config {
-        ModelBackend::Api {
-            base_url,
-            api_key,
-            model,
-        } => (base_url, api_key, model),
-    };
 
-    let provider = std::sync::Arc::new(OpenAiProvider::new(base_url, api_key, model));
+    let provider = crate::agent::make_provider(config);
     let mode = match mode.as_deref() {
         Some("auto") => agent_loop::Mode::Auto,
         Some("read_only") => agent_loop::Mode::ReadOnly,
@@ -577,7 +565,9 @@ pub async fn update_scan_filters<R: Runtime>(
 }
 
 /// Probe a candidate provider config. Sends a 1-token request to verify the
-/// URL + key + model triple speaks OpenAI-compat HTTP.
+/// URL + key + model triple speaks the expected protocol. Each provider has
+/// its own quirks — auth header, token-limit field, body shape — so they
+/// can't share a single probe.
 #[tauri::command]
 pub async fn test_provider(config: ModelBackend) -> Result<(), String> {
     match &config {
@@ -595,6 +585,33 @@ pub async fn test_provider(config: ModelBackend) -> Result<(), String> {
             let resp = reqwest::Client::new()
                 .post(&url)
                 .bearer_auth(api_key)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("network: {e}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("HTTP {status}: {body}"));
+            }
+            Ok(())
+        }
+        ModelBackend::Anthropic {
+            base_url,
+            api_key,
+            model,
+        } => {
+            let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+            let body = serde_json::json!({
+                "model": model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "ping"}],
+            });
+            let resp = reqwest::Client::new()
+                .post(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", crate::agent::anthropic::ANTHROPIC_VERSION)
+                .header("content-type", "application/json")
                 .json(&body)
                 .send()
                 .await

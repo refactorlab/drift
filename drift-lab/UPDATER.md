@@ -48,6 +48,26 @@ you'd have to ship a new app identifier and ask users to reinstall.
 
 ## One-time bootstrap (do this once per app)
 
+### The shortcut: one command does everything
+
+If you have `gh` (GitHub CLI) installed and authenticated (`brew install gh && gh auth login`),
+the entire bootstrap is:
+
+```bash
+bash drift-lab/scripts/bootstrap-updater.sh
+```
+
+The script generates the keypair (if not present), patches `tauri.conf.json` with the
+public key, and uploads both GitHub Actions secrets via `gh secret set` — so you never
+touch the GitHub settings UI. It's safe to re-run; every step is idempotent.
+
+After it finishes, just `git add … && git commit && git push`, then tag a release.
+
+The manual breakdown below is for anyone who wants to understand what the script does,
+or who can't install `gh` for some reason.
+
+---
+
 ### 1. Generate a minisign keypair
 
 From the repo root, run:

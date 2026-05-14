@@ -14,7 +14,6 @@ use tauri::{ipc::Channel, AppHandle, Runtime, State};
 
 use crate::agent::provider::Provider;
 use crate::agent::types::{Message, MessageContent, Role};
-use crate::agent::OpenAiProvider;
 use crate::model_config::ModelBackend;
 use crate::patch::types::{ApplyArgs, ApplyItem, ApplyResult, PatchEvent};
 use crate::state::AppState;
@@ -150,12 +149,7 @@ fn build_user_prompt(
 }
 
 fn build_provider(config: ModelBackend) -> anyhow::Result<Arc<dyn Provider>> {
-    let ModelBackend::Api {
-        base_url,
-        api_key,
-        model,
-    } = config;
-    Ok(Arc::new(OpenAiProvider::new(base_url, api_key, model)))
+    Ok(crate::agent::make_provider(config))
 }
 
 #[tauri::command]

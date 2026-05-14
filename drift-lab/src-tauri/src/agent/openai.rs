@@ -106,10 +106,20 @@ fn extract_context_numbers(body: &str) -> (Option<u64>, Option<u64>) {
     (prompt, ctx)
 }
 
+/// Default streaming budget. Sized to cover reasoning models like GPT-5 / o1
+/// / o3, which charge their internal reasoning against the same budget as
+/// visible output — leaving it unset makes the server pick its own (often
+/// tiny) default and the model errors out mid-stream with:
+///   `Could not finish the message because max_tokens or model output limit
+///    was reached. Please try again with higher max_tokens.`
+/// 16K leaves headroom for both reasoning and a substantial answer.
+pub const DEFAULT_MAX_TOKENS: u32 = 16000;
+
 pub struct OpenAiProvider {
     base_url: String,
     api_key: String,
     model: String,
+    max_tokens: u32,
     http: reqwest::Client,
 }
 
@@ -119,8 +129,14 @@ impl OpenAiProvider {
             base_url: base_url.into(),
             api_key: api_key.into(),
             model: model.into(),
+            max_tokens: DEFAULT_MAX_TOKENS,
             http: reqwest::Client::new(),
         }
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
     }
 
     fn build_request_body(
@@ -157,6 +173,11 @@ impl OpenAiProvider {
             "stream": true,
             "stream_options": {"include_usage": true},
         });
+        // Pick `max_tokens` vs `max_completion_tokens` per the reasoning-model
+        // policy in [`TokenLimitParam`] — sending the wrong field 400s on
+        // GPT-5 / o-series, sending nothing yields a tiny server default and
+        // the model truncates mid-thought.
+        TokenLimitParam::for_model(&self.model).apply(&mut body, self.max_tokens);
         if !wire_tools.is_empty() {
             body["tools"] = serde_json::Value::Array(wire_tools);
         }
@@ -562,6 +583,52 @@ mod tests {
             TokenLimitParam::for_model("  o1-pro  "),
             TokenLimitParam::MaxCompletionTokens,
         );
+    }
+
+    #[test]
+    fn streaming_body_includes_max_tokens_for_classic_models() {
+        let p = OpenAiProvider::new("https://api.openai.com/v1", "sk", "gpt-4o");
+        let body = p.build_request_body("", &[Message::user("hi")], &[]);
+        assert_eq!(body["stream"], true);
+        assert_eq!(
+            body["max_tokens"].as_u64(),
+            Some(DEFAULT_MAX_TOKENS as u64),
+            "classic GPT models must receive max_tokens in the streaming body",
+        );
+        assert!(
+            body.get("max_completion_tokens").is_none(),
+            "must not send max_completion_tokens to classic models — it 400s",
+        );
+    }
+
+    #[test]
+    fn streaming_body_uses_max_completion_tokens_for_reasoning_models() {
+        // The exact scenario behind the user-reported 400:
+        //   "Could not finish the message because max_tokens or model output
+        //    limit was reached. Please try again with higher max_tokens."
+        // Reasoning models burn their budget on internal thinking; an unset
+        // server-side default truncates them mid-thought.
+        for model in ["gpt-5", "gpt-5.5", "gpt-5-mini", "o1", "o3-mini", "o4-mini"] {
+            let p = OpenAiProvider::new("https://api.openai.com/v1", "sk", model);
+            let body = p.build_request_body("", &[Message::user("hi")], &[]);
+            assert_eq!(
+                body["max_completion_tokens"].as_u64(),
+                Some(DEFAULT_MAX_TOKENS as u64),
+                "{model}: reasoning models need max_completion_tokens, not max_tokens",
+            );
+            assert!(
+                body.get("max_tokens").is_none(),
+                "{model}: must NOT send max_tokens (server returns 400 unsupported_parameter)",
+            );
+        }
+    }
+
+    #[test]
+    fn with_max_tokens_overrides_the_default() {
+        let p = OpenAiProvider::new("https://api.openai.com/v1", "sk", "gpt-4o")
+            .with_max_tokens(64000);
+        let body = p.build_request_body("", &[Message::user("hi")], &[]);
+        assert_eq!(body["max_tokens"], 64000);
     }
 
     #[test]

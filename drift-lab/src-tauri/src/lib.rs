@@ -225,9 +225,13 @@ pub fn run() {
                         .and_then(|id| cfg.providers.iter().find(|p| &p.id == id).cloned())
                 };
                 if let Some(provider) = active {
-                    let mode = "api".to_string();
-                    let model_label = match &provider.config {
-                        model_config::ModelBackend::Api { model, .. } => model.clone(),
+                    let (mode, model_label) = match &provider.config {
+                        model_config::ModelBackend::Api { model, .. } => {
+                            ("api".to_string(), model.clone())
+                        }
+                        model_config::ModelBackend::Anthropic { model, .. } => {
+                            ("anthropic".to_string(), model.clone())
+                        }
                     };
 
                     match backend::resolve(provider.config, &handle_for_hydrate).await {

@@ -1,13 +1,19 @@
 //! Configuration for the LLM agent backend.
 //!
-//! Every supported runtime — cloud or local — speaks OpenAI-compatible HTTP,
-//! so a single `Api` variant covers all of them. Local runtimes (Ollama,
-//! LM Studio, Docker Model Runner, vLLM, llama-server, …) are detected via
-//! [`crate::model_discovery::probe_local_runtimes`] and saved as an `Api`
-//! config pointing at the loopback URL the runtime is bound to.
+//! Two wire protocols are supported:
 //!
-//! Frontend sends `{ "mode": "api", ... }` to the `configure_backend` Tauri
-//! command; serde dispatches into the matching variant.
+//! - `Api` — OpenAI-compatible HTTP. Covers cloud OpenAI, Azure OpenAI, and
+//!   every local runtime we care about (Ollama, LM Studio, Docker Model
+//!   Runner, vLLM, llama-server), all of which speak `/chat/completions`.
+//! - `Anthropic` — Anthropic's `/v1/messages`. Distinct because the wire
+//!   format differs in load-bearing ways: `x-api-key` auth, `max_tokens`
+//!   required, `system` top-level, tool use as content blocks, multi-event
+//!   SSE.
+//!
+//! Frontend sends `{ "mode": "api" | "anthropic", ... }` to the
+//! `configure_backend` Tauri command; serde dispatches into the matching
+//! variant. To pick a concrete `Provider` from a config, call
+//! [`crate::agent::make_provider`].
 
 use serde::{Deserialize, Serialize};
 
@@ -19,4 +25,14 @@ pub enum ModelBackend {
         api_key: String,
         model: String,
     },
+    Anthropic {
+        #[serde(default = "default_anthropic_base_url")]
+        base_url: String,
+        api_key: String,
+        model: String,
+    },
+}
+
+fn default_anthropic_base_url() -> String {
+    "https://api.anthropic.com".to_string()
 }

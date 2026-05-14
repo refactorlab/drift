@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Runtime, State};
 use uuid::Uuid;
 
-use crate::agent::OpenAiProvider;
 use crate::model_config::ModelBackend;
 use crate::scan::{runner, storage, suggester, types::ScanPickerRoot};
 use crate::state::AppState;
@@ -164,10 +163,5 @@ pub async fn stop_scan_suggestions(
 fn build_provider(
     config: ModelBackend,
 ) -> anyhow::Result<Arc<dyn crate::agent::provider::Provider>> {
-    let ModelBackend::Api {
-        base_url,
-        api_key,
-        model,
-    } = config;
-    Ok(Arc::new(OpenAiProvider::new(base_url, api_key, model)))
+    Ok(crate::agent::make_provider(config))
 }

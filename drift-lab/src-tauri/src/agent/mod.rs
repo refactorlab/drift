@@ -17,6 +17,7 @@
 //! turns where the loop has to drive multiple provider round-trips.
 
 pub mod agent_loop;
+pub mod anthropic;
 pub mod openai;
 pub mod provider;
 pub mod tools;
@@ -28,6 +29,8 @@ pub mod workflow;
 #[allow(unused_imports)]
 pub use agent_loop::{Agent, AgentEvent, DEFAULT_MAX_TURNS};
 #[allow(unused_imports)]
+pub use anthropic::ClaudeProvider;
+#[allow(unused_imports)]
 pub use openai::{OpenAiProvider, TokenLimitParam};
 #[allow(unused_imports)]
 pub use provider::{MessageStream, Provider};
@@ -35,3 +38,22 @@ pub use provider::{MessageStream, Provider};
 pub use tools::{Mode, Permission};
 #[allow(unused_imports)]
 pub use types::{Message, MessageContent, ProviderError, Role, ToolDef, Usage};
+
+/// Construct the concrete `Provider` matching the saved backend config. One
+/// factory keeps every call site (chat, scan, patch, workflow) honest: when
+/// we add a provider, only this function changes.
+pub fn make_provider(config: crate::model_config::ModelBackend) -> std::sync::Arc<dyn Provider> {
+    use crate::model_config::ModelBackend;
+    match config {
+        ModelBackend::Api {
+            base_url,
+            api_key,
+            model,
+        } => std::sync::Arc::new(OpenAiProvider::new(base_url, api_key, model)),
+        ModelBackend::Anthropic {
+            base_url,
+            api_key,
+            model,
+        } => std::sync::Arc::new(ClaudeProvider::with_base_url(base_url, api_key, model)),
+    }
+}
