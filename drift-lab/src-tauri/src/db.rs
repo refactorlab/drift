@@ -74,3 +74,12 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
 pub fn pool() -> Option<&'static SqlitePool> {
     POOL.get()
 }
+
+/// Close the pool gracefully (flush in-flight statements + drop
+/// connections). Called by the app's shutdown path so SQLite isn't left
+/// with a half-written WAL when the process exits.
+pub async fn close() {
+    if let Some(pool) = POOL.get() {
+        pool.close().await;
+    }
+}

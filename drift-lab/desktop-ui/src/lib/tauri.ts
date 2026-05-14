@@ -183,6 +183,18 @@ export async function onLogLine(cb: (line: LogLine) => void): Promise<() => void
   return listen<LogLine>("agent:log", cb);
 }
 
+// ---------- System tray deep-links ----------
+
+/**
+ * The user clicked "Settings…" in the system tray menu. The Rust side has
+ * already shown the main window; the UI's job is to navigate to
+ * `/settings`. Mirrors the `EVENT_OPEN_SETTINGS` constant in `tray.rs` —
+ * the wire name must match exactly.
+ */
+export async function onOpenSettings(cb: () => void): Promise<() => void> {
+  return listen<unknown>("tray://open-settings", () => cb());
+}
+
 // ---------- Blocked-on-user question ----------
 
 /** The agent called `ask_user` and is parked waiting for a human answer.
@@ -299,6 +311,16 @@ export type BackendStatus =
 
 export async function getBackendStatus(): Promise<BackendStatus> {
   return invoke<BackendStatus>("get_backend_status");
+}
+
+/**
+ * URL the bundled localhost HTTP server is listening on (e.g.
+ * `http://127.0.0.1:5151`), or `null` if the bind step hasn't finished
+ * yet. The Home page's viewer + Swagger buttons read this so the actual
+ * port — possibly overridden via `DRIFT_HTTP_PORT` — drives the link.
+ */
+export async function getHttpServerUrl(): Promise<string | null> {
+  return invoke<string | null>("get_http_server_url");
 }
 
 export async function onBackendStatus(
@@ -624,7 +646,13 @@ export type ScanProgress =
   | { kind: "parse_progress"; scanId: string; done: number; total: number; current: string | null }
   | { kind: "phase"; scanId: string; name: string }
   | { kind: "step_start"; scanId: string; label: string; total: number }
-  | { kind: "step_progress"; scanId: string; label: string; done: number; total: number; current: string | null };
+  | { kind: "step_progress"; scanId: string; label: string; done: number; total: number; current: string | null }
+  // Pipeline-level heartbeat — one per phase boundary. The UI uses it to
+  // render a tqdm-style overall bar (phase X/Y · elapsed · ETA) above the
+  // per-phase timeline. `elapsedMs` is measured from the moment the
+  // analysis task started in the backend, so it includes any time spent
+  // parked on the picker.
+  | { kind: "overall"; scanId: string; phaseIndex: number; phaseTotalHint: number; elapsedMs: number };
 
 export interface ScanPickerCaller {
   name: string;
@@ -711,6 +739,10 @@ export interface StoredScan {
   /// Typed loosely here; the summary components in
   /// `components/scan-summary` declare the concrete shape they need. */
   report: unknown;
+  /// Full picker-root list the discovery phase produced for this scan.
+  /// Empty for scans saved before the cache was introduced — the UI hides
+  /// the "Pick another entry" affordance when this is empty.
+  pickerRoots: ScanPickerRoot[];
 }
 
 export interface ScanMeta {
@@ -734,12 +766,48 @@ export async function selectEntryAndScan(
   return invoke<void>("select_entry_and_scan", { scanId, rootIndex });
 }
 
+/**
+ * Re-run the focused profile against a different entry from a prior scan's
+ * cached picker roots — skips the discovery phase and the picker pause.
+ *
+ * Returns the *new* `scan_id`. Progress streams over the same
+ * `scan://progress` channel; no `scan://entries-ready` event will fire (the
+ * picker is bypassed), so the UI should render the running view in
+ * "profiling chosen entry" mode rather than waiting on a picker.
+ *
+ * Throws if the source scan's cached roots are empty (e.g. it predates the
+ * cache feature) — the UI surfaces this with a hint to run a full Rescan.
+ */
+export async function restartScanFromCache(
+  sourceScanId: string,
+  rootIndex: number,
+): Promise<string> {
+  return invoke<string>("restart_scan_from_cache", { sourceScanId, rootIndex });
+}
+
+/** Stop an in-flight static scan. Idempotent — returns `false` if no scan
+ *  is running with the given id. The backend flips a cancel flag the
+ *  progress sink polls on every callback; the analyzer unwinds within
+ *  milliseconds and the UI receives a `scan://error` with message
+ *  `"scan stopped"`. */
+export async function stopStaticScan(scanId: string): Promise<boolean> {
+  return invoke<boolean>("stop_static_scan", { scanId });
+}
+
 export async function listStaticScans(): Promise<ScanMeta[]> {
   return invoke<ScanMeta[]>("list_static_scans");
 }
 
 export async function loadStaticScan(scanId: string): Promise<StoredScan> {
   return invoke<StoredScan>("load_static_scan", { scanId });
+}
+
+/** Delete a saved scan from `~/.drift/scans/`. Idempotent — calling for a
+ *  scan id that's already been deleted resolves without throwing. Any
+ *  in-flight "Study this" suggestion driver writing to this scan is
+ *  cancelled by the backend before the file is removed. */
+export async function deleteStaticScan(scanId: string): Promise<void> {
+  return invoke<void>("delete_static_scan", { scanId });
 }
 
 /** One row in the canonical (dedupe + ranked + truncated) finding list the
@@ -776,6 +844,50 @@ export async function stopScanFindingSuggestion(
   index: number,
 ): Promise<boolean> {
   return invoke<boolean>("stop_scan_finding_suggestion", { scanId, index });
+}
+
+/** One previously-persisted LLM suggestion, loaded from
+ *  `~/.drift/scans/<scanId>/code-suggestions/<index>.json`. Matches the
+ *  shape the `scan://suggestion` event delivers, plus a `savedAt`
+ *  timestamp for diagnostics. The ScanReport page seeds its `rowsRef`
+ *  from these on mount so prior "Study this" output survives reloads. */
+export interface SavedSuggestion {
+  index: number;
+  /** 1-based sequence number within this finding's version history. v3
+   *  means "the third Study This run on this finding". `listSavedSuggestions`
+   *  returns the LATEST version of each finding (highest `version`);
+   *  `listSuggestionVersions` returns every version for one finding,
+   *  newest first. */
+  version: number;
+  source: "immediate_fix" | "refactor_candidate" | "finding_top";
+  kind: string;
+  severity: string;
+  file: string;
+  line: number;
+  name: string;
+  suggestion: string;
+  savedAt: string;
+}
+
+/** Load the LATEST version of every previously-persisted suggestion for a
+ *  saved scan, sorted by finding index. One entry per finding (the most
+ *  recent take). Returns an empty array for scans where nothing was
+ *  studied (the on-disk suggestions directory simply doesn't exist).
+ *
+ *  Use {@link listSuggestionVersions} for the full history of one finding. */
+export async function listSavedSuggestions(scanId: string): Promise<SavedSuggestion[]> {
+  return invoke<SavedSuggestion[]>("list_saved_suggestions", { scanId });
+}
+
+/** Load EVERY persisted version for one finding, newest first. Powers the
+ *  per-row "← v3/5 →" version-history navigation: the user can flip
+ *  through prior bodies without re-running the model. Returns an empty
+ *  array if the finding has never been studied. */
+export async function listSuggestionVersions(
+  scanId: string,
+  index: number,
+): Promise<SavedSuggestion[]> {
+  return invoke<SavedSuggestion[]>("list_suggestion_versions", { scanId, index });
 }
 
 export async function onScanProgress(

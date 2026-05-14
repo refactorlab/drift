@@ -30,7 +30,7 @@ export function subtreeWeight(node: CallTreeNode): number {
   return count;
 }
 
-export function toFlame(node: CallTreeNode, mode: FlameMode = 'kind'): FlameNode {
+export function toFlame(node: CallTreeNode, mode: FlameMode = 'kind', path = ''): FlameNode {
   const value = subtreeWeight(node);
   let bg: string;
   let fg: string;
@@ -74,8 +74,15 @@ export function toFlame(node: CallTreeNode, mode: FlameMode = 'kind'): FlameNode
     tooltip: `${parent}${node.name}\n${node.file}:${node.line}\nkind: ${node.kind}\ncomplexity: ${node.complexity ?? 0}\nsubtree: ${value}\npagerank: ${(node.pagerank ?? 0).toFixed(4)}`,
     backgroundColor: bg,
     color: fg,
-    id: node.id,
+    // Same CallTreeNode can appear at multiple positions in the call tree
+    // (e.g., a validator method invoked from many call sites). react-flame-graph
+    // uses this `id` as the React child key, so it must be unique per occurrence
+    // — we encode the path through the tree. The original node.id is preserved
+    // via `source` for lookups.
+    id: path ? `${path}/${node.id}` : node.id,
     source: node,
-    children: node.children.length ? node.children.map(c => toFlame(c, mode)) : undefined,
+    children: node.children.length
+      ? node.children.map((c, i) => toFlame(c, mode, path ? `${path}/${node.id}#${i}` : `${node.id}#${i}`))
+      : undefined,
   };
 }

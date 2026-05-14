@@ -41,8 +41,30 @@ pub async fn start_static_scan<R: Runtime>(
         path,
         filters,
         Arc::clone(&state.scan_pickers),
+        Arc::clone(&state.scan_cancels),
     );
     Ok(scan_id)
+}
+
+/// Stop an in-flight static scan. Idempotent — silently no-ops if no scan
+/// is running with the given id (returns `false`).
+///
+/// Mechanism: flip the cancel flag in the registry. The progress sink polls
+/// it on every callback (walk, parse, graph, tree build) and panics with
+/// `CancelledByUser` to unwind the rayon-driven analysis pipeline. We also
+/// send `None` through the picker channel so a scan parked waiting for the
+/// user's pick wakes up immediately rather than after the first post-pick
+/// progress callback.
+#[tauri::command]
+pub async fn stop_static_scan(
+    scan_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Ok(runner::stop_scan(
+        &scan_id,
+        state.scan_pickers.as_ref(),
+        state.scan_cancels.as_ref(),
+    ))
 }
 
 /// Deliver the user's picker choice. `root_index` is the row index from the
@@ -59,6 +81,65 @@ pub async fn select_entry_and_scan(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Re-run the focused profile against a *different* entry from a prior
+/// scan's cached picker-root list — no re-discovery, no picker pause.
+///
+/// Returns the new `scan_id` immediately; progress streams over the same
+/// `scan://progress` channel the live scan uses. The new scan also gets the
+/// same `picker_roots` cached on its envelope, so the user can keep
+/// switching entries against the same candidate set.
+///
+/// `source_scan_id` identifies the saved scan whose cached roots + project
+/// path we draw from. `root_index` indexes into that scan's
+/// `picker_roots`. The project root comes from the source scan's
+/// `report.generator.source_root`, which is the path the original scan was
+/// run against.
+#[tauri::command]
+pub async fn restart_scan_from_cache<R: Runtime>(
+    source_scan_id: String,
+    root_index: usize,
+    state: State<'_, AppState>,
+    app: AppHandle<R>,
+) -> Result<String, String> {
+    let env = storage::load_envelope(&source_scan_id).map_err(|e| format!("{e:#}"))?;
+    if env.picker_roots.is_empty() {
+        return Err(
+            "this scan was saved before picker_roots were cached — run `Rescan entirely` first to populate the cache"
+                .to_string(),
+        );
+    }
+    let picked = env
+        .picker_roots
+        .get(root_index)
+        .ok_or_else(|| format!("root_index {root_index} out of range"))?
+        .clone();
+    let project_path = env
+        .report
+        .generator
+        .source_root
+        .clone()
+        .ok_or_else(|| "source scan has no recorded source_root".to_string())?;
+    let path = PathBuf::from(&project_path);
+    if !path.is_dir() {
+        return Err(format!(
+            "project root no longer a directory: {project_path}"
+        ));
+    }
+
+    let scan_id = Uuid::new_v4().to_string();
+    let filters = state.app_config.lock().await.scan_filters;
+    runner::start_scan_for_entry(
+        app,
+        scan_id.clone(),
+        path,
+        filters,
+        picked.name.clone(),
+        env.picker_roots,
+        Arc::clone(&state.scan_cancels),
+    );
+    Ok(scan_id)
+}
+
 /// List every saved scan under `~/.drift/scans/`. Sorted by saved_at desc.
 #[tauri::command]
 pub async fn list_static_scans() -> Result<Vec<storage::ScanMeta>, String> {
@@ -69,6 +150,23 @@ pub async fn list_static_scans() -> Result<Vec<storage::ScanMeta>, String> {
 #[tauri::command]
 pub async fn load_static_scan(scan_id: String) -> Result<storage::StoredScan, String> {
     storage::load_envelope(&scan_id).map_err(|e| format!("{e:#}"))
+}
+
+/// Delete a saved scan from `~/.drift/scans/`. Best-effort: any per-finding
+/// suggestion driver still running for this scan is cancelled first so it
+/// can't re-create the file we're about to remove. Idempotent — deleting
+/// a non-existent scan returns `Ok(())`.
+#[tauri::command]
+pub async fn delete_static_scan(
+    scan_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Cancel any per-finding suggestion drivers writing to this scan so a
+    // racing save can't recreate the file. cancel_all_for_scan returns
+    // quickly — the drivers' `tokio::select!` arms on the cancel token
+    // and unwinds on their own thread.
+    state.scan_suggestions.cancel_all_for_scan(&scan_id);
+    storage::delete_scan(&scan_id).map_err(|e| format!("{e:#}"))
 }
 
 /// Return only the picker-style root list from a previously-saved scan —
@@ -99,6 +197,36 @@ pub async fn list_scan_entries(scan_id: String) -> Result<Vec<ScanPickerRoot>, S
                 .collect(),
         })
         .collect())
+}
+
+/// Return every persisted "Study this" suggestion for `scan_id`. Used by
+/// the report page on mount to re-hydrate the suggestion rows from disk —
+/// the user's prior LLM output survives reloads and re-navigations without
+/// re-running the model.
+///
+/// Returns an empty list (not an error) when the scan exists but has never
+/// had a Study This clicked on it. The frontend treats both shapes the
+/// same: no rows pre-populated, all buttons in their idle "Study this"
+/// state.
+#[tauri::command]
+pub async fn list_saved_suggestions(
+    scan_id: String,
+) -> Result<Vec<storage::SavedSuggestion>, String> {
+    storage::list_saved_suggestions(&scan_id).map_err(|e| format!("{e:#}"))
+}
+
+/// Return EVERY version persisted for one finding, newest first. Used by
+/// the per-row "version history" picker — the user can swap the visible
+/// body back to a prior version without re-running the model.
+///
+/// `scan_id` + `index` identify the finding. Returns an empty list if
+/// the finding has never been studied (no on-disk history yet).
+#[tauri::command]
+pub async fn list_suggestion_versions(
+    scan_id: String,
+    index: usize,
+) -> Result<Vec<storage::SavedSuggestion>, String> {
+    storage::list_suggestion_versions(&scan_id, index).map_err(|e| format!("{e:#}"))
 }
 
 /// Return the canonical ranked + deduped finding list for a saved scan.

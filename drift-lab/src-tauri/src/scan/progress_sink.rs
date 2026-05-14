@@ -19,6 +19,8 @@
 //! `ScanProgress::WalkStart` on the wire — so the frontend handler reads
 //! exactly like the Rust progress contract.
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -26,6 +28,18 @@ use drift_static_profiler::Progress;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use super::types::{topic, ScanProgress};
+
+/// Panic payload the sink raises when its cancel flag flips. The runner's
+/// `catch_unwind` arm downcasts on this concrete type so it can distinguish
+/// "user pressed Stop" from a real crash and emit the right event. Empty
+/// marker struct — the discriminator is the type, not a field.
+pub struct CancelledByUser;
+
+/// Same hint the CLI's tqdm-style bar uses (`drift_static_profiler::progress::
+/// PIPELINE_PHASES_HINT`). Re-stating it here keeps the desktop "overall" bar
+/// visually aligned with the CLI without coupling the wire contract to a
+/// constant we don't re-export.
+const PIPELINE_PHASES_HINT: u64 = 28;
 
 /// Minimum gap between two consecutive throttled emissions per phase. Any
 /// `parse_progress` / `step_progress` call within this window is dropped on
@@ -48,21 +62,63 @@ pub struct TauriProgressSink<R: Runtime> {
     /// `set_current` thread-locally; the frontend wants it inline with the
     /// counted event so it lands in the same UI row.
     current_item: Mutex<Option<String>>,
+    /// Wall-clock origin used to stamp `Overall { elapsed_ms }`. Set when
+    /// the sink is constructed (right before the analyzer is invoked).
+    started_at: Instant,
+    /// Monotonically increasing pipeline phase counter. Bumped on every
+    /// boundary callback (`walk_start`, `parse_start`, `phase`, `step_start`)
+    /// so the UI can render "phase X / N" like the CLI's overall bar.
+    phase_idx: AtomicU64,
+    /// User-pressed-Stop flag, shared with `ScanCancelRegistry` in `runner`.
+    /// Polled on every callback via [`Self::check_cancel`]; when set we
+    /// `panic!(CancelledByUser)` to unwind the rayon-driven analysis
+    /// pipeline. This is the only viable abort path because
+    /// `analyze_picked_with_progress` has no native cancellation.
+    cancel: Arc<AtomicBool>,
 }
 
 impl<R: Runtime> TauriProgressSink<R> {
-    pub fn new(app: AppHandle<R>, scan_id: String) -> Self {
+    pub fn new(app: AppHandle<R>, scan_id: String, cancel: Arc<AtomicBool>) -> Self {
         Self {
             app,
             scan_id,
             last: Mutex::new(Instant::now() - THROTTLE),
             active_step: Mutex::new(None),
             current_item: Mutex::new(None),
+            started_at: Instant::now(),
+            phase_idx: AtomicU64::new(0),
+            cancel,
         }
     }
 
     fn emit(&self, ev: ScanProgress) {
         let _ = self.app.emit(topic::PROGRESS, ev);
+    }
+
+    /// Single bail-point invoked at the top of every `Progress` callback.
+    /// Cheap (one relaxed atomic load on the hot parse-loop path); when
+    /// the flag is set, panics with `CancelledByUser` to unwind the
+    /// analysis stack. The runner's `catch_unwind` then converts the
+    /// panic into a clean "scan stopped" event.
+    #[inline]
+    fn check_cancel(&self) {
+        if self.cancel.load(Ordering::Relaxed) {
+            std::panic::panic_any(CancelledByUser);
+        }
+    }
+
+    /// Bump the phase counter and emit an `Overall` heartbeat. Called from
+    /// every phase-boundary callback (walk/parse/phase/step start). The
+    /// returned index is 1-based so the UI reads "phase 1 of 28" on the
+    /// very first boundary.
+    fn bump_phase(&self) {
+        let n = self.phase_idx.fetch_add(1, Ordering::Relaxed) + 1;
+        self.emit(ScanProgress::Overall {
+            scan_id: self.scan_id.clone(),
+            phase_index: n,
+            phase_total_hint: PIPELINE_PHASES_HINT,
+            elapsed_ms: self.started_at.elapsed().as_millis() as u64,
+        });
     }
 
     /// Decide whether the next throttled callback should actually emit. We
@@ -91,10 +147,13 @@ impl<R: Runtime> TauriProgressSink<R> {
 
 impl<R: Runtime> Progress for TauriProgressSink<R> {
     fn walk_start(&self) {
+        self.check_cancel();
+        self.bump_phase();
         self.emit(ScanProgress::WalkStart { scan_id: self.scan_id.clone() });
     }
 
     fn walk_progress(&self, total: usize) {
+        self.check_cancel();
         if !self.allow_throttled(false) {
             return;
         }
@@ -105,6 +164,7 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn walk_end(&self, total_files: usize, bytes: u64) {
+        self.check_cancel();
         self.emit(ScanProgress::WalkEnd {
             scan_id: self.scan_id.clone(),
             total_files: total_files as u64,
@@ -113,6 +173,8 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn parse_start(&self, total: usize) {
+        self.check_cancel();
+        self.bump_phase();
         self.emit(ScanProgress::ParseStart {
             scan_id: self.scan_id.clone(),
             total_source_files: total as u64,
@@ -120,6 +182,7 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn parse_progress(&self, done: usize, total: usize) {
+        self.check_cancel();
         if !self.allow_throttled(done == total) {
             return;
         }
@@ -132,10 +195,12 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn phase(&self, name: &str) {
+        self.check_cancel();
         // A new atomic phase implicitly closes any active counted step.
         if let Ok(mut g) = self.active_step.lock() {
             *g = None;
         }
+        self.bump_phase();
         self.emit(ScanProgress::Phase {
             scan_id: self.scan_id.clone(),
             name: name.to_string(),
@@ -143,9 +208,11 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn step_start(&self, label: &str, total: usize) {
+        self.check_cancel();
         if let Ok(mut g) = self.active_step.lock() {
             *g = Some(label.to_string());
         }
+        self.bump_phase();
         self.emit(ScanProgress::StepStart {
             scan_id: self.scan_id.clone(),
             label: label.to_string(),
@@ -154,6 +221,7 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn step_progress(&self, done: usize, total: usize) {
+        self.check_cancel();
         if !self.allow_throttled(done == total) {
             return;
         }
@@ -173,6 +241,7 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     }
 
     fn set_current(&self, item: &str) {
+        self.check_cancel();
         if let Ok(mut g) = self.current_item.lock() {
             *g = Some(item.to_string());
         }

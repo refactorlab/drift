@@ -1,10 +1,17 @@
 import { create } from "zustand";
 
 import type { Entry as AgentLogEntry } from "../components/ReasoningLog";
+import {
+  reduceProgress,
+  type OverallStats,
+  type PhaseRow,
+} from "../components/scan-summary/ScanProgress";
 import type {
   AgentMode,
   BlockedQuestion,
   LogLine,
+  ScanPickerRoot,
+  ScanProgress as ScanProgressEvent,
   TelemetrySample,
   VisibilityMap,
 } from "../lib/tauri";
@@ -39,6 +46,36 @@ export interface RunParams {
   mode: AgentMode;
   goalPrompt?: string;
 }
+
+/**
+ * Static-scan lifecycle. Lifted out of the Home component (where it used to
+ * live as `useState`) so navigating to Settings and back doesn't drop a
+ * scan-in-progress — Home re-mounts and re-reads this state.
+ *
+ *   idle     → before any scan was started
+ *   running  → backend has a scan in flight (or parked at the picker)
+ *   complete → backend finalized; Home will navigate to /scan/:scanId
+ *              the next time it renders, then reset to idle
+ *   error    → backend emitted scan://error (includes user-pressed-Stop)
+ */
+export type StaticScanState =
+  | { kind: "idle" }
+  | {
+      kind: "running";
+      scanId: string;
+      /** Reduced phase timeline — derived from `scan://progress` events. */
+      rows: PhaseRow[];
+      /** Latest pipeline heartbeat (driven by `overall` events). Null until
+       *  the first heartbeat arrives. Persisted on the store so navigation
+       *  away to /settings and back doesn't briefly drop the overall bar. */
+      overall: OverallStats | null;
+      /** Picker roots once discovery completes; null while still walking/parsing. */
+      roots: ScanPickerRoot[] | null;
+      /** The entry the user picked from the picker (or null until they pick). */
+      pickedRoot: ScanPickerRoot | null;
+    }
+  | { kind: "complete"; scanId: string }
+  | { kind: "error"; message: string };
 
 interface RunStore {
   projectPath: string;
@@ -86,6 +123,18 @@ interface RunStore {
   pushLogLine: (line: LogLine) => void;
   setBlockedQuestion: (q: BlockedQuestion | null) => void;
   setVisibilityMap: (map: VisibilityMap) => void;
+
+  /** Static-scan state, used by the Home page's running view. The mutators
+   *  below are called by `useStaticScanSubscription` in `App` — install once
+   *  at the top of the tree so events keep landing even when Home unmounts. */
+  staticScan: StaticScanState;
+  beginStaticScan: (scanId: string) => void;
+  applyStaticScanEvent: (ev: ScanProgressEvent) => void;
+  applyStaticScanEntries: (scanId: string, roots: ScanPickerRoot[]) => void;
+  applyStaticScanPicked: (root: ScanPickerRoot) => void;
+  applyStaticScanComplete: (scanId: string) => void;
+  applyStaticScanError: (scanId: string, message: string) => void;
+  resetStaticScan: () => void;
 }
 
 /** 6-stage UI timeline. The agent's internal 10-step recipe (in the system
@@ -188,4 +237,91 @@ export const useRunStore = create<RunStore>((set) => ({
     }),
   setBlockedQuestion: (q) => set({ blockedQuestion: q }),
   setVisibilityMap: (map) => set({ visibilityMap: map }),
+
+  staticScan: { kind: "idle" },
+  beginStaticScan: (scanId) =>
+    set({
+      staticScan: {
+        kind: "running",
+        scanId,
+        rows: [],
+        overall: null,
+        roots: null,
+        pickedRoot: null,
+      },
+    }),
+  applyStaticScanEvent: (ev) =>
+    set((state) => {
+      // Filter to the active scan; events for stale scan ids (e.g. a fresh
+      // scan started before the old one's stream fully drained) are
+      // ignored so the timeline never contaminates across runs.
+      if (
+        state.staticScan.kind !== "running" ||
+        state.staticScan.scanId !== ev.scanId
+      ) {
+        return state;
+      }
+      // Pipeline heartbeat lives in its own slot (the overall bar lives
+      // above the per-phase timeline). Other variants flow through the
+      // row reducer; `reduceProgress` returns identity for `overall` so
+      // we don't double-handle it.
+      if (ev.kind === "overall") {
+        return {
+          staticScan: {
+            ...state.staticScan,
+            overall: {
+              phaseIndex: ev.phaseIndex,
+              phaseTotalHint: ev.phaseTotalHint,
+              elapsedMs: ev.elapsedMs,
+              receivedAt: Date.now(),
+            },
+          },
+        };
+      }
+      return {
+        staticScan: {
+          ...state.staticScan,
+          rows: reduceProgress(state.staticScan.rows, ev),
+        },
+      };
+    }),
+  applyStaticScanEntries: (scanId, roots) =>
+    set((state) => {
+      if (
+        state.staticScan.kind !== "running" ||
+        state.staticScan.scanId !== scanId
+      ) {
+        return state;
+      }
+      return { staticScan: { ...state.staticScan, roots } };
+    }),
+  applyStaticScanPicked: (root) =>
+    set((state) => {
+      if (state.staticScan.kind !== "running") return state;
+      return { staticScan: { ...state.staticScan, pickedRoot: root } };
+    }),
+  applyStaticScanComplete: (scanId) =>
+    set((state) => {
+      // Defensive: only transition if this completion is for the active
+      // scan. A late-arriving complete event for an old scan would
+      // otherwise overwrite a freshly-started one.
+      if (
+        state.staticScan.kind === "running" &&
+        state.staticScan.scanId !== scanId
+      ) {
+        return state;
+      }
+      return { staticScan: { kind: "complete", scanId } };
+    }),
+  applyStaticScanError: (scanId, message) =>
+    set((state) => {
+      if (
+        state.staticScan.kind === "running" &&
+        state.staticScan.scanId !== scanId
+      ) {
+        return state;
+      }
+      return { staticScan: { kind: "error", message } };
+    }),
+  resetStaticScan: () => set({ staticScan: { kind: "idle" } }),
 }));

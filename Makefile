@@ -40,6 +40,8 @@ RESET  := \033[0m
 .PHONY: help \
         install check run run-llm db \
         kill-port kill-port-test kill-bun-sock kill-dev \
+        dev setup \
+        drift-lab-viewer-bundle \
         drift-lab-build drift-lab-build-release drift-lab-verify \
         drift-lab-export drift-lab-export-clean
 
@@ -102,6 +104,53 @@ help: ## Show this help (auto-generated from inline doc strings)
 	@printf "    $(BLUE)%-26s$(RESET) %s\n" "make -C drift-lab help"             "desktop app targets (dev, compile, ship)"
 	@printf "    $(BLUE)%-26s$(RESET) %s\n" "make -C drift-static-profiler help" "CLI analyzer + viewer targets"
 	@printf "\n"
+
+### Whole-repo bootstrap
+
+# `make setup` is the single command a fresh clone runs to become buildable:
+# every subproject's deps + the viewer dist that `drift-lab` embeds.
+#
+# Order is deliberate:
+#   1. drift-lab/setup        → rustup, cargo-tauri, icons, npm deps for desktop-ui
+#   2. drift-static-profiler/setup → npm deps for viewer/ (rust is a no-op after #1)
+#   3. drift-lab-viewer-bundle    → vite build, so cargo doesn't embed the build.rs stub
+#   4. action/ npm ci            → GitHub Action source (best-effort)
+#   5. web-app/ bun install      → web app (best-effort; only run when bun is installed)
+#
+# Idempotent — re-running after a `git pull` is the recommended way to re-sync deps.
+setup: ## Install everything across all subprojects (rust + tauri-cli + npm deps + viewer dist + action + web-app). Idempotent — run after fresh clone or git pull
+	@printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"
+	@printf "$(BLUE)drift / setup$(RESET) — bootstrapping the entire repo\n"
+	@printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"
+
+	@printf "\n$(CYAN)[1/5] drift-lab — rust + tauri-cli + icons + desktop-ui npm deps$(RESET)\n"
+	@$(MAKE) --no-print-directory -C drift-lab setup
+
+	@printf "\n$(CYAN)[2/5] drift-static-profiler — viewer npm deps$(RESET)\n"
+	@$(MAKE) --no-print-directory -C drift-static-profiler setup
+
+	@printf "\n$(CYAN)[3/5] viewer dist (so cargo embeds the real viewer, not the build.rs stub)$(RESET)\n"
+	@$(MAKE) --no-print-directory drift-lab-viewer-bundle
+
+	@printf "\n$(CYAN)[4/5] action — npm ci$(RESET)\n"
+	@if command -v npm >/dev/null 2>&1; then \
+	  cd action && npm ci && printf "$(GREEN)✓$(RESET) action deps installed\n"; \
+	else \
+	  printf "$(YELLOW)!$(RESET) npm not on PATH — skipping action/ (install Node 22+ and re-run if you need it)\n"; \
+	fi
+
+	@printf "\n$(CYAN)[5/5] web-app — bun install$(RESET)\n"
+	@if command -v bun >/dev/null 2>&1; then \
+	  cd web-app && bun install --frozen-lockfile && printf "$(GREEN)✓$(RESET) web-app deps installed\n"; \
+	else \
+	  printf "$(YELLOW)!$(RESET) bun not on PATH — skipping web-app/ (https://bun.sh/install — only needed if you work on web-app/)\n"; \
+	fi
+
+	@printf "\n$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"
+	@printf "$(GREEN)✓$(RESET) setup complete\n"
+	@printf "  Next: $(CYAN)make dev$(RESET) (launches the desktop app + localhost:5151 HTTP server)\n"
+	@printf "        $(CYAN)make help$(RESET) (full target list)\n"
+	@printf "$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"
 
 ### Docker Model Runner
 
@@ -178,9 +227,29 @@ kill-dev: kill-port kill-port-test kill-bun-sock ## kill-port + kill-port-test +
 # These mirror what .github/workflows/{ci,drift-lab-desktop-build}.yml run,
 # so passing locally is strong evidence CI will too. `cargo tauri build`
 # internally runs the frontend build via tauri.conf.json's
-# beforeBuildCommand, so one target covers the whole pipeline.
+# beforeBuildCommand, so one target covers the *desktop UI* pipeline — but
+# the static-profiler viewer is a SEPARATE frontend that the Rust crate
+# embeds at compile time via rust-embed. Every build target below depends
+# on `drift-lab-viewer-bundle` so the embedded viewer reflects the live
+# `drift-static-profiler/viewer/` sources, not the stub `build.rs` creates
+# for fresh clones.
 
-drift-lab-build: ## Debug-profile desktop build (~30s, no LTO). Prompts for the updater key passphrase if not cached
+drift-lab-viewer-bundle: ## Build the embedded static-profiler viewer (drift-static-profiler/viewer → dist/). Required before every drift-lab build
+	@printf "$(BLUE)▶$(RESET) building static-profiler viewer (npm ci + vite build)\n"
+	@cd drift-static-profiler/viewer && \
+	  if [ -f package-lock.json ]; then npm ci; else npm install; fi && \
+	  npm run build
+	@test -f drift-static-profiler/viewer/dist/index.html || { \
+	  printf "$(RED)✗$(RESET) viewer build did not produce dist/index.html\n"; exit 1; }
+	@printf "$(GREEN)✓$(RESET) viewer dist ready → drift-static-profiler/viewer/dist/\n"
+
+dev: drift-lab-viewer-bundle ## Run the entire desktop app in dev mode (viewer bundled + hot-reload desktop-ui + Rust backend + localhost:5151 HTTP server)
+	@printf "$(BLUE)▶$(RESET) launching drift-lab in dev mode — Ctrl+C to stop\n"
+	@printf "    Desktop window: opens automatically (Tauri dev)\n"
+	@printf "    HTTP server:    $(CYAN)http://127.0.0.1:5151$(RESET) (viewer at /, Swagger at /docs)\n"
+	@$(MAKE) --no-print-directory -C drift-lab dev
+
+drift-lab-build: drift-lab-viewer-bundle ## Debug-profile desktop build (~30s, no LTO). Prompts for the updater key passphrase if not cached
 	$(require_tauri_key)
 	@printf "$(BLUE)▶$(RESET) cargo tauri build --debug\n"
 	@$(resolve_tauri_pwd) && cd drift-lab && \
@@ -189,7 +258,7 @@ drift-lab-build: ## Debug-profile desktop build (~30s, no LTO). Prompts for the 
 	  cargo tauri build --debug
 	@printf "$(GREEN)✓$(RESET) bundles → $(CYAN)drift-lab/src-tauri/target/debug/bundle/$(RESET)\n"
 
-drift-lab-build-release: ## Release-profile desktop build (matches CI, full LTO, ~5-10min). Prompts for passphrase if not cached
+drift-lab-build-release: drift-lab-viewer-bundle ## Release-profile desktop build (matches CI, full LTO, ~5-10min). Prompts for passphrase if not cached
 	$(require_tauri_key)
 	@printf "$(BLUE)▶$(RESET) cargo tauri build (release)\n"
 	@$(resolve_tauri_pwd) && cd drift-lab && \
@@ -198,7 +267,7 @@ drift-lab-build-release: ## Release-profile desktop build (matches CI, full LTO,
 	  cargo tauri build
 	@printf "$(GREEN)✓$(RESET) bundles → $(CYAN)drift-lab/src-tauri/target/release/bundle/$(RESET)\n"
 
-drift-lab-verify: ## Pre-flight: cargo check --release + unit tests + frontend prod build (~15s sanity gate)
+drift-lab-verify: drift-lab-viewer-bundle ## Pre-flight: viewer build + cargo check --release + unit tests + desktop-ui prod build (~30s sanity gate)
 	@printf "$(BLUE)▶$(RESET) [1/3] cargo check --release\n"
 	@cd drift-lab/src-tauri && cargo check --release
 	@printf "$(BLUE)▶$(RESET) [2/3] cargo test --lib\n"

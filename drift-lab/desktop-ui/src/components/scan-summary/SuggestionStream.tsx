@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import { FINDING_KIND_LABEL, SEVERITY_COLORS, type Severity } from "./types";
-import type { ListedFinding } from "../../lib/tauri";
+import type { ListedFinding, SavedSuggestion } from "../../lib/tauri";
 import DiffView from "./DiffView";
 import { parseSuggestion } from "./parseSuggestion";
 
@@ -38,8 +38,25 @@ export interface SuggestionRowVM {
   file: string;
   line: number;
   name: string;
+  /// What gets rendered right now. Drives the SuggestionBody view.
+  /// During a live stream, this is the accumulating delta buffer.
+  /// Otherwise, it's `versions[cursor]?.suggestion` projected here for
+  /// rendering. Keeping a single string here means the renderer doesn't
+  /// have to know about version state — clean separation.
   body: string;
   isStreaming: boolean;
+  /// Full version history for this finding, newest first. Empty if
+  /// nothing has ever been studied (no saved file on disk and no live
+  /// stream has finalized yet). When non-empty, `cursor` indexes into
+  /// this array to pick which version `body` mirrors.
+  ///
+  /// `versions[0]` is always the newest. The UI's "← / →" controls move
+  /// `cursor` up (older) or down (newer); `cursor === 0` means "showing
+  /// the latest version".
+  versions: SavedSuggestion[];
+  /// Active version index. Defaults to 0 (newest). Ignored while
+  /// `isStreaming` is true — the live buffer is shown instead.
+  cursor: number;
 }
 
 interface Props {
@@ -48,6 +65,10 @@ interface Props {
   rows: Map<number, SuggestionRowVM>;
   studying: Set<number>;
   onStudy: (index: number) => void;
+  /// Step the version cursor for one row. `direction = -1` shows older;
+  /// `+1` shows newer. The parent owns the rowsRef so the mutation lives
+  /// there, not in this presentation-only component.
+  onCursorStep: (index: number, direction: -1 | 1) => void;
   onStop: (index: number) => void;
 }
 
@@ -58,6 +79,7 @@ export default function SuggestionStream({
   studying,
   onStudy,
   onStop,
+  onCursorStep,
 }: Props) {
   return (
     <div className="scan-suggestions">
@@ -85,6 +107,7 @@ export default function SuggestionStream({
           isStudying={studying.has(i)}
           onStudy={() => onStudy(i)}
           onStop={() => onStop(i)}
+          onCursorStep={(dir) => onCursorStep(i, dir)}
         />
       ))}
     </div>
@@ -97,12 +120,14 @@ function FindingRow({
   isStudying,
   onStudy,
   onStop,
+  onCursorStep,
 }: {
   finding: ListedFinding;
   row: SuggestionRowVM | undefined;
   isStudying: boolean;
   onStudy: () => void;
   onStop: () => void;
+  onCursorStep: (direction: -1 | 1) => void;
 }) {
   const sevColor = SEVERITY_COLORS[finding.severity as Severity] ?? "#999";
   const hasResult = !!row && row.body.length > 0;
@@ -113,6 +138,17 @@ function FindingRow({
   const kindLabel =
     FINDING_KIND_LABEL[finding.kind as keyof typeof FINDING_KIND_LABEL] ??
     finding.kind.replace(/_/g, " ");
+  const versionCount = row?.versions.length ?? 0;
+  const cursor = row?.cursor ?? 0;
+  // "v3 of 5" — cursor=0 is the newest, so the displayed version number
+  // counts down: versionCount - cursor. We only show the indicator when
+  // there's actual history (>=2 versions) to avoid clutter on the
+  // first-ever study.
+  const showVersionNav = !isStreaming && versionCount >= 2;
+  const currentVersionLabel = versionCount > 0
+    ? `v${versionCount - cursor}/${versionCount}`
+    : null;
+  const currentSavedAt = row?.versions[cursor]?.savedAt;
 
   return (
     <div className={rowClass}>
@@ -146,7 +182,7 @@ function FindingRow({
             onClick={onStudy}
             title={
               hasResult
-                ? "Re-run the LLM suggestion for this finding."
+                ? "Re-run the LLM suggestion for this finding (appends a new version, doesn't replace history)."
                 : "Ask the model to explain this finding and suggest a fix."
             }
           >
@@ -155,6 +191,37 @@ function FindingRow({
         )}
       </div>
 
+      {showVersionNav && (
+        <div className="scan-suggestion-version-nav muted">
+          <button
+            type="button"
+            className="scan-version-step"
+            onClick={() => onCursorStep(1)}
+            disabled={cursor + 1 >= versionCount}
+            title="Show the previous (older) version"
+            aria-label="Previous version"
+          >
+            ←
+          </button>
+          <span className="scan-version-label">{currentVersionLabel}</span>
+          <button
+            type="button"
+            className="scan-version-step"
+            onClick={() => onCursorStep(-1)}
+            disabled={cursor === 0}
+            title="Show the next (newer) version"
+            aria-label="Next version"
+          >
+            →
+          </button>
+          {currentSavedAt && (
+            <span className="scan-version-savedat" title={currentSavedAt}>
+              · saved {formatRelativeShort(currentSavedAt)}
+            </span>
+          )}
+        </div>
+      )}
+
       {finding.message && !hasResult && (
         <div className="scan-finding-message muted">{finding.message}</div>
       )}
@@ -162,6 +229,23 @@ function FindingRow({
       {row && <SuggestionBody body={row.body} streaming={isStreaming} />}
     </div>
   );
+}
+
+/// Compact "Xm ago" / "Xh ago" formatter for the version-nav timestamp.
+/// Kept inline (no shared date util in the codebase) — it's small and
+/// only used here.
+function formatRelativeShort(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  return new Date(t).toLocaleDateString();
 }
 
 /**

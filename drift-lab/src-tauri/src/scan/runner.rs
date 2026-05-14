@@ -18,6 +18,7 @@
 //! don't know about `analyze_picked_with_progress`.
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -25,13 +26,14 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use drift_static_profiler::{
-    analyze_picked_with_progress, AnalyzeOptions, AnalyzeOutcome, DiscoverOpts,
+    analyze_picked_with_progress, analyze_with_progress, AnalyzeOptions, AnalyzeOutcome,
+    DiscoverOpts,
 };
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::app_config::ScanFilters;
 
-use super::progress_sink::TauriProgressSink;
+use super::progress_sink::{CancelledByUser, TauriProgressSink};
 use super::storage;
 use super::types::{
     topic, ScanComplete, ScanEntriesReady, ScanError, ScanPickerCaller, ScanPickerRoot,
@@ -92,6 +94,96 @@ impl PickerRegistry {
             .context("picker decision channel closed — analysis task exited")?;
         Ok(())
     }
+
+    /// Send `None` if a picker is parked, otherwise no-op. Used by Stop —
+    /// callers don't care whether the picker slot was active (we always also
+    /// flip the cancel flag).
+    fn cancel_if_parked(&self, scan_id: &str) {
+        if let Some(tx) = self.take(scan_id) {
+            let _ = tx.send(None);
+        }
+    }
+
+    /// Resolve every parked picker with `None`. Used by the app's graceful
+    /// shutdown path so any blocking scan task currently waiting on a
+    /// picker decision unwinds immediately instead of hanging the process
+    /// until the tokio runtime drops the channel.
+    pub fn cancel_all(&self) {
+        let drained: Vec<_> = match self.inner.lock() {
+            Ok(mut g) => g.drain().collect(),
+            Err(_) => return,
+        };
+        for (_, tx) in drained {
+            let _ = tx.send(None);
+        }
+    }
+}
+
+/// Per-scan cancel flags, flipped by the Stop button. The progress sink
+/// checks this on every callback and panics with [`CancelledByUser`] to
+/// unwind the blocking analysis task — the only viable cancellation
+/// strategy because `analyze_picked_with_progress` runs inside a rayon
+/// parse loop with no native abort. The runner catches the panic and
+/// converts it to a clean error event.
+///
+/// Why a separate registry from [`PickerRegistry`]: the picker channel
+/// covers the parked-on-picker window only. Cancel needs to work in
+/// every phase — walk, parse, graph build, tree build — and a long-lived
+/// `Arc<AtomicBool>` shared with the sink is the cheapest way to do it.
+#[derive(Default)]
+pub struct ScanCancelRegistry {
+    inner: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+impl ScanCancelRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Install a fresh cancel flag for `scan_id` and return it so the
+    /// runner can hand it to the progress sink. The same `Arc` is held in
+    /// the registry so [`Self::cancel`] can flip it from a different task.
+    fn install(&self, scan_id: String) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut g) = self.inner.lock() {
+            g.insert(scan_id, Arc::clone(&flag));
+        }
+        flag
+    }
+
+    /// Free the registry slot once the analysis task exits — success,
+    /// error, or cancel. Without this the map would grow unbounded.
+    fn clear(&self, scan_id: &str) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.remove(scan_id);
+        }
+    }
+
+    /// Set the cancel flag for `scan_id`. Returns true if a flag existed
+    /// (i.e. there was a live scan), false otherwise. The flag is held by
+    /// the progress sink, which polls it on every callback.
+    pub fn cancel(&self, scan_id: &str) -> bool {
+        let Ok(g) = self.inner.lock() else { return false };
+        match g.get(scan_id) {
+            Some(flag) => {
+                flag.store(true, Ordering::SeqCst);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Flip every registered cancel flag. The corresponding blocking scan
+    /// tasks will unwind on their next progress callback. Returns the
+    /// number of flags that were flipped, so callers can log how many
+    /// in-flight scans were signalled.
+    pub fn cancel_all(&self) -> usize {
+        let Ok(g) = self.inner.lock() else { return 0 };
+        for flag in g.values() {
+            flag.store(true, Ordering::SeqCst);
+        }
+        g.len()
+    }
 }
 
 /// Kick off a static scan. Returns immediately; results stream over events.
@@ -103,11 +195,13 @@ pub fn start_scan<R: Runtime>(
     scan_id: String,
     project_path: PathBuf,
     filters: ScanFilters,
-    registry: Arc<PickerRegistry>,
+    picker_registry: Arc<PickerRegistry>,
+    cancel_registry: Arc<ScanCancelRegistry>,
 ) {
     let app_for_task = app.clone();
     let scan_id_for_task = scan_id.clone();
-    let pick_rx = registry.install(scan_id.clone());
+    let pick_rx = picker_registry.install(scan_id.clone());
+    let cancel_flag = cancel_registry.install(scan_id.clone());
 
     tauri::async_runtime::spawn_blocking(move || {
         run_blocking(
@@ -116,7 +210,48 @@ pub fn start_scan<R: Runtime>(
             project_path,
             filters,
             pick_rx,
-            registry,
+            picker_registry,
+            cancel_registry,
+            cancel_flag,
+        );
+    });
+}
+
+/// Kick off a focused scan against a *specific* entry function, skipping the
+/// discovery + picker handshake. Used by `restart_scan_from_cache` so the user
+/// can pick a different entry from a prior scan's saved roots without paying
+/// for re-discovery.
+///
+/// `picker_roots_seed` is the same list the source scan saved — we re-persist
+/// it on the new scan's envelope so a subsequent "Pick another entry" works
+/// against the new scan id symmetrically.
+///
+/// Walk + parse + graph build still happen (those are the structural inputs
+/// the analyzer needs); only the roots-discovery phase + the user-picker
+/// pause are bypassed.
+pub fn start_scan_for_entry<R: Runtime>(
+    app: AppHandle<R>,
+    scan_id: String,
+    project_path: PathBuf,
+    filters: ScanFilters,
+    entry_name: String,
+    picker_roots_seed: Vec<ScanPickerRoot>,
+    cancel_registry: Arc<ScanCancelRegistry>,
+) {
+    let app_for_task = app.clone();
+    let scan_id_for_task = scan_id.clone();
+    let cancel_flag = cancel_registry.install(scan_id.clone());
+
+    tauri::async_runtime::spawn_blocking(move || {
+        run_focused_blocking(
+            app_for_task,
+            scan_id_for_task,
+            project_path,
+            filters,
+            entry_name,
+            picker_roots_seed,
+            cancel_registry,
+            cancel_flag,
         );
     });
 }
@@ -127,9 +262,11 @@ fn run_blocking<R: Runtime>(
     project_path: PathBuf,
     filters: ScanFilters,
     pick_rx: std::sync::mpsc::Receiver<Option<usize>>,
-    registry: Arc<PickerRegistry>,
+    picker_registry: Arc<PickerRegistry>,
+    cancel_registry: Arc<ScanCancelRegistry>,
+    cancel_flag: Arc<AtomicBool>,
 ) {
-    let sink = TauriProgressSink::new(app.clone(), scan_id.clone());
+    let sink = TauriProgressSink::new(app.clone(), scan_id.clone(), Arc::clone(&cancel_flag));
     let discover = DiscoverOpts {
         max_roots: PICKER_LIMIT,
         ..DiscoverOpts::default()
@@ -158,15 +295,26 @@ fn run_blocking<R: Runtime>(
     // (cancel); if it stayed false, discovery yielded zero roots and the
     // closure was never called. Two very different failure modes that the
     // old error message conflated — the UI now gets a real reason.
+    //
+    // `captured_roots` keeps a clone of the decorated rows so the outer
+    // `finalize` can persist them in the saved scan envelope. We need them
+    // *after* the analyzer returns — the closure's borrowed `&[PickerRoot]`
+    // is gone by then, so capture-on-call is the only path that works.
     let app_for_picker = app.clone();
     let scan_id_for_picker = scan_id.clone();
     let picker_invoked = Arc::new(AtomicBool::new(false));
     let picker_invoked_for_callback = Arc::clone(&picker_invoked);
+    let captured_roots: Arc<Mutex<Vec<ScanPickerRoot>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured_roots_for_callback = Arc::clone(&captured_roots);
     let pick_callback = move |roots: &[drift_static_profiler::PickerRoot]| -> Option<usize> {
         picker_invoked_for_callback.store(true, Ordering::SeqCst);
+        let decorated: Vec<ScanPickerRoot> = roots.iter().enumerate().map(decorate).collect();
+        if let Ok(mut g) = captured_roots_for_callback.lock() {
+            *g = decorated.clone();
+        }
         let payload = ScanEntriesReady {
             scan_id: scan_id_for_picker.clone(),
-            roots: roots.iter().enumerate().map(decorate).collect(),
+            roots: decorated,
         };
         let _ = app_for_picker.emit(topic::ENTRIES_READY, payload);
         // Wait for the user. If the sender is dropped (cancelled), recv
@@ -177,21 +325,51 @@ fn run_blocking<R: Runtime>(
         }
     };
 
-    let result = analyze_picked_with_progress(
-        &project_path,
-        &discover,
-        &opts,
-        &sink,
-        pick_callback,
-    );
+    // The analysis runs on rayon worker threads with no native abort. Our
+    // cancel path is the progress sink panicking with `CancelledByUser` —
+    // rayon catches the panic and re-raises at the join point. `catch_unwind`
+    // converts that into a value we can branch on without crashing the task.
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        analyze_picked_with_progress(
+            &project_path,
+            &discover,
+            &opts,
+            &sink,
+            pick_callback,
+        )
+    }));
 
-    // Ensure the registry slot is freed even if the closure short-circuited
-    // before recv (e.g. discovery returned no roots).
-    let _ = registry.take(&scan_id);
+    // Free both registry slots so a follow-up scan can install fresh state.
+    let _ = picker_registry.take(&scan_id);
+    cancel_registry.clear(&scan_id);
+
+    // Cancel-on-panic is the priority branch — even if rayon also produced
+    // a noisy `Err(...)` while unwinding, the user's intent was Stop.
+    if cancel_flag.load(Ordering::SeqCst)
+        || matches!(&result, Err(p) if p.downcast_ref::<CancelledByUser>().is_some())
+    {
+        let _ = app.emit(
+            topic::ERROR,
+            ScanError {
+                scan_id,
+                message: "scan stopped".to_string(),
+            },
+        );
+        return;
+    }
 
     match result {
-        Ok(Some(outcome)) => finalize(app, scan_id, outcome),
-        Ok(None) => {
+        Ok(Ok(Some(outcome))) => {
+            // Snapshot the captured roots out of the shared cell. The closure
+            // has dropped by the time we get here, so this `take` is
+            // single-owner — no contention with another writer.
+            let roots = captured_roots
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            finalize(app, scan_id, outcome, roots);
+        }
+        Ok(Ok(None)) => {
             let message = if picker_invoked.load(Ordering::SeqCst) {
                 // Closure ran → user closed the picker without selecting.
                 "scan cancelled — no entry selected".to_string()
@@ -209,7 +387,7 @@ fn run_blocking<R: Runtime>(
                 },
             );
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
@@ -218,7 +396,131 @@ fn run_blocking<R: Runtime>(
                 },
             );
         }
+        Err(p) => {
+            // Unrelated panic (not our cancel sentinel) — surface enough
+            // for the UI to show, and let the process keep serving the
+            // rest of the app.
+            let msg = panic_message(p.as_ref());
+            let _ = app.emit(
+                topic::ERROR,
+                ScanError {
+                    scan_id,
+                    message: format!("scan crashed: {msg}"),
+                },
+            );
+        }
     }
+}
+
+/// Focused-scan body. Runs `analyze_with_progress` for a single entry name
+/// — same walk/parse/graph build pipeline as the picker flow, but no
+/// discovery pass and no picker pause. On success, persists with the seed
+/// picker_roots so subsequent "switch entry" UX has a menu to render.
+fn run_focused_blocking<R: Runtime>(
+    app: AppHandle<R>,
+    scan_id: String,
+    project_path: PathBuf,
+    filters: ScanFilters,
+    entry_name: String,
+    picker_roots_seed: Vec<ScanPickerRoot>,
+    cancel_registry: Arc<ScanCancelRegistry>,
+    cancel_flag: Arc<AtomicBool>,
+) {
+    let sink = TauriProgressSink::new(app.clone(), scan_id.clone(), Arc::clone(&cancel_flag));
+    let opts = AnalyzeOptions {
+        exclude_static_assets: filters.exclude_static_assets,
+        exclude_tests: filters.exclude_tests,
+        ..AnalyzeOptions::default()
+    };
+    let entries = vec![entry_name.clone()];
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        analyze_with_progress(&project_path, &entries, &opts, &sink)
+    }));
+
+    cancel_registry.clear(&scan_id);
+
+    if cancel_flag.load(Ordering::SeqCst)
+        || matches!(&result, Err(p) if p.downcast_ref::<CancelledByUser>().is_some())
+    {
+        let _ = app.emit(
+            topic::ERROR,
+            ScanError {
+                scan_id,
+                message: "scan stopped".to_string(),
+            },
+        );
+        return;
+    }
+
+    match result {
+        Ok(Ok(outcome)) => {
+            // If the named entry didn't resolve to anything in the graph,
+            // surface that as a real diagnostic rather than emitting a
+            // success with an empty report (the suggester would then have
+            // no findings and the user wouldn't know why).
+            if outcome.report.entries.is_empty() {
+                let _ = app.emit(
+                    topic::ERROR,
+                    ScanError {
+                        scan_id,
+                        message: format!(
+                            "entry `{entry_name}` did not resolve in the current graph — \
+                             the file may have changed since the source scan. Try `Rescan entirely`."
+                        ),
+                    },
+                );
+                return;
+            }
+            finalize(app, scan_id, outcome, picker_roots_seed);
+        }
+        Ok(Err(e)) => {
+            let _ = app.emit(
+                topic::ERROR,
+                ScanError {
+                    scan_id,
+                    message: format!("{e:#}"),
+                },
+            );
+        }
+        Err(p) => {
+            let msg = panic_message(&p);
+            let _ = app.emit(
+                topic::ERROR,
+                ScanError {
+                    scan_id,
+                    message: format!("scan crashed: {msg}"),
+                },
+            );
+        }
+    }
+}
+
+fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = p.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// Public entry-point used by the `stop_static_scan` Tauri command. Flips
+/// the cancel flag (so the sink will panic on the next callback) AND sends
+/// `None` through the picker channel (so a scan parked waiting for the
+/// user's pick wakes up immediately).
+///
+/// Returns true if a live scan was found and signalled.
+pub fn stop_scan(
+    scan_id: &str,
+    picker_registry: &PickerRegistry,
+    cancel_registry: &ScanCancelRegistry,
+) -> bool {
+    // Unblock the picker first — `cancel` alone wouldn't wake a thread
+    // sitting on `pick_rx.recv()`. Idempotent if no picker is parked.
+    picker_registry.cancel_if_parked(scan_id);
+    cancel_registry.cancel(scan_id)
 }
 
 /// Build a real "why did discovery return zero?" message that the UI can
@@ -256,14 +558,19 @@ fn no_roots_diagnostic(project_path: &std::path::Path, filters: &ScanFilters) ->
     )
 }
 
-fn finalize<R: Runtime>(app: AppHandle<R>, scan_id: String, outcome: AnalyzeOutcome) {
+fn finalize<R: Runtime>(
+    app: AppHandle<R>,
+    scan_id: String,
+    outcome: AnalyzeOutcome,
+    picker_roots: Vec<ScanPickerRoot>,
+) {
     let picked_root = outcome
         .report
         .entries
         .first()
         .map(|e| e.name.clone());
 
-    match storage::save_report(&scan_id, &outcome.report) {
+    match storage::save_report(&scan_id, &outcome.report, &picker_roots) {
         Ok(path) => {
             let _ = app.emit(
                 topic::COMPLETE,
@@ -302,5 +609,40 @@ fn decorate((index, r): (usize, &drift_static_profiler::PickerRoot)) -> ScanPick
                 line: c.line,
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod cancel_all_tests {
+    //! Coverage for the `cancel_all` helpers the app's graceful shutdown
+    //! path depends on. Without this, regressions in the registries could
+    //! silently leak in-flight scans on quit.
+
+    use super::*;
+
+    #[test]
+    fn scan_cancel_registry_flips_every_flag() {
+        let reg = ScanCancelRegistry::new();
+        let f1 = reg.install("a".into());
+        let f2 = reg.install("b".into());
+        assert!(!f1.load(Ordering::SeqCst));
+        assert!(!f2.load(Ordering::SeqCst));
+
+        assert_eq!(reg.cancel_all(), 2);
+        assert!(f1.load(Ordering::SeqCst));
+        assert!(f2.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn picker_registry_resolves_parked_waiters_with_none() {
+        let reg = PickerRegistry::new();
+        let rx = reg.install("scan-1".into());
+
+        reg.cancel_all();
+
+        // The parked task wakes with `None` (the abort sentinel) rather
+        // than hanging on `recv()` forever.
+        let choice = rx.recv().expect("picker channel should resolve");
+        assert!(choice.is_none());
     }
 }

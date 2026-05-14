@@ -273,6 +273,21 @@ jobs:
         working-directory: drift-lab/desktop-ui
         run: npm ci
 
+      # The Rust crate embeds the static-profiler viewer's built dist/
+      # via rust-embed at compile time. Without this step, `cargo tauri
+      # build` would link in the placeholder index.html that
+      # `drift-lab/src-tauri/build.rs` writes on a fresh checkout — the
+      # shipped .app would render "viewer not built" instead of the React
+      # SPA. The local Makefile path is `make drift-lab-viewer-bundle`;
+      # we reproduce its `npm ci && npm run build` here so neither side
+      # silently drifts from the other.
+      - name: Build static-profiler viewer (embedded into the desktop app)
+        working-directory: drift-static-profiler/viewer
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html || { echo "::error::viewer build did not produce dist/index.html"; exit 1; }
+
       - name: Build desktop app (release)
         working-directory: drift-lab
         env:

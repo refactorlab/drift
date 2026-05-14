@@ -114,7 +114,13 @@ export function App() {
     // after the Vite watcher triggers a reload).
     fetch(fixture.json, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then((data: Report) => {
+      .then((raw: Report | { report: Report }) => {
+        // drift-lab saves scans as a StoredScan envelope ({scan_id, saved_at, report});
+        // built-in fixtures are the bare Report. Unwrap when needed.
+        const data: Report =
+          raw && typeof raw === 'object' && 'report' in raw && !('entries' in raw)
+            ? (raw as { report: Report }).report
+            : (raw as Report);
         // Sort entry points alphabetically by display name.
         const sorted = [...data.entries].sort((a, b) => {
           const aName = (a.parent_class ? `${a.parent_class}.` : '') + a.name;

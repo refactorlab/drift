@@ -106,6 +106,40 @@ impl SuggestionRegistry {
             g.remove(&(scan_id.to_string(), index));
         }
     }
+
+    /// Cancel every registered suggestion stream. Used by the app's
+    /// graceful shutdown path — each driver sees its token fire and
+    /// finalizes cleanly (emitting a final `suggestion:done`). Returns
+    /// the number of streams that were signalled.
+    pub fn cancel_all(&self) -> usize {
+        let Ok(mut g) = self.inner.lock() else { return 0 };
+        let drained: Vec<_> = g.drain().collect();
+        let n = drained.len();
+        for (_, token) in drained {
+            token.cancel();
+        }
+        n
+    }
+
+    /// Cancel every registered suggestion stream that belongs to a single
+    /// scan. Called from the `delete_static_scan` path so any in-flight
+    /// driver can't recreate the envelope file we're about to remove.
+    /// Returns how many streams were signalled.
+    pub fn cancel_all_for_scan(&self, scan_id: &str) -> usize {
+        let Ok(mut g) = self.inner.lock() else { return 0 };
+        let keys: Vec<(String, usize)> = g
+            .keys()
+            .filter(|(s, _)| s == scan_id)
+            .cloned()
+            .collect();
+        let n = keys.len();
+        for k in keys {
+            if let Some(token) = g.remove(&k) {
+                token.cancel();
+            }
+        }
+        n
+    }
 }
 
 /// Prompt contract — locks the output to a shape the UI can render as a
@@ -489,6 +523,39 @@ async fn suggest_one<R: Runtime>(
     //    would hang forever). The body is exactly what we captured — no
     //    "(stopped)" marker, the partial-diff renderer already conveys
     //    incompleteness by virtue of the parser not seeing a closing fence.
+    //
+    //    Persistence: BEFORE the wire emit, write the body to
+    //    `~/.drift/scans/<scan_id>/code-suggestions/<index>.json` so a
+    //    page reload re-hydrates the same content without re-running the
+    //    model. Best-effort — a save failure logs but doesn't fail the
+    //    stream; the UI already has the data via events, so a disk hiccup
+    //    is recoverable on the next click. Empty buffers (cancel before
+    //    any chunks landed) are skipped to avoid useless empty files.
+    if !buffer.is_empty() {
+        let saved = storage::SavedSuggestion {
+            index,
+            // `storage::save_suggestion` overwrites this with the next
+            // sequential version before bytes hit disk; the placeholder
+            // here just keeps the struct literal complete.
+            version: 0,
+            source: item.source.to_string(),
+            kind: item.kind.clone(),
+            severity: item.severity.clone(),
+            file: item.file.clone(),
+            line: item.line,
+            name: item.name.clone(),
+            suggestion: buffer.clone(),
+            saved_at: chrono::Utc::now().to_rfc3339(),
+        };
+        if let Err(e) = storage::save_suggestion(scan_id, &saved) {
+            tracing::warn!(
+                scan_id,
+                index,
+                "failed to persist suggestion: {e:#}"
+            );
+        }
+    }
+
     let _ = app.emit(
         topic::SUGGESTION,
         ScanSuggestion {
@@ -561,4 +628,33 @@ fn build_user_prompt(item: &FindingItem, window: &read_file_lines::Output) -> St
             1–2 lines of context."
     );
     buf
+}
+
+#[cfg(test)]
+mod cancel_all_tests {
+    //! Coverage for the helper the app's graceful shutdown path leans on.
+
+    use super::*;
+
+    #[test]
+    fn suggestion_registry_cancels_every_registered_token() {
+        let reg = SuggestionRegistry::new();
+        let t1 = reg.register_if_absent("scan-1", 0).expect("register 1");
+        let t2 = reg.register_if_absent("scan-1", 1).expect("register 2");
+        let t3 = reg.register_if_absent("scan-2", 0).expect("register 3");
+        assert!(!t1.is_cancelled());
+        assert!(!t2.is_cancelled());
+        assert!(!t3.is_cancelled());
+
+        assert_eq!(reg.cancel_all(), 3);
+
+        assert!(t1.is_cancelled());
+        assert!(t2.is_cancelled());
+        assert!(t3.is_cancelled());
+
+        // Registry is now empty — a fresh register for the same key
+        // succeeds (proves `cancel_all` cleared the map, not just fired
+        // tokens).
+        assert!(reg.register_if_absent("scan-1", 0).is_some());
+    }
 }

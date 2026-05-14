@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useNavigate } from "react-router-dom";
 
 import Onboarding from "./components/Onboarding";
-import { AppConfig, getAppConfig } from "./lib/tauri";
+import { AppConfig, getAppConfig, onOpenSettings } from "./lib/tauri";
+import { useStaticScanSubscription } from "./lib/useStaticScanSubscription";
 import HomePage from "./pages/Home";
 import ReportPage from "./pages/Report";
 import ScanReportPage from "./pages/ScanReport";
@@ -23,6 +24,21 @@ export default function App() {
     return <Onboarding onComplete={() => getAppConfig().then(setConfig)} />;
   }
 
+  return <RoutedApp />;
+}
+
+/**
+ * Routed view — split from `App` so the static-scan subscription hook only
+ * runs *after* onboarding completes. Mounting it above the onboarding gate
+ * would install listeners against a not-yet-configured backend and (worse)
+ * never re-run when the user finishes onboarding.
+ */
+function RoutedApp() {
+  // Listeners live at the app level so a running scan survives navigation
+  // to Settings — see useStaticScanSubscription for the full rationale.
+  useStaticScanSubscription();
+  useOpenSettingsFromTray();
+
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
@@ -31,4 +47,30 @@ export default function App() {
       <Route path="/settings" element={<SettingsPage />} />
     </Routes>
   );
+}
+
+/**
+ * Subscribe to the tray's "Settings…" menu item. The Rust side
+ * (`tray.rs`) shows the main window and emits `tray://open-settings`; we
+ * navigate to `/settings` so the user lands exactly where they expected.
+ * Lives inside `RoutedApp` because `useNavigate` requires a router
+ * context — mounting it above the onboarding gate would crash.
+ */
+function useOpenSettingsFromTray(): void {
+  const navigate = useNavigate();
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    onOpenSettings(() => navigate("/settings")).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [navigate]);
 }

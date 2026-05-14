@@ -1,5 +1,6 @@
 //! Shared app state held by Tauri's `State` registry.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -9,7 +10,7 @@ use crate::backend::ResolvedBackend;
 use crate::events::BackendStatus;
 use crate::history::Conversation;
 use crate::model_config::ModelBackend;
-use crate::scan::runner::PickerRegistry;
+use crate::scan::runner::{PickerRegistry, ScanCancelRegistry};
 use crate::scan::suggester::SuggestionRegistry;
 
 pub struct AppState {
@@ -47,6 +48,27 @@ pub struct AppState {
     /// `stop_scan_finding_suggestion` (cancellation) can share the map
     /// without re-plumbing through the runner.
     pub scan_suggestions: Arc<SuggestionRegistry>,
+
+    /// Per-scan cancel flags for the static-scan runner. The Stop button on
+    /// the running view resolves to `stop_static_scan`, which flips the
+    /// flag — the progress sink polls it on every callback and panics with
+    /// `CancelledByUser` to unwind the otherwise-uninterruptible rayon
+    /// analysis pipeline.
+    pub scan_cancels: Arc<ScanCancelRegistry>,
+
+    /// Process-wide shutdown signal. Cancelled exactly once by the tray
+    /// "Quit" menu / Cmd+Q path so the HTTP server's `with_graceful_shutdown`
+    /// and any other long-lived task can wind down before the process
+    /// exits. Kept as a `CancellationToken` (not a `oneshot::Sender`) so
+    /// multiple subscribers can observe the same event.
+    pub shutdown: CancellationToken,
+
+    /// Whether `tray::install` succeeded at startup. The window-close
+    /// handler reads this: when the tray is live, closing hides to tray;
+    /// when it isn't (Linux without a status-notifier host, headless
+    /// runtimes), closing must actually exit — otherwise the app
+    /// disappears with no way to bring it back.
+    pub tray_available: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -60,6 +82,9 @@ impl AppState {
             cancel_token: Arc::new(Mutex::new(None)),
             scan_pickers: Arc::new(PickerRegistry::new()),
             scan_suggestions: Arc::new(SuggestionRegistry::new()),
+            scan_cancels: Arc::new(ScanCancelRegistry::new()),
+            shutdown: CancellationToken::new(),
+            tray_available: Arc::new(AtomicBool::new(false)),
         }
     }
 }

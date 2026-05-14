@@ -153,8 +153,20 @@ button { font-family: inherit; }
 }
 .search-pick:hover { background: white; color: var(--text); border-color: var(--border-strong); }
 
-/* Run button */
-.btn-row { margin-top: 32px; display: flex; justify-content: center; z-index: 1; }
+/* Run button — column-direction flex so the optional caption
+   (`.run-btn-subtext`) stacks UNDER the button rather than floating off
+   to its right side. When the page lays out the button in a wider
+   column (see `.home-action-row`), a row-direction flex would let the
+   caption slide horizontally instead of wrapping — which read as a
+   broken layout in the two-column Home redesign. */
+.btn-row {
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
 .run-btn {
   padding: 16px 40px;
   background: var(--gradient);
@@ -186,6 +198,209 @@ button { font-family: inherit; }
   display: inline-block;
   animation: sparkle 2.4s ease-in-out infinite;
   font-size: 16px;
+}
+.run-btn-subtext {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+.home-prior-scan-btn {
+  margin-top: 16px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.home-prior-scan-meta {
+  font-size: 12px;
+}
+
+/* Home idle-state action row.
+   - Default (no prior scans for this folder): a single auto-sized
+     column, centered, so the primary CTA reads as the unambiguous
+     focus of the page.
+   - With prior scans (`--has-prior` modifier from Home.tsx): two
+     columns — primary CTA left, "Previous scans" dropdown right.
+     Power users get the shortcut without it intruding on the
+     fresh-folder flow.
+   - On narrow viewports the two-column variant stacks. */
+.home-action-row {
+  margin-top: 32px;
+  display: grid;
+  grid-template-columns: auto;
+  align-items: start;
+  justify-content: center;
+  gap: 28px;
+  /* Lifted above `.hint` (z-index: 1) so the "Previous scans" dropdown
+     panel — whose own z-index: 10 is trapped inside this row's
+     stacking context — can render in front of the hint text below it.
+     A descendant's z-index can only reorder *within* its own context;
+     it can't outrank a higher-DOM-order sibling at the same level. */
+  position: relative;
+  z-index: 2;
+}
+.home-action-row--has-prior {
+  grid-template-columns: auto auto;
+}
+.home-action-col { display: flex; flex-direction: column; align-items: center; }
+.home-action-col--primary .btn-row { margin-top: 0; }
+.home-action-col--secondary { min-width: 220px; padding-top: 6px; }
+@media (max-width: 680px) {
+  .home-action-row--has-prior {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .home-action-col--secondary { min-width: 0; }
+}
+
+/* Previous scans dropdown */
+.prior-scans { position: relative; }
+.prior-scans-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.prior-scans-toggle:hover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: var(--text-dim);
+  transform: translateY(-1px);
+}
+.prior-scans-toggle[aria-expanded="true"] { background: rgba(255, 255, 255, 0.9); }
+.prior-scans-toggle-label { display: inline-flex; gap: 6px; align-items: baseline; }
+.prior-scans-toggle-count { font-size: 12px; }
+.prior-scans-chev { font-size: 10px; opacity: 0.7; }
+
+.prior-scans-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 340px;
+  max-width: 420px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  z-index: 10;
+  /* Cap height + scroll — projects with dozens of prior scans should
+     stay browseable without growing the dropdown off-screen. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.prior-scans-panel-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 10px 4px;
+}
+.prior-scans-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.prior-scans-row:hover { background: rgba(0, 0, 0, 0.04); }
+.prior-scans-row-meta { flex: 1; min-width: 0; }
+.prior-scans-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prior-scans-row-sub { font-size: 11.5px; margin-top: 2px; }
+.prior-scans-row-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+
+/* Compact ghost-button variant — used inside the dropdown rows so the
+   per-scan actions don't dwarf the row content. */
+.ghost-btn-sm {
+  padding: 5px 10px !important;
+  font-size: 12px !important;
+}
+
+/* Two-step inline-confirm delete button. Same base shape as `.ghost-btn`
+   so it sits visually equal to "Open report" / "Pick entry" in the same
+   row; gains a red wash only after the first click so the affordance is
+   discoverable but never accidentally destructive at rest. */
+.confirm-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  white-space: nowrap;
+}
+.confirm-delete-btn:hover:not(:disabled) {
+  background: #fff5f5;
+  border-color: #f3b8b8;
+  color: #b91c1c;
+}
+.confirm-delete-btn--armed {
+  background: #fde2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+  /* Subtle pulse so the user notices the state changed even if their
+     cursor was already on the button when they clicked. */
+  animation: confirm-delete-pulse 1.2s ease-in-out infinite;
+}
+.confirm-delete-btn--armed:hover:not(:disabled) {
+  background: #fbd0d0;
+  border-color: #dc2626;
+  color: #7f1d1d;
+}
+.confirm-delete-btn--pending {
+  background: #f3f4f6;
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: progress;
+}
+.confirm-delete-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+@keyframes confirm-delete-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  50%      { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
+}
+
+/* "N saved suggestions loaded" pill on the scan report header.
+   Makes the rehydration state visible at a glance so the user can
+   distinguish "nothing was ever studied" from "disk load silently
+   failed". Subtle by default — green accent on the dot, regular text
+   weight on the count so it doesn't compete with the title. */
+.scan-saved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+.scan-saved-badge::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2ea44f;
+  box-shadow: 0 0 6px rgba(46, 164, 79, 0.5);
 }
 @keyframes sparkle {
   0%, 100% { transform: scale(1) rotate(0); }
@@ -904,6 +1119,48 @@ button { font-family: inherit; }
 }
 .settings-fab:hover { background: #fff; color: var(--text); border-color: var(--border-strong); }
 .settings-fab svg { width: 18px; height: 18px; }
+
+/* Local HTTP server quick-links (viewer + Swagger). Lives in the top-left
+   corner mirroring the settings FAB on the right. Each button opens the
+   target URL in the system browser via tauri-plugin-opener. */
+.local-server-links {
+  /* Below the centered update banner (which lives at top:16px and is
+     usually hidden when no update is pending). 64px keeps both visible
+     even when the banner is showing. */
+  position: absolute;
+  top: 64px;
+  left: 16px;
+  z-index: 5;
+  display: inline-flex;
+  gap: 8px;
+}
+.local-server-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.local-server-link:hover:not(:disabled) {
+  background: #fff;
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.local-server-link:disabled { opacity: 0.5; cursor: not-allowed; }
+.local-server-link .port-pill {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 
 /* Update banner — used on Home (compact) + Settings inline */
 .home-update-slot {
@@ -1951,21 +2208,34 @@ button { font-family: inherit; }
   border-radius: 18px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 32px rgba(0, 0, 0, 0.06);
   padding: 24px 24px 28px;
+  /* The card and its children must be allowed to shrink inside the page
+   * column — without this, a long unbreakable child (e.g. a code span)
+   * inflates the card and creates a page-level horizontal scrollbar. */
+  min-width: 0;
 }
 .scan-page-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 12px 20px;
   margin-bottom: 18px;
+}
+.scan-page-head > div:first-child {
+  min-width: 0;
+  flex: 1 1 240px;
 }
 .scan-page-head h1 {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
-.scan-page-head .muted { color: var(--text-dim); font-size: 12px; }
-.scan-page-actions { display: flex; gap: 8px; align-items: center; }
+.scan-page-head .muted {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.scan-page-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* Folder picker row reuses the global SearchBox styles. The Start-scan
  * button below it is a tinted primary, matching the home page Run button. */
@@ -1996,7 +2266,10 @@ button { font-family: inherit; }
 }
 .scan-progress-row {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
+  /* icon | label | bar | done/total | tqdm [elapsed<eta, rate] — the trailing
+   * three columns collapse to zero when a row lacks them (atomic phases,
+   * spinner rows), so the same grid handles every variant. */
+  grid-template-columns: 28px 1fr auto auto auto;
   align-items: center;
   gap: 12px;
   padding: 9px 4px;
@@ -2067,6 +2340,68 @@ button { font-family: inherit; }
   animation: scan-spin 0.9s linear infinite;
 }
 @keyframes scan-spin { to { transform: rotate(360deg); } }
+
+/* Inline %-of-total caption next to "done/total". Muted so the dominant
+ * read is the numerator/denominator pair, the percentage is a secondary
+ * glance. */
+.scan-progress-pct {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+/* tqdm trailing stat panel — `[01:23<00:45, 12.3/s]`. Monospace + tabular
+ * digits so the brackets don't shimmy as the seconds and rate tick. */
+.scan-progress-stats {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 160px;
+  text-align: right;
+}
+
+/* Pipeline-level overall bar. Wider than per-phase bars and visually
+ * weightier (slightly taller, gradient text on the label) so the eye
+ * lands on it first when scanning the column. */
+.scan-progress-overall {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  font-size: 12.5px;
+}
+.scan-progress-overall-label {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.scan-progress-bar-overall {
+  width: auto;
+  min-width: 180px;
+  height: 8px;
+}
+.scan-progress-overall-count {
+  min-width: 48px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text);
+}
+.scan-progress-overall-stats {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 120px;
+  text-align: right;
+}
 
 /* Entry-roots picker. Card per root, hover-elevation, a "select" button on
  * the right. Same visual rhythm as the saved-scans list further down. */
@@ -2291,10 +2626,79 @@ button { font-family: inherit; }
   padding: 14px 16px;
   margin-bottom: 12px;
   font-size: 13px;
+  /* Allow the row to shrink inside narrow parents instead of pushing the
+   * card out: long file paths in the meta header would otherwise force
+   * horizontal overflow at the page level. */
+  min-width: 0;
 }
 .scan-suggestion-meta {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  display: flex;
+  /* Wrap when the window is too narrow to fit badge + name + path + button
+   * on a single line — long file paths and unbroken symbol names are the
+   * common offenders. Tighter row-gap keeps the wrapped layout compact. */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 10px;
   font-size: 11.5px; color: var(--text-dim);
+  min-width: 0;
+}
+/* File:line path inside the meta header. Default `.scan-code` is nowrap,
+ * which is right almost everywhere — but here the value can be a 60-char
+ * Kotlin path and we'd rather truncate-with-ellipsis than blow out the
+ * row. `min-width: 0` lets the flex item shrink past its content size. */
+.scan-suggestion-meta .scan-code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+/* Finding name — long unbroken identifiers (`UserLimitValidator.kt:...`)
+ * would otherwise hold the row at their intrinsic width and prevent the
+ * path from getting any space at all. */
+.scan-suggestion-meta > strong {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow-wrap: anywhere;
+}
+/* Version-history nav: rendered between the row's metadata header and
+ * the suggestion body. Shows up only when versions.length >= 2 so the
+ * default single-version display stays clean. */
+.scan-suggestion-version-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+  font-size: 12px;
+}
+.scan-version-step {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  transition: background 0.15s ease;
+}
+.scan-version-step:hover:not(:disabled) {
+  background: var(--bg-soft);
+}
+.scan-version-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.scan-version-label {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 56px;
+  text-align: center;
+}
+.scan-version-savedat {
+  color: var(--text-faint);
 }
 .scan-suggestion-body {
   white-space: pre-wrap;
@@ -2318,6 +2722,16 @@ button { font-family: inherit; }
   color: var(--text);
   margin: 14px 0 8px;
   letter-spacing: 0.02em;
+}
+
+/* Action row below the live scan progress timeline. Today holds just the
+ * Stop button, but it's a slot — future "Pause" or "Save partial" actions
+ * land here without re-layout. */
+.scan-running-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 /* CTA row that gates the LLM suggestion phase on the report page. */
 .scan-suggestions-cta {
@@ -3140,5 +3554,30 @@ button { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .scan-picker-list {
     animation: none;
+  }
+}
+
+/* Narrow desktop windows (resized to ~tablet width). Trim the outer page
+ * padding and the card padding so more horizontal real estate goes to the
+ * actual content — the meta row wraps cleanly at this point and file paths
+ * get enough room before they need to ellipsize. Placed at end-of-file so
+ * source-order beats the earlier non-media declarations of the same
+ * selectors at equal specificity. */
+@media (max-width: 720px) {
+  .scan-page {
+    padding: 18px 14px 60px;
+  }
+  .scan-page-card {
+    padding: 18px 16px 22px;
+    border-radius: 14px;
+  }
+  .scan-page-head {
+    margin-bottom: 14px;
+  }
+  .scan-page-head h1 {
+    font-size: 19px;
+  }
+  .scan-suggestion-row {
+    padding: 12px 12px;
   }
 }

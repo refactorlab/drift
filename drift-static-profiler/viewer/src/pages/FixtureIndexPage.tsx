@@ -1,6 +1,7 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FIXTURES } from '../fixtures';
-import { useUserScans } from '../userScans';
+import { invalidateUserScans, useUserScans } from '../userScans';
 import type { FixtureSpec } from '../types';
 
 /**
@@ -15,6 +16,24 @@ import type { FixtureSpec } from '../types';
  */
 export function FixtureIndexPage() {
   const { scans, loading } = useUserScans();
+  // Hidden-after-delete set so deletes feel instant — the parent hook
+  // doesn't re-fetch until `invalidateUserScans()` + a remount, and we
+  // can't easily force its internal state to refresh mid-render.
+  const [deletedKeys, setDeletedKeys] = useState<Set<string>>(new Set());
+  // Bump on every delete so the user can also force a list refresh
+  // implicitly (the index endpoint is cheap; no harm in re-fetching).
+  // The hook itself doesn't expose a refetch; this is a soft refresh.
+  const [, force] = useState(0);
+  const handleDeleted = (key: string) => {
+    setDeletedKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+    invalidateUserScans();
+    force((n) => n + 1);
+  };
+  const visibleScans = scans.filter((s) => !deletedKeys.has(s.key));
   return (
     <div style={pageStyle}>
       <header style={headerStyle}>
@@ -31,7 +50,7 @@ export function FixtureIndexPage() {
             {loading ? '…' : `${scans.length}`}
           </span>
         </div>
-        {scans.length === 0 ? (
+        {visibleScans.length === 0 ? (
           <div style={emptyStyle}>
             No scans yet. Run <code style={codeStyle}>make scan /path/to/your-project</code>
             {' '}from the <code style={codeStyle}>drift-static-profiler/</code> directory.
@@ -39,8 +58,13 @@ export function FixtureIndexPage() {
           </div>
         ) : (
           <div style={gridStyle}>
-            {scans.map((f) => (
-              <ScanCard key={f.key} f={f} kindLabel="SCAN" />
+            {visibleScans.map((f) => (
+              <ScanCard
+                key={f.key}
+                f={f}
+                kindLabel="SCAN"
+                onDeleted={() => handleDeleted(f.key)}
+              />
             ))}
           </div>
         )}
@@ -67,21 +91,124 @@ export function FixtureIndexPage() {
   );
 }
 
-function ScanCard({ f, kindLabel }: { f: FixtureSpec; kindLabel: string }) {
+function ScanCard({
+  f,
+  kindLabel,
+  onDeleted,
+}: {
+  f: FixtureSpec;
+  kindLabel: string;
+  /// When provided, renders an inline-confirm delete button in the
+  /// card's top-right corner. The handler is responsible for re-fetching
+  /// or otherwise reflecting that the scan is gone. Built-in fixtures
+  /// omit this prop — they aren't user data and shouldn't be deletable.
+  onDeleted?: () => void;
+}) {
   return (
-    <Link
-      to={`/scan/${f.key}/report`}
-      style={cardStyle}
-      title={`Open the full scan report for ${f.label}`}
+    <div style={cardContainerStyle}>
+      <Link
+        to={`/scan/${f.key}/report`}
+        style={cardStyle}
+        title={`Open the full scan report for ${f.label}`}
+      >
+        <div style={cardKindStyle}>{kindLabel}</div>
+        <div style={cardLabelStyle}>{f.label}</div>
+        <div style={cardDescStyle}>{f.description}</div>
+        <div style={cardFooterStyle}>
+          <span style={cardPathStyle}>{f.json}</span>
+          <span style={cardArrowStyle}>→</span>
+        </div>
+      </Link>
+      {onDeleted && <ScanCardDeleteButton scanKey={f.key} onDeleted={onDeleted} />}
+    </div>
+  );
+}
+
+/// Two-step inline-confirm delete button overlaid on a scan card. First
+/// click → red, label changes to "Confirm?"; second click within 3 s →
+/// `DELETE /api/scans/{key}` then notify parent. Wrapped in its own
+/// component so the `Link` parent's click handler is fully bypassed
+/// (`stopPropagation` + `preventDefault`) and the user can't accidentally
+/// navigate away mid-confirm.
+function ScanCardDeleteButton({
+  scanKey,
+  onDeleted,
+}: {
+  scanKey: string;
+  onDeleted: () => void;
+}) {
+  type Phase = 'idle' | 'armed' | 'pending' | 'error';
+  const [phase, setPhase] = useState<Phase>('idle');
+  const revertTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (revertTimer.current !== null) window.clearTimeout(revertTimer.current);
+    };
+  }, []);
+
+  const onClick = async (e: React.MouseEvent) => {
+    // Stop the parent <Link> from navigating to /scan/.../report.
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (phase === 'pending') return;
+    if (phase === 'idle' || phase === 'error') {
+      setPhase('armed');
+      if (revertTimer.current !== null) window.clearTimeout(revertTimer.current);
+      revertTimer.current = window.setTimeout(() => {
+        setPhase('idle');
+        revertTimer.current = null;
+      }, 3000);
+      return;
+    }
+    // Confirmed.
+    if (revertTimer.current !== null) {
+      window.clearTimeout(revertTimer.current);
+      revertTimer.current = null;
+    }
+    setPhase('pending');
+    try {
+      const r = await fetch(`/api/scans/${encodeURIComponent(scanKey)}`, {
+        method: 'DELETE',
+      });
+      if (!r.ok && r.status !== 204) {
+        throw new Error(`DELETE /api/scans/${scanKey} → HTTP ${r.status}`);
+      }
+      onDeleted();
+    } catch {
+      setPhase('error');
+    }
+  };
+
+  const label =
+    phase === 'pending'
+      ? 'Deleting…'
+      : phase === 'armed'
+        ? '⚠ Click again'
+        : phase === 'error'
+          ? 'Retry delete'
+          : 'Delete';
+  const style =
+    phase === 'armed' || phase === 'error'
+      ? cardDeleteArmedStyle
+      : phase === 'pending'
+        ? cardDeletePendingStyle
+        : cardDeleteIdleStyle;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={style}
+      disabled={phase === 'pending'}
+      title={
+        phase === 'armed'
+          ? 'Click again within 3 s to confirm — or wait to cancel.'
+          : 'Permanently delete this scan from ~/.drift/scans/.'
+      }
     >
-      <div style={cardKindStyle}>{kindLabel}</div>
-      <div style={cardLabelStyle}>{f.label}</div>
-      <div style={cardDescStyle}>{f.description}</div>
-      <div style={cardFooterStyle}>
-        <span style={cardPathStyle}>{f.json}</span>
-        <span style={cardArrowStyle}>→</span>
-      </div>
-    </Link>
+      {label}
+    </button>
   );
 }
 
@@ -128,6 +255,11 @@ const gridStyle: React.CSSProperties = {
   gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
   gap: 14,
 };
+const cardContainerStyle: React.CSSProperties = {
+  // Wrapper so the absolutely-positioned delete button has a relative
+  // anchor without breaking the existing card layout.
+  position: 'relative',
+};
 const cardStyle: React.CSSProperties = {
   display: 'block',
   textDecoration: 'none',
@@ -137,6 +269,39 @@ const cardStyle: React.CSSProperties = {
   borderRadius: 6,
   padding: 16,
   transition: 'border-color 120ms',
+};
+const cardDeleteBaseStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  right: 8,
+  padding: '3px 9px',
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: 0.3,
+  textTransform: 'uppercase',
+  borderRadius: 100,
+  border: '1px solid #3f4147',
+  background: 'rgba(38, 40, 44, 0.85)',
+  color: '#9ca0a8',
+  cursor: 'pointer',
+  transition: 'background 120ms, color 120ms, border-color 120ms',
+  // Above the Link's z-context so clicks reach the button.
+  zIndex: 1,
+};
+const cardDeleteIdleStyle: React.CSSProperties = {
+  ...cardDeleteBaseStyle,
+};
+const cardDeleteArmedStyle: React.CSSProperties = {
+  ...cardDeleteBaseStyle,
+  background: '#5b1d1d',
+  borderColor: '#e26d6d',
+  color: '#ffd6d6',
+};
+const cardDeletePendingStyle: React.CSSProperties = {
+  ...cardDeleteBaseStyle,
+  background: '#2f3136',
+  color: '#7e8189',
+  cursor: 'progress',
 };
 const cardKindStyle: React.CSSProperties = {
   fontSize: 9, fontWeight: 700, color: '#7e8189',

@@ -48,7 +48,15 @@ export function useReport(): {
     setLoading(true);
     fetch(fixture.json, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: Report) => setReport(data))
+      .then((data: Report | { report: Report }) => {
+        // drift-lab saves scans as a StoredScan envelope ({scan_id, saved_at, report}),
+        // while built-in fixtures are the bare Report. Unwrap when needed.
+        const unwrapped =
+          data && typeof data === 'object' && 'report' in data && !('entries' in data)
+            ? (data as { report: Report }).report
+            : (data as Report);
+        setReport(unwrapped);
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   }, [fixture?.json, fixtureKey, scansLoading]);

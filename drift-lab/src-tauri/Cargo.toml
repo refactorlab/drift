@@ -68,6 +68,21 @@ chrono = { version = "0.4", features = ["serde"] }
 # whitespace-drift tolerance). Used by `crate::patch::commands::apply_patch`.
 udiffx = "0.1"
 
+# Localhost HTTP server: exposes the static-profiler viewer + a documented
+# REST API (Swagger UI at /docs) so external tools and the user's browser
+# can drive scans and inspect ~/.drift/scans/* without going through Tauri's
+# IPC. Bound to 127.0.0.1 only.
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
+# Embed the built viewer (drift-static-profiler/viewer/dist) into the
+# binary so the desktop app has no filesystem dependency at runtime.
+rust-embed = { version = "8", features = ["mime-guess"] }
+mime_guess = "2"
+tokio-stream = "0.1"
+
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

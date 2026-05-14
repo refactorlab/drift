@@ -13,7 +13,7 @@
 //! scanned root, first few callers resolved by name) so the UI never has to
 //! reach back into `CallGraph` internals.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// One streamed progress event. The frontend dispatches on `kind` to pick an
 /// icon and to update the right phase row. Shapes mirror the
@@ -78,11 +78,26 @@ pub enum ScanProgress {
         total: u64,
         current: Option<String>,
     },
+    /// Pipeline-level heartbeat. Emitted on every phase boundary so the UI
+    /// can render a tqdm-style overall bar ("phase 7/28 · 4.2s elapsed").
+    /// The frontend computes ETA from elapsed_ms + the running phase ratio.
+    /// `phase_total_hint` is the CLI's `PIPELINE_PHASES_HINT` — the bar caps
+    /// at 100% visually even if the real count drifts slightly.
+    Overall {
+        scan_id: String,
+        phase_index: u64,
+        phase_total_hint: u64,
+        elapsed_ms: u64,
+    },
 }
 
 /// One row in the top-N entry-root picker. Same fields as
 /// `drift_static_profiler::PickerRoot`, mapped to camelCase via `serde`.
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Deserialize` is on the same camelCase derive so the same shape that goes
+/// out over IPC also round-trips through `~/.drift/scans/<id>.json` —
+/// `storage::StoredScan::picker_roots` reads exactly this struct off disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanPickerRoot {
     pub index: usize,
@@ -93,7 +108,7 @@ pub struct ScanPickerRoot {
     pub callers: Vec<ScanPickerCaller>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanPickerCaller {
     pub name: String,
@@ -262,6 +277,22 @@ mod tests {
         assert!(s.contains("\"totalFiles\":99"), "wire: {s}");
         assert!(s.contains("\"bytes\":1024"), "wire: {s}");
         assert!(!s.contains("total_files"), "snake_case leaked: {s}");
+    }
+
+    #[test]
+    fn scan_progress_overall_renames_to_camelcase() {
+        let s = json(ScanProgress::Overall {
+            scan_id: "x".into(),
+            phase_index: 3,
+            phase_total_hint: 28,
+            elapsed_ms: 1234,
+        });
+        assert!(s.contains("\"kind\":\"overall\""), "wire: {s}");
+        assert!(s.contains("\"phaseIndex\":3"), "wire: {s}");
+        assert!(s.contains("\"phaseTotalHint\":28"), "wire: {s}");
+        assert!(s.contains("\"elapsedMs\":1234"), "wire: {s}");
+        assert!(!s.contains("phase_index"), "snake_case leaked: {s}");
+        assert!(!s.contains("elapsed_ms"), "snake_case leaked: {s}");
     }
 
     #[test]

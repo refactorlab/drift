@@ -163,6 +163,15 @@ pub async fn get_backend_status(state: State<'_, AppState>) -> Result<BackendSta
     Ok(state.status.lock().await.clone())
 }
 
+/// Return the URL the bundled localhost HTTP server is listening on, or
+/// `null` when the bind step hasn't finished yet (or failed). The UI uses
+/// this for the "Open viewer" / "API docs" buttons so it always points at
+/// the *actual* port — `DRIFT_HTTP_PORT` may have overridden the default.
+#[tauri::command]
+pub async fn get_http_server_url() -> Result<Option<String>, String> {
+    Ok(crate::http_server::server_url())
+}
+
 /// Eager configure: store the config + resolve immediately so the caller
 /// blocks on connection errors instead of seeing them on first chat.
 #[tauri::command]

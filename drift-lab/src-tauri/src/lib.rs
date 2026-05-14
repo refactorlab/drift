@@ -8,6 +8,7 @@ mod db;
 mod docker;
 pub mod events;
 mod history;
+mod http_server;
 mod model_config;
 pub mod model_discovery;
 mod presets;
@@ -16,6 +17,7 @@ pub mod scan;
 mod scan_commands;
 #[allow(dead_code)] // Trait + file-backed impl. Kept as the swap path to a future KeychainSecretStore.
 mod secret_store;
+mod shutdown;
 mod state;
 mod telemetry;
 mod user_input;
@@ -179,9 +181,26 @@ pub fn run() {
     builder
         .setup(|app| {
             // Set up tray icon (best-effort; fails silently in headless test envs).
-            if let Err(e) = tray::install(app.handle()) {
-                tracing::warn!("tray install failed: {e}");
+            // Record success in AppState so the window-close handler can fall
+            // back to a real exit on Linux desktops without a status-notifier
+            // host — otherwise the app would hide with no way to bring it back.
+            match tray::install(app.handle()) {
+                Ok(()) => {
+                    let state: tauri::State<'_, state::AppState> = app.state();
+                    state
+                        .tray_available
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                Err(e) => tracing::warn!("tray install failed: {e}"),
             }
+
+            // Route POSIX signals (SIGINT from `make dev` Ctrl+C, SIGTERM
+            // from `kill` / IDE Stop buttons) and the Windows ctrl-c event
+            // through the same graceful-shutdown path as Cmd+Q. Without
+            // this, Ctrl+C in the dev terminal hard-kills the binary and
+            // skips the HTTP-server drain / SQLite WAL flush /
+            // docker-child cleanup. Double-press escape hatch is built in.
+            shutdown::install_signal_handlers(app.handle());
 
             // Hook the tracing pipeline into Tauri's event bus so the UI's
             // BackendLogPane can mirror what's printed to stderr. Installing
@@ -208,6 +227,38 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = db::init(&handle_for_db).await {
                     tracing::warn!("sqlite init failed (non-fatal): {e:?}");
+                }
+            });
+
+            // Localhost HTTP server: serves the static-profiler viewer at
+            // `/`, exposes scans under `~/.drift/scans/` as fixtures the
+            // viewer can render, and a documented REST API at `/api/*`
+            // (Swagger UI at `/docs`). Bound to 127.0.0.1 only. Failure to
+            // bind is non-fatal — the desktop UI keeps working over IPC.
+            let handle_for_http = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let port = http_server::resolved_port();
+                let state: tauri::State<'_, state::AppState> = handle_for_http.state();
+                let scan_pickers = Arc::clone(&state.scan_pickers);
+                let scan_cancels = Arc::clone(&state.scan_cancels);
+                let scan_suggestions = Arc::clone(&state.scan_suggestions);
+                // Share the process-wide shutdown token. `crate::shutdown::run`
+                // fires it from the tray "Quit" path and from the
+                // `ExitRequested` run-event, so `axum::serve` breaks out of
+                // `with_graceful_shutdown` and the bound port is freed before
+                // the process exits.
+                let shutdown = state.shutdown.clone();
+                if let Err(e) = http_server::serve(
+                    handle_for_http.clone(),
+                    scan_pickers,
+                    scan_cancels,
+                    scan_suggestions,
+                    port,
+                    shutdown,
+                )
+                .await
+                {
+                    tracing::warn!("drift-lab HTTP server stopped: {e:?}");
                 }
             });
 
@@ -275,6 +326,7 @@ pub fn run() {
             commands::load_backend_config,
             commands::clear_backend,
             commands::get_backend_status,
+            commands::get_http_server_url,
             // Multi-provider (Phase 1.5).
             commands::get_app_config,
             commands::update_scan_filters,
@@ -305,28 +357,76 @@ pub fn run() {
             commands::get_current_conversation,
             // Static scan — two-step pick flow + per-finding "Study this" driver.
             scan_commands::start_static_scan,
+            scan_commands::restart_scan_from_cache,
             scan_commands::select_entry_and_scan,
             scan_commands::list_static_scans,
             scan_commands::load_static_scan,
+            scan_commands::delete_static_scan,
             scan_commands::list_scan_entries,
             scan_commands::list_scan_findings,
+            scan_commands::list_saved_suggestions,
+            scan_commands::list_suggestion_versions,
             scan_commands::start_scan_finding_suggestion,
             scan_commands::stop_scan_finding_suggestion,
+            scan_commands::stop_static_scan,
             // LLM-driven single-location patch (streaming → card → apply).
             patch::commands::start_patch,
             patch::commands::apply_patch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            // Hard-exit on any quit path. The static scan runs via
-            // `spawn_blocking` + rayon — neither honors cancellation,
-            // so a graceful Tauri/Tokio shutdown would block (sometimes
-            // for minutes) waiting for the analysis to finish. We
-            // deliberately bypass runtime drop and kill the process
-            // (and all its threads) immediately.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                std::process::exit(0);
+        .run(|app_handle, event| match event {
+            // Window close (X / Cmd+W) hides to tray instead of exiting —
+            // but only when the tray actually came up. Without a live tray
+            // icon there's no way to bring the window back, so on platforms
+            // where tray install failed we fall through and let Tauri exit
+            // normally (which then routes through `ExitRequested` below for
+            // the cooperative shutdown).
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                let state: tauri::State<'_, state::AppState> = app_handle.state();
+                let has_tray = state
+                    .tray_available
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                if has_tray {
+                    api.prevent_close();
+                    if let Some(window) = app_handle.get_webview_window(&label) {
+                        let _ = window.hide();
+                    }
+                }
             }
+            // Dock icon clicked on macOS while every window was hidden —
+            // re-show the main window so the app feels reachable.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } => {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            // Real quit path (Cmd+Q, `app.exit()`, OS-driven shutdown):
+            // run the cooperative cancellation sequence before exiting.
+            //
+            // `api.prevent_exit()` keeps Tauri from dropping the tokio
+            // runtime out from under the shutdown task. We still
+            // `std::process::exit(0)` at the end because the rayon-based
+            // static scan can't be cleanly cancelled — same rationale as
+            // the original hard-exit, but now with a 5s grace period
+            // (see `shutdown::SHUTDOWN_DEADLINE`) for HTTP / DB to flush.
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                api.prevent_exit();
+                let app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    shutdown::run(&app).await;
+                    std::process::exit(0);
+                });
+            }
+            _ => {}
         });
 }
