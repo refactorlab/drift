@@ -811,6 +811,77 @@ button { font-family: inherit; }
 .status-downloading,
 .status-starting { background: #fff5e6; color: #a85b00; border-color: #f6dca8; }
 
+/* Active provider/model pill — surfaced on Home + ScanReport so the user
+   can verify which provider the next scan/suggestion run will hit. Click
+   navigates to Settings → Models. */
+.active-model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 100px;
+  background: rgba(255,255,255,0.75);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.active-model-badge:hover {
+  background: #fff;
+  border-color: var(--border-strong);
+}
+.active-model-badge--compact {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+.active-model-badge--empty .active-model-label {
+  color: var(--text-dim);
+}
+.active-model-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-model-name { color: var(--text-dim); font-weight: 500; }
+.active-model-sep { color: var(--text-dim); opacity: 0.5; }
+.active-model-model { color: var(--text); font-weight: 600; }
+.active-model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 100px;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+.active-model-dot--ready { background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15); }
+.active-model-dot--starting { background: #f59e0b; animation: active-model-pulse 1.4s ease-in-out infinite; }
+.active-model-dot--error { background: #c4341f; }
+.active-model-dot--idle { background: #94a3b8; }
+.active-model-dot--unconfigured { background: #cbd5e1; }
+
+@keyframes active-model-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Home header: place active-model badge next to the settings FAB. */
+.home-active-model-slot {
+  position: absolute;
+  top: 18px;
+  right: 64px;
+  z-index: 5;
+  max-width: 40%;
+}
+
 /* Floating settings (gear) button on Home */
 .settings-fab {
   position: absolute;
@@ -1889,7 +1960,7 @@ button { font-family: inherit; }
   letter-spacing: -0.01em;
 }
 .scan-page-head .muted { color: var(--text-dim); font-size: 12px; }
-.scan-page-actions { display: flex; gap: 8px; }
+.scan-page-actions { display: flex; gap: 8px; align-items: center; }
 
 /* Folder picker row reuses the global SearchBox styles. The Start-scan
  * button below it is a tinted primary, matching the home page Run button. */

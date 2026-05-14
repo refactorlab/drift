@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import ActiveModelBadge from "../components/ActiveModelBadge";
 import MagicOrb from "../components/MagicOrb";
 import Orbs from "../components/Orbs";
 import ScanSummary from "../components/scan-summary/ScanSummary";
@@ -241,6 +242,7 @@ export default function ScanReportPage() {
             </div>
           </div>
           <div className="scan-page-actions">
+            <ActiveModelBadge compact />
             <button type="button" className="ghost-btn" onClick={() => navigate("/")}>
               ← Home
             </button>

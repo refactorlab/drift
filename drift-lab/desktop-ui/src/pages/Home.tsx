@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import ActiveModelBadge from "../components/ActiveModelBadge";
 import Orbs from "../components/Orbs";
 import RunButton from "../components/RunButton";
 import SearchBox from "../components/SearchBox";
@@ -94,6 +95,10 @@ export default function HomePage() {
 
       <div className="home-update-slot">
         <UpdateBanner compact />
+      </div>
+
+      <div className="home-active-model-slot">
+        <ActiveModelBadge />
       </div>
 
       <button

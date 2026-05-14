@@ -689,6 +689,12 @@ pub async fn save_provider<R: Runtime>(
     }
 
     if activate {
+        // The single-config slot (`state.config`) is the source of truth
+        // read by every scan/agent/patch path via `make_provider`. If we
+        // only flip `active_provider_id` here, downstream calls keep
+        // hitting the *previously* active provider (e.g. activating
+        // Ollama but every scan still going to Docker Model Runner).
+        *state.config.lock().await = Some(config.clone());
         *state.backend.lock().await = None;
         spawn_background_resolve(&app, config);
     }
@@ -712,6 +718,12 @@ pub async fn activate_provider<R: Runtime>(
             .clone()
     };
 
+    // Sync both slots in lockstep. `state.config` drives `make_provider`
+    // in scan/agent/patch paths — if it's left stale, switching from
+    // (say) Docker Model Runner to Ollama in the UI silently keeps
+    // routing requests to Docker. Update it *before* the resolve kicks
+    // off so any racing scan command sees the new provider.
+    *state.config.lock().await = Some(provider.config.clone());
     *state.backend.lock().await = None;
 
     {
@@ -720,6 +732,8 @@ pub async fn activate_provider<R: Runtime>(
         app_config::save(&app, &cfg).map_err(|e| e.to_string())?;
     }
 
+    let (mode, model) = describe(&provider.config);
+    set_status(&app, &state, BackendStatus::Idle { mode, model }).await;
     spawn_background_resolve(&app, provider.config);
     Ok(())
 }
@@ -756,6 +770,10 @@ pub async fn delete_provider<R: Runtime>(
     drop(cfg);
 
     if was_active {
+        // Same reason as activate_provider: keep `state.config` in lockstep
+        // with `active_provider_id` so nothing downstream picks the deleted
+        // provider on its next call.
+        *state.config.lock().await = None;
         *state.backend.lock().await = None;
         set_status(&app, &state, BackendStatus::Unconfigured).await;
     }
@@ -769,6 +787,7 @@ pub async fn reset_all_config<R: Runtime>(
     state: State<'_, AppState>,
     app: AppHandle<R>,
 ) -> Result<(), String> {
+    *state.config.lock().await = None;
     *state.backend.lock().await = None;
     {
         let mut cfg = state.app_config.lock().await;
