@@ -1,2 +1,6 @@
 action/node_modules/
 .DS_Store
+
+# Tauri updater signing keys — generated locally by `tauri signer generate`.
+# Private key must never be committed. See drift-lab/UPDATER.md.
+.tauri-keys/

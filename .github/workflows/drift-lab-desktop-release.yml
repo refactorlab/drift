@@ -1,0 +1,188 @@
+name: drift-lab desktop / release
+
+# Cuts a signed release of Drift Lab and emits the latest.json manifest the
+# in-app updater consumes. Triggered by tag push (`drift-lab-v*`) or manual
+# dispatch. The release is created as a DRAFT — a human reviews and clicks
+# Publish, which is what makes /releases/latest/download/latest.json point
+# at this build (GitHub serves /latest from the most recent published, not
+# drafted, release).
+#
+# Bootstrap + key-management lives in drift-lab/UPDATER.md.
+
+on:
+  push:
+    tags:
+      - 'drift-lab-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re-)build for, e.g. drift-lab-v0.1.1'
+        required: true
+        type: string
+
+concurrency:
+  group: drift-lab-desktop-release-${{ github.ref }}
+  cancel-in-progress: false  # never abort a release mid-flight
+
+permissions:
+  contents: write  # required for tauri-action to create the GitHub release
+
+jobs:
+  release:
+    name: release / ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            label: macos-universal
+            args: --target universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+            args: ''
+            rust_targets: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            build-essential \
+            file \
+            jq
+
+      - name: Install jq on macOS
+        if: startsWith(matrix.runner, 'macos')
+        run: brew list jq >/dev/null 2>&1 || brew install jq
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: drift-lab/desktop-ui/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-lab/src-tauri -> target
+          key: release-${{ matrix.label }}
+
+      - name: Install frontend deps
+        working-directory: drift-lab/desktop-ui
+        run: npm ci
+
+      # `tauriScript: cargo tauri` (set on the action below) requires
+      # the CLI binary on PATH. Release cadence is low enough that we
+      # don't bother caching it — a one-shot install on each release is
+      # ~2-3 min and avoids the cache-poisoning complexity the PR build
+      # workflow had to work around.
+      - name: Install cargo-tauri
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      # The actual build + sign + upload. tauri-action:
+      #   • reads tauri.conf.json → bundle.createUpdaterArtifacts=true to know
+      #     to emit .app.tar.gz / .AppImage.tar.gz updater bundles
+      #   • signs with TAURI_SIGNING_PRIVATE_KEY (writes .sig next to each)
+      #   • creates a draft GitHub Release named after the tag
+      #   • uploads bundles + .sig files + a per-platform latest.json fragment
+      #
+      # `uploadUpdaterJson` defaults to true; we set it explicitly so a future
+      # reader doesn't have to memorise the default.
+      - name: Build, sign, and draft release
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: drift-lab
+          # Our layout has package.json in drift-lab/desktop-ui/ (not at
+          # projectPath), so tauri-action's default `npm run tauri` would fail
+          # to find a script. `cargo tauri` works because the CLI is installed
+          # via `cargo install tauri-cli` (already on the runner image / fast
+          # to fetch). beforeBuildCommand in tauri.conf.json handles the UI
+          # build via `npm --prefix ../desktop-ui run build`.
+          tauriScript: cargo tauri
+          tagName: drift-lab-v__VERSION__
+          releaseName: 'Drift Lab v__VERSION__'
+          releaseBody: |
+            See assets below. Auto-update will roll out to existing installs
+            within ~60 seconds of clicking *Publish* on this draft.
+
+            Bootstrap docs: [drift-lab/UPDATER.md](https://github.com/refactor-labs-pub/drift/blob/main/drift-lab/UPDATER.md)
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      # tauri-action only writes the host runner's triple into latest.json.
+      # On macOS that's `darwin-aarch64` (macos-14 is Apple Silicon), but the
+      # universal `.app.tar.gz` is also valid for Intel — so we mirror the
+      # darwin-aarch64 entry under darwin-x86_64. Without this, Intel Macs
+      # never see the update.
+      #
+      # We download latest.json from the just-created draft, patch it, and
+      # re-upload. Idempotent: if darwin-x86_64 already exists it's left
+      # alone.
+      - name: Mirror macOS universal entry to darwin-x86_64
+        if: startsWith(matrix.runner, 'macos')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          # Find the latest.json asset on the draft release.
+          asset_json=$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${repo}/releases/${RELEASE_ID}/assets")
+          asset_id=$(echo "$asset_json" | jq -r '.[] | select(.name=="latest.json") | .id')
+          if [ -z "$asset_id" ] || [ "$asset_id" = "null" ]; then
+            echo "::warning::latest.json not found on release ${RELEASE_ID} — skipping mirror"
+            exit 0
+          fi
+          # Download → patch → re-upload.
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/${repo}/releases/assets/${asset_id}" \
+            -o latest.json
+          echo "--- before ---" && cat latest.json
+          jq '
+            if .platforms["darwin-aarch64"] and (.platforms["darwin-x86_64"] | not)
+            then .platforms["darwin-x86_64"] = .platforms["darwin-aarch64"]
+            else . end
+          ' latest.json > latest.patched.json
+          echo "--- after ---" && cat latest.patched.json
+          # Delete the old asset then upload the patched one (GitHub doesn't
+          # allow PUT-replace on release assets).
+          curl -fsSL -X DELETE \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${repo}/releases/assets/${asset_id}"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @latest.patched.json \
+            "https://uploads.github.com/repos/${repo}/releases/${RELEASE_ID}/assets?name=latest.json"
+          echo "::notice::latest.json mirrored for darwin-x86_64"

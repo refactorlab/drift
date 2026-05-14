@@ -985,9 +985,19 @@ function NotConfiguredPanel({ detail }: { detail?: string }) {
       </div>
       <p className="muted" style={{ marginTop: 0, marginBottom: 8, fontSize: 13 }}>
         The release pipeline hasn't published a <code>latest.json</code> manifest
-        yet, or the updater is disabled in <code>tauri.conf.json</code>. This is
-        normal during development. Updates will arrive automatically once the
-        first signed release is published.
+        yet, or the <code>pubkey</code> in <code>tauri.conf.json</code> is still
+        the placeholder. See{" "}
+        <a
+          href="https://github.com/refactor-labs-pub/drift/blob/main/drift-lab/UPDATER.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          UPDATER.md
+        </a>{" "}
+        for the one-time bootstrap (generate keys, set GitHub secrets, paste
+        the public key) and the release recipe (push a <code>drift-lab-v*</code>
+        tag). Updates will arrive automatically once the first signed release
+        is published.
       </p>
       <details
         open={showDetail}
