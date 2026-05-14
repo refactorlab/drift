@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 /// Source: cross-referenced GitHub's default `gitignore` templates
 /// (github.com/github/gitignore) for Node, Python, Java, Maven, Gradle, Rust,
 /// Go, plus common framework conventions.
+///
+/// Contract: every name in this list represents code that is **never** the
+/// user's source — package caches, build output, editor metadata. If a name
+/// belongs here it must NEVER hold project source code by any convention.
+/// Names that are "usually" asset/non-source live in
+/// [`STATIC_ASSET_DIRS`] instead and are toggleable.
 pub const DEFAULT_IGNORE_DIRS: &[&str] = &[
     // VCS metadata
     ".git", ".hg", ".svn",
@@ -27,6 +33,24 @@ pub const DEFAULT_IGNORE_DIRS: &[&str] = &[
     // Editor / OS
     ".idea", ".vscode", ".DS_Store",
 ];
+
+/// "Probably-not-source" directories. On by default but **togglable** via
+/// [`WalkOpts::exclude_static_assets`].
+///
+/// Why this is separate from [`DEFAULT_IGNORE_DIRS`]:
+///   - These names *can* legitimately hold source. A Django app's
+///     `static/` may also contain hand-written admin JavaScript; a Vue
+///     project's `public/` is usually plain HTML but a team may put
+///     small scripts there. Marking these "always skip" would silently
+///     hide real code on some projects.
+///   - The motivating signal is huge minified bundles (`swagger-ui-
+///     bundle.js`, vendored `app.min.js`, copied SDK builds). When the
+///     analyzer parses these, they dominate the top entries with reach
+///     counts in the thousands and bury the user's actual code.
+///   - Default ON because the noise case is the common one; advanced
+///     users can disable from the desktop Settings UI when they really
+///     are trying to inspect a static-asset payload.
+pub const STATIC_ASSET_DIRS: &[&str] = &["static", "assets"];
 
 /// Options that control which paths the walker emits.
 #[derive(Debug, Clone)]
@@ -58,6 +82,14 @@ pub struct WalkOpts {
     /// See [`is_test_path`] for the full rule; boundary handling avoids
     /// false positives like `testimony.ts`, `contest.py`, `Tester.java`.
     pub exclude_tests: bool,
+    /// Skip directories named in [`STATIC_ASSET_DIRS`] (currently `static`,
+    /// `assets`). **Defaults to true** — vendored asset directories on real
+    /// projects (e.g. Django `static/`, FastAPI `static/`, generic
+    /// `assets/swagger-ui-bundle.js`) routinely contain minified JS that
+    /// otherwise dominates the entry-point picker with synthetic
+    /// "functions" named `Gk`, `Ek`, etc. Settable to `false` for projects
+    /// where these directories legitimately contain hand-written source.
+    pub exclude_static_assets: bool,
 }
 
 impl Default for WalkOpts {
@@ -68,6 +100,7 @@ impl Default for WalkOpts {
             apply_defaults: true,
             skip_hidden: true,
             exclude_tests: false,
+            exclude_static_assets: true,
         }
     }
 }
@@ -339,6 +372,9 @@ pub fn walk_files_classified_with(
         if opts.apply_defaults && hits_default_ignore(path) {
             continue;
         }
+        if opts.exclude_static_assets && hits_static_asset_ignore(path) {
+            continue;
+        }
         if opts.exclude_tests && is_test_path(path, root) {
             continue;
         }
@@ -373,6 +409,22 @@ fn hits_default_ignore(path: &Path) -> bool {
         c.as_os_str()
             .to_str()
             .map(|s| DEFAULT_IGNORE_DIRS.contains(&s))
+            .unwrap_or(false)
+    })
+}
+
+/// True iff any component of `path` matches one of [`STATIC_ASSET_DIRS`]
+/// (case-sensitive — every convention this targets uses lowercase). We match
+/// at any depth, not just the project root, because vendored static
+/// directories appear under sub-apps too (`apps/admin/static/...`,
+/// `dashboards/static/admin.js`). Users with edge-case projects where these
+/// names legitimately hold source can disable the whole filter via
+/// [`WalkOpts::exclude_static_assets`].
+fn hits_static_asset_ignore(path: &Path) -> bool {
+    path.components().any(|c| {
+        c.as_os_str()
+            .to_str()
+            .map(|s| STATIC_ASSET_DIRS.contains(&s))
             .unwrap_or(false)
     })
 }
@@ -707,6 +759,62 @@ mod tests {
         // Using a set for clarity:
         let set: std::collections::HashSet<String> = names.into_iter().collect();
         assert_eq!(set.len(), 5, "expected exactly 5 source files; got {set:?}");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn static_assets_dirs_are_excluded_by_default() {
+        // Real-world shape: a server project with vendored Swagger UI sitting
+        // in `static/` and `assets/`. Real source under `src/` and `app/`.
+        // The motivating bug was these vendored bundles appearing as the
+        // top entry-point candidates with reach 4000+, drowning out the
+        // user's actual code.
+        let root = tmp_dir("static-assets-default");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::create_dir_all(root.join("apps/admin/static")).unwrap();
+        fs::write(root.join("src/server.py"), "x = 1").unwrap();
+        fs::write(root.join("static/swagger-ui-bundle.js"), "var Gk={};").unwrap();
+        fs::write(root.join("static/redoc.standalone.js"), "var Ek={};").unwrap();
+        fs::write(root.join("assets/app.min.js"), "var ai={};").unwrap();
+        fs::write(root.join("apps/admin/static/admin.js"), "var ci={};").unwrap();
+
+        let files = discover_source_files(&root);
+        let names = rel(&root, &files);
+        assert_eq!(
+            names,
+            vec!["src/server.py".to_string()],
+            "default WalkOpts should exclude static/ and assets/ at any depth; got {names:?}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn static_assets_filter_can_be_disabled() {
+        // The escape hatch — users analyzing a project that genuinely keeps
+        // source under static/ (rare but real, e.g. Django apps with
+        // `static/admin/js/admin.js` as the codebase under analysis) can
+        // opt out via the new flag. Settings UI exposes this toggle.
+        let root = tmp_dir("static-assets-disabled");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
+        fs::write(root.join("src/main.py"), "x = 1").unwrap();
+        fs::write(root.join("static/admin.py"), "x = 1").unwrap();
+
+        let opts = WalkOpts {
+            exclude_static_assets: false,
+            ..WalkOpts::default()
+        };
+        let files = discover_source_files_with(&root, &opts);
+        let names = rel(&root, &files);
+        let set: std::collections::HashSet<String> = names.into_iter().collect();
+        assert!(
+            set.contains("src/main.py") && set.contains("static/admin.py"),
+            "with the static-assets filter off, static/admin.py must reappear; got {set:?}"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

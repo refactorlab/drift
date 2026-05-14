@@ -57,7 +57,7 @@ RESET  := \033[0m
         tags-python tags-java tags-ts tags-js \
         refresh refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-kotlin refresh-insights-demo refresh-docker-app viewer-data \
         viewer-bun viewer-stop viewer-install viewer-build \
-        scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt scans-index \
+        scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt scan-prompt-entries scans-index \
         diff-demo schema-validate \
         refresh-catalogs extend-catalogs verify-catalogs list-uncategorized \
         sync-otel-registry refresh-from-upstream \
@@ -297,8 +297,8 @@ viewer-build: install-viewer refresh ## Production build → viewer/dist/
 # `make scan-no-tests /abs/path`, etc. Treat any extra goals after scan/
 # scan-roots/scan-no-tests/scan-roots-no-tests as args: first one → SCAN_PATH,
 # and stub them out as no-op targets so make doesn't try to build them.
-ifneq ($(filter scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt,$(MAKECMDGOALS)),)
-  SCAN_POSITIONAL := $(filter-out scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt,$(MAKECMDGOALS))
+ifneq ($(filter scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt scan-prompt-entries,$(MAKECMDGOALS)),)
+  SCAN_POSITIONAL := $(filter-out scan scan-roots scan-no-tests scan-roots-no-tests scan-prompt scan-prompt-entries,$(MAKECMDGOALS))
   ifneq ($(SCAN_POSITIONAL),)
     SCAN_PATH ?= $(firstword $(SCAN_POSITIONAL))
     $(eval $(SCAN_POSITIONAL):;@:)
@@ -449,6 +449,45 @@ scan-prompt: $(BIN) ## Interactive scan: prompt to pick one of the top 10 roots,
 	  --out-dir "$(SCANS_OUT)" \
 	  --no-accessors \
 	  $(if $(INCLUDE_TESTS),--include-tests,)
+
+# `scan-prompt-entries` is the debug companion to `scan-prompt`: identical
+# discovery filter (no tests / no private / no accessors), but with the
+# top-N cap raised so EVERY plausible entry root prints to stderr instead
+# of being clipped at 10. Use this when scan-prompt feels wrong (e.g. the
+# UI's picker returned 0 entries on a project that visibly has many) —
+# the printed roots list tells you whether discovery is the problem or
+# the picker cap is. The walker filters (`--no-tests`, default
+# `--exclude-static-assets`) match what the desktop runner uses, so the
+# numbers here are what the UI sees.
+#
+#   make scan-prompt-entries /abs/path                      # → up to 5000 rows
+#   make scan-prompt-entries /abs/path MAX_ROOTS=20000      # raise the cap
+#   make scan-prompt-entries /abs/path INCLUDE_TESTS=1      # include test roots
+#
+# Output goes to scans/<basename>-entries.json so it doesn't shadow the
+# scan-prompt output.
+PROMPT_ENTRIES_MAX_ROOTS ?= 5000
+PROMPT_ENTRIES_NAME      ?= $(notdir $(patsubst %/,%,$(SCAN_PATH)))-entries
+scan-prompt-entries: $(BIN) ## Debug: list every entry root scan-prompt would offer (no top-10 cap), printed to stderr.
+	@if [ -z "$(SCAN_PATH)" ]; then \
+	  printf "$(YELLOW)!$(RESET) usage: make scan-prompt-entries /abs/path [MAX_ROOTS=N] [INCLUDE_TESTS=1]\n"; \
+	  printf "          or: make scan-prompt-entries SCAN_PATH=/abs/path\n"; \
+	  printf "   tip: this is the unbounded companion to `make scan-prompt` — same\n"; \
+	  printf "        filters (no tests / no private / no accessors), but every root\n"; \
+	  printf "        gets printed so you can debug 'why was nothing offered?'.\n"; \
+	  exit 1; \
+	fi
+	@mkdir -p $(SCANS_OUT)
+	@printf "$(BLUE)▶$(RESET) listing all entry roots for $(SCAN_PATH) (max=$(PROMPT_ENTRIES_MAX_ROOTS)) → $(SCANS_OUT)/$(PROMPT_ENTRIES_NAME).json\n"
+	@$(BIN) analyze-root "$(SCAN_PATH)" \
+	  --name "$(PROMPT_ENTRIES_NAME)" \
+	  --out-dir "$(SCANS_OUT)" \
+	  --min-reach 2 \
+	  --max-roots $(PROMPT_ENTRIES_MAX_ROOTS) \
+	  --no-accessors \
+	  $(if $(INCLUDE_TESTS),--include-tests,--no-tests) \
+	  --print
+	@$(MAKE) --no-print-directory scans-index
 
 # Rebuild scans/index.json from the current contents of scans/. The viewer
 # fetches this file at boot to discover user-run scans; browsers can't

@@ -1,8 +1,8 @@
-MODEL        ?= ai/gemma4:E4B
+MODEL        ?= ai/gemma4:latest
 CONTEXT_SIZE ?= 40192
 DMR_PORT     ?= 12434
 
-.PHONY: install check run kill-port kill-bun-sock kill-dev
+.PHONY: install check run kill-port kill-bun-sock kill-dev drift-lab-build drift-lab-build-release drift-lab-verify
 
 install: ## Enable Model Runner, pull the model, set context size
 	@docker version >/dev/null || (echo "❌ Docker not running"; exit 1)
@@ -64,3 +64,20 @@ run-llm: ## Run a test LLM query against the model runner
 
 db: ## Start the postgres database
 	docker compose up -d db
+
+# ── drift-lab desktop app ─────────────────────────────────────────────
+# These mirror what .github/workflows/{ci,drift-lab-desktop-build}.yml run,
+# so passing locally is strong evidence CI will too. `cargo tauri build`
+# internally runs the frontend build via tauri.conf.json's
+# beforeBuildCommand, so a single target covers the whole pipeline.
+
+drift-lab-build: ## Build the desktop app (debug profile — ~30s, no LTO). Produces .app + .dmg under drift-lab/src-tauri/target/debug/bundle/.
+	cd drift-lab && cargo tauri build --debug
+
+drift-lab-build-release: ## Build the desktop app (release profile — matches CI, full LTO, ~5-10min). Output under drift-lab/src-tauri/target/release/bundle/.
+	cd drift-lab && cargo tauri build
+
+drift-lab-verify: ## Pre-flight: release-profile compile check + unit tests + frontend production build. Fast (~15s) sanity gate before pushing.
+	cd drift-lab/src-tauri && cargo check --release
+	cd drift-lab/src-tauri && cargo test --lib
+	cd drift-lab/desktop-ui && npm run build

@@ -10,6 +10,7 @@ import {
   ModelBackendConfig,
   ProviderPreset,
   SavedProvider,
+  ScanFilters,
   UpdateInfo,
   UpdateProgress,
   activateProvider,
@@ -27,10 +28,11 @@ import {
   resetAllConfig,
   saveProvider,
   testProvider,
+  updateScanFilters,
   withTimeout,
 } from "../lib/tauri";
 
-type Tab = "models" | "local" | "providers" | "updates";
+type Tab = "models" | "local" | "providers" | "scanning" | "updates";
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -80,6 +82,9 @@ export default function SettingsPage() {
           <TabButton active={tab === "providers"} onClick={() => switchTab("providers")}>
             Providers
           </TabButton>
+          <TabButton active={tab === "scanning"} onClick={() => switchTab("scanning")}>
+            Scanning
+          </TabButton>
           <TabButton active={tab === "updates"} onClick={() => switchTab("updates")}>
             Updates
           </TabButton>
@@ -91,6 +96,9 @@ export default function SettingsPage() {
         {config && tab === "local" && <LocalRuntimesTab refresh={refresh} />}
         {config && tab === "providers" && (
           <ProvidersTab config={config} refresh={refresh} />
+        )}
+        {config && tab === "scanning" && (
+          <ScanningTab config={config} refresh={refresh} />
         )}
         {tab === "updates" && <UpdatesTab />}
       </div>
@@ -685,6 +693,138 @@ function AddProviderForm({
         </button>
       </div>
     </div>
+  );
+}
+
+// ---------- Scanning tab ----------
+//
+// Static-scan filter preferences. The Rust runner reads `scan_filters` from
+// AppConfig at the moment a scan kicks off, so toggling here takes effect
+// on the very next scan. No need to restart the app.
+//
+// Design: each filter row is a single `<FilterToggle>` so adding another
+// filter (e.g. "exclude tests") is a one-line append. Persistence is
+// optimistic — toggle flips visually, then we call updateScanFilters; on
+// error we roll back and surface the message.
+function ScanningTab({
+  config,
+  refresh,
+}: {
+  config: AppConfig;
+  refresh: () => Promise<void>;
+}) {
+  const [filters, setFilters] = useState<ScanFilters>(config.scanFilters);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Keep local state aligned if the parent reloads config (e.g. after a
+  // reset-config action elsewhere). Single source of truth stays Rust-side.
+  useEffect(() => {
+    setFilters(config.scanFilters);
+  }, [config.scanFilters]);
+
+  async function persist(next: ScanFilters) {
+    const previous = filters;
+    setFilters(next); // optimistic
+    setError(null);
+    setSaving(true);
+    try {
+      const saved = await updateScanFilters(next);
+      setFilters(saved);
+      await refresh();
+    } catch (e) {
+      setFilters(previous); // rollback
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-title" style={{ fontSize: 16 }}>
+        Static-scan filters
+      </div>
+      <p className="muted" style={{ marginTop: 4, marginBottom: 18 }}>
+        Control which directories the analyzer walks when discovering entry
+        points. Defaults match the 90% case — toggle off only if your
+        project legitimately keeps hand-written source under these dirs.
+      </p>
+
+      <FilterToggle
+        checked={filters.excludeStaticAssets}
+        disabled={saving}
+        label="Exclude static/assets directories"
+        hint={
+          <>
+            Skip every <code>static/</code> and <code>assets/</code> dir at
+            any depth. Stops vendored bundles (e.g.{" "}
+            <code>swagger-ui-bundle.js</code>, minified vendor JS) from
+            dominating the entry-point picker with synthetic functions like{" "}
+            <code>Gk</code>, <code>Ek</code>.
+          </>
+        }
+        onChange={(v) => persist({ ...filters, excludeStaticAssets: v })}
+      />
+
+      <FilterToggle
+        checked={filters.excludeTests}
+        disabled={saving}
+        label="Exclude test/spec/mock files"
+        hint={
+          <>
+            Drop files like <code>*.test.ts</code>, <code>*.spec.js</code>,{" "}
+            <code>test_*.py</code>, and directories like{" "}
+            <code>tests/</code>, <code>__tests__/</code> at the walker
+            stage. Mirrors <code>make scan-prompt</code>. Turn off only when
+            the test code itself is what you want to analyze — a heavy
+            bundled test file (e.g. a vite-built <code>main.test.js</code>)
+            can otherwise flip the dominant language pick and leave the
+            picker with zero application roots.
+          </>
+        }
+        onChange={(v) => persist({ ...filters, excludeTests: v })}
+      />
+
+      {error && (
+        <div className="onboarding-error" style={{ marginTop: 14 }}>
+          {error}
+        </div>
+      )}
+      <p className="muted" style={{ marginTop: 18, fontSize: 12 }}>
+        Changes take effect on the next scan you kick off — runs already in
+        flight are unaffected.
+      </p>
+    </section>
+  );
+}
+
+function FilterToggle({
+  checked,
+  disabled,
+  label,
+  hint,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  hint: React.ReactNode;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="filter-toggle">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="filter-toggle-body">
+        <span className="filter-toggle-label">{label}</span>
+        <span className="filter-toggle-hint muted">{hint}</span>
+      </span>
+    </label>
   );
 }
 

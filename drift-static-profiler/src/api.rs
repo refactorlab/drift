@@ -31,6 +31,15 @@ pub struct AnalyzeOptions {
     /// graph. Off by default — the historical scan walks tests.
     /// Forwarded to `WalkOpts.exclude_tests` in `build_graph_context`.
     pub exclude_tests: bool,
+    /// Walker-level filter: skip directories matching `static`/`assets`
+    /// (see [`crate::walker::STATIC_ASSET_DIRS`]). Default **true** because
+    /// these dirs almost always hold vendored minified bundles that
+    /// dominate the entry-point picker with synthetic top callers
+    /// (e.g. swagger-ui's `Gk`, `Ek` with reach 4000+). Forwarded to
+    /// `WalkOpts.exclude_static_assets`. UI surfaces this as a settings
+    /// toggle so users analyzing a project where these dirs really hold
+    /// hand-written source can disable the filter.
+    pub exclude_static_assets: bool,
 }
 
 impl Default for AnalyzeOptions {
@@ -39,6 +48,7 @@ impl Default for AnalyzeOptions {
             max_depth: 12,
             skip_accessors: false,
             exclude_tests: false,
+            exclude_static_assets: true,
         }
     }
 }
@@ -97,6 +107,7 @@ fn build_graph_context(
     // step below applies `exclude_tests`.
     let walk_opts = WalkOpts {
         exclude_tests: opts.exclude_tests,
+        exclude_static_assets: opts.exclude_static_assets,
         ..WalkOpts::default()
     };
     let walked = walk_files_classified_with(root, &walk_opts, progress);

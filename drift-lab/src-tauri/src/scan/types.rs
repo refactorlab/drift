@@ -19,8 +19,18 @@ use serde::Serialize;
 /// icon and to update the right phase row. Shapes mirror the
 /// `drift_static_profiler::Progress` trait so we can forward each callback
 /// without lossy translation.
+///
+/// **Serialization contract** (crucial — the TS handler depends on it):
+///   - `rename_all = "snake_case"` renames the **variant tags** so the `kind`
+///     discriminator on the wire reads `walk_progress`, not `WalkProgress`.
+///   - `rename_all_fields = "camelCase"` renames the **fields inside each
+///     variant** to camelCase (so `scan_id` → `scanId`, `files_seen` →
+///     `filesSeen`, etc.). Without this, the TS handler reads `ev.scanId` as
+///     `undefined`, the `isMine(...)` filter drops every event silently, and
+///     the live progress timeline appears completely empty even while the
+///     scan is running.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum ScanProgress {
     /// Filesystem walk has begun. No total yet — UI shows a spinner.
     WalkStart {
@@ -120,9 +130,38 @@ pub struct ScanError {
     pub message: String,
 }
 
-/// One streamed LLM suggestion. The suggester runs sequentially over the
-/// findings, emits one of these per finding so the UI can render a growing
-/// list as the model produces answers.
+/// Emitted once per finding *before* the LLM stream opens. Carries the row
+/// metadata so the UI can render the row skeleton (badges, file:line) with a
+/// streaming spinner immediately — before any text deltas arrive.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanSuggestionStart {
+    pub scan_id: String,
+    pub index: usize,
+    pub source: &'static str,
+    pub kind: String,
+    pub severity: String,
+    pub file: String,
+    pub line: usize,
+    pub name: String,
+}
+
+/// One text delta from the provider stream. We forward every non-empty chunk
+/// the provider yields so the UI grows the body live, OpenAI-style.
+///
+/// The `delta` is a fragment to *append* to the row's accumulated body — the
+/// frontend never has to re-assemble or diff against a previous snapshot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanSuggestionDelta {
+    pub scan_id: String,
+    pub index: usize,
+    pub delta: String,
+}
+
+/// Emitted once per finding *after* the stream drains. Carries the full
+/// settled body so the UI can reconcile its delta accumulator (covers any
+/// lost frames) and clear the row's streaming flag.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanSuggestion {
@@ -162,7 +201,76 @@ pub mod topic {
     pub const COMPLETE: &str = "scan://complete";
     pub const ERROR: &str = "scan://error";
 
-    /// One suggestion-per-finding stream from the LLM driver.
+    /// Row metadata emitted before the LLM stream opens — UI seeds an empty
+    /// row with a streaming spinner.
+    pub const SUGGESTION_START: &str = "scan://suggestion-start";
+    /// Per-chunk text delta from the provider stream — append to the row body.
+    pub const SUGGESTION_DELTA: &str = "scan://suggestion-delta";
+    /// Final settled body for one finding — UI clears the streaming flag and
+    /// reconciles its accumulator against this canonical text.
     pub const SUGGESTION: &str = "scan://suggestion";
+    /// Phase done — emitted once when every finding has been processed.
     pub const SUGGESTION_DONE: &str = "scan://suggestion-done";
+}
+
+#[cfg(test)]
+mod tests {
+    //! Wire-contract tests. These exist because a serde attribute regression
+    //! on `ScanProgress` once caused every progress event to be silently
+    //! dropped by the frontend (snake_case fields didn't match the camelCase
+    //! TS interface). Each assertion below pins one field name on the wire
+    //! so a future "tidy-up" of the attributes can't reintroduce that bug.
+
+    use super::*;
+
+    fn json(v: impl Serialize) -> String {
+        serde_json::to_string(&v).expect("serialize")
+    }
+
+    #[test]
+    fn scan_progress_walk_progress_uses_camelcase_fields() {
+        let s = json(ScanProgress::WalkProgress {
+            scan_id: "abc".into(),
+            files_seen: 42,
+        });
+        assert!(s.contains("\"kind\":\"walk_progress\""), "wire: {s}");
+        assert!(s.contains("\"scanId\":\"abc\""), "wire: {s}");
+        assert!(s.contains("\"filesSeen\":42"), "wire: {s}");
+        assert!(!s.contains("scan_id"), "snake_case leaked: {s}");
+        assert!(!s.contains("files_seen"), "snake_case leaked: {s}");
+    }
+
+    #[test]
+    fn scan_progress_parse_progress_uses_camelcase_fields() {
+        let s = json(ScanProgress::ParseProgress {
+            scan_id: "x".into(),
+            done: 1,
+            total: 2,
+            current: Some("foo.rs".into()),
+        });
+        assert!(s.contains("\"kind\":\"parse_progress\""), "wire: {s}");
+        assert!(s.contains("\"scanId\":\"x\""), "wire: {s}");
+    }
+
+    #[test]
+    fn scan_progress_walk_end_renames_total_files_and_bytes() {
+        let s = json(ScanProgress::WalkEnd {
+            scan_id: "x".into(),
+            total_files: 99,
+            bytes: 1024,
+        });
+        assert!(s.contains("\"totalFiles\":99"), "wire: {s}");
+        assert!(s.contains("\"bytes\":1024"), "wire: {s}");
+        assert!(!s.contains("total_files"), "snake_case leaked: {s}");
+    }
+
+    #[test]
+    fn scan_progress_parse_start_renames_total_source_files() {
+        let s = json(ScanProgress::ParseStart {
+            scan_id: "x".into(),
+            total_source_files: 1234,
+        });
+        assert!(s.contains("\"totalSourceFiles\":1234"), "wire: {s}");
+        assert!(!s.contains("total_source_files"), "snake_case leaked: {s}");
+    }
 }

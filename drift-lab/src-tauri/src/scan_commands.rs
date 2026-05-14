@@ -31,10 +31,16 @@ pub async fn start_static_scan<R: Runtime>(
         return Err(format!("not a directory: {project_path}"));
     }
     let scan_id = Uuid::new_v4().to_string();
+    // Snapshot the user's scan-filter preferences at scan kick-off — the
+    // settings UI can be opened/changed mid-scan without affecting the run
+    // already in flight. Settings UI users see "next scan will use new
+    // filters" semantics, which matches how the wire contract is documented.
+    let filters = state.app_config.lock().await.scan_filters;
     runner::start_scan(
         app,
         scan_id.clone(),
         path,
+        filters,
         Arc::clone(&state.scan_pickers),
     );
     Ok(scan_id)
@@ -99,6 +105,12 @@ pub async fn list_scan_entries(scan_id: String) -> Result<Vec<ScanPickerRoot>, S
 /// Kick off the per-finding suggestion phase against a saved scan. The
 /// command returns immediately; suggestions stream over `scan://suggestion`
 /// and the run terminates with `scan://suggestion-done`.
+///
+/// **Idempotent**: if a driver is already running for `scan_id` (e.g. the
+/// page remounts during a stream, or auto-start fires twice in quick
+/// succession) we return `Ok(())` without spawning a duplicate task. The
+/// UI's auto-start path relies on this — it can call the command on every
+/// mount without risk of double-streaming the same scan.
 #[tauri::command]
 pub async fn start_scan_suggestions<R: Runtime>(
     scan_id: String,
@@ -112,8 +124,41 @@ pub async fn start_scan_suggestions<R: Runtime>(
         .clone()
         .ok_or_else(|| "backend not configured".to_string())?;
     let provider = build_provider(config).map_err(|e| format!("{e:#}"))?;
-    suggester::start_suggestions(app, scan_id, provider);
+    // Idempotency guard: only one driver per scan_id at a time.
+    let Some(cancel) = state.scan_suggestions.register_if_absent(&scan_id) else {
+        // A session for this scan_id is already running — silently no-op so
+        // remount-driven auto-starts don't pile up tasks.
+        return Ok(());
+    };
+    suggester::start_suggestions(
+        app,
+        scan_id,
+        provider,
+        cancel,
+        Arc::clone(&state.scan_suggestions),
+    );
     Ok(())
+}
+
+/// Stop the in-flight suggestion driver for `scan_id`. Idempotent — calling
+/// for a scan with no live session is a silent no-op (returns `false`).
+///
+/// Mechanism: trigger the `CancellationToken` in the registry. The driver's
+/// `tokio::select!` on `cancel.cancelled()` fires immediately, dropping the
+/// provider stream future, which drops the underlying HTTP connection. The
+/// driver finalizes the current row (emits `scan://suggestion` so the UI
+/// clears `isStreaming`) and exits the outer loop on the next iteration's
+/// `is_cancelled` check.
+///
+/// The driver still emits a final `scan://suggestion-done` after cancel —
+/// the UI uses that to flip its "running" flag and surface the Regenerate
+/// affordance.
+#[tauri::command]
+pub async fn stop_scan_suggestions(
+    scan_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Ok(state.scan_suggestions.cancel(&scan_id))
 }
 
 fn build_provider(
