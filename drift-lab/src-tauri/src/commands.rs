@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    agent::{self as agent_loop, Agent, OpenAiProvider},
+    agent::{self as agent_loop, Agent, OpenAiProvider, TokenLimitParam},
     agent_tools::{self, Toolset},
     app_config::{self, AppConfig, SavedProvider, ScanFilters},
     backend,
@@ -587,14 +587,15 @@ pub async fn test_provider(config: ModelBackend) -> Result<(), String> {
             model,
         } => {
             let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+            let mut body = serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+            });
+            TokenLimitParam::for_model(model).apply(&mut body, 1);
             let resp = reqwest::Client::new()
                 .post(&url)
                 .bearer_auth(api_key)
-                .json(&serde_json::json!({
-                    "model": model,
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "max_tokens": 1,
-                }))
+                .json(&body)
                 .send()
                 .await
                 .map_err(|e| format!("network: {e}"))?;

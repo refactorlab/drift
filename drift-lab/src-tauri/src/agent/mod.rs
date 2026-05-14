@@ -28,7 +28,7 @@ pub mod workflow;
 #[allow(unused_imports)]
 pub use agent_loop::{Agent, AgentEvent, DEFAULT_MAX_TURNS};
 #[allow(unused_imports)]
-pub use openai::OpenAiProvider;
+pub use openai::{OpenAiProvider, TokenLimitParam};
 #[allow(unused_imports)]
 pub use provider::{MessageStream, Provider};
 #[allow(unused_imports)]

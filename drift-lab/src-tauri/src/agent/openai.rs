@@ -24,6 +24,59 @@ use serde::Deserialize;
 use super::provider::{MessageStream, Provider};
 use super::types::{Message, MessageContent, ProviderError, Role, ToolDef, Usage};
 
+/// Which JSON field a model expects for "stop generating after N tokens".
+///
+/// OpenAI deprecated `max_tokens` for its reasoning and next-gen families
+/// (o1/o3/o4, gpt-5+) — they reject the parameter outright with HTTP 400:
+///   `Unsupported parameter: 'max_tokens' is not supported with this model.
+///    Use 'max_completion_tokens' instead.`
+/// Older OpenAI models and every local OpenAI-compatible runtime (llama-server,
+/// Ollama, LM Studio, vLLM) still expect `max_tokens`. One value object owns
+/// this decision so callers don't sprinkle string matching at the call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenLimitParam {
+    MaxTokens,
+    MaxCompletionTokens,
+}
+
+impl TokenLimitParam {
+    pub fn field_name(self) -> &'static str {
+        match self {
+            Self::MaxTokens => "max_tokens",
+            Self::MaxCompletionTokens => "max_completion_tokens",
+        }
+    }
+
+    /// Pick the right parameter for the given model identifier. Matches
+    /// case-insensitively, tolerates a `vendor/` prefix, and falls back to
+    /// `max_tokens` for anything unrecognised — that keeps local runtimes
+    /// (which only know `max_tokens`) working.
+    pub fn for_model(model: &str) -> Self {
+        let trimmed = model.trim().to_ascii_lowercase();
+        let bare = trimmed.rsplit('/').next().unwrap_or(&trimmed);
+        if requires_completion_tokens(bare) {
+            Self::MaxCompletionTokens
+        } else {
+            Self::MaxTokens
+        }
+    }
+
+    /// Inject the token limit into a chat-completions request body using
+    /// the model-appropriate field name. No-op if `body` isn't a JSON object.
+    pub fn apply(self, body: &mut serde_json::Value, limit: u32) {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(self.field_name().into(), serde_json::Value::from(limit));
+        }
+    }
+}
+
+fn requires_completion_tokens(bare_model_lower: &str) -> bool {
+    bare_model_lower.starts_with("o1")
+        || bare_model_lower.starts_with("o3")
+        || bare_model_lower.starts_with("o4")
+        || bare_model_lower.starts_with("gpt-5")
+}
+
 /// Returns true if the response body looks like a context-size overrun from
 /// any of the OpenAI-compatible runtimes we target.
 fn is_context_error(body: &str) -> bool {
@@ -447,6 +500,82 @@ impl StreamAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_param_defaults_to_max_tokens_for_classic_and_local_models() {
+        for model in [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo",
+            "llama-3.1-8b-instruct",
+            "qwen2.5-coder-32b",
+            "mistral-7b",
+        ] {
+            assert_eq!(
+                TokenLimitParam::for_model(model),
+                TokenLimitParam::MaxTokens,
+                "{model} should use max_tokens",
+            );
+        }
+    }
+
+    #[test]
+    fn token_param_picks_max_completion_tokens_for_o_series() {
+        for model in ["o1", "o1-mini", "o1-preview", "o1-pro", "o3-mini", "o4-mini"] {
+            assert_eq!(
+                TokenLimitParam::for_model(model),
+                TokenLimitParam::MaxCompletionTokens,
+                "{model} should use max_completion_tokens",
+            );
+        }
+    }
+
+    #[test]
+    fn token_param_picks_max_completion_tokens_for_gpt5_family() {
+        for model in [
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5.5",
+            "gpt-5-2025-01-01",
+        ] {
+            assert_eq!(
+                TokenLimitParam::for_model(model),
+                TokenLimitParam::MaxCompletionTokens,
+                "{model} should use max_completion_tokens",
+            );
+        }
+    }
+
+    #[test]
+    fn token_param_is_case_insensitive_and_tolerates_vendor_prefix() {
+        assert_eq!(
+            TokenLimitParam::for_model("GPT-5"),
+            TokenLimitParam::MaxCompletionTokens,
+        );
+        assert_eq!(
+            TokenLimitParam::for_model("openai/gpt-5-mini"),
+            TokenLimitParam::MaxCompletionTokens,
+        );
+        assert_eq!(
+            TokenLimitParam::for_model("  o1-pro  "),
+            TokenLimitParam::MaxCompletionTokens,
+        );
+    }
+
+    #[test]
+    fn apply_writes_the_model_specific_field_only() {
+        let mut body = serde_json::json!({"model": "gpt-5.5"});
+        TokenLimitParam::for_model("gpt-5.5").apply(&mut body, 1);
+        assert_eq!(body["max_completion_tokens"], 1);
+        assert!(body.get("max_tokens").is_none());
+
+        let mut body = serde_json::json!({"model": "gpt-4o"});
+        TokenLimitParam::for_model("gpt-4o").apply(&mut body, 1);
+        assert_eq!(body["max_tokens"], 1);
+        assert!(body.get("max_completion_tokens").is_none());
+    }
 
     #[test]
     fn is_context_error_matches_docker_model_runner_shape() {
