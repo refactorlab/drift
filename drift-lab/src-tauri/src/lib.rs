@@ -361,6 +361,8 @@ pub fn run() {
             scan_commands::select_entry_and_scan,
             scan_commands::list_static_scans,
             scan_commands::load_static_scan,
+            scan_commands::load_static_scan_summary,
+            scan_commands::load_scan_entry,
             scan_commands::delete_static_scan,
             scan_commands::list_scan_entries,
             scan_commands::list_scan_findings,

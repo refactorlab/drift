@@ -27,6 +27,10 @@ tree-sitter-containerfile = "0.8"
 serde_yaml = "0.9"
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 ignore = "0.4"
+# Compiled-once test-name patterns shared by walker file/directory
+# filtering. We only need the default "perf" feature set; no Unicode
+# property classes — our needles are pure ASCII.
+regex = { version = "1", default-features = false, features = ["std", "perf"] }
 petgraph = "0.8"
 # Data-parallelism for tree-sitter parsing across files. Each worker
 # thread owns its own Parser and pre-compiled Query (one per language),

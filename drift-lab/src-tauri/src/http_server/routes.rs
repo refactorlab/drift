@@ -54,6 +54,10 @@ pub fn api_router(state: Arc<HttpServerState>) -> Router {
         // id is literally "import").
         .route("/api/scans/import", post(api_import_scan))
         .route("/api/scans/:id", get(api_get_scan).delete(api_delete_scan))
+        // Sliced fetch — see api_get_scan_summary doc-comment. The viewer
+        // hits /summary on landing, then /entries/:idx per drill-in.
+        .route("/api/scans/:id/summary", get(api_get_scan_summary))
+        .route("/api/scans/:id/entry/:idx", get(api_get_scan_entry))
         .route("/api/scans/:id/download", get(api_download_scan))
         .route("/api/scans/:id/entries", get(api_list_scan_entries))
         .route("/api/scans/:id/findings", get(api_list_scan_findings))
@@ -195,6 +199,55 @@ pub async fn api_list_scans() -> Response {
 pub async fn api_get_scan(Path(id): Path<String>) -> Response {
     match storage::load_envelope(&id) {
         Ok(stored) => Json(stored).into_response(),
+        Err(e) => err(StatusCode::NOT_FOUND, format!("{e:#}")),
+    }
+}
+
+/// Sliced fetch — return the saved envelope **without** each entry's
+/// recursive `children` subtree. The summary + entry headers are enough
+/// to render the viewer's landing dashboard; the per-entry call tree is
+/// fetched lazily via `api_get_scan_entry` when the user drills in.
+///
+/// Typical sizes: summary is KB–tens of KB; full envelope on a real
+/// project can be 50–500 MB. Sending only the summary on initial render
+/// removes the multi-second hitch the browser would otherwise hit on
+/// every navigation.
+#[utoipa::path(
+    get,
+    path = "/api/scans/{id}/summary",
+    tag = "scans",
+    params(("id" = String, Path, description = "Scan UUID")),
+    responses(
+        (status = 200, body = serde_json::Value),
+        (status = 404, body = ApiError),
+    )
+)]
+pub async fn api_get_scan_summary(Path(id): Path<String>) -> Response {
+    match storage::load_envelope_summary(&id) {
+        Ok(stored) => Json(stored).into_response(),
+        Err(e) => err(StatusCode::NOT_FOUND, format!("{e:#}")),
+    }
+}
+
+/// Return one entry's full call-tree subtree. `idx` is the 0-based index
+/// into the envelope's `entries` array — the same index the summary
+/// payload's entry rows carry.
+#[utoipa::path(
+    get,
+    path = "/api/scans/{id}/entry/{idx}",
+    tag = "scans",
+    params(
+        ("id" = String, Path, description = "Scan UUID"),
+        ("idx" = usize, Path, description = "0-based entry index"),
+    ),
+    responses(
+        (status = 200, body = serde_json::Value),
+        (status = 404, body = ApiError),
+    )
+)]
+pub async fn api_get_scan_entry(Path((id, idx)): Path<(String, usize)>) -> Response {
+    match storage::load_scan_entry(&id, idx) {
+        Ok(node) => Json(node).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, format!("{e:#}")),
     }
 }

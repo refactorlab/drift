@@ -23,7 +23,7 @@ import type {
   Severity,
 } from '../types';
 import { filterAndSortEntries, formatCapturedAt } from '../ScanReport';
-import { flattenFindings, useReport } from './useReport';
+import { useScanSummary } from './useReport';
 
 /**
  * Full-page dedicated Scan Report — distinct from the in-tab
@@ -39,18 +39,35 @@ import { flattenFindings, useReport } from './useReport';
  *  - Breadcrumb back to the fixture index
  */
 export function ScanReportPage() {
-  const { report, fixture, fixtureKey, error, loading } = useReport();
+  // Summary-only fetch: pulls just the rollups + entry headers (no
+  // children) from the drift-lab HTTP server when available, projects
+  // built-in fixtures client-side. ~10–100× smaller payload than
+  // `useReport`; `flattenFindings` totals stay exact because subtree
+  // findings are pre-aggregated onto the entry root.
+  const { report, fixture, fixtureKey, error, loading } = useScanSummary();
 
   // ── Rule-of-hooks: every hook below MUST run before any conditional
-  // return. `flattenFindings` returns [] for a null report, so the
-  // memoized values are well-defined even while `useReport` is still
-  // loading — that's what lets us call them up here.
-  const allFindings = useMemo(() => flattenFindings(report), [report]);
+  // return. Both memos handle a null report cleanly so they're safe
+  // even while `useScanSummary` is still loading.
+  //
+  // `sevCounts` used to come from `flattenFindings(report)`, which
+  // recursed into every node's `findings` Vec — fine for built-in
+  // fixtures but catastrophic on 250 MB user scans where the
+  // recursive walk alone takes seconds. We now sum per-root counts
+  // from `summary.roots_overview[*].findings_by_severity`, which the
+  // analyzer pre-computes and ships in the (small) summary response.
+  // Same numbers, zero recursive cost on the client.
   const sevCounts: Record<Severity, number> = useMemo(() => {
     const counts: Record<Severity, number> = { high: 0, medium: 0, low: 0 };
-    for (const t of allFindings) counts[t.finding.severity]++;
+    const rolls = report?.summary.roots_overview ?? [];
+    for (const r of rolls) {
+      const bySev = r.findings_by_severity ?? {};
+      counts.high += bySev.high ?? 0;
+      counts.medium += bySev.medium ?? 0;
+      counts.low += bySev.low ?? 0;
+    }
     return counts;
-  }, [allFindings]);
+  }, [report]);
   const healthScore = useMemo(() => {
     const s = 10 - sevCounts.high * 0.5 - sevCounts.medium * 0.2 - sevCounts.low * 0.05;
     return Math.max(0, s);
@@ -81,6 +98,17 @@ export function ScanReportPage() {
   const immediateFixes = summary.immediate_fixes ?? [];
   const refactorCandidates = summary.refactor_candidates ?? [];
   const entryDecls = summary.entry_declarations ?? [];
+
+  // The legacy dashboard built a flat `allFindings` array by recursing
+  // into every entry's `findings` Vec to populate the `/finding/:idx`
+  // links on summary cards. The new summary projection ships zero
+  // per-finding objects (counts live in `summary.roots_overview` and
+  // top-N items in `summary.findings_top`), so we hand the child cards
+  // an empty array — their existing find-by-idx code paths already
+  // degrade gracefully (no link, plain row). Click-through to a
+  // specific finding still works from the in-tab dashboard, which
+  // loads the full report via `useReport`.
+  const allFindings: never[] = [];
 
   return (
     <div style={pageStyle}>

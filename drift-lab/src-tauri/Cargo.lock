@@ -1272,6 +1272,7 @@ dependencies = [
  "indicatif",
  "petgraph",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",

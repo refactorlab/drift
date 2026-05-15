@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FIXTURES } from '../fixtures';
 import { invalidateUserScans, useUserScans } from '../userScans';
+import { invalidateScanCache } from './useReport';
 import type { FixtureSpec } from '../types';
 
 /**
@@ -31,6 +32,10 @@ export function FixtureIndexPage() {
       return next;
     });
     invalidateUserScans();
+    // Drop the cached summary + lazy entries for this scan so a re-create
+    // with the same key (rare, but possible via the import path) won't
+    // hand the dashboard stale data on the next open.
+    invalidateScanCache(key);
     force((n) => n + 1);
   };
   const visibleScans = scans.filter((s) => !deletedKeys.has(s.key));

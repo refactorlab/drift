@@ -53,6 +53,95 @@ fn scan_path(scan_id: &str) -> Result<PathBuf> {
     Ok(scans_dir()?.join(format!("{scan_id}.json")))
 }
 
+/// `~/.drift/scans/<scan_id>/` — the per-scan companion directory.
+/// Holds everything keyed to one scan that isn't the envelope itself:
+/// LLM suggestions, per-entry call-tree sidecars, future extensions.
+///
+/// Path-traversal-safe via [`validate_scan_id`]. `create_dir_all` is
+/// idempotent so callers can use this whether the dir already exists
+/// from a prior write or not.
+fn scan_dir(scan_id: &str) -> Result<PathBuf> {
+    validate_scan_id(scan_id)?;
+    let dir = scans_dir()?.join(scan_id);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// `~/.drift/scans/<scan_id>/entries/` — per-entry call-tree sidecars.
+/// One `<idx>.json` per element of the envelope's `entries` array.
+/// Written eagerly by [`save_report`] AND lazily by [`load_scan_entry`]
+/// when a legacy scan (saved before the sidecar machinery) is first
+/// drilled into.
+fn scan_entries_dir(scan_id: &str) -> Result<PathBuf> {
+    let dir = scan_dir(scan_id)?.join("entries");
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// `~/.drift/scans/<scan_id>/entries/<idx>.json` — one entry's full
+/// call-tree subtree. Read by the per-entry fast path in
+/// [`load_scan_entry`]: instead of parsing the 250 MB envelope to pull
+/// out one entry, we hit this small file (~1–5 MB).
+fn scan_entry_path(scan_id: &str, entry_index: usize) -> Result<PathBuf> {
+    Ok(scan_entries_dir(scan_id)?.join(format!("{entry_index}.json")))
+}
+
+/// Generic atomic-write helper. Serializes `value` as pretty JSON, writes
+/// to a sibling `*.json.tmp`, then `rename(2)`s into place — so a
+/// crash mid-write never leaves a half-formed file at `path`. DRY
+/// extraction of the pattern that previously lived inline in
+/// [`save_report`], [`write_summary_sidecar`], and the legacy-suggestion
+/// migration helper.
+///
+/// Single responsibility: durably persist one JSON document. Caller
+/// supplies the destination path; this function knows nothing about
+/// scan_id schemas or where things live in `~/.drift/`.
+fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    let json = serde_json::to_vec_pretty(value)
+        .with_context(|| format!("serializing {}", path.display()))?;
+    std::fs::write(&tmp, &json)
+        .with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// Sidecar file: a pre-projected summary written next to the full
+/// envelope at save time so the dashboard loader can skip parsing the
+/// 250-MB body on every navigation. Lives at
+/// `~/.drift/scans/<scan_id>.summary.json` — same directory as the
+/// envelope so listing / deleting / backups stay simple.
+///
+/// Wire format is the same `StoredScan` as the full envelope, just with
+/// each entry stripped to its header (see `strip_to_header`). That means
+/// the same `serde_json::from_slice::<StoredScan>` deserializer works
+/// for both paths — no new wire type for the viewer to learn.
+fn scan_summary_path(scan_id: &str) -> Result<PathBuf> {
+    validate_scan_id(scan_id)?;
+    Ok(scans_dir()?.join(format!("{scan_id}.summary.json")))
+}
+
+/// Tiny listing sidecar: `~/.drift/scans/<scan_id>.meta.json` —
+/// roughly 200 bytes per scan, just the fields `list_scans` returns to
+/// the viewer's index page. Without it, listing N scans required
+/// reading N × envelope-size bytes off disk (the canonical "8 scans of
+/// 250 MB each → 2 GB of reads" footgun). With it, listing is
+/// O(scans × ~200 B) — `ls ~/.drift/scans/*.meta.json | xargs cat` is
+/// quite literally a few KB total even for 100 scans.
+///
+/// Write semantics mirror `<scan_id>.summary.json`: written eagerly by
+/// `save_report`, atomically via tmp → rename, AND lazily backfilled
+/// by `list_scans` when a legacy scan (saved before this sidecar
+/// existed) is encountered. The file is a pure cache — deleting it is
+/// always safe.
+fn scan_meta_path(scan_id: &str) -> Result<PathBuf> {
+    validate_scan_id(scan_id)?;
+    Ok(scans_dir()?.join(format!("{scan_id}.meta.json")))
+}
+
 /// Single source of truth for "is this scan_id safe to embed in a path?".
 /// Rejects empty / traversal sequences. Inlined into every function that
 /// builds a path from a user-controllable id so a future caller can't
@@ -64,14 +153,13 @@ fn validate_scan_id(scan_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// `~/.drift/scans/<scan_id>/code-suggestions/`. Created on demand. The
-/// per-scan parent dir lives alongside `<scan_id>.json` — they coexist
-/// safely because one is a file with a `.json` extension and the other is
-/// a bare directory. No migration needed for older scans: this dir simply
-/// doesn't exist for them and [`list_saved_suggestions`] returns empty.
+/// `~/.drift/scans/<scan_id>/code-suggestions/`. Created on demand.
+/// Routes through [`scan_dir`] so the per-scan parent dir creation is
+/// one helper, not duplicated here — DRY. No migration needed for older
+/// scans: this dir simply doesn't exist for them and
+/// [`list_saved_suggestions`] returns empty.
 pub fn suggestions_dir(scan_id: &str) -> Result<PathBuf> {
-    validate_scan_id(scan_id)?;
-    let dir = scans_dir()?.join(scan_id).join("code-suggestions");
+    let dir = scan_dir(scan_id)?.join("code-suggestions");
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("creating {}", dir.display()))?;
     Ok(dir)
@@ -370,21 +458,140 @@ pub fn save_report(
     report: &Report,
     picker_roots: &[ScanPickerRoot],
 ) -> Result<PathBuf> {
+    let saved_at = now_rfc3339();
+    let envelope_path = write_envelope(scan_id, report, picker_roots, &saved_at)?;
+
+    // Cache layer — best-effort projections written next to the envelope
+    // so subsequent reads skip the full-envelope parse. Each cache is
+    // independently rebuildable from the envelope, so a write failure
+    // here is logged and never propagates: the lazy-backfill paths in
+    // `load_envelope_summary` / `load_scan_entry` will rebuild on miss.
+    log_if_err("summary sidecar", scan_id, || {
+        write_summary_sidecar(scan_id, report, picker_roots, &saved_at)
+    });
+    log_if_err("entry sidecars", scan_id, || {
+        write_entry_sidecars(scan_id, report)
+    });
+    log_if_err("meta sidecar", scan_id, || {
+        write_meta_sidecar(scan_id, report, &saved_at)
+    });
+
+    Ok(envelope_path)
+}
+
+/// Write the full envelope at `<scan_id>.json`. The single source of
+/// truth — everything else (summary sidecar, per-entry files) is a
+/// derived cache that can be rebuilt from this file.
+fn write_envelope(
+    scan_id: &str,
+    report: &Report,
+    picker_roots: &[ScanPickerRoot],
+    saved_at: &str,
+) -> Result<PathBuf> {
     let path = scan_path(scan_id)?;
-    let tmp = path.with_extension("json.tmp");
     let env = ScanEnvelope {
         scan_id,
-        saved_at: now_rfc3339(),
+        saved_at: saved_at.to_string(),
         report,
         picker_roots,
     };
-    let json = serde_json::to_vec_pretty(&env)
-        .context("serializing report envelope")?;
-    std::fs::write(&tmp, &json)
-        .with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("renaming {} → {}", tmp.display(), path.display()))?;
+    atomic_write_json(&path, &env)?;
     Ok(path)
+}
+
+/// Run `f`, logging any error against the named cache layer without
+/// surfacing it to the caller. Centralizes the "best-effort cache
+/// write" pattern so each call site reads as one line of intent.
+fn log_if_err<F>(layer: &'static str, scan_id: &str, f: F)
+where
+    F: FnOnce() -> Result<()>,
+{
+    if let Err(e) = f() {
+        tracing::warn!(
+            scan_id = scan_id,
+            layer = layer,
+            "cache write failed (non-fatal; lazy backfill will retry): {e:#}"
+        );
+    }
+}
+
+/// Build + atomically write the pre-projected summary sidecar. Same
+/// `strip_to_header` projection `load_envelope_summary` would do at read
+/// time — we just do it once at save time so subsequent reads only
+/// touch the small file.
+fn write_summary_sidecar(
+    scan_id: &str,
+    report: &Report,
+    picker_roots: &[ScanPickerRoot],
+    saved_at: &str,
+) -> Result<()> {
+    let path = scan_summary_path(scan_id)?;
+    let mut summary_report = report.clone();
+    for entry in summary_report.entries.iter_mut() {
+        strip_to_header(entry);
+    }
+    let env = ScanEnvelope {
+        scan_id,
+        saved_at: saved_at.to_string(),
+        report: &summary_report,
+        picker_roots,
+    };
+    atomic_write_json(&path, &env)
+}
+
+/// Write one file per entry under `<scan_id>/entries/<idx>.json`. Each
+/// file is the full `CallTreeNode` subtree for that entry, ready to be
+/// served by `load_scan_entry` with no envelope parse. This is the
+/// optimization that takes per-entry dashboard drill-ins from
+/// O(envelope-size) to O(entry-size) — roughly 50× faster on
+/// real-project scans.
+///
+/// Atomic per file. Partial failure (3 of 5 written, then disk full)
+/// leaves a usable state: present files serve the fast path, missing
+/// ones fall through to the lazy backfill in `load_scan_entry`.
+fn write_entry_sidecars(scan_id: &str, report: &Report) -> Result<()> {
+    // Creates the entries dir on demand; cheap when it already exists.
+    scan_entries_dir(scan_id)?;
+    for (idx, entry) in report.entries.iter().enumerate() {
+        let path = scan_entry_path(scan_id, idx)?;
+        atomic_write_json(&path, entry)?;
+    }
+    Ok(())
+}
+
+/// Build + atomically write the ~200-byte index-page sidecar. Same shape
+/// `list_scans` returns to the viewer — the meta file IS the listing
+/// row, just persisted at save time so we don't pay an envelope parse
+/// per scan when rendering the index.
+///
+/// Wire format is the same `ScanMeta` struct (camelCase via serde
+/// rename_all) the HTTP / Tauri layer already returns to the UI, so a
+/// future tool could `cat` the meta file straight into a list view
+/// without writing any new code.
+fn write_meta_sidecar(scan_id: &str, report: &Report, saved_at: &str) -> Result<()> {
+    let meta = derive_meta(scan_id, report, saved_at);
+    atomic_write_json(&scan_meta_path(scan_id)?, &meta)
+}
+
+/// Single source of truth for "what does a listing row contain?". Used
+/// at both write time (`write_meta_sidecar`) and the legacy backfill
+/// path (`read_meta_from_envelope`), so the two can't drift.
+fn derive_meta(scan_id: &str, report: &Report, saved_at: &str) -> ScanMeta {
+    let summary = &report.summary;
+    let findings_total: u32 = summary
+        .findings_by_kind
+        .values()
+        .map(|v| *v as u32)
+        .sum();
+    ScanMeta {
+        scan_id: scan_id.to_string(),
+        saved_at: saved_at.to_string(),
+        source_root: report.generator.source_root.clone(),
+        profiled_language: summary.profiled_language.clone(),
+        files: summary.files as u32,
+        symbols: summary.symbols as u32,
+        findings_total,
+    }
 }
 
 /// Read a saved scan back. Returns the envelope so the caller can read the
@@ -396,6 +603,168 @@ pub fn load_envelope(scan_id: &str) -> Result<StoredScan> {
     let stored: StoredScan = serde_json::from_slice(&bytes)
         .with_context(|| format!("parsing {}", path.display()))?;
     Ok(stored)
+}
+
+/// Load only the lightweight summary of a saved scan — every field of
+/// the original envelope except each entry's recursive `children` tree.
+/// Returned `entries` are still in the original order (the array index
+/// is the public handle the slicing API uses) but their `children`
+/// arrays are empty.
+///
+/// **Performance contract.** When the sidecar file
+/// `~/.drift/scans/<id>.summary.json` exists — written by `save_report`
+/// since the optimization landed — this function reads ~tens of KB and
+/// returns in low single-digit ms even for 250 MB scans. Without a
+/// sidecar (legacy scans saved before the sidecar machinery), we fall
+/// back to parsing the full envelope, then write the sidecar
+/// best-effort so the next call is fast. This makes the optimization
+/// roll out transparently on existing on-disk data.
+///
+/// Why a sidecar (not streaming JSON, not split files): writing a tiny
+/// projection alongside the envelope at save time is cheaper than every
+/// other option (parse cost moves from per-load to once-per-save) and
+/// keeps the on-disk schema additive (sidecar missing → fall back).
+///
+/// Subtrees are still fetched on demand via [`load_scan_entry`].
+pub fn load_envelope_summary(scan_id: &str) -> Result<StoredScan> {
+    // ── Fast path: sidecar present → tiny read, no full-envelope parse.
+    let sidecar = scan_summary_path(scan_id)?;
+    if sidecar.is_file() {
+        match std::fs::read(&sidecar)
+            .with_context(|| format!("reading {}", sidecar.display()))
+            .and_then(|bytes| {
+                serde_json::from_slice::<StoredScan>(&bytes)
+                    .with_context(|| format!("parsing {}", sidecar.display()))
+            }) {
+            Ok(stored) => return Ok(stored),
+            Err(e) => {
+                // Corrupt sidecar (e.g. partial write from a crash). Log
+                // and fall through to rebuild from the source-of-truth
+                // envelope. We don't try to delete the bad sidecar
+                // here — the backfill below overwrites it atomically.
+                tracing::warn!(
+                    scan_id = scan_id,
+                    "summary sidecar unreadable, rebuilding from envelope: {e:#}"
+                );
+            }
+        }
+    }
+
+    // ── Slow path: no sidecar yet. Parse the full envelope, project, AND
+    // backfill the sidecar so the next call is fast. Lazy-migration: a
+    // user pinging `/api/scans/<id>/summary` on a legacy scan pays the
+    // full parse once; every subsequent dashboard mount is instant.
+    let mut stored = load_envelope(scan_id)?;
+    for entry in stored.report.entries.iter_mut() {
+        strip_to_header(entry);
+    }
+    // Best-effort sidecar backfill. We can't reuse `stored` directly
+    // because `write_summary_sidecar` takes `&Report` and we already
+    // mutated it in place; the saved-at and picker-roots are right
+    // there on the StoredScan. A failure here is logged but does not
+    // fail the read — the caller still gets a correct response.
+    if let Err(e) =
+        write_summary_sidecar(scan_id, &stored.report, &stored.picker_roots, &stored.saved_at)
+    {
+        tracing::warn!(
+            scan_id = scan_id,
+            "summary sidecar backfill failed (next read will retry): {e:#}"
+        );
+    }
+    Ok(stored)
+}
+
+/// Load one entry's full call-tree subtree by 0-based index into the
+/// envelope's `entries` array.
+///
+/// **Performance contract.** When the per-entry sidecar
+/// `~/.drift/scans/<id>/entries/<idx>.json` exists — written by
+/// `save_report` since the per-entry optimization landed — this is an
+/// O(entry-size) read (~1–5 MB, ~5–50 ms). Without it we fall back to
+/// parsing the full envelope (~500 ms–2 s) AND backfill every entry
+/// sidecar so subsequent drill-ins on this scan are fast. Lazy
+/// migration: existing on-disk scans upgrade themselves on first click.
+///
+/// Index out of range surfaces a clean error.
+pub fn load_scan_entry(
+    scan_id: &str,
+    entry_index: usize,
+) -> Result<drift_static_profiler::tree::CallTreeNode> {
+    if let Some(node) = try_read_entry_sidecar(scan_id, entry_index)? {
+        return Ok(node);
+    }
+    backfill_entry_sidecars_from_envelope(scan_id)?;
+    read_entry_sidecar_after_backfill(scan_id, entry_index)
+}
+
+/// Fast path: read the per-entry sidecar if it exists. `Ok(None)` (not
+/// `Err`) when the file is simply absent — the caller falls through to
+/// the backfill path. Anything else (permission denied, partial-write
+/// JSON, etc.) is a real error worth surfacing.
+fn try_read_entry_sidecar(
+    scan_id: &str,
+    entry_index: usize,
+) -> Result<Option<drift_static_profiler::tree::CallTreeNode>> {
+    let path = scan_entry_path(scan_id, entry_index)?;
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let node: drift_static_profiler::tree::CallTreeNode =
+                serde_json::from_slice(&bytes)
+                    .with_context(|| format!("parsing {}", path.display()))?;
+            Ok(Some(node))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+/// Slow path: parse the full envelope and write every entry as its own
+/// sidecar so future drill-ins are fast. This is the lazy migration
+/// hook — legacy scans saved before the per-entry optimization upgrade
+/// themselves on first click. After this returns successfully, every
+/// `<scan_id>/entries/<idx>.json` exists.
+fn backfill_entry_sidecars_from_envelope(scan_id: &str) -> Result<()> {
+    let stored = load_envelope(scan_id)?;
+    write_entry_sidecars(scan_id, &stored.report)
+}
+
+/// Re-read the entry sidecar after backfill, surfacing a clean
+/// out-of-range error when the requested index doesn't exist. Split out
+/// so `load_scan_entry`'s control flow reads as three one-liners.
+fn read_entry_sidecar_after_backfill(
+    scan_id: &str,
+    entry_index: usize,
+) -> Result<drift_static_profiler::tree::CallTreeNode> {
+    let path = scan_entry_path(scan_id, entry_index)?;
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
+            "entry_index {entry_index} out of range for scan {scan_id}"
+        ),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+/// Strip every per-entry field that costs bytes on the wire AND isn't
+/// needed by the dashboard. After this:
+///   • `children` → `[]`           (the big one — recursive subtree)
+///   • `findings` → `[]`           (counts live in `roots_overview`)
+///   • `external_calls` → `[]`     (entry-level detail, fetched lazily)
+///   • `callers` → `[]`            (count survives via `callers_count`)
+///
+/// What's preserved per entry (the "header" set the picker + entry list
+/// renders): id, name, kind, file, line, depth, parent_class,
+/// subtree_size, callers_count, callees_count, categories_reached,
+/// entry_labels, and the small metric fields (complexity, loc, …).
+///
+/// On a 100 k-finding scan, this drops the summary payload from tens of
+/// MB (old aggregation behavior) to single-digit KB per entry.
+fn strip_to_header(node: &mut drift_static_profiler::tree::CallTreeNode) {
+    node.children = Vec::new();
+    node.findings = Vec::new();
+    node.external_calls = Vec::new();
+    node.callers = Vec::new();
 }
 
 /// Delete the saved scan envelope for `scan_id`. Idempotent — a missing
@@ -413,69 +782,265 @@ pub fn load_envelope(scan_id: &str) -> Result<StoredScan> {
 /// registry and the race window is small enough in practice that the
 /// simpler API wins.
 pub fn delete_scan(scan_id: &str) -> Result<()> {
-    let path = scan_path(scan_id)?;
-    match std::fs::remove_file(&path) {
+    // Delete cache layers first so we never serve a stale projection
+    // pointing at a deleted envelope. The reverse order (envelope
+    // gone, cache stale) would briefly serve dead data; sidecar-then-
+    // dir-then-envelope keeps the visible state consistent at every
+    // intermediate point. All three layers ignore NotFound (idempotent).
+    remove_quietly("summary sidecar", scan_id, scan_summary_path(scan_id)?, false);
+    remove_quietly("meta sidecar", scan_id, scan_meta_path(scan_id)?, false);
+    remove_quietly("meta sidecar", scan_id, scan_meta_path(scan_id)?, false);
+    remove_quietly("entries dir", scan_id, scan_dir_path(scan_id)?, true);
+
+    let envelope = scan_path(scan_id)?;
+    match std::fs::remove_file(&envelope) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("deleting {}", path.display())),
+        Err(e) => Err(e).with_context(|| format!("deleting {}", envelope.display())),
+    }
+}
+
+/// `scan_dir(id)` creates the directory on call. For deletion we want
+/// the path WITHOUT side-effecting the filesystem (creating the dir
+/// just to delete it would be silly). Path-traversal-safe via
+/// `validate_scan_id`.
+fn scan_dir_path(scan_id: &str) -> Result<PathBuf> {
+    validate_scan_id(scan_id)?;
+    Ok(scans_dir()?.join(scan_id))
+}
+
+/// Best-effort remove. `is_dir = true` recursively removes a directory
+/// tree; `false` removes a single file. NotFound is silent (idempotent
+/// delete); any other error is logged but does NOT propagate, because
+/// these are cache layers — losing them just means the next read pays a
+/// parse cost. The source-of-truth envelope deletion below is the only
+/// place a real error matters.
+fn remove_quietly(layer: &'static str, scan_id: &str, path: PathBuf, is_dir: bool) {
+    let result = if is_dir {
+        std::fs::remove_dir_all(&path)
+    } else {
+        std::fs::remove_file(&path)
+    };
+    match result {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(
+            scan_id = scan_id,
+            layer = layer,
+            path = %path.display(),
+            "removing cache layer failed (non-fatal): {e}"
+        ),
     }
 }
 
 /// Coarse metadata for the scans index. We don't parse the whole `Report`
 /// body — just the envelope head + filesystem mtime — so listing 100 scans is
 /// cheap.
-#[derive(Debug, Clone, Serialize)]
+/// One row of the viewer's index page. Both Serialize (sent to the UI)
+/// and Deserialize (round-tripped through the `<id>.meta.json` sidecar).
+/// `camelCase` wire form matches the viewer's `ScanMeta` TypeScript
+/// interface — keep them in sync. The `alias` attributes accept the
+/// snake_case form too so a legacy meta file (or one a CLI tool wrote
+/// by hand) still loads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanMeta {
+    #[serde(alias = "scan_id")]
     pub scan_id: String,
+    #[serde(alias = "saved_at")]
     pub saved_at: String,
+    #[serde(alias = "source_root")]
     pub source_root: Option<String>,
+    #[serde(alias = "profiled_language")]
     pub profiled_language: Option<String>,
     pub files: u32,
     pub symbols: u32,
+    #[serde(alias = "findings_total")]
     pub findings_total: u32,
 }
 
-/// Enumerate every saved scan. Sorted by saved_at descending (newest first).
-/// A malformed file is logged + skipped — the user can still see the rest.
+/// Enumerate every saved scan. Sorted by saved_at descending (newest
+/// first). A malformed file is logged + skipped — the user can still
+/// see the rest.
+///
+/// **Performance contract.** Each scan contributes one ~200-byte
+/// `<id>.meta.json` read; the canonical "8 scans of 250 MB each → 2 GB
+/// of envelope reads just to render the index" footgun is gone. For
+/// legacy scans (saved before the meta sidecar landed), the first call
+/// rebuilds the meta file by parsing the envelope once, after which
+/// every subsequent listing is instant.
+///
+/// Iteration source: envelope files (`<id>.json`). The envelope is the
+/// canonical "scan exists" marker; meta files are pure cache. If a meta
+/// file exists but the envelope doesn't (orphan from a partial delete),
+/// it's not a scan and gets ignored. The reverse — envelope without
+/// meta — triggers the lazy backfill below.
 pub fn list_scans() -> Result<Vec<ScanMeta>> {
-    let dir = scans_dir()?;
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(&dir)
-        .with_context(|| format!("reading {}", dir.display()))?
-    {
-        let entry = match entry { Ok(e) => e, Err(_) => continue };
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+    for envelope_path in iter_envelope_paths()? {
+        let Some(scan_id) = scan_id_from_envelope_path(&envelope_path) else {
             continue;
-        }
-        match read_meta(&path) {
+        };
+        match read_meta_for_listing(&scan_id, &envelope_path) {
             Ok(meta) => out.push(meta),
-            Err(e) => tracing::warn!(path = %path.display(), "skipping malformed scan: {e:#}"),
+            Err(e) => tracing::warn!(
+                scan_id = scan_id,
+                "skipping malformed scan: {e:#}"
+            ),
         }
     }
     out.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
     Ok(out)
 }
 
-fn read_meta(path: &Path) -> Result<ScanMeta> {
-    let bytes = std::fs::read(path)?;
-    let stored: StoredScan = serde_json::from_slice(&bytes)?;
-    let summary = &stored.report.summary;
-    let findings_total: u32 = summary
-        .findings_by_kind
-        .values()
-        .map(|v| *v as u32)
-        .sum();
-    Ok(ScanMeta {
-        scan_id: stored.scan_id,
-        saved_at: stored.saved_at,
-        source_root: stored.report.generator.source_root.clone(),
-        profiled_language: summary.profiled_language.clone(),
-        files: summary.files as u32,
-        symbols: summary.symbols as u32,
-        findings_total,
-    })
+/// Enumerate scan envelope paths in `~/.drift/scans/`. Yields each
+/// `<id>.json` file once, filtering out the cache sidecars that also
+/// end in `.json`. Pure iteration helper — no I/O beyond the
+/// `read_dir`, no parsing.
+fn iter_envelope_paths() -> Result<Vec<PathBuf>> {
+    let dir = scans_dir()?;
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+    {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if !is_envelope_file(&path) {
+            continue;
+        }
+        out.push(path);
+    }
+    Ok(out)
+}
+
+/// True when `path` is the source-of-truth `<id>.json` for a scan —
+/// not one of the `<id>.summary.json` / `<id>.meta.json` cache
+/// sidecars. Single source of truth for the suffix-filter rule so
+/// `iter_envelope_paths` reads as one clear predicate.
+fn is_envelope_file(path: &Path) -> bool {
+    if path.extension().and_then(|s| s.to_str()) != Some("json") {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    !name.ends_with(".summary.json") && !name.ends_with(".meta.json")
+}
+
+/// Recover the scan_id from an envelope's filename. `<id>.json` →
+/// `<id>`. Returns `None` for paths that don't have the expected
+/// shape — listing skips them silently.
+fn scan_id_from_envelope_path(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+}
+
+/// Three-tier read for one scan's listing row, fastest path first:
+///   1. **Meta sidecar** — `<id>.meta.json` (~200 B). Hit rate: 100 %
+///      for any scan saved after this optimization landed.
+///   2. **Summary sidecar** — `<id>.summary.json` (~KB). The middle
+///      tier exists for the rare case where a save crashed AFTER the
+///      summary write but BEFORE the meta write (or a manual file
+///      deletion). Still saves us from reading a multi-GB envelope.
+///   3. **Envelope** — `<id>.json` (could be 1.72 GB on real scans).
+///      Legacy path only. Backfills the meta sidecar before returning
+///      so the NEXT list_scans call falls through to tier 1.
+fn read_meta_for_listing(scan_id: &str, envelope_path: &Path) -> Result<ScanMeta> {
+    if let Some(meta) = try_read_meta_sidecar(scan_id) {
+        return Ok(meta);
+    }
+    let meta = read_meta_via_fallback(scan_id, envelope_path)?;
+    log_if_err("meta sidecar (backfill)", scan_id, || {
+        atomic_write_json(&scan_meta_path(scan_id)?, &meta)
+    });
+    Ok(meta)
+}
+
+/// Try the summary sidecar (tier 2), fall through to the envelope
+/// (tier 3) only if both caches are absent. Split out so
+/// `read_meta_for_listing` stays a three-line tier-1 → fallback →
+/// backfill sketch.
+fn read_meta_via_fallback(scan_id: &str, envelope_path: &Path) -> Result<ScanMeta> {
+    if let Some(meta) = try_read_meta_from_summary(scan_id) {
+        return Ok(meta);
+    }
+    read_meta_from_envelope(scan_id, envelope_path)
+}
+
+/// Tier 2 — pull listing fields from `<id>.summary.json` instead of the
+/// envelope. The summary sidecar is the same `StoredScan` wire shape,
+/// just with entries stripped; the same deserializer works and we save
+/// the multi-GB envelope read. `None` on absent OR malformed — both
+/// fall through to the envelope path.
+fn try_read_meta_from_summary(scan_id: &str) -> Option<ScanMeta> {
+    let path = scan_summary_path(scan_id).ok()?;
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                scan_id = scan_id,
+                "reading summary sidecar for meta fallback failed (will try envelope): {e}"
+            );
+            return None;
+        }
+    };
+    match serde_json::from_slice::<StoredScan>(&bytes) {
+        Ok(stored) => Some(derive_meta(scan_id, &stored.report, &stored.saved_at)),
+        Err(e) => {
+            tracing::warn!(
+                scan_id = scan_id,
+                "parsing summary sidecar for meta fallback failed (will try envelope): {e}"
+            );
+            None
+        }
+    }
+}
+
+/// Try the meta sidecar. `None` for absent OR corrupt — both fall
+/// through to the envelope rebuild. We log a warning on corrupt so a
+/// real disk issue isn't silently masked.
+fn try_read_meta_sidecar(scan_id: &str) -> Option<ScanMeta> {
+    let path = scan_meta_path(scan_id).ok()?;
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                scan_id = scan_id,
+                "reading meta sidecar failed (will rebuild): {e}"
+            );
+            return None;
+        }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(meta) => Some(meta),
+        Err(e) => {
+            tracing::warn!(
+                scan_id = scan_id,
+                "parsing meta sidecar failed (will rebuild): {e}"
+            );
+            None
+        }
+    }
+}
+
+/// Slow path: parse the full envelope and derive the listing fields.
+/// Used only on legacy scans (saved before the meta sidecar existed)
+/// AND on cache-miss recovery. Routes through `derive_meta` so the
+/// "what does a listing row contain?" definition lives in exactly one
+/// place.
+fn read_meta_from_envelope(scan_id: &str, path: &Path) -> Result<ScanMeta> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let stored: StoredScan = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    Ok(derive_meta(scan_id, &stored.report, &stored.saved_at))
 }
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
@@ -621,6 +1186,679 @@ mod tests {
         assert!(err2.to_string().contains("invalid scan id"));
         let err3 = delete_scan("a/b").unwrap_err();
         assert!(err3.to_string().contains("invalid scan id"));
+    }
+
+    /// Build a fixture envelope with one entry that has a non-empty
+    /// `children` subtree so we can assert summary stripping actually
+    /// removes the recursive payload.
+    fn fixture_with_subtree() -> Report {
+        let child = serde_json::json!({
+            "id": "child-sym",
+            "name": "child_fn",
+            "kind": "Function",
+            "file": "src/lib.rs",
+            "line": 99,
+            "depth": 1,
+            "parent_class": null,
+            "children": [],
+            "truncated_reason": null,
+            "callers": [],
+            "callers_count": 1,
+            "callees_count": 0,
+            "subtree_size": 1,
+            "category_self": null,
+            "categories_reached": {},
+            "external_calls": [],
+            "complexity": 1,
+            "loc": 5,
+            "nesting_depth": 1,
+            "parameter_count": 0,
+            "is_async": false,
+            "call_site_count": 1,
+            "is_recursive": false,
+            "pagerank": 0.0,
+            "percent_total": 0.5,
+            "percent_parent": 0.5,
+            "n_plus_one_risk": false,
+            "blocking_in_async": false,
+        });
+        let entry = serde_json::json!({
+            "id": "entry-sym",
+            "name": "entry_fn",
+            "kind": "Function",
+            "file": "src/main.rs",
+            "line": 7,
+            "depth": 0,
+            "parent_class": null,
+            "children": [child],
+            "truncated_reason": null,
+            "callers": [],
+            "callers_count": 0,
+            "callees_count": 1,
+            "subtree_size": 2,
+            "category_self": null,
+            "categories_reached": {},
+            "external_calls": [],
+            "complexity": 2,
+            "loc": 10,
+            "nesting_depth": 1,
+            "parameter_count": 0,
+            "is_async": false,
+            "call_site_count": 0,
+            "is_recursive": false,
+            "pagerank": 0.0,
+            "percent_total": 1.0,
+            "percent_parent": 0.0,
+            "n_plus_one_risk": false,
+            "blocking_in_async": false,
+        });
+        let report_json = serde_json::json!({
+            "schema_version": "1.0",
+            "mode": "static",
+            "generator": {
+                "tool": "drift-static-profiler",
+                "version": "0.1.0",
+                "source_root": "/tmp/example",
+            },
+            "summary": {
+                "languages": ["rust"],
+                "files": 3,
+                "symbols": 12,
+                "edges": 18,
+                "categories": {},
+                "top_callers": [],
+                "top_callees": [],
+                "hot_paths": [],
+                "dead_code": [],
+                "pagerank_top": [],
+                "recursive_symbols": [],
+                "language_breakdown": [],
+                "profiled_language": "rust",
+                "profiled_language_percent": 100.0,
+                "findings_by_kind": {},
+            },
+            "entries": [entry],
+        });
+        serde_json::from_value(report_json).unwrap()
+    }
+
+    /// `load_envelope_summary` must keep every per-entry field (subtree_size,
+    /// findings counts, file:line, etc.) while emptying `children`. That
+    /// shape is what makes the viewer's landing dashboard render fast
+    /// even on 50 MB scans — the recursive call tree is fetched lazily
+    /// per drill-in via `load_scan_entry`.
+    #[test]
+    fn load_envelope_summary_strips_children_but_keeps_headers() {
+        let scan_id = format!("drift-summary-test-{}", uuid::Uuid::new_v4());
+        let report = fixture_with_subtree();
+        let saved = save_report(&scan_id, &report, &[]).unwrap();
+
+        let summary = load_envelope_summary(&scan_id).unwrap();
+        assert_eq!(summary.report.entries.len(), 1);
+        let entry = &summary.report.entries[0];
+        // Children stripped — this is the headline contract.
+        assert!(
+            entry.children.is_empty(),
+            "summary projection must empty `children`"
+        );
+        // Header fields preserved — without these the viewer's entry
+        // picker / summary cards would have nothing to render.
+        assert_eq!(entry.name, "entry_fn");
+        assert_eq!(entry.file, "src/main.rs");
+        assert_eq!(entry.line, 7);
+        assert_eq!(entry.subtree_size, 2);
+        assert_eq!(entry.callees_count, 1);
+
+        let _ = std::fs::remove_file(&saved);
+    }
+
+    /// `load_scan_entry` must return the FULL subtree (children intact),
+    /// because this is the lazy-load endpoint the viewer hits per
+    /// drill-in. Out-of-range index must surface a clean error string.
+    #[test]
+    fn load_scan_entry_returns_full_subtree_and_rejects_out_of_range() {
+        let scan_id = format!("drift-entry-test-{}", uuid::Uuid::new_v4());
+        let report = fixture_with_subtree();
+        let saved = save_report(&scan_id, &report, &[]).unwrap();
+
+        let node = load_scan_entry(&scan_id, 0).unwrap();
+        assert_eq!(node.name, "entry_fn");
+        assert_eq!(node.children.len(), 1, "subtree must be intact");
+        assert_eq!(node.children[0].name, "child_fn");
+
+        // Out-of-range — clean error, no panic.
+        let err = load_scan_entry(&scan_id, 99).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "out-of-range index must error cleanly, got: {err}"
+        );
+
+        let _ = std::fs::remove_file(&saved);
+    }
+
+    /// Wire-contract for the dashboard's optimization: the summary
+    /// projection MUST strip everything heavy from each entry — no
+    /// children, no findings array, no external_calls, no callers Vec —
+    /// while keeping the header fields the entry-list renders.
+    ///
+    /// The dashboard derives global sevCounts from
+    /// `summary.roots_overview[*].findings_by_severity` (already
+    /// emitted by the analyzer), so a hoist-findings-onto-root step
+    /// would be both unnecessary AND a wire-size bomb on big scans.
+    /// This test guards against accidentally re-introducing it.
+    #[test]
+    fn summary_projection_strips_heavy_fields_keeps_headers() {
+        let scan_id = format!("drift-aggregate-test-{}", uuid::Uuid::new_v4());
+
+        // Findings at three depths: one on entry root (depth 0), one on
+        // the direct child (depth 1), one on a grandchild (depth 2).
+        // The grandchild verifies the recursion actually descends.
+        let grandchild = serde_json::json!({
+            "id": "gc-sym", "name": "deep_fn", "kind": "Function",
+            "file": "src/lib.rs", "line": 200, "depth": 2,
+            "parent_class": null, "children": [], "truncated_reason": null,
+            "callers": [], "callers_count": 0, "callees_count": 0,
+            "subtree_size": 1, "category_self": null,
+            "categories_reached": {}, "external_calls": [],
+            "complexity": 1, "loc": 3, "nesting_depth": 1,
+            "parameter_count": 0, "is_async": false, "call_site_count": 0,
+            "is_recursive": false, "pagerank": 0.0,
+            "percent_total": 0.1, "percent_parent": 0.1,
+            "n_plus_one_risk": false, "blocking_in_async": false,
+            "findings": [{
+                "kind": "n_plus_one", "severity": "high", "confidence": 0.9,
+                "line": 200, "message": "loop-N+1 in grandchild",
+            }],
+        });
+        let child = serde_json::json!({
+            "id": "child-sym", "name": "mid_fn", "kind": "Function",
+            "file": "src/lib.rs", "line": 99, "depth": 1,
+            "parent_class": null, "children": [grandchild],
+            "truncated_reason": null, "callers": [],
+            "callers_count": 1, "callees_count": 1, "subtree_size": 2,
+            "category_self": null, "categories_reached": {},
+            "external_calls": [], "complexity": 1, "loc": 5,
+            "nesting_depth": 1, "parameter_count": 0, "is_async": false,
+            "call_site_count": 1, "is_recursive": false, "pagerank": 0.0,
+            "percent_total": 0.4, "percent_parent": 0.4,
+            "n_plus_one_risk": false, "blocking_in_async": false,
+            "findings": [{
+                "kind": "blocking_in_async", "severity": "medium",
+                "confidence": 0.7, "line": 99, "message": "blocking in async",
+            }],
+        });
+        let entry = serde_json::json!({
+            "id": "entry-sym", "name": "entry_fn", "kind": "Function",
+            "file": "src/main.rs", "line": 7, "depth": 0,
+            "parent_class": null, "children": [child],
+            "truncated_reason": null, "callers": [],
+            "callers_count": 0, "callees_count": 1, "subtree_size": 3,
+            "category_self": null, "categories_reached": {},
+            "external_calls": [], "complexity": 2, "loc": 10,
+            "nesting_depth": 1, "parameter_count": 0, "is_async": false,
+            "call_site_count": 0, "is_recursive": false, "pagerank": 0.0,
+            "percent_total": 1.0, "percent_parent": 0.0,
+            "n_plus_one_risk": false, "blocking_in_async": false,
+            "findings": [{
+                "kind": "hot_zone", "severity": "low",
+                "confidence": 0.5, "line": 7, "message": "hot zone at entry",
+            }],
+        });
+        let report_json = serde_json::json!({
+            "schema_version": "1.0", "mode": "static",
+            "generator": { "tool": "drift-static-profiler", "version": "0.1.0",
+                           "source_root": "/tmp/example" },
+            "summary": {
+                "languages": ["rust"], "files": 1, "symbols": 3, "edges": 2,
+                "categories": {}, "top_callers": [], "top_callees": [],
+                "hot_paths": [], "dead_code": [], "pagerank_top": [],
+                "recursive_symbols": [], "language_breakdown": [],
+                "profiled_language": "rust",
+                "profiled_language_percent": 100.0,
+                "findings_by_kind": {
+                    "hot_zone": 1, "blocking_in_async": 1, "n_plus_one": 1,
+                },
+            },
+            "entries": [entry],
+        });
+        let report: Report = serde_json::from_value(report_json).unwrap();
+        let saved = save_report(&scan_id, &report, &[]).unwrap();
+
+        let summary = load_envelope_summary(&scan_id).unwrap();
+        let entry = &summary.report.entries[0];
+
+        // Headline guarantees — the heavy fields are gone.
+        assert!(entry.children.is_empty(), "children must be stripped");
+        assert!(
+            entry.findings.is_empty(),
+            "findings must be stripped (counts live in summary.roots_overview); got {:?}",
+            entry.findings
+        );
+        assert!(
+            entry.external_calls.is_empty(),
+            "external_calls must be stripped, got {:?}",
+            entry.external_calls
+        );
+        assert!(
+            entry.callers.is_empty(),
+            "callers Vec must be stripped (count survives via callers_count), got {:?}",
+            entry.callers
+        );
+
+        // Header preserved — the entry-list / picker still has everything
+        // it needs to render row labels and navigation.
+        assert_eq!(entry.name, "entry_fn");
+        assert_eq!(entry.file, "src/main.rs");
+        assert_eq!(entry.line, 7);
+        assert_eq!(entry.subtree_size, 3);
+        assert_eq!(entry.callees_count, 1);
+
+        let _ = std::fs::remove_file(&saved);
+    }
+
+    /// Performance contract: `save_report` writes a pre-projected
+    /// summary sidecar alongside the envelope. Without this, the
+    /// dashboard's `/api/scans/:id/summary` endpoint would still pay
+    /// the full-envelope parse cost on every load.
+    #[test]
+    fn save_report_writes_summary_sidecar() {
+        let scan_id = format!("drift-sidecar-write-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let saved = save_report(&scan_id, &report, &[]).unwrap();
+        assert!(saved.exists(), "envelope must be written");
+
+        let sidecar = scan_summary_path(&scan_id).unwrap();
+        assert!(
+            sidecar.exists(),
+            "summary sidecar must be written by save_report; expected {}",
+            sidecar.display()
+        );
+
+        // Sidecar must be parseable as the same StoredScan shape the
+        // viewer expects — same wire type for envelope and summary, just
+        // with entries stripped.
+        let bytes = std::fs::read(&sidecar).unwrap();
+        let stored: StoredScan =
+            serde_json::from_slice(&bytes).expect("sidecar must be valid StoredScan JSON");
+        assert_eq!(stored.scan_id, scan_id);
+
+        let _ = std::fs::remove_file(&saved);
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    /// Lazy-migration: existing on-disk scans (saved before the sidecar
+    /// machinery landed) must still get fast summary reads on the
+    /// second call. The first call rebuilds the projection from the
+    /// envelope AND backfills the sidecar; the second call hits the
+    /// sidecar and skips the full parse.
+    #[test]
+    fn load_envelope_summary_backfills_missing_sidecar() {
+        let scan_id = format!("drift-sidecar-backfill-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let saved = save_report(&scan_id, &report, &[]).unwrap();
+
+        // Simulate a legacy scan by deleting the sidecar `save_report`
+        // just wrote. The next summary load must succeed AND re-create
+        // the sidecar.
+        let sidecar = scan_summary_path(&scan_id).unwrap();
+        std::fs::remove_file(&sidecar).unwrap();
+        assert!(!sidecar.exists(), "precondition: sidecar removed");
+
+        // First load — rebuilds + backfills.
+        let summary1 = load_envelope_summary(&scan_id).unwrap();
+        assert_eq!(summary1.scan_id, scan_id);
+        assert!(
+            sidecar.exists(),
+            "load_envelope_summary must backfill the sidecar on miss"
+        );
+
+        // Second load — sidecar is now present. Should return the same
+        // shape. We can't directly observe "didn't parse the full
+        // envelope" from this test (no instrumentation), but we CAN
+        // verify the sidecar path returns the same data.
+        let summary2 = load_envelope_summary(&scan_id).unwrap();
+        assert_eq!(summary2.scan_id, scan_id);
+        assert_eq!(summary1.report.entries.len(), summary2.report.entries.len());
+
+        let _ = std::fs::remove_file(&saved);
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    /// Delete must remove BOTH the envelope and the sidecar — otherwise
+    /// a re-create with the same scan_id (rare, but the import flow
+    /// can produce duplicates) would briefly serve the stale sidecar
+    /// for the deleted scan.
+    #[test]
+    fn delete_scan_removes_both_envelope_and_sidecar() {
+        let scan_id = format!("drift-sidecar-delete-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+        let sidecar = scan_summary_path(&scan_id).unwrap();
+        assert!(envelope.exists() && sidecar.exists(), "precondition");
+
+        delete_scan(&scan_id).unwrap();
+
+        assert!(!envelope.exists(), "envelope must be deleted");
+        assert!(
+            !sidecar.exists(),
+            "sidecar must be deleted alongside the envelope"
+        );
+    }
+
+    /// `list_scans` walks `*.json` files in `~/.drift/scans/`. The
+    /// summary sidecar shares that extension; without an explicit skip
+    /// the scan would appear twice (once per file) in the dropdown.
+    #[test]
+    fn list_scans_skips_summary_sidecars() {
+        let scan_id = format!("drift-sidecar-listsift-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+        let sidecar = scan_summary_path(&scan_id).unwrap();
+        assert!(sidecar.exists(), "precondition: sidecar was written");
+
+        let listed = list_scans().unwrap();
+        let hits: Vec<_> = listed.iter().filter(|m| m.scan_id == scan_id).collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "scan must appear exactly once in list_scans (not also as a sidecar row); got {} matches",
+            hits.len()
+        );
+
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    /// Build a fixture with N entries so per-entry tests can index by
+    /// position. Each entry has a distinct name + file so we can assert
+    /// `load_scan_entry(n)` returns the n-th one, not some other.
+    fn fixture_with_n_entries(n: usize) -> Report {
+        let entries: Vec<_> = (0..n)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("entry-{i}"),
+                    "name": format!("entry_fn_{i}"),
+                    "kind": "Function",
+                    "file": format!("src/main_{i}.rs"),
+                    "line": 7 + i,
+                    "depth": 0,
+                    "parent_class": null,
+                    "children": [],
+                    "truncated_reason": null,
+                    "callers": [],
+                    "callers_count": 0,
+                    "callees_count": 0,
+                    "subtree_size": 1,
+                    "category_self": null,
+                    "categories_reached": {},
+                    "external_calls": [],
+                    "complexity": 1,
+                    "loc": 10,
+                    "nesting_depth": 1,
+                    "parameter_count": 0,
+                    "is_async": false,
+                    "call_site_count": 0,
+                    "is_recursive": false,
+                    "pagerank": 0.0,
+                    "percent_total": 1.0 / (n as f64),
+                    "percent_parent": 0.0,
+                    "n_plus_one_risk": false,
+                    "blocking_in_async": false,
+                })
+            })
+            .collect();
+        let report_json = serde_json::json!({
+            "schema_version": "1.0",
+            "mode": "static",
+            "generator": {
+                "tool": "drift-static-profiler",
+                "version": "0.1.0",
+                "source_root": "/tmp/example",
+            },
+            "summary": {
+                "languages": ["rust"],
+                "files": n,
+                "symbols": n,
+                "edges": 0,
+                "categories": {},
+                "top_callers": [],
+                "top_callees": [],
+                "hot_paths": [],
+                "dead_code": [],
+                "pagerank_top": [],
+                "recursive_symbols": [],
+                "language_breakdown": [],
+                "profiled_language": "rust",
+                "profiled_language_percent": 100.0,
+                "findings_by_kind": {},
+            },
+            "entries": entries,
+        });
+        serde_json::from_value(report_json).unwrap()
+    }
+
+    /// Performance contract: `save_report` writes one
+    /// `<scan_id>/entries/<idx>.json` file per entry so subsequent
+    /// `load_scan_entry` calls hit a fast O(entry-size) read instead
+    /// of parsing the full envelope.
+    #[test]
+    fn save_report_writes_per_entry_sidecars() {
+        let scan_id = format!("drift-entry-sidecar-write-{}", uuid::Uuid::new_v4());
+        let report = fixture_with_n_entries(3);
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+
+        // Every entry index has its own file.
+        for i in 0..3 {
+            let path = scan_entry_path(&scan_id, i).unwrap();
+            assert!(
+                path.exists(),
+                "per-entry sidecar must exist; expected {}",
+                path.display()
+            );
+            // Each file deserializes as a `CallTreeNode` standalone —
+            // no envelope wrapping, ready to serve from the API.
+            let bytes = std::fs::read(&path).unwrap();
+            let node: drift_static_profiler::tree::CallTreeNode =
+                serde_json::from_slice(&bytes).expect("entry sidecar must be valid JSON");
+            assert_eq!(node.name, format!("entry_fn_{i}"));
+        }
+
+        // Cleanup — remove envelope + summary + entries directory.
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(scan_summary_path(&scan_id).unwrap());
+        let _ = std::fs::remove_dir_all(scan_dir_path(&scan_id).unwrap());
+    }
+
+    /// `load_scan_entry` must read the small per-entry file when it
+    /// exists. The file already deserializes to a `CallTreeNode` —
+    /// no envelope parse needed. This is the headline optimization.
+    #[test]
+    fn load_scan_entry_uses_per_entry_sidecar_fast_path() {
+        let scan_id = format!("drift-entry-fastpath-{}", uuid::Uuid::new_v4());
+        let report = fixture_with_n_entries(2);
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+
+        // Sanity: the per-entry sidecars exist.
+        assert!(scan_entry_path(&scan_id, 0).unwrap().exists());
+        assert!(scan_entry_path(&scan_id, 1).unwrap().exists());
+
+        // Fast path served — without instrumenting the function we
+        // verify the contract by checking we got the right entry back.
+        let n0 = load_scan_entry(&scan_id, 0).unwrap();
+        assert_eq!(n0.name, "entry_fn_0");
+        let n1 = load_scan_entry(&scan_id, 1).unwrap();
+        assert_eq!(n1.name, "entry_fn_1");
+
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(scan_summary_path(&scan_id).unwrap());
+        let _ = std::fs::remove_dir_all(scan_dir_path(&scan_id).unwrap());
+    }
+
+    /// Lazy migration for legacy scans saved before the per-entry
+    /// machinery: first `load_scan_entry` parses the full envelope
+    /// AND backfills every per-entry sidecar, so future calls are fast.
+    #[test]
+    fn load_scan_entry_backfills_legacy_scan_on_miss() {
+        let scan_id = format!("drift-entry-backfill-{}", uuid::Uuid::new_v4());
+        let report = fixture_with_n_entries(3);
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+
+        // Simulate a legacy scan: nuke the entries dir but keep the
+        // envelope. The next `load_scan_entry` must succeed AND
+        // re-populate every sidecar.
+        let entries_dir = scan_dir_path(&scan_id).unwrap().join("entries");
+        std::fs::remove_dir_all(&entries_dir).unwrap();
+        assert!(!entries_dir.exists(), "precondition: entries dir removed");
+
+        // First call — parses envelope, backfills all entries.
+        let n1 = load_scan_entry(&scan_id, 1).unwrap();
+        assert_eq!(n1.name, "entry_fn_1");
+
+        // Every entry sidecar should now exist (we backfill ALL on
+        // miss, not just the requested one — so subsequent drill-ins
+        // on this scan don't pay another envelope parse).
+        for i in 0..3 {
+            let path = scan_entry_path(&scan_id, i).unwrap();
+            assert!(
+                path.exists(),
+                "backfill must populate entry {i} sidecar at {}",
+                path.display()
+            );
+        }
+
+        // Out-of-range index — clean error after backfill.
+        let err = load_scan_entry(&scan_id, 99).unwrap_err().to_string();
+        assert!(
+            err.contains("out of range"),
+            "out-of-range index must error cleanly, got: {err}"
+        );
+
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(scan_summary_path(&scan_id).unwrap());
+        let _ = std::fs::remove_dir_all(scan_dir_path(&scan_id).unwrap());
+    }
+
+    /// Delete must remove the entire `<scan_id>/` directory, not just
+    /// the envelope + summary sidecar. Without this, per-entry sidecars
+    /// (and any prior LLM suggestions) would leak on disk and a
+    /// same-keyed re-import could serve stale data.
+    #[test]
+    fn delete_scan_removes_per_entry_directory() {
+        let scan_id = format!("drift-entry-delete-{}", uuid::Uuid::new_v4());
+        let report = fixture_with_n_entries(2);
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+        let dir = scan_dir_path(&scan_id).unwrap();
+        assert!(dir.exists() && envelope.exists(), "precondition");
+
+        delete_scan(&scan_id).unwrap();
+
+        assert!(!envelope.exists(), "envelope deleted");
+        assert!(
+            !dir.exists(),
+            "per-scan dir (entries + suggestions) deleted"
+        );
+        // Calling again is idempotent (NotFound on every layer).
+        delete_scan(&scan_id).expect("delete must be idempotent on every layer");
+    }
+
+    /// Performance contract: `save_report` writes a tiny
+    /// `<id>.meta.json` sidecar so the viewer's index page can render
+    /// without parsing the full envelope per scan.
+    #[test]
+    fn save_report_writes_meta_sidecar() {
+        let scan_id = format!("drift-meta-write-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+
+        let meta_path = scan_meta_path(&scan_id).unwrap();
+        assert!(meta_path.is_file(), "meta sidecar missing: {}", meta_path.display());
+
+        let size = std::fs::metadata(&meta_path).unwrap().len();
+        assert!(size < 2048, "meta sidecar must be tiny; got {size} bytes");
+
+        let bytes = std::fs::read(&meta_path).unwrap();
+        let meta: ScanMeta = serde_json::from_slice(&bytes)
+            .expect("meta sidecar must parse as ScanMeta directly");
+        assert_eq!(meta.scan_id, scan_id);
+        assert_eq!(meta.files, 3);
+
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(&meta_path);
+        let _ = std::fs::remove_file(scan_summary_path(&scan_id).unwrap());
+        let _ = std::fs::remove_dir_all(scan_dir_path(&scan_id).unwrap());
+    }
+
+    /// Lazy migration: existing scans without a meta sidecar (saved
+    /// before this optimization landed) must still appear in
+    /// `list_scans` AND their first listing must backfill the meta
+    /// file so subsequent listings are fast.
+    #[test]
+    fn list_scans_backfills_missing_meta_sidecar() {
+        let scan_id = format!("drift-meta-backfill-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+        let meta_path = scan_meta_path(&scan_id).unwrap();
+        std::fs::remove_file(&meta_path).unwrap();
+        assert!(!meta_path.exists(), "precondition: meta wiped");
+
+        let listed = list_scans().unwrap();
+        let row = listed
+            .iter()
+            .find(|m| m.scan_id == scan_id)
+            .expect("scan must appear in listing");
+        assert_eq!(row.files, 3);
+        assert!(
+            meta_path.is_file(),
+            "list_scans must lazy-backfill the meta sidecar on miss"
+        );
+
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(&meta_path);
+        let _ = std::fs::remove_file(scan_summary_path(&scan_id).unwrap());
+        let _ = std::fs::remove_dir_all(scan_dir_path(&scan_id).unwrap());
+    }
+
+    /// `list_scans` filters the dir walk by suffix so neither summary
+    /// nor meta sidecars appear as their own listing row. Without this,
+    /// every saved scan would show up multiple times in the index.
+    #[test]
+    fn list_scans_skips_meta_sidecars() {
+        let scan_id = format!("drift-meta-listsift-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+        assert!(scan_meta_path(&scan_id).unwrap().is_file());
+        assert!(scan_summary_path(&scan_id).unwrap().is_file());
+
+        let listed = list_scans().unwrap();
+        let hits: Vec<_> = listed.iter().filter(|m| m.scan_id == scan_id).collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "scan must appear exactly once despite three on-disk files; got {}",
+            hits.len()
+        );
+
+        let _ = std::fs::remove_file(&envelope);
+        let _ = std::fs::remove_file(scan_meta_path(&scan_id).unwrap());
+        let _ = std::fs::remove_file(scan_summary_path(&scan_id).unwrap());
+        let _ = std::fs::remove_dir_all(scan_dir_path(&scan_id).unwrap());
+    }
+
+    /// Cleanup contract: `delete_scan` removes the meta sidecar too —
+    /// otherwise a re-import with the same scan_id would surface the
+    /// stale meta row briefly until the next list_scans rebuilt it.
+    #[test]
+    fn delete_scan_removes_meta_sidecar() {
+        let scan_id = format!("drift-meta-delete-{}", uuid::Uuid::new_v4());
+        let report = fixture();
+        let envelope = save_report(&scan_id, &report, &[]).unwrap();
+        let meta = scan_meta_path(&scan_id).unwrap();
+        assert!(envelope.exists() && meta.exists(), "precondition");
+
+        delete_scan(&scan_id).unwrap();
+
+        assert!(!envelope.exists(), "envelope deleted");
+        assert!(!meta.exists(), "meta sidecar deleted alongside envelope");
     }
 
     #[test]

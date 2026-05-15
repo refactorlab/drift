@@ -152,6 +152,33 @@ pub async fn load_static_scan(scan_id: String) -> Result<storage::StoredScan, St
     storage::load_envelope(&scan_id).map_err(|e| format!("{e:#}"))
 }
 
+/// Return a previously-saved scan envelope **without** each entry's
+/// recursive `children` subtree. The summary + entry headers are enough
+/// to render the landing dashboard for any scan; the actual per-entry
+/// call tree is fetched lazily via [`load_scan_entry`] when the user
+/// drills in.
+///
+/// Sized for browser / IPC ergonomics: typical summary is KB-tens-of-KB,
+/// while a full envelope on a real project can be 50–500 MB.
+#[tauri::command]
+pub async fn load_static_scan_summary(
+    scan_id: String,
+) -> Result<storage::StoredScan, String> {
+    storage::load_envelope_summary(&scan_id).map_err(|e| format!("{e:#}"))
+}
+
+/// Return the full `CallTreeNode` (with `children` populated recursively)
+/// for one entry of a saved scan, indexed by 0-based position in the
+/// envelope's `entries` array. Out-of-range surfaces as a clean error
+/// that the UI can show inline.
+#[tauri::command]
+pub async fn load_scan_entry(
+    scan_id: String,
+    entry_index: usize,
+) -> Result<drift_static_profiler::tree::CallTreeNode, String> {
+    storage::load_scan_entry(&scan_id, entry_index).map_err(|e| format!("{e:#}"))
+}
+
 /// Delete a saved scan from `~/.drift/scans/`. Best-effort: any per-finding
 /// suggestion driver still running for this scan is cancelled first so it
 /// can't re-create the file we're about to remove. Idempotent — deleting

@@ -802,6 +802,27 @@ export async function loadStaticScan(scanId: string): Promise<StoredScan> {
   return invoke<StoredScan>("load_static_scan", { scanId });
 }
 
+/** Sliced fetch — returns the same `StoredScan` shape as `loadStaticScan`
+ *  but with each entry's `children` array empty. KB–tens of KB on the
+ *  wire vs MBs–hundreds-of-MBs for a real-project full envelope, so it's
+ *  the right primitive for the viewer's landing dashboard. Drill in to a
+ *  specific entry via {@link loadScanEntry}. */
+export async function loadStaticScanSummary(
+  scanId: string,
+): Promise<StoredScan> {
+  return invoke<StoredScan>("load_static_scan_summary", { scanId });
+}
+
+/** Fetch one entry's full call-tree subtree (with `children` populated
+ *  recursively). `entryIndex` is the 0-based position in the envelope's
+ *  `entries` array — same index the summary payload carries. */
+export async function loadScanEntry(
+  scanId: string,
+  entryIndex: number,
+): Promise<unknown> {
+  return invoke<unknown>("load_scan_entry", { scanId, entryIndex });
+}
+
 /** Delete a saved scan from `~/.drift/scans/`. Idempotent — calling for a
  *  scan id that's already been deleted resolves without throwing. Any
  *  in-flight "Study this" suggestion driver writing to this scan is

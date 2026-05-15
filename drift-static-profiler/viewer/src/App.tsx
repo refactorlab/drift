@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { fetchScanEntry, fetchScanSummary } from './api/scanApi';
 import { FIXTURES } from './fixtures';
 import { useUserScans } from './userScans';
 import { FlameView } from './FlameView';
@@ -24,6 +25,54 @@ import type { CallTreeNode, EntryDecl, FindingKind, Report } from './types';
 
 type FlameMode = 'kind' | 'category' | 'complexity' | 'smells';
 type BottomTab = 'report' | 'tree' | 'graph' | 'roots' | 'hot' | 'smells' | 'insights' | 'stats';
+
+/// Functional Map-insert — preserves React's identity invariant for
+/// `useState<Map>`. `setLoadedEntries(mapWith(prev, idx, node))` is
+/// the equivalent of `setState({...prev, [idx]: node})` for Maps.
+function mapWith<K, V>(m: Map<K, V>, key: K, value: V): Map<K, V> {
+  const next = new Map(m);
+  next.set(key, value);
+  return next;
+}
+
+/// Run `task` against every index in `[0, count)` with at most
+/// `concurrency` tasks in flight at once. Used by the background
+/// entry-prefetch so a legacy 200-entry "roots-mode" scan doesn't fire
+/// 200 concurrent HTTP requests at the bundled axum server. Each worker
+/// pulls the next index from a shared cursor; when the cursor reaches
+/// `count` workers exit. Per-task errors are swallowed (intentional —
+/// the prefetch is best-effort).
+async function forEachConcurrent(
+  count: number,
+  concurrency: number,
+  task: (index: number) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < count) {
+      const i = cursor++;
+      try {
+        await task(i);
+      } catch {
+        /* per-task errors are silent — the caller's UI degrades gracefully */
+      }
+    }
+  };
+  const workers = Array.from({ length: Math.max(1, concurrency) }, worker);
+  await Promise.all(workers);
+}
+
+/// Maximum entry fetches in flight at once during background prefetch.
+/// Picked at 4 because:
+///   • Typical scans have 1–10 entries → cap rarely kicks in.
+///   • Pathological "roots-mode" scans have 100–200 entries → with no
+///     cap the browser would saturate the kernel network queue AND
+///     hammer the bundled axum server with O(entries) concurrent file
+///     reads. At 4 in-flight the server stays responsive AND total
+///     wall time stays close to optimal on commodity SSDs.
+///   • Higher values (8, 16) don't help on a single localhost server —
+///     the file reads serialize on the kernel anyway.
+const PREFETCH_CONCURRENCY = 4;
 
 export function App() {
   // Fixture identity now lives in the URL (`/scan/:fixtureKey`). The
@@ -106,59 +155,201 @@ export function App() {
     return fixture.label;
   }, [report, fixtureKey, fixture.label, isUserScan]);
 
+  // Two-tier load.
+  //
+  // Tier 1 (this effect) — fetch only the SUMMARY: per-entry headers
+  // (name, file:line, kind, subtree_size, counts) + the aggregate
+  // rollups (`summary.findings_top`, `roots_overview`, `top_callers`,
+  // …). The drift-lab HTTP server projects this server-side; for
+  // built-in fixtures and `vite dev` we fall back to the bare fixture
+  // URL and project client-side. Total wire payload: KB–tens-of-KB
+  // even for 250 MB scans.
+  //
+  // Tier 2 (the separate effect below) — once `activeRootId` is set,
+  // fetch THAT entry's full subtree. Cached per (scanKey, entryIdx) by
+  // `fetchScanEntry`, so switching back to a previously-viewed entry
+  // is instant.
+  //
+  // The render builds a "patched" report where the active entry is
+  // swapped in with its full subtree; all other entries stay header-
+  // only. Components that walk the tree (`FlameView`, `CallTreeView`,
+  // `Smells`, etc.) see real data only for the active entry — which is
+  // exactly what they render anyway.
   useEffect(() => {
     setError(null);
     setSelected(null);
-    // cache: 'no-store' so re-runs of `make scan` are picked up immediately
-    // (browser/proxy caches would otherwise serve a stale fixture JSON even
-    // after the Vite watcher triggers a reload).
-    fetch(fixture.json, { cache: 'no-store' })
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then((raw: Report | { report: Report }) => {
-        // drift-lab saves scans as a StoredScan envelope ({scan_id, saved_at, report});
-        // built-in fixtures are the bare Report. Unwrap when needed.
-        const data: Report =
-          raw && typeof raw === 'object' && 'report' in raw && !('entries' in raw)
-            ? (raw as { report: Report }).report
-            : (raw as Report);
-        // Sort entry points alphabetically by display name.
-        const sorted = [...data.entries].sort((a, b) => {
+    setReport(null);
+    let cancelled = false;
+    fetchScanSummary(fixtureKey, fixture.json)
+      .then(({ report: summaryReport }) => {
+        if (cancelled) return;
+        // Sort entry headers alphabetically — same UX as the old full
+        // load, just over the slim header list.
+        const sorted = [...summaryReport.entries].sort((a, b) => {
           const aName = (a.parent_class ? `${a.parent_class}.` : '') + a.name;
           const bName = (b.parent_class ? `${b.parent_class}.` : '') + b.name;
           return aName.localeCompare(bName);
         });
-        setReport({ ...data, entries: sorted });
+        setReport({ ...summaryReport, entries: sorted });
         setActiveRootId(sorted[0]?.id ?? null);
-        // Tab-default policy: report > roots > tree.
-        // - report when the scan produced any findings (the most useful landing
-        //   when we have something to say)
-        // - roots when there are many entry points (multi-root scans)
-        // - tree otherwise (the historical default)
+        // Tab-default policy: report > roots > tree. (Same heuristic as
+        // before; `summary.findings_by_kind` + `findings_top` are
+        // already in the summary response.)
         const hasFindings =
-          Object.keys(data.summary.findings_by_kind ?? {}).length > 0
-          || (data.summary.findings_top?.length ?? 0) > 0;
+          Object.keys(summaryReport.summary.findings_by_kind ?? {}).length > 0
+          || (summaryReport.summary.findings_top?.length ?? 0) > 0;
         if (hasFindings) {
           setBottomTab('report');
         } else if (sorted.length >= ROOTS_TAB_THRESHOLD) {
           setBottomTab('roots');
         }
       })
-      .catch(e => setError(String(e)));
-  }, [fixture.json]);
+      .catch(e => { if (!cancelled) setError(String(e)); });
+    return () => { cancelled = true; };
+  }, [fixture.json, fixtureKey]);
 
-  const activeRoot = useMemo(
-    () => report?.entries.find(r => r.id === activeRootId) ?? null,
-    [report, activeRootId],
-  );
+  // Tier 2 — per-entry cache populated incrementally. Three writers:
+  //   1. Selection-change effect (below): priority-fetches the active
+  //      entry first so the flame/tree views light up immediately.
+  //   2. Background-prefetch effect (below that): fetches every OTHER
+  //      entry in parallel after the summary lands. Insights /
+  //      Statistics / RootsView / `nodeIndex` walk all entries; without
+  //      this they'd silently undercount (e.g. "Insights (37)" tab
+  //      header but 0 rows because every entry's `findings` is `[]`
+  //      in the summary projection).
+  //   3. Resolved entries get patched into `patchedReport` so every
+  //      consumer that reads `report.entries[*].children/findings/…`
+  //      sees real data as it arrives. The summary's header-only
+  //      entries remain visible for not-yet-loaded ones — the UI
+  //      degrades gracefully (counts at zero, no crash).
+  const [loadedEntries, setLoadedEntries] = useState<Map<number, CallTreeNode>>(new Map());
+  const [activeRootLoading, setActiveRootLoading] = useState(false);
+  // Mirror `loadedEntries` into a ref so the long-running prefetch
+  // worker can read the latest value without being a dep of its
+  // effect. Without this, the prefetch effect would either restart on
+  // every entry resolution (re-firing all fetches) or read a stale
+  // snapshot captured at effect-start time (re-fetching already-loaded
+  // entries).
+  const loadedEntriesRef = useRef(loadedEntries);
+  useEffect(() => {
+    loadedEntriesRef.current = loadedEntries;
+  }, [loadedEntries]);
+
+  // In-flight dedupe: the active-fetch effect and the background
+  // prefetch worker both check `loadedEntries.has(idx)` BEFORE firing a
+  // fetch. Nothing stops them from both passing that check
+  // simultaneously and double-fetching the same entry — wasted
+  // bandwidth (one ~5 MB redundant request per active-entry switch).
+  // This ref is the single in-flight registry; both writers consult it
+  // before firing and add to it before the await. Refs (not state) so
+  // an add/remove never schedules a re-render.
+  const inFlightRef = useRef<Set<number>>(new Set());
+
+  // Reset the cache when the fixture changes (different scan → different
+  // entries — stale cache would yield wrong data).
+  useEffect(() => {
+    setLoadedEntries(new Map());
+    inFlightRef.current = new Set();
+  }, [fixtureKey]);
+
+  // Priority fetch — active entry first. Skipped when the entry is
+  // already in the cache (e.g. user navigates back to a previously
+  // active root) OR currently being fetched by the background worker.
+  useEffect(() => {
+    if (!report || !activeRootId) return;
+    const idx = report.entries.findIndex(r => r.id === activeRootId);
+    if (idx < 0) return;
+    if (loadedEntries.has(idx)) return;
+    if (inFlightRef.current.has(idx)) return;
+    let cancelled = false;
+    inFlightRef.current.add(idx);
+    setActiveRootLoading(true);
+    fetchScanEntry(fixtureKey, idx, fixture.json)
+      .then(node => {
+        if (cancelled) return;
+        setLoadedEntries(prev => mapWith(prev, idx, node));
+      })
+      .catch(e => { if (!cancelled) setError(String(e)); })
+      .finally(() => {
+        inFlightRef.current.delete(idx);
+        if (!cancelled) setActiveRootLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeRootId, fixtureKey, fixture.json, report, loadedEntries]);
+
+  // Background prefetch — every entry, with bounded concurrency.
+  // Fires once per summary load. Each resolved entry trickles into
+  // `loadedEntries` so Insights/RootsView/nodeIndex update
+  // incrementally as data arrives.
+  //
+  // Why we prefetch instead of waiting for tab click: Insights and
+  // RootsView walk EVERY entry's `findings` / `children` to render
+  // their tables. Without prefetch, clicking those tabs would either
+  // (a) lag while N fetches finish, or (b) silently show partial data.
+  // (a) is bad UX; (b) is worse — users see "0 insights" when 37 exist.
+  // Eager prefetch trades a few seconds of background bandwidth for
+  // "everything just works" once the user clicks around.
+  //
+  // Concurrency cap: see `PREFETCH_CONCURRENCY`. Without it, a 200-
+  // entry roots-mode scan would fire 200 concurrent fetches and
+  // saturate the localhost server.
+  useEffect(() => {
+    if (!report) return;
+    let cancelled = false;
+    void forEachConcurrent(report.entries.length, PREFETCH_CONCURRENCY, async (idx) => {
+      if (cancelled) return;
+      // Skip if another writer (the active-root priority effect) beat
+      // us to it OR is currently fetching this idx. The in-flight set
+      // is the only way to dedupe the latter case — `loadedEntries`
+      // only reflects completed fetches.
+      if (loadedEntriesRef.current.has(idx)) return;
+      if (inFlightRef.current.has(idx)) return;
+      inFlightRef.current.add(idx);
+      try {
+        const node = await fetchScanEntry(fixtureKey, idx, fixture.json);
+        if (cancelled) return;
+        setLoadedEntries(prev => (prev.has(idx) ? prev : mapWith(prev, idx, node)));
+      } finally {
+        inFlightRef.current.delete(idx);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [report, fixtureKey, fixture.json]);
+
+  // `patchedReport` — single source of truth for every consumer below.
+  // Header-only entries (from the summary) get swapped for full
+  // subtrees as `loadedEntries` fills in. Memoised so unrelated
+  // re-renders don't churn the nodeIndex walk.
+  const patchedReport = useMemo<Report | null>(() => {
+    if (!report) return null;
+    if (loadedEntries.size === 0) return report;
+    const entries = report.entries.map((entry, idx) => loadedEntries.get(idx) ?? entry);
+    return { ...report, entries };
+  }, [report, loadedEntries]);
+
+  // The "active root" the flame/tree views consume. Headers don't have
+  // a meaningful subtree, so we hand back null while the priority
+  // fetch is in flight — every consumer below already handles `null`.
+  const activeRoot = useMemo<CallTreeNode | null>(() => {
+    if (!patchedReport || !activeRootId) return null;
+    const idx = patchedReport.entries.findIndex(r => r.id === activeRootId);
+    if (idx < 0) return null;
+    return loadedEntries.get(idx) ?? null;
+  }, [patchedReport, activeRootId, loadedEntries]);
 
   // Cross-root index: for every reachable node, remember (root id, node ref).
   // Lets us jump from Statistics/HotPaths into the right entry-point tree.
+  // Walks `patchedReport` so cross-entry jumps from Statistics/HotPaths
+  // hit the loaded entries' real subtrees as soon as the background
+  // prefetch resolves them. Header-only entries (not yet loaded)
+  // contribute just themselves to the index — better than nothing, and
+  // they're upgraded incrementally as `loadedEntries` fills in.
   const nodeIndex = useMemo(() => {
     const byId = new Map<string, { rootId: string; node: CallTreeNode }>();
     const byFileLine = new Map<string, { rootId: string; node: CallTreeNode }>();
     const byName = new Map<string, { rootId: string; node: CallTreeNode }>();
-    if (!report) return { byId, byFileLine, byName };
-    for (const root of report.entries) {
+    if (!patchedReport) return { byId, byFileLine, byName };
+    for (const root of patchedReport.entries) {
       const walk = (n: CallTreeNode) => {
         if (!byId.has(n.id)) byId.set(n.id, { rootId: root.id, node: n });
         const fl = `${n.file}:${n.line}`;
@@ -171,7 +362,7 @@ export function App() {
       walk(root);
     }
     return { byId, byFileLine, byName };
-  }, [report]);
+  }, [patchedReport]);
 
   const flameRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 320 });
@@ -285,7 +476,12 @@ export function App() {
                 width={size.w}
               />
             )}
-            {!error && !activeRoot && <div style={emptyStyle}>no data</div>}
+            {!error && !activeRoot && activeRootLoading && (
+              <div style={emptyStyle}>loading entry…</div>
+            )}
+            {!error && !activeRoot && !activeRootLoading && (
+              <div style={emptyStyle}>no data</div>
+            )}
           </div>
           <div style={tabsStyle}>
             <Tab active={bottomTab === 'report'} onClick={() => setBottomTab('report')} tip="One-screen scan report — health score, findings breakdown, hot zones, entry points.">
@@ -324,7 +520,7 @@ export function App() {
           <div style={bottomPanelStyle}>
             {bottomTab === 'report' && (
               <ScanReport
-                report={report}
+                report={patchedReport}
                 onJump={jump}
                 onShowKind={(kind) => {
                   setInsightsKindFilter([kind]);
@@ -368,7 +564,7 @@ export function App() {
             )}
             {bottomTab === 'insights' && (
               <Insights
-                report={report}
+                report={patchedReport}
                 presetKinds={insightsKindFilter ?? undefined}
                 onJump={jump}
               />
@@ -480,9 +676,19 @@ function Toolbar(props: {
     const base = sourceFilteredRoots;
     if (!search) return base;
     const q = search.toLowerCase();
+    // Extended match: bare name OR bare file OR `file:name` (stack-frame
+    // paste from another tool) OR `file:line` (terminal / IDE
+    // go-to-line paste). The combined forms make it natural to search
+    // for "src/router/index.ts:handler" or "src/foo.ts:47" and land on
+    // the right row, instead of getting an empty list because the colon
+    // never appears inside a single field.
     const matched = base.filter(r => {
-      const name = (r.parent_class ? `${r.parent_class}.` : '') + r.name;
-      return name.toLowerCase().includes(q) || r.file.toLowerCase().includes(q);
+      const name = ((r.parent_class ? `${r.parent_class}.` : '') + r.name).toLowerCase();
+      const file = r.file.toLowerCase();
+      if (name.includes(q) || file.includes(q)) return true;
+      if (`${file}:${name}`.includes(q)) return true;
+      if (`${file}:${r.line}`.includes(q)) return true;
+      return false;
     });
     // Ensure the active selection is always present in the list — even
     // if it was filtered out by source or search — so the <select>

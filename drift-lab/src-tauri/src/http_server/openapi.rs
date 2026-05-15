@@ -21,6 +21,8 @@ use super::routes;
         routes::api_health,
         routes::api_list_scans,
         routes::api_get_scan,
+        routes::api_get_scan_summary,
+        routes::api_get_scan_entry,
         routes::api_delete_scan,
         routes::api_download_scan,
         routes::api_import_scan,

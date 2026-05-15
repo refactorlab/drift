@@ -224,15 +224,39 @@ export function filterEntries(
   const matched =
     q.length === 0
       ? roots
-      : roots.filter(
-          (r) =>
-            r.name.toLowerCase().includes(q) ||
-            r.file.toLowerCase().includes(q),
-        );
+      : roots.filter((r) => entryMatchesQuery(r, q));
   // Defensive reach-desc sort. Idempotent on already-sorted input. The
   // backend currently delivers them sorted, but this guarantees the
   // displayed rank reflects real reach even if that invariant ever drifts.
   return [...matched].sort((a, b) => b.reach - a.reach);
+}
+
+/// Match `q` (already lowercase) against the four forms a user might
+/// reach for. We extend beyond plain `name` / `file` so pasting a stack
+/// frame ("src/foo.ts:42", "agents/router/index.ts:handler") lands on
+/// the right row instead of silently returning empty:
+///
+///   1. `name` — bare function/symbol name.
+///   2. `file` — path the symbol is declared in.
+///   3. `file:name` — the combined "where + what" string the desktop and
+///      viewer render in row headers; matches pasted "open at definition"
+///      links the user copied from another tool.
+///   4. `file:line` — the form copy-pasted out of stack traces, terminal
+///      errors, and IDE go-to-line outputs. Reach-style matching: a
+///      query of "foo.ts:47" matches the row whose `line === 47` AND
+///      whose file contains "foo.ts".
+///
+/// Pure function — no React, no DOM. Exported for unit testing.
+export function entryMatchesQuery(r: ScanPickerRoot, q: string): boolean {
+  if (q.length === 0) return true;
+  const name = r.name.toLowerCase();
+  const file = r.file.toLowerCase();
+  if (name.includes(q) || file.includes(q)) return true;
+  const fileColonName = `${file}:${name}`;
+  if (fileColonName.includes(q)) return true;
+  const fileColonLine = `${file}:${r.line}`;
+  if (fileColonLine.includes(q)) return true;
+  return false;
 }
 
 /**

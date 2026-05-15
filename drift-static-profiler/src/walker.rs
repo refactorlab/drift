@@ -1,7 +1,9 @@
 use crate::progress::{NullProgress, Progress};
 use crate::Language;
 use ignore::WalkBuilder;
+use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Always-skip directories. Applied regardless of `.gitignore` contents because
 /// they're universal noise across languages and dramatically reduce wall time
@@ -67,20 +69,32 @@ pub struct WalkOpts {
     pub apply_defaults: bool,
     /// Skip hidden files / dirs (anything starting with `.`).
     pub skip_hidden: bool,
-    /// Skip test/spec/mock files and the test-segment directories that
-    /// hold them. Off by default — the scan walks tests. When on, both
-    /// path segments AND filename conventions are filtered:
+    /// Skip test/spec/mock files and any directory whose name follows a
+    /// test-naming convention. Off by default — the scan walks tests.
+    /// When on, files AND directory segments share the same grammar
+    /// (see [`is_test_token`]):
     ///
-    /// - directories: case-insensitive `test`/`tests`/`__tests__`/
-    ///   `spec`/`specs`/`__mocks__`/`testdata` (so `/Test/` matches too)
-    /// - filenames: dot-separated (`*.test.ts`, `*.spec.js`,
-    ///   `*.mock.ts`), underscore-separated (`test_*.py`, `*_test.py`,
-    ///   `*_test.go`), dash-separated (`test-*`, `*-test`, `*-test-*`),
-    ///   PascalCase prefix (`Test<UPPER>...`), PascalCase suffix
-    ///   (`*Test`, `*Tests`, `*Spec`, `*Specs` across any extension).
+    /// - **Test-marker prefix** — PascalCase `Test<UPPER>...` AND
+    ///   camelCase `test<UPPER>...` / `test<DIGIT>...` (`TestRunner/`,
+    ///   `TestUserService.java`, `testFixtures/`, `testHelpers/`,
+    ///   `testEmptyMeansEmpty`).
+    /// - **Test-marker suffix** — `<alnum_lower>Test[s]`,
+    ///   `<alnum_lower>Spec[s]`, `<alnum_lower>Mock[s]` — with digit
+    ///   boundary support (`MyTests/`, `IntegrationTest.java`,
+    ///   `UserMocks/`, `ServiceMock`, `jsr166Test/`, `JUnit5Tests/`,
+    ///   bare `Test.java`).
+    /// - **Separator-bounded substring** (case-insensitive) — any of
+    ///   `test`/`tests`/`spec`/`specs`/`mock`/`mocks`/`testdata`
+    ///   bounded by non-alphanumeric chars (or string boundary).
+    ///   Covers dot- (`*.test.ts`), underscore- (`test_*.py`,
+    ///   `*_test.go`), and dash-separated (`test-*`, `integration-tests/`)
+    ///   names, as well as classic buckets like `__tests__/` and
+    ///   `__mocks__/`.
     ///
-    /// See [`is_test_path`] for the full rule; boundary handling avoids
-    /// false positives like `testimony.ts`, `contest.py`, `Tester.java`.
+    /// Boundary handling guarantees no false positives on words that
+    /// merely contain "test" / "spec" / "mock" mid-word —
+    /// `testimony/`, `contest.py`, `Tester.java`, `inspector.ts`,
+    /// `mockery.ts` all correctly pass through.
     pub exclude_tests: bool,
     /// Skip directories named in [`STATIC_ASSET_DIRS`] (currently `static`,
     /// `assets`). **Defaults to true** — vendored asset directories on real
@@ -107,33 +121,29 @@ impl Default for WalkOpts {
 
 /// Test-file recognition shared by walker filtering AND roots discovery
 /// so the definition of "test code" stays consistent across the two
-/// stages. Returns true for paths that are either:
+/// stages. Both checks delegate to the same [`is_test_token`] grammar
+/// so directories and filenames cannot drift apart:
 ///
-/// - inside a test/spec subdirectory — case-insensitive: `test`,
-///   `tests`, `Test`, `TEST`, `__tests__`, `spec`, `specs`,
-///   `__mocks__`, `testdata` all qualify, OR
-/// - have a test-shaped filename per any of these conventions
-///   (see [`is_test_filename`] for the full grammar):
-///   - JS/TS/JS — `foo.test.ts`, `foo.spec.ts`, `foo.mock.ts`,
-///     `test-foo.ts`, `foo-test.ts`, `foo-test-bar.ts`
-///   - Python — `test_foo.py`, `foo_test.py`
-///   - Go — `foo_test.go`
-///   - Java/Kotlin — `FooTest.java`, `FooTests.kt`, `TestFoo.java`
-///   - Scala — `FooSpec.scala`, `FooSpecs.scala`
-///   - Generic — any stem that starts with `test` (followed by
-///     `_`/`-`/`.`/PascalCase) or ends with `test` (preceded by
-///     `_`/`-`/`.`/PascalCase).
+/// - **directory segments** between `root` (exclusive) and the
+///   filename (exclusive) are tested as-is. Catches both the classic
+///   buckets (`tests/`, `__tests__/`, `__mocks__/`, `testdata/`,
+///   `spec/`) and the longer variants real projects actually use
+///   (`integration-tests/`, `test-utils/`, `e2e_tests/`, `MyTests/`,
+///   `TestRunner/`).
+/// - **filenames** are tested against the part before the final
+///   extension (so `foo.test.ts` → `foo.test` still matches via the
+///   bounded `test` substring rule). Covers every shape we used to
+///   match before — `foo.test.ts`, `*.spec.js`, `*.mock.ts`,
+///   `test_foo.py`, `foo_test.go`, `Test<UPPER>...`, `<lower>Test`,
+///   `<lower>Tests`, `<lower>Spec`, `<lower>Specs`, etc.
 ///
-/// Boundary rule (matters for the "contains test" cases): we never match
-/// "test" embedded in another word — `testimony.ts`, `contesting.ts`,
-/// `tester.java`, `protest.py` are NOT test files. The substring rule
-/// only fires when `test` is bounded by start/end-of-stem or by a
-/// non-alphanumeric character.
+/// Boundary rule (the heart of the matcher): we never flag `test` /
+/// `spec` / `mock` embedded mid-word. `testimony.ts`, `contesting.py`,
+/// `Tester.java`, `inspector.ts`, `mockery.ts` all pass through.
 ///
-/// `root` is used to strip the project-root prefix BEFORE checking path
-/// segments, so a project rooted at e.g. `tests/fixtures/foo/` is not
-/// itself misidentified as test code — only test directories *inside*
-/// the analyzed root count.
+/// `root` is stripped BEFORE the segment scan so a project rooted at
+/// e.g. `tests/fixtures/foo/` is not itself misidentified — only test
+/// directories *inside* the analyzed root count.
 pub fn is_test_path(path: &Path, root: &Path) -> bool {
     if has_test_directory_segment(path, root) {
         return true;
@@ -145,124 +155,108 @@ pub fn is_test_path(path: &Path, root: &Path) -> bool {
 }
 
 /// True iff any path segment between `root` (exclusive) and the
-/// filename (also exclusive) is a recognized test bucket. Case-insensitive.
-/// The filename itself is checked separately by [`is_test_filename`].
+/// filename (also exclusive) is a test-named directory. Delegates to
+/// [`is_test_token`] so directory and filename matching share one
+/// grammar.
+///
+/// The filename itself is intentionally skipped here; it's handled by
+/// [`is_test_filename`] so we only have one place that strips the
+/// final extension.
 fn has_test_directory_segment(path: &Path, root: &Path) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let total = rel.components().count();
-    // Skip the last component — that's the filename. Without this skip
-    // a file named `test.py` at the project root would match via the
-    // segment rule, hiding bugs in the filename rule (we want only one
-    // pass to handle filenames).
     rel.components().take(total.saturating_sub(1)).any(|c| {
-        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(
-            s.as_str(),
-            "test"
-                | "tests"
-                | "__tests__"
-                | "spec"
-                | "specs"
-                | "__mocks__"
-                | "testdata",
-        )
+        c.as_os_str()
+            .to_str()
+            .map(is_test_token)
+            .unwrap_or(false)
     })
 }
 
 /// Decide whether a bare filename (no directory) names a test file.
-///
-/// Three orthogonal rules, in order; any one of them firing is enough:
-///   1. **PascalCase prefix** — `Test<UPPER>...` (case-sensitive). Catches
-///      `TestService.java`, `TestRepositoryImpl.kt`. Does NOT match
-///      `Tester.java` (lowercase `e` after `Test`) or `Testing.java`.
-///   2. **PascalCase suffix** — `<lower>Test`, `<lower>Tests`, `<lower>Spec`,
-///      `<lower>Specs` at the end of the stem. The lowercase-before
-///      boundary is what makes `MyTest.java` match but `attest.java`
-///      not. Plain `Test.java` / `Tests.kt` / `Spec.scala` also match
-///      (empty prefix). Language-agnostic — works for `.java`, `.kt`,
-///      `.cs`, `.rs`, anything.
-///   3. **Boundary-respecting `test` / `spec` / `mock` substring**
-///      (case-insensitive). The needle must sit between non-alphanumeric
-///      separators (`-`, `_`, `.`) or at start/end of the stem. Catches
-///      every shape the user listed: `test_foo`, `foo_test`,
-///      `test-foo`, `foo-test`, `foo-test-bar`, `foo.test.ts`,
-///      `e2e.test.ts`. Rejects `testimony`, `contesting`, `tester`.
+/// Thin wrapper over [`is_test_token`] — strips the final extension
+/// (so `foo.test.ts` → `foo.test`, `MyTest.java` → `MyTest`) and
+/// applies the shared grammar. See [`is_test_token`] for the rules.
 pub fn is_test_filename(name: &str) -> bool {
-    // Use the part before the final extension as the "stem". `foo.test.ts`
-    // → stem `foo.test`; `MyTest.java` → `MyTest`; `test.py` → `test`.
-    // We only strip ONE extension because compound conventions like
-    // `foo.test.ts` rely on the inner `.test.` surviving the strip.
     let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-
-    // Rule 1 — PascalCase prefix `Test<UPPER>...`
-    if let Some(rest) = stem.strip_prefix("Test") {
-        if rest
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_uppercase())
-            .unwrap_or(false)
-        {
-            return true;
-        }
-    }
-
-    // Rule 2 — PascalCase suffix `Test`/`Tests`/`Spec`/`Specs`.
-    // The prefix must be empty OR end with a lowercase letter, so the
-    // suffix sits on a PascalCase boundary (`MyTest` ✓, `attest` ✗).
-    for suf in ["Tests", "Specs", "Test", "Spec"] {
-        if let Some(prefix) = stem.strip_suffix(suf) {
-            if prefix.is_empty()
-                || prefix
-                    .chars()
-                    .next_back()
-                    .map(|c| c.is_ascii_lowercase())
-                    .unwrap_or(false)
-            {
-                return true;
-            }
-        }
-    }
-
-    // Rule 3 — separator-bounded `test`/`spec`/`mock` substring.
-    // We run this on the FULL filename (not just the stem) so trailing
-    // extensions still count as separators — `foo.test.ts` matches
-    // because the `.` after `test` is a non-alnum boundary.
-    let lower = name.to_ascii_lowercase();
-    for needle in ["test", "spec", "mock"] {
-        if has_separator_bounded_substring(&lower, needle) {
-            return true;
-        }
-    }
-
-    false
+    is_test_token(stem)
 }
 
-/// True iff `haystack` contains `needle` bounded by non-alphanumeric
-/// characters (or start / end of string). ASCII-only — fine for our
-/// case because the needles are pure ASCII keywords.
+/// Test-marker PREFIX — covers BOTH PascalCase `Test<UPPER>...`
+/// (`TestUserService`, `TestRunner`, `TestRepositoryImpl`) AND
+/// camelCase `test<UPPER>...` (`testFixtures`, `testHelpers`,
+/// `testEmptyMeansEmpty`). The character class `[Tt]` accepts either
+/// leading case; the trailing `[A-Z]` is the camelCase / PascalCase
+/// boundary that distinguishes a real test marker from words like
+/// `Tester` / `Testing` / `testimony` (next char is a lowercase
+/// letter, NOT uppercase) which correctly fail.
 ///
-/// Examples for needle="test":
-///   - "test"          → match (both ends are string boundary)
-///   - "test_foo"      → match (`_` is non-alnum after)
-///   - "foo-test"      → match (`-` non-alnum before, end after)
-///   - "foo-test-bar"  → match
-///   - "foo.test.ts"   → match (`.` non-alnum on both sides)
-///   - "testimony"     → NO match (alnum `i` after)
-///   - "contesting"    → NO match (alnum `n` before)
-///   - "tester"        → NO match (alnum `e` after)
-fn has_separator_bounded_substring(haystack: &str, needle: &str) -> bool {
-    debug_assert!(needle.is_ascii());
-    debug_assert!(needle.bytes().all(|b| b.is_ascii_lowercase()));
-    let bytes = haystack.as_bytes();
-    let n = needle.len();
-    for (i, _) in haystack.match_indices(needle) {
-        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
-        let after_ok = i + n == bytes.len() || !bytes[i + n].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-    }
-    false
+/// Uppercase-only boundary on purpose: a digit boundary here would
+/// pull in ambiguous names like `test123` (a generic identifier, not
+/// a test marker). The suffix pattern accepts digits BEFORE the
+/// marker because `jsr166Test` is unambiguous, but a digit AFTER
+/// `test` is too weak a signal.
+fn test_prefix_pattern() -> &'static Regex {
+    static PAT: OnceLock<Regex> = OnceLock::new();
+    PAT.get_or_init(|| Regex::new(r"^[Tt]est[A-Z]").expect("test-prefix regex compiles"))
+}
+
+/// Test-marker SUFFIX — `<alnum_lower>Test[s]` /
+/// `<alnum_lower>Spec[s]` / `<alnum_lower>Mock[s]`. Catches
+/// `UserTest`, `IntegrationTests`, `MyTests`, `UserMocks`,
+/// `ServiceMock`, AND digit-boundary variants like `jsr166Test`,
+/// `JUnit5Tests` (the JSR / version-numbered directories real Java
+/// repos use). The `[a-z0-9]` boundary is what separates
+/// `<word>Test` (match) from `attest` (no match — `t` before `Test`
+/// is uppercase via `Test`'s own `T`, not a separator); bare `Test` /
+/// `Tests` / `Spec` / `Specs` / `Mock` / `Mocks` also qualify via the
+/// `^` alternative.
+///
+/// Case-sensitive on purpose: `Mocks?` requires the capital `M`, so
+/// `Hammock` / `Hammocks` (lowercase `m`) don't false-positive even
+/// though they textually end with "mock"/"mocks".
+fn test_suffix_pattern() -> &'static Regex {
+    static PAT: OnceLock<Regex> = OnceLock::new();
+    PAT.get_or_init(|| {
+        Regex::new(r"(?:^|[a-z0-9])(?:Tests?|Specs?|Mocks?)$")
+            .expect("test-suffix regex compiles")
+    })
+}
+
+/// Case-insensitive `test` / `tests` / `spec` / `specs` / `mock` /
+/// `mocks` / `testdata` bounded by non-alphanumeric chars (or string
+/// boundary). This is the rule that lets longer real-world names
+/// match (`integration-tests`, `e2e_tests`, `__tests__`,
+/// `mock-server`) while rejecting `testimony`, `contest`, `tester`,
+/// `mockery`, `inspector`, `respect`.
+fn bounded_test_pattern() -> &'static Regex {
+    static PAT: OnceLock<Regex> = OnceLock::new();
+    PAT.get_or_init(|| {
+        Regex::new(r"(?i)(?:^|[^a-z0-9])(?:tests?|specs?|mocks?|testdata)(?:[^a-z0-9]|$)")
+            .expect("bounded-test regex compiles")
+    })
+}
+
+/// Single source of truth for "does this name look like a test?" —
+/// applied to both directory segments and filename stems. Three
+/// orthogonal rules; any one firing is enough:
+///
+///   1. **Test-marker prefix** — see [`test_prefix_pattern`].
+///      Camel- or PascalCase `test<UPPER>` / `Test<UPPER>` start.
+///   2. **Test-marker suffix** — see [`test_suffix_pattern`].
+///      `<alnum_lower>Test[s]` / `Spec[s]` / `Mock[s]` end.
+///   3. **Separator-bounded substring** — see [`bounded_test_pattern`].
+///      Non-alphanumeric-bounded `test`/`spec`/`mock`/`testdata` token.
+///
+/// Keeping the three rules as separately-named patterns (rather than
+/// a single mega-disjunction) follows Uncle Bob's
+/// "intention-revealing names" — each predicate tells you what shape
+/// of name it catches without forcing a reader to decode a long
+/// alternation.
+pub fn is_test_token(name: &str) -> bool {
+    test_prefix_pattern().is_match(name)
+        || test_suffix_pattern().is_match(name)
+        || bounded_test_pattern().is_match(name)
 }
 
 /// Convenience wrapper using sensible defaults. Used by the CLI.
@@ -973,21 +967,265 @@ mod tests {
         }
     }
 
+    // ── is_test_token — directory-segment grammar tests ───────────────
+    //
+    // is_test_token is the shared predicate behind both filename and
+    // directory matching. The filename behavior is already covered by
+    // the `is_test_filename_*` suites above (they delegate to
+    // is_test_token under the hood). These tests focus on the
+    // *directory* shapes that were silently missed before the regex
+    // refactor — and pin the boundary behavior that prevents new
+    // false positives.
+
     #[test]
-    fn has_separator_bounded_substring_is_strict_about_alnum() {
-        // Direct unit tests for the boundary helper — these are the
-        // exact cases that determine our true/false above. Keeping them
-        // as their own assertions makes regressions obvious.
-        assert!(has_separator_bounded_substring("test", "test"));
-        assert!(has_separator_bounded_substring("test_x", "test"));
-        assert!(has_separator_bounded_substring("x_test", "test"));
-        assert!(has_separator_bounded_substring("x.test.y", "test"));
-        assert!(has_separator_bounded_substring("x-test-y", "test"));
-        assert!(has_separator_bounded_substring("a.b.test", "test"));
-        // Negatives — the substring exists but isn't bounded by non-alnum.
-        assert!(!has_separator_bounded_substring("testing", "test"));
-        assert!(!has_separator_bounded_substring("contest", "test"));
-        assert!(!has_separator_bounded_substring("attestation", "test"));
-        assert!(!has_separator_bounded_substring("attester", "test"));
+    fn is_test_token_matches_classic_buckets() {
+        // The original exact-name allowlist must still match — these
+        // were the only directories the pre-refactor code recognized.
+        for name in [
+            "test",
+            "tests",
+            "Test",
+            "Tests",
+            "TEST",
+            "TESTS",
+            "spec",
+            "specs",
+            "__tests__",
+            "__mocks__",
+            "testdata",
+        ] {
+            assert!(is_test_token(name), "classic bucket should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_token_matches_longer_dir_names() {
+        // New behavior: longer real-world directory names that contain
+        // a bounded `test` / `spec` / `mock` token now match too.
+        for name in [
+            "integration-tests",
+            "integration_tests",
+            "unit-tests",
+            "e2e_tests",
+            "smoke-tests",
+            "acceptance.tests",
+            "test-utils",
+            "test_helpers",
+            "mock-server",
+            "MyTests",          // PascalCase suffix
+            "IntegrationTest",  // PascalCase suffix
+            "TestRunner",       // PascalCase prefix
+            "TestUtils",        // PascalCase prefix
+        ] {
+            assert!(is_test_token(name), "long test dir should match: {name:?}");
+        }
+    }
+
+    #[test]
+    fn is_test_token_matches_camel_case_test_prefix() {
+        // Real-world bug: `caffeine/src/testFixtures/java/...` and
+        // `caffeine/src/jsr166Test/java/...` slipped past the filter
+        // because:
+        //   - `testFixtures` starts with lowercase `t` (camelCase),
+        //     and the old `^Test[A-Z]` only matched capital `Test`.
+        //   - `jsr166Test` has digit `6` before `Test`, and the old
+        //     `(?:^|[a-z])(?:Tests?|...)$` only matched a lowercase
+        //     letter before the marker.
+        // Both shapes are extremely common in Java/JUnit codebases
+        // (camelCase test source-sets, JSR-versioned test packages).
+        for name in [
+            "testFixtures",        // Gradle test-source-set convention
+            "testHelpers",
+            "testIntegration",
+            "testE2E",             // capital E after `test` — PascalCase boundary
+            "testV2Runner",        // V is the boundary; 2 sits inside the tail
+        ] {
+            assert!(
+                is_test_token(name),
+                "camelCase test prefix must match: {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_test_token_matches_digit_boundary_test_suffix() {
+        // The `jsr166Test/` directory family — version-numbered test
+        // packages from upstream Java projects (Caffeine vendors JSR
+        // 166 tests this way).
+        for name in [
+            "jsr166Test",
+            "jsr166Tests",
+            "JUnit5Test",
+            "JUnit5Tests",
+            "Spring5Test",
+            "Java11Tests",
+            "PostgreSQL9Spec",     // digit before Spec
+            "Redis7Mocks",         // digit before Mocks
+        ] {
+            assert!(
+                is_test_token(name),
+                "digit-boundary test suffix must match: {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_test_token_matches_pascal_case_mock_suffix() {
+        // PascalCase `Mock` / `Mocks` suffix is part of the suffix
+        // rule alongside `Test[s]` / `Spec[s]`. Catches the common
+        // shape `<Subject>Mock[s]` for hand-written test doubles —
+        // `UserMocks/`, `ServiceMock.java`, `HttpClientMocks/`.
+        for name in [
+            "UserMocks",
+            "ServiceMock",
+            "HttpClientMocks",
+            "RepositoryMock",
+            "Mock",                // bare — empty prefix is fine
+            "Mocks",
+        ] {
+            assert!(is_test_token(name), "Mock suffix should match: {name:?}");
+        }
+
+        // Case-sensitivity guard: lowercase `mock`/`mocks` does NOT
+        // satisfy the PascalCase suffix rule, so common-English words
+        // ending in those letters don't false-positive. The bounded
+        // rule rejects them too (their lowercase letter before `mock`
+        // is alnum), so `is_test_token` returns false overall.
+        for name in [
+            "Hammock",             // ends with lowercase "mock"
+            "Hammocks",            // ends with lowercase "mocks"
+            "Schoolmock",          // hypothetical — same shape
+        ] {
+            assert!(
+                !is_test_token(name),
+                "lowercase mock/mocks tail must NOT match: {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_test_token_rejects_words_that_merely_contain_test() {
+        // The boundary invariant: names that have `test` / `spec` /
+        // `mock` embedded inside another word must NOT match. This is
+        // what protects unrelated code from being filtered.
+        for name in [
+            "src",
+            "lib",
+            "app",
+            "vendor",
+            "static",
+            "assets",
+            "testimony",       // alnum after `test`
+            "testimonial",
+            "contest",         // alnum before `test`
+            "contesting",
+            "protester",
+            "tester",          // bare alnum `e` after
+            "Tester",          // PascalCase prefix fails: `e` not uppercase
+            "Testing",         // same
+            "MyTestUtil",      // bounded fails: `y` before; suffix fails: ends in `Util`
+            "inspector",       // contains `spec` mid-word
+            "respect",
+            "mockery",         // `mock` + alnum `e` after
+            "smoke",
+            "test123",         // bounded fails: `1` after — must be non-alnum
+        ] {
+            assert!(
+                !is_test_token(name),
+                "non-test name must NOT match: {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn exclude_tests_filters_caffeine_style_test_source_sets() {
+        // Reproduces the exact bug seen in the desktop UI: a Caffeine-
+        // shaped repo with `testFixtures/` (Gradle test source set,
+        // lowercase camelCase) and `jsr166Test/` (digit-bounded test
+        // package). Before the prefix/suffix boundary extension, files
+        // under both directories survived the filter and their methods
+        // (e.g. `provideArguments`, `testEmptyMeansEmpty`) polluted
+        // the entry-roots picker.
+        let root = tmp_dir("exclude-tests-caffeine");
+        fs::create_dir_all(root.join("caffeine/src/main/java")).unwrap();
+        fs::create_dir_all(root.join("caffeine/src/testFixtures/java")).unwrap();
+        fs::create_dir_all(root.join("caffeine/src/jsr166Test/java")).unwrap();
+        fs::write(
+            root.join("caffeine/src/main/java/Cache.java"),
+            "class Cache {}",
+        )
+        .unwrap();
+        fs::write(
+            root.join("caffeine/src/testFixtures/java/Fixtures.java"),
+            "class Fixtures { Object provideArguments() { return null; } }",
+        )
+        .unwrap();
+        fs::write(
+            root.join("caffeine/src/jsr166Test/java/MapTest.java"),
+            "class MapTest { void testEmptyMeansEmpty() {} }",
+        )
+        .unwrap();
+
+        let opts = WalkOpts {
+            exclude_tests: true,
+            ..WalkOpts::default()
+        };
+        let files = discover_source_files_with(&root, &opts);
+        let names = rel(&root, &files);
+        assert_eq!(
+            names,
+            vec!["caffeine/src/main/java/Cache.java".to_string()],
+            "testFixtures/ (camelCase) and jsr166Test/ (digit-boundary) \
+             must both be filtered when exclude_tests is on; got {names:?}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn exclude_tests_filters_substring_named_directories() {
+        // End-to-end: with exclude_tests on, the walker drops files
+        // under directories whose NAMES contain a bounded test token,
+        // even when the directory isn't in the original exact-name
+        // allowlist. `testimony/` is the negative control — its name
+        // textually contains "test" but fails the boundary rule, so
+        // its contents stay.
+        let root = tmp_dir("exclude-tests-substring-dirs");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("integration-tests")).unwrap();
+        fs::create_dir_all(root.join("MyTests")).unwrap();
+        fs::create_dir_all(root.join("TestRunner")).unwrap();
+        fs::create_dir_all(root.join("apps/admin/e2e_tests")).unwrap();
+        fs::create_dir_all(root.join("testimony")).unwrap();
+        fs::write(root.join("src/main.py"), "x = 1").unwrap();
+        fs::write(root.join("integration-tests/e2e.py"), "x = 1").unwrap();
+        fs::write(root.join("MyTests/runner.py"), "x = 1").unwrap();
+        fs::write(root.join("TestRunner/run.py"), "x = 1").unwrap();
+        fs::write(root.join("apps/admin/e2e_tests/login.py"), "x = 1").unwrap();
+        fs::write(root.join("testimony/affidavit.py"), "x = 1").unwrap();
+
+        let opts = WalkOpts {
+            exclude_tests: true,
+            ..WalkOpts::default()
+        };
+        let files = discover_source_files_with(&root, &opts);
+        let names = rel(&root, &files);
+
+        assert!(
+            names.contains(&"src/main.py".to_string()),
+            "src/main.py must survive; got {names:?}"
+        );
+        assert!(
+            names.contains(&"testimony/affidavit.py".to_string()),
+            "testimony/ is not a test directory (alnum after 'test'); got {names:?}"
+        );
+        for forbidden in ["integration-tests", "MyTests", "TestRunner", "e2e_tests"] {
+            assert!(
+                !names.iter().any(|n| n.contains(forbidden)),
+                "test-shaped directory {forbidden:?} should be excluded; got {names:?}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
