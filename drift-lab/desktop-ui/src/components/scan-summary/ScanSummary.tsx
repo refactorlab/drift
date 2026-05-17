@@ -1,9 +1,16 @@
 import { useMemo } from "react";
+import { useState } from "react";
 import {
+  CATEGORY_BADGE_COLOR,
   CATEGORY_COLORS,
+  CATEGORY_LABEL,
+  CATEGORY_ORDER,
   FINDING_KIND_LABEL,
   SEVERITY_COLORS,
   type Category,
+  type CategoryRollup,
+  type CategoryTopEntry,
+  type FindingCategoryName,
   type FindingKind,
   type FindingTopRef,
   type Report,
@@ -67,6 +74,11 @@ export default function ScanSummary({ report, onPickEntry }: Props) {
           totalFindings={totalFindings}
         />
         <FindingsBreakdownCard byKind={findingsByKind} total={totalFindings} />
+        <FindingsByCategoryCard
+          byCategory={summary.findings_by_category ?? {}}
+          byOrmFamily={summary.findings_by_orm_family ?? {}}
+          topByCategory={summary.findings_top_by_category ?? {}}
+        />
         <CategoriesCard cats={cats} />
         <LanguagesCard languages={langBreakdown} />
         <HotZonesCard
@@ -187,6 +199,229 @@ function FindingsBreakdownCard({
     </Panel>
   );
 }
+
+function FindingsByCategoryCard({
+  byCategory,
+  byOrmFamily,
+  topByCategory,
+}: {
+  byCategory: Record<string, CategoryRollup>;
+  byOrmFamily: Record<string, number>;
+  topByCategory: Record<string, CategoryTopEntry[]>;
+}) {
+  const [openCat, setOpenCat] = useState<string | null>(null);
+  const orderedCats = CATEGORY_ORDER.filter(
+    (c) => byCategory[c] && byCategory[c].total > 0,
+  );
+  const total = orderedCats.reduce(
+    (sum, c) => sum + (byCategory[c]?.total ?? 0),
+    0,
+  );
+  const ormBreakdown = Object.entries(byOrmFamily).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <Panel title={`findings by category · ${total} total`}>
+      {orderedCats.length === 0 ? (
+        <Empty msg="no findings yet" />
+      ) : (
+        <>
+          <ul className="scan-list">
+            {orderedCats.map((cat) => {
+              const roll = byCategory[cat];
+              if (!roll) return null;
+              const expanded = openCat === cat;
+              const top = topByCategory[cat] ?? [];
+              return (
+                <li
+                  key={cat}
+                  className="scan-list-item"
+                  style={{ display: "block", padding: "4px 0" }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      cursor: "pointer",
+                    }}
+                    onClick={() => setOpenCat(expanded ? null : cat)}
+                    title={
+                      expanded
+                        ? `Hide top findings in ${CATEGORY_LABEL[cat]}`
+                        : `Show top ${top.length} findings in ${CATEGORY_LABEL[cat]}`
+                    }
+                  >
+                    <span style={categoryBadgeStyle(cat)}>
+                      {CATEGORY_LABEL[cat]}
+                    </span>
+                    <span
+                      style={{
+                        flex: 1,
+                        fontSize: 11,
+                        color: "var(--text-muted, #888)",
+                      }}
+                    >
+                      {Object.entries(roll.by_kind)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(
+                          ([k, n]) =>
+                            `${
+                              FINDING_KIND_LABEL[k as FindingKind] ?? k
+                            }=${n}`,
+                        )
+                        .join("  ·  ")}
+                    </span>
+                    <strong>{roll.total}</strong>
+                    <span
+                      style={{
+                        marginLeft: 6,
+                        fontSize: 10,
+                        color: "var(--text-muted, #888)",
+                      }}
+                    >
+                      {expanded ? "▼" : "▶"}
+                    </span>
+                  </div>
+                  {expanded && top.length > 0 && (
+                    <ul
+                      className="scan-list"
+                      style={{
+                        marginTop: 6,
+                        borderTop: "1px solid var(--border, #ddd)",
+                      }}
+                    >
+                      {top.map((row, idx) => (
+                        <li
+                          key={`${row.node_id}:${row.line}:${idx}`}
+                          className="scan-list-item"
+                          title={row.message}
+                          style={{ alignItems: "flex-start" }}
+                        >
+                          <span
+                            style={{
+                              display: "inline-block",
+                              minWidth: 60,
+                              color: SEVERITY_COLORS[row.severity],
+                              fontWeight: 600,
+                              fontSize: 10,
+                              textTransform: "uppercase",
+                              letterSpacing: 0.4,
+                            }}
+                          >
+                            {row.severity}
+                          </span>
+                          <span style={kindChipStyle}>
+                            {FINDING_KIND_LABEL[row.kind as FindingKind] ??
+                              row.kind}
+                          </span>
+                          {row.originating_orm && (
+                            <span style={ormFamilyChipStyle}>
+                              {row.originating_orm}
+                            </span>
+                          )}
+                          <span
+                            style={{
+                              flex: 1,
+                              marginLeft: 6,
+                              fontSize: 11,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {row.rule && (
+                              <code
+                                style={{
+                                  marginRight: 4,
+                                  color: "var(--text-muted, #888)",
+                                }}
+                              >
+                                {row.rule}
+                              </code>
+                            )}
+                            {row.message}
+                          </span>
+                          <span style={locStyle}>
+                            {row.file}:{row.line}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {ormBreakdown.length > 0 && (
+            <div
+              style={{
+                marginTop: 8,
+                paddingTop: 8,
+                borderTop: "1px solid var(--border, #ddd)",
+                fontSize: 11,
+                color: "var(--text-muted, #888)",
+              }}
+            >
+              <span style={{ marginRight: 6 }}>orm family:</span>
+              {ormBreakdown.map(([fam, n]) => (
+                <span key={fam} style={ormFamilyChipStyle}>
+                  {fam} · {n}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function categoryBadgeStyle(cat: FindingCategoryName): React.CSSProperties {
+  const color = CATEGORY_BADGE_COLOR[cat];
+  return {
+    fontSize: 10,
+    color,
+    border: `1px solid ${color}`,
+    borderRadius: 3,
+    padding: "1px 6px",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    flexShrink: 0,
+    minWidth: 100,
+    textAlign: "center",
+    fontWeight: 600,
+  };
+}
+
+const kindChipStyle: React.CSSProperties = {
+  display: "inline-block",
+  fontSize: 9,
+  color: "var(--text-strong, #222)",
+  border: "1px solid var(--border, #ddd)",
+  borderRadius: 2,
+  padding: "0 4px",
+  minWidth: 90,
+  textAlign: "center",
+};
+
+const ormFamilyChipStyle: React.CSSProperties = {
+  display: "inline-block",
+  fontSize: 9,
+  color: "var(--text-strong, #222)",
+  background: "var(--bg-soft, #f4f4f4)",
+  border: "1px solid var(--border, #ddd)",
+  borderRadius: 8,
+  padding: "0 6px",
+  marginRight: 4,
+  textTransform: "lowercase",
+};
+
+const locStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-muted, #888)",
+  whiteSpace: "nowrap",
+  marginLeft: 8,
+};
 
 function CategoriesCard({ cats }: { cats: [Category, number][] }) {
   const max = cats.reduce((m, [, v]) => Math.max(m, v), 1);

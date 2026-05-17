@@ -13,4 +13,12 @@ use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "../../drift-static-profiler/viewer/dist/"]
+// Don't bake real scan reports into the binary. `fixtures/scans/` is the
+// viewer's *runtime* URL space — the HTTP server rewrites those paths to
+// read from `~/.drift/scans/` at request time. If a developer drops a real
+// scan into `viewer/dist/fixtures/scans/` (e.g. while debugging), the
+// rust-embed derive macro would otherwise read every byte at compile time
+// and emit it as a `const &[u8]` literal, turning drift-lab into a
+// gigabyte-class compile. Exclude the directory entirely.
+#[exclude = "fixtures/scans/*"]
 pub struct ViewerAssets;

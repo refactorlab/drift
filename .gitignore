@@ -9,3 +9,4 @@ action/node_modules/
 # Contains built .app/.dmg/.AppImage/.deb + SHA256SUMS — release artifacts
 # belong on GitHub Releases, not in git.
 /dist/
+drift-static-profiler/research/code-production-repositories

@@ -40,7 +40,53 @@ export type FindingKind =
   | "hot_zone"
   | "expensive_compute"
   | "missing_caching"
-  | "log_amplification";
+  | "log_amplification"
+  | "sql_antipattern"
+  | "migration_safety"
+  | "django_antipattern"
+  | "sqlalchemy_antipattern"
+  | "alembic_migration"
+  | "sql_ir_antipattern"
+  | "prisma_antipattern"
+  | "drizzle_antipattern"
+  | "typeorm_antipattern"
+  | "sequelize_antipattern"
+  | "mongoose_antipattern"
+  | "jpa_antipattern"
+  | "gorm_antipattern"
+  | "sqlx_antipattern"
+  | "llm_antipattern"
+  | "auth_crypto_antipattern";
+
+/// High-level semantic grouping — matches `FindingCategory` in
+/// `src/insights.rs`. The viewer/desktop should branch on category,
+/// not on individual kinds, so new ORMs slot in without UI changes.
+export type FindingCategoryName =
+  | "orm"
+  | "sql"
+  | "performance"
+  | "security"
+  | "reliability"
+  | "observability"
+  | "ai"
+  | "maintenance";
+
+export interface CategoryRollup {
+  total: number;
+  by_kind: Record<string, number>;
+}
+
+export interface CategoryTopEntry {
+  node_id: string;
+  file: string;
+  line: number;
+  kind: string;
+  severity: Severity;
+  confidence: number;
+  rule?: string;
+  message: string;
+  originating_orm?: string;
+}
 
 export interface FindingTopRef {
   node_id: string;
@@ -101,6 +147,9 @@ export interface Summary {
   pagerank_top?: RankedByScore[];
   findings_by_kind?: Record<string, number>;
   findings_top?: FindingTopRef[];
+  findings_by_category?: Record<string, CategoryRollup>;
+  findings_by_orm_family?: Record<string, number>;
+  findings_top_by_category?: Record<string, CategoryTopEntry[]>;
   immediate_fixes?: ImmediateFix[];
   refactor_candidates?: RefactorCandidate[];
   language_breakdown?: LanguageBreakdownEntry[];
@@ -161,4 +210,57 @@ export const FINDING_KIND_LABEL: Record<FindingKind, string> = {
   expensive_compute: "EXPENSIVE COMPUTE",
   missing_caching: "MISSING CACHING",
   log_amplification: "LOG AMPLIFICATION",
+  sql_antipattern: "SQL ANTIPATTERN",
+  migration_safety: "MIGRATION SAFETY",
+  django_antipattern: "DJANGO",
+  sqlalchemy_antipattern: "SQLALCHEMY",
+  alembic_migration: "ALEMBIC",
+  sql_ir_antipattern: "SQL-IR",
+  prisma_antipattern: "PRISMA",
+  drizzle_antipattern: "DRIZZLE",
+  typeorm_antipattern: "TYPEORM",
+  sequelize_antipattern: "SEQUELIZE",
+  mongoose_antipattern: "MONGOOSE",
+  jpa_antipattern: "JPA",
+  gorm_antipattern: "GORM",
+  sqlx_antipattern: "SQLX",
+  llm_antipattern: "LLM",
+  auth_crypto_antipattern: "AUTH/CRYPTO",
+};
+
+/// Canonical ordering of categories — keep aligned with
+/// `FindingCategory::all()` on the Rust side.
+export const CATEGORY_ORDER: readonly FindingCategoryName[] = [
+  "orm",
+  "sql",
+  "performance",
+  "security",
+  "reliability",
+  "observability",
+  "ai",
+  "maintenance",
+] as const;
+
+export const CATEGORY_LABEL: Record<FindingCategoryName, string> = {
+  orm: "ORM",
+  sql: "SQL",
+  performance: "Performance",
+  security: "Security",
+  reliability: "Reliability",
+  observability: "Observability",
+  ai: "AI / LLM",
+  maintenance: "Maintenance",
+};
+
+/// Light-theme palette for category badges — picks values that read
+/// on the desktop app's warm off-white background.
+export const CATEGORY_BADGE_COLOR: Record<FindingCategoryName, string> = {
+  orm: "#5b8def",
+  sql: "#7e6ff0",
+  performance: "#e0a458",
+  security: "#e53935",
+  reliability: "#48a999",
+  observability: "#5bd9f3",
+  ai: "#d09bd1",
+  maintenance: "#9e9e9e",
 };

@@ -45,6 +45,45 @@ export interface FindingTopRef {
   line: number;
 }
 
+/// One entry in `summary.findings_by_category`. The viewer can show
+/// the category total OR drill into `by_kind` without re-summing.
+export interface CategoryRollup {
+  total: number;
+  by_kind: Record<string, number>;
+}
+
+/// One row in `summary.findings_top_by_category[<category>]`. Carries
+/// everything needed to render a table row — no join back to entries
+/// required.
+export interface CategoryTopEntry {
+  node_id: string;
+  file: string;
+  line: number;
+  kind: string;
+  severity: 'high' | 'medium' | 'low';
+  confidence: number;
+  rule?: string;
+  message: string;
+  /// ORM family (snake_case) when this finding belongs to the `orm`
+  /// category. Cross-ORM kinds (`sql_ir_antipattern`) carry it via
+  /// the finding's `originating_orm`; native kinds get it derived
+  /// from the kind name in Rust.
+  originating_orm?: string;
+}
+
+/// Stable category names produced by the profiler. Keep aligned with
+/// `FindingCategory` in src/insights.rs — the values are
+/// snake_case-serialized variant names.
+export type FindingCategoryName =
+  | 'orm'
+  | 'sql'
+  | 'performance'
+  | 'security'
+  | 'reliability'
+  | 'observability'
+  | 'ai'
+  | 'maintenance';
+
 export interface RootCallerSummary {
   node_id: string;
   name: string;
@@ -476,6 +515,17 @@ export interface Summary {
   // Phase E — insights rollups (optional; older fixtures omit them)
   findings_by_kind?: Record<string, number>;
   findings_top?: FindingTopRef[];
+  /// Findings grouped by high-level semantic category (orm, sql,
+  /// performance, security, …). Each entry carries the per-kind
+  /// breakdown for the category — render either level without re-summing.
+  findings_by_category?: Record<string, CategoryRollup>;
+  /// ORM-family-keyed counter across all ORM-category findings.
+  /// `SqlIrAntipattern` findings contribute via their stored
+  /// `originating_orm`, native ORM kinds via their inherent family.
+  findings_by_orm_family?: Record<string, number>;
+  /// Top-N findings (capped at 50) per category, ranked by
+  /// `severity * confidence`. Self-contained: no join needed.
+  findings_top_by_category?: Record<string, CategoryTopEntry[]>;
   /// Per-entry-point rollup. Mirrors pprof's `top -cum` at root granularity.
   roots_overview?: RootOverview[];
   /// "Quick wins" — high severity + trivial/small effort findings.

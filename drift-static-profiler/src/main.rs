@@ -250,6 +250,24 @@ enum Cmd {
         #[arg(default_value = "viewer/public/fixtures/scans")]
         dir: PathBuf,
     },
+    /// Fast file-based ORM scan: walks `<PATH>` for source files,
+    /// runs the ORM static-analysis rules on each, and emits a flat
+    /// findings JSON. Skips the call-graph and call-tree construction
+    /// entirely — orders of magnitude faster than `analyze-root` on a
+    /// large project. Use this when you only care about ORM findings.
+    ///
+    /// Example:
+    ///   drift-static-profiler orm-scan /path/to/project
+    OrmScan {
+        /// Absolute or relative path to the project root.
+        path: PathBuf,
+        /// Output JSON file (defaults to stdout).
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Hard cap on files scanned (default 8000).
+        #[arg(long, default_value_t = 8000)]
+        max_files: usize,
+    },
     /// Compare two report JSONs (baseline vs current). Exit non-zero if regressions found.
     Diff {
         baseline: PathBuf,
@@ -261,6 +279,99 @@ enum Cmd {
         #[arg(long)]
         no_fail: bool,
     },
+}
+
+fn run_orm_scan(path: &std::path::Path, out: Option<&std::path::Path>, max_files: usize) -> Result<()> {
+    let start = std::time::Instant::now();
+    let findings = drift_static_profiler::orm::scan_workspace(path, max_files);
+    let elapsed_ms = start.elapsed().as_millis();
+
+    // Group by rule_id for a tidy summary.
+    let mut by_rule: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for (_p, f) in &findings {
+        if let Some(rule) = f.evidence.first().map(|e| e.call.clone()) {
+            *by_rule.entry(rule).or_default() += 1;
+        }
+    }
+
+    // Category & ORM-family rollups — same kind→category mapping the
+    // full report uses. Lets callers of `orm-scan` see the breakdown
+    // without having to re-aggregate the flat findings array.
+    let mut by_category: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut by_orm_family: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for (_p, f) in &findings {
+        *by_category
+            .entry(f.kind.category().as_str().to_string())
+            .or_default() += 1;
+        if let Some(fam) = f.orm_family() {
+            *by_orm_family.entry(fam.to_string()).or_default() += 1;
+        }
+    }
+
+    #[derive(serde::Serialize)]
+    struct OrmScanRecord {
+        file: String,
+        line: usize,
+        kind: String,
+        rule: String,
+        confidence: f64,
+        severity: String,
+        message: String,
+        remediation: Option<String>,
+    }
+    let records: Vec<OrmScanRecord> = findings
+        .iter()
+        .map(|(p, f)| OrmScanRecord {
+            file: p
+                .strip_prefix(path)
+                .unwrap_or(p)
+                .display()
+                .to_string(),
+            line: f.line,
+            kind: f.kind.as_str().to_string(),
+            rule: f
+                .evidence
+                .first()
+                .map(|e| e.call.clone())
+                .unwrap_or_default(),
+            confidence: f.confidence,
+            severity: format!("{:?}", f.severity).to_lowercase(),
+            message: f.message.clone(),
+            remediation: f.remediation.clone(),
+        })
+        .collect();
+
+    let report = serde_json::json!({
+        "schema_version": 1,
+        "mode": "orm-scan",
+        "root": path.display().to_string(),
+        "elapsed_ms": elapsed_ms,
+        "summary": {
+            "total_findings": findings.len(),
+            "by_rule": by_rule,
+            "by_category": by_category,
+            "by_orm_family": by_orm_family,
+        },
+        "findings": records,
+    });
+
+    let body = serde_json::to_string_pretty(&report)?;
+    match out {
+        Some(p) => {
+            std::fs::write(p, body)?;
+            println!(
+                "orm-scan: {} findings in {} ms — wrote {}",
+                findings.len(),
+                elapsed_ms,
+                p.display()
+            );
+        }
+        None => println!("{body}"),
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -293,6 +404,11 @@ fn main() -> Result<()> {
             no_accessors,
             min_reach,
         ),
+        Cmd::OrmScan {
+            path,
+            out,
+            max_files,
+        } => run_orm_scan(&path, out.as_deref(), max_files),
         Cmd::Diff {
             baseline,
             current,
@@ -607,6 +723,8 @@ fn run_analyze_root(
         "  open the viewer (make viewer) and pick the fixture named '{name}' to see it",
     );
 
+    print_category_breakdown(&outcome.report.summary);
+
     if print {
         eprintln!("\ntop roots (ranked by reach):");
         for (i, r) in outcome.discovered_roots.iter().take(20).enumerate() {
@@ -870,5 +988,52 @@ fn print_language_summary(stats: &LanguageStats) {
             eprintln!("profiling: {name} ({pct:.1}% of code) — marked with *")
         }
         _ => eprintln!("profiling: (no supported language present)"),
+    }
+}
+
+/// Render the per-category findings rollup as a short stderr block.
+/// One line per non-empty category with the per-kind breakdown, plus a
+/// second line for the ORM family split when any ORM finding exists.
+/// Designed to be visible at a glance without scrolling — same role as
+/// `print_language_summary`'s "languages: …" line.
+fn print_category_breakdown(s: &drift_static_profiler::report::Summary) {
+    if s.findings_by_category.is_empty() {
+        return;
+    }
+    eprintln!("\nfindings by category:");
+    // Same canonical order as FindingCategory::all() to keep output stable.
+    let order = [
+        "orm",
+        "sql",
+        "performance",
+        "security",
+        "reliability",
+        "observability",
+        "ai",
+        "maintenance",
+    ];
+    for name in order {
+        let Some(roll) = s.findings_by_category.get(name) else {
+            continue;
+        };
+        let breakdown: Vec<String> = roll
+            .by_kind
+            .iter()
+            .map(|(k, n)| format!("{k}={n}"))
+            .collect();
+        eprintln!(
+            "  {:<14} {:>4}  [{}]",
+            name,
+            roll.total,
+            breakdown.join(", ")
+        );
+    }
+    if !s.findings_by_orm_family.is_empty() {
+        let parts: Vec<String> = s
+            .findings_by_orm_family
+            .iter()
+            .map(|(fam, n)| format!("{fam}={n}"))
+            .collect();
+        eprintln!("  orm-family breakdown: {}", parts.join(", "));
     }
 }

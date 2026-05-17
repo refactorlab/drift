@@ -11,6 +11,8 @@ import {
 } from './types';
 import type {
   CallTreeNode,
+  CategoryRollup,
+  CategoryTopEntry,
   Category,
   EntryDecl,
   EntryFamily,
@@ -95,6 +97,12 @@ export function ScanReport({ report, onJump, onShowKind, onPickRoot }: Props) {
           byKind={findingsByKind}
           totalFindings={totalFindings}
           onShowKind={onShowKind}
+        />
+        <FindingsByCategoryCard
+          byCategory={summary.findings_by_category ?? {}}
+          byOrmFamily={summary.findings_by_orm_family ?? {}}
+          topByCategory={summary.findings_top_by_category ?? {}}
+          onJump={onJump}
         />
         <CategoriesCard cats={cats} />
         <LanguagesCard languages={langBreakdown} />
@@ -275,6 +283,205 @@ function FindingsBreakdownCard({
     </Panel>
   );
 }
+
+// ─── Findings by Category (with top-N per category) ────────────────────
+//
+// Renders the three new rollups (`findings_by_category`,
+// `findings_by_orm_family`, `findings_top_by_category`) as a single
+// card with an expandable section per non-empty category. The category
+// row shows total + kind chips; clicking expands to reveal the top
+// rows (already capped at 50 by the profiler).
+
+const CATEGORY_ORDER = [
+  'orm',
+  'sql',
+  'performance',
+  'security',
+  'reliability',
+  'observability',
+  'ai',
+  'maintenance',
+] as const;
+
+const CATEGORY_LABEL: Record<string, string> = {
+  orm: 'ORM',
+  sql: 'SQL',
+  performance: 'Performance',
+  security: 'Security',
+  reliability: 'Reliability',
+  observability: 'Observability',
+  ai: 'AI / LLM',
+  maintenance: 'Maintenance',
+};
+
+function FindingsByCategoryCard({
+  byCategory,
+  byOrmFamily,
+  topByCategory,
+  onJump,
+}: {
+  byCategory: Record<string, CategoryRollup>;
+  byOrmFamily: Record<string, number>;
+  topByCategory: Record<string, CategoryTopEntry[]>;
+  onJump?: (lookup: { id?: string; file?: string; line?: number; name?: string }) => void;
+}) {
+  const [openCat, setOpenCat] = useState<string | null>(null);
+  const orderedCats = CATEGORY_ORDER.filter((c) => byCategory[c] && byCategory[c].total > 0);
+  const total = orderedCats.reduce((sum, c) => sum + (byCategory[c]?.total ?? 0), 0);
+  const ormBreakdown = Object.entries(byOrmFamily).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <Panel
+      title={`findings by category · ${total} total`}
+      tip="High-level grouping. Click a row to see its top 50 findings."
+    >
+      {orderedCats.length === 0 ? (
+        <Empty msg="no findings yet" />
+      ) : (
+        <>
+          <ul style={listStyle}>
+            {orderedCats.map((cat) => {
+              const roll = byCategory[cat];
+              if (!roll) return null;
+              const expanded = openCat === cat;
+              const top = topByCategory[cat] ?? [];
+              return (
+                <li key={cat} style={{ ...liStyle, flexDirection: 'column', alignItems: 'stretch' }}>
+                  <div
+                    style={{ ...liButtonStyle, padding: '4px 0', borderBottom: 'none' }}
+                    onClick={() => setOpenCat(expanded ? null : cat)}
+                    title={
+                      expanded
+                        ? `Hide top findings in ${CATEGORY_LABEL[cat] ?? cat}.`
+                        : `Show the top ${top.length} findings in ${CATEGORY_LABEL[cat] ?? cat}.`
+                    }
+                  >
+                    <span style={categoryBadgeStyle(cat)}>{CATEGORY_LABEL[cat] ?? cat}</span>
+                    <span style={{ flex: 1, marginLeft: 8, fontSize: 11, color: '#9ca0a8' }}>
+                      {Object.entries(roll.by_kind)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([k, n]) => `${k}=${n}`)
+                        .join('  ·  ')}
+                    </span>
+                    <span style={countNumStyle}>{roll.total}</span>
+                    <span style={{ marginLeft: 6, color: '#7e8189', fontSize: 10 }}>
+                      {expanded ? '▼' : '▶'}
+                    </span>
+                  </div>
+                  {expanded && top.length > 0 && (
+                    <ul
+                      style={{
+                        ...listStyle,
+                        marginTop: 4,
+                        marginBottom: 4,
+                        borderTop: '1px solid #2f3136',
+                      }}
+                    >
+                      {top.map((row, idx) => (
+                        <li
+                          key={`${row.node_id}:${row.line}:${idx}`}
+                          style={liButtonStyle}
+                          onClick={() =>
+                            onJump?.({
+                              id: row.node_id,
+                              file: row.file,
+                              line: row.line,
+                            })
+                          }
+                          title={row.message}
+                        >
+                          <span
+                            style={{
+                              ...miniBadgeStyle,
+                              background: SEVERITY_COLORS[row.severity as Severity],
+                              minWidth: 56,
+                            }}
+                          >
+                            {row.severity}
+                          </span>
+                          <span style={{ ...kindBadgeStyle, minWidth: 130 }}>
+                            {FINDING_KIND_LABEL[row.kind as FindingKind] ?? row.kind}
+                          </span>
+                          {row.originating_orm && (
+                            <span style={ormFamilyChipStyle}>{row.originating_orm}</span>
+                          )}
+                          <span style={{ flex: 1, marginLeft: 6, color: '#d7d9dc' }}>
+                            {row.rule ? <code style={{ color: '#9ca0a8' }}>{row.rule}</code> : ''}{' '}
+                            {row.message}
+                          </span>
+                          <span style={locStyle}>{row.file}:{row.line}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {ormBreakdown.length > 0 && (
+            <div
+              style={{
+                marginTop: 8,
+                paddingTop: 8,
+                borderTop: '1px solid #2f3136',
+                fontSize: 11,
+                color: '#9ca0a8',
+              }}
+            >
+              <span style={{ color: '#7e8189', marginRight: 6 }}>orm family:</span>
+              {ormBreakdown.map(([fam, n]) => (
+                <span key={fam} style={ormFamilyChipStyle}>
+                  {fam} · {n}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function categoryBadgeStyle(cat: string): React.CSSProperties {
+  // Reuse the existing category palette where it overlaps; fall back
+  // to a neutral grey for the new buckets. Keeps the theme coherent.
+  const fallback = '#7e8189';
+  const palette: Record<string, string> = {
+    orm: '#5b8def',
+    sql: '#9c64f3',
+    performance: '#f3b85b',
+    security: '#f35b5b',
+    reliability: '#5bf3a3',
+    observability: '#5bd9f3',
+    ai: '#f35bd9',
+    maintenance: fallback,
+  };
+  const color = palette[cat] ?? fallback;
+  return {
+    fontSize: 10,
+    color,
+    border: `1px solid ${color}`,
+    borderRadius: 2,
+    padding: '1px 6px',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    flexShrink: 0,
+    minWidth: 96,
+    textAlign: 'center',
+  };
+}
+
+const ormFamilyChipStyle: React.CSSProperties = {
+  display: 'inline-block',
+  fontSize: 9,
+  color: '#d7d9dc',
+  background: '#3b3f44',
+  border: '1px solid #4a4e54',
+  borderRadius: 8,
+  padding: '0 6px',
+  marginRight: 4,
+  textTransform: 'lowercase',
+};
 
 // ─── Category reach ─────────────────────────────────────────────────────
 

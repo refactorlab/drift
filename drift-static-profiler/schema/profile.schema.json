@@ -457,7 +457,21 @@
         "missing_caching",
         "log_amplification",
         "sql_antipattern",
-        "migration_safety"
+        "migration_safety",
+        "django_antipattern",
+        "sqlalchemy_antipattern",
+        "alembic_migration",
+        "sql_ir_antipattern",
+        "prisma_antipattern",
+        "drizzle_antipattern",
+        "typeorm_antipattern",
+        "jpa_antipattern",
+        "gorm_antipattern",
+        "sqlx_antipattern",
+        "llm_antipattern",
+        "auth_crypto_antipattern",
+        "sequelize_antipattern",
+        "mongoose_antipattern"
       ],
       "description": "Closed-set finding kind. New kinds are additive; viewers ignore unknown values."
     },

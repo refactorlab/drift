@@ -129,6 +129,11 @@ impl SqlRule {
                 },
             ],
             remediation: Some(self.remediation.to_string()),
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: vec![self.id.to_string()],
+            predicted_sql: None,
+            originating_orm: None,
         }
     }
 }
@@ -1684,6 +1689,11 @@ fn unparseable_marker(reason: &'static str) -> Finding {
              for the planned libpg_query backend (plan §5.3)."
                 .to_string(),
         ),
+        byte_range: None,
+        fidelity: None,
+        fusion_paths: vec!["SQL_UNPARSEABLE".to_string()],
+        predicted_sql: None,
+        originating_orm: None,
     }
 }
 

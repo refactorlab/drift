@@ -8,6 +8,7 @@ pub mod insights;
 pub mod languages;
 pub mod linguist;
 pub mod metrics;
+pub mod orm;
 pub mod pagerank;
 pub mod parser;
 pub mod progress;
