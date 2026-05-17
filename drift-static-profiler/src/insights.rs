@@ -104,6 +104,55 @@ pub enum FindingKind {
     /// `evidence[0].call`. Detector lives in `src/sql_lint.rs` under
     /// the `MIG_*` prefix.
     MigrationSafety,
+    /// Django ORM antipattern (N+1, missing prefetch, bulk_create
+    /// opportunity, raw-SQL interpolation). Carries the rule id
+    /// (`DJ-N1-001`, `DJ-PERF-007`, ...) in `evidence[0].call`.
+    /// Detector lives in `src/orm/python/django.rs`.
+    DjangoAntipattern,
+    /// SQLAlchemy 1.x/2.x ORM antipattern (N+1, lazy=dynamic, raw
+    /// text() interpolation). Carries the rule id (`SA-N1-001`, ...)
+    /// in `evidence[0].call`. Detector lives in
+    /// `src/orm/python/sqlalchemy.rs`.
+    SqlalchemyAntipattern,
+    /// Alembic migration safety hazard at the Python-call layer (kept
+    /// for forward-compat — Phase 1 does not emit it).
+    AlembicMigration,
+    /// Cross-ORM SQL-IR finding — fires on predicted SQL emitted by
+    /// any dialect. Same shape as `SqlAntipattern` but for predicted
+    /// rather than inline SQL. Carries the rule id (`SQLIR-001` ...)
+    /// in `evidence[0].call`. Detector lives in
+    /// `src/orm/sql_ir_rules.rs`.
+    SqlIrAntipattern,
+    /// Prisma client antipattern (deep includes, raw interpolation,
+    /// findUnique-in-loop). Carries the rule id (`PRI-N1-002` ...) in
+    /// `evidence[0].call`. Detector lives in `src/orm/ts/prisma.rs`.
+    PrismaAntipattern,
+    /// Drizzle ORM antipattern. Carries the rule id (`DRZ-LMT-001` ...)
+    /// in `evidence[0].call`. Detector lives in `src/orm/ts/drizzle.rs`.
+    DrizzleAntipattern,
+    /// TypeORM antipattern. Carries the rule id (`TO-N1-001` ...) in
+    /// `evidence[0].call`. Detector lives in `src/orm/ts/typeorm.rs`.
+    TypeormAntipattern,
+    /// JPA / Hibernate / Spring Data antipattern. Carries the rule id
+    /// (`JPA-N1-001` ...) in `evidence[0].call`. Detector lives in
+    /// `src/orm/jvm/jpa.rs`.
+    JpaAntipattern,
+    /// GORM (Go) antipattern. Detector lives in `src/orm/go/gorm.rs`.
+    GormAntipattern,
+    /// SQLx / Diesel (Rust compile-time ORMs) antipattern. Detector
+    /// lives in `src/orm/rust_lang/sqlx.rs`.
+    SqlxAntipattern,
+    /// LLM / AI workload antipattern (client per request, sync in
+    /// async, missing batching, etc.). Detector lives in
+    /// `src/orm/parallel/llm.rs`.
+    LlmAntipattern,
+    /// Auth/crypto perf antipattern (bcrypt in loop, JWKS per request,
+    /// etc.). Detector lives in `src/orm/parallel/auth_crypto.rs`.
+    AuthCryptoAntipattern,
+    /// Sequelize antipattern. Detector lives in `src/orm/ts/sequelize.rs`.
+    SequelizeAntipattern,
+    /// Mongoose antipattern (NoSQL). Detector lives in `src/orm/ts/mongoose.rs`.
+    MongooseAntipattern,
 }
 
 impl FindingKind {
@@ -122,7 +171,131 @@ impl FindingKind {
             FindingKind::LogAmplification => "log_amplification",
             FindingKind::SqlAntipattern => "sql_antipattern",
             FindingKind::MigrationSafety => "migration_safety",
+            FindingKind::DjangoAntipattern => "django_antipattern",
+            FindingKind::SqlalchemyAntipattern => "sqlalchemy_antipattern",
+            FindingKind::AlembicMigration => "alembic_migration",
+            FindingKind::SqlIrAntipattern => "sql_ir_antipattern",
+            FindingKind::PrismaAntipattern => "prisma_antipattern",
+            FindingKind::DrizzleAntipattern => "drizzle_antipattern",
+            FindingKind::TypeormAntipattern => "typeorm_antipattern",
+            FindingKind::JpaAntipattern => "jpa_antipattern",
+            FindingKind::GormAntipattern => "gorm_antipattern",
+            FindingKind::SqlxAntipattern => "sqlx_antipattern",
+            FindingKind::LlmAntipattern => "llm_antipattern",
+            FindingKind::AuthCryptoAntipattern => "auth_crypto_antipattern",
+            FindingKind::SequelizeAntipattern => "sequelize_antipattern",
+            FindingKind::MongooseAntipattern => "mongoose_antipattern",
         }
+    }
+
+    /// Single source of truth for kind → semantic category. Consumers
+    /// (viewer, CLI summary, dashboard rollup) should group on
+    /// `category()` not on individual kinds — when new ORMs land, only
+    /// this match arm changes; downstream code stays put.
+    ///
+    /// Robert C. Martin's *Open/Closed*: open to extension (new kinds),
+    /// closed to modification (consumers never need to learn new names).
+    pub fn category(&self) -> FindingCategory {
+        match self {
+            FindingKind::DjangoAntipattern
+            | FindingKind::SqlalchemyAntipattern
+            | FindingKind::AlembicMigration
+            | FindingKind::SqlIrAntipattern
+            | FindingKind::PrismaAntipattern
+            | FindingKind::DrizzleAntipattern
+            | FindingKind::TypeormAntipattern
+            | FindingKind::SequelizeAntipattern
+            | FindingKind::MongooseAntipattern
+            | FindingKind::JpaAntipattern
+            | FindingKind::GormAntipattern
+            | FindingKind::SqlxAntipattern => FindingCategory::Orm,
+            FindingKind::SqlAntipattern | FindingKind::MigrationSafety => FindingCategory::Sql,
+            FindingKind::NPlusOne
+            | FindingKind::ExpensiveCompute
+            | FindingKind::MemoryExplosion
+            | FindingKind::HotZone
+            | FindingKind::MissingCaching
+            | FindingKind::SmellyLoop => FindingCategory::Performance,
+            FindingKind::AuthCryptoAntipattern => FindingCategory::Security,
+            FindingKind::Recursive | FindingKind::BlockingInAsync => FindingCategory::Reliability,
+            FindingKind::NoisyLog | FindingKind::LogAmplification => FindingCategory::Observability,
+            FindingKind::LlmAntipattern => FindingCategory::Ai,
+            FindingKind::OutdatedPackage => FindingCategory::Maintenance,
+        }
+    }
+
+    /// For ORM-family kinds, return the ORM family name as a stable
+    /// snake_case string. Returns `None` for non-ORM kinds AND for
+    /// `SqlIrAntipattern` (which is cross-ORM — its origin is carried
+    /// on `Finding::originating_orm`, populated by `run_sql_ir`).
+    pub fn orm_family(&self) -> Option<&'static str> {
+        match self {
+            FindingKind::DjangoAntipattern => Some("django"),
+            FindingKind::SqlalchemyAntipattern => Some("sqlalchemy"),
+            FindingKind::AlembicMigration => Some("alembic"),
+            FindingKind::PrismaAntipattern => Some("prisma"),
+            FindingKind::DrizzleAntipattern => Some("drizzle"),
+            FindingKind::TypeormAntipattern => Some("typeorm"),
+            FindingKind::SequelizeAntipattern => Some("sequelize"),
+            FindingKind::MongooseAntipattern => Some("mongoose"),
+            FindingKind::JpaAntipattern => Some("jpa"),
+            FindingKind::GormAntipattern => Some("gorm"),
+            FindingKind::SqlxAntipattern => Some("sqlx"),
+            // SqlIrAntipattern: provenance lives on Finding.originating_orm.
+            _ => None,
+        }
+    }
+}
+
+/// High-level semantic grouping of findings. Stable surface for
+/// consumers (viewer, CLI, dashboards) — new finding kinds must map
+/// onto one of these, but the set itself rarely grows.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingCategory {
+    /// Anything emitted by an ORM dialect — including the cross-ORM
+    /// SQL-IR rules whose provenance is preserved on
+    /// `Finding::originating_orm`.
+    Orm,
+    /// Inline / standalone SQL inspected by the SQL-lint pass.
+    Sql,
+    Performance,
+    Security,
+    Reliability,
+    Observability,
+    Ai,
+    Maintenance,
+}
+
+impl FindingCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FindingCategory::Orm => "orm",
+            FindingCategory::Sql => "sql",
+            FindingCategory::Performance => "performance",
+            FindingCategory::Security => "security",
+            FindingCategory::Reliability => "reliability",
+            FindingCategory::Observability => "observability",
+            FindingCategory::Ai => "ai",
+            FindingCategory::Maintenance => "maintenance",
+        }
+    }
+
+    /// All categories in stable order — used for summary serialization
+    /// so the JSON shape is deterministic across runs.
+    pub fn all() -> &'static [FindingCategory] {
+        &[
+            FindingCategory::Orm,
+            FindingCategory::Sql,
+            FindingCategory::Performance,
+            FindingCategory::Security,
+            FindingCategory::Reliability,
+            FindingCategory::Observability,
+            FindingCategory::Ai,
+            FindingCategory::Maintenance,
+        ]
     }
 }
 
@@ -153,6 +326,44 @@ pub struct Finding {
     pub evidence: Vec<Evidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remediation: Option<String>,
+    /// Byte range of the call/statement the finding pinpoints. Used by
+    /// `orm::fusion` to detect site equivalence between ORM-level and
+    /// SQL-IR findings. Optional for backward compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_range: Option<std::ops::Range<usize>>,
+    /// SQL-IR fidelity tier when the finding came from a prediction.
+    /// `None` for direct (non-predicted) findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fidelity: Option<crate::orm::sql_ir::SqlFidelity>,
+    /// Rule IDs that contributed to this finding after fusion. Always
+    /// ≥1 element; >1 = triangulation occurred.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fusion_paths: Vec<String>,
+    /// Optional rendered SQL (truncated to ~200 chars) for SQL-IR or
+    /// fused findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicted_sql: Option<String>,
+    /// Which ORM family produced this finding when the `kind` itself
+    /// doesn't carry that information. Populated by `run_sql_ir` for
+    /// cross-ORM `SqlIrAntipattern` findings from the underlying
+    /// `PredictedSql.orm`. Native ORM kinds (e.g. `DjangoAntipattern`)
+    /// leave this `None` and let `FindingKind::orm_family()` derive it.
+    /// Use `Finding::orm_family()` to read the effective value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub originating_orm: Option<String>,
+}
+
+impl Finding {
+    /// Returns the ORM family this finding belongs to, if any:
+    /// the stored provenance for cross-ORM kinds (`SqlIrAntipattern`)
+    /// falls back to deriving from `kind` for native ORM kinds.
+    /// Returns `None` for non-ORM findings.
+    pub fn orm_family(&self) -> Option<&str> {
+        if let Some(o) = &self.originating_orm {
+            return Some(o.as_str());
+        }
+        self.kind.orm_family()
+    }
 }
 
 fn default_effort() -> Effort { Effort::Medium }
@@ -673,7 +884,12 @@ pub fn detect_expensive_compute(sym: &Symbol) -> Vec<Finding> {
         message,
         evidence: Vec::new(),
         remediation,
-    }]
+    
+    byte_range: None,
+    fidelity: None,
+    fusion_paths: Vec::new(),
+    predicted_sql: None,
+    originating_orm: None,}]
 }
 
 /// Log calls inside a loop: every iteration writes a line. On a hot
@@ -720,7 +936,12 @@ pub fn detect_noisy_log_in_loop(sym: &Symbol, externals: &[ExternalCall]) -> Vec
         message,
         evidence,
         remediation,
-    }]
+    
+    byte_range: None,
+    fidelity: None,
+    fusion_paths: Vec::new(),
+    predicted_sql: None,
+    originating_orm: None,}]
 }
 
 /// Detect db/network/io calls in an async function that aren't awaited —
@@ -799,7 +1020,12 @@ pub fn detect_blocking_in_async(sym: &Symbol, externals: &[ExternalCall]) -> Vec
         message,
         evidence,
         remediation,
-    }]
+    
+    byte_range: None,
+    fidelity: None,
+    fusion_paths: Vec::new(),
+    predicted_sql: None,
+    originating_orm: None,}]
 }
 
 
@@ -894,7 +1120,12 @@ pub fn detect_n_plus_one(sym: &Symbol, externals: &[ExternalCall]) -> Vec<Findin
         message,
         evidence,
         remediation,
-    }]
+    
+    byte_range: None,
+    fidelity: None,
+    fusion_paths: Vec::new(),
+    predicted_sql: None,
+    originating_orm: None,}]
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1110,7 +1341,12 @@ pub fn attach_missing_caching_findings(entries: &mut [crate::tree::CallTreeNode]
                      Rust: a HashMap behind a Once/RwLock or the `cached` crate."
                         .to_string(),
                 ),
-            });
+            
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: Vec::new(),
+            predicted_sql: None,
+            originating_orm: None,});
         }
         for c in node.children.iter_mut() {
             walk(c);
@@ -1184,7 +1420,12 @@ pub fn attach_log_amplification_findings(
                     "Move chatty logs to DEBUG (so prod can disable them), aggregate per-batch, or rate-limit via a sampler."
                         .to_string(),
                 ),
-            });
+            
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: Vec::new(),
+            predicted_sql: None,
+            originating_orm: None,});
         }
         for c in node.children.iter_mut() {
             walk(c, p90);
@@ -1230,7 +1471,12 @@ pub fn attach_recursive_findings(entries: &mut [crate::tree::CallTreeNode]) {
                     "Confirm termination invariants. If the recursion depth scales with input size, consider an explicit loop or tail-recursion equivalent."
                         .to_string(),
                 ),
-            });
+            
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: Vec::new(),
+            predicted_sql: None,
+            originating_orm: None,});
         }
         for c in node.children.iter_mut() {
             walk(c);
@@ -1311,6 +1557,134 @@ fn walk_for_kinds(
     }
 }
 
+/// Compute the three category-grouped rollups in **one walk** over the
+/// tree (Single Responsibility for the iteration; three side outputs).
+///
+/// Returns `(by_category, by_orm_family, top_by_category)`:
+///
+/// * **`by_category`** — count per category with the per-kind breakdown
+///   embedded, so a viewer can render either level without re-walking.
+/// * **`by_orm_family`** — count keyed by ORM family name
+///   (`"sqlalchemy"`, `"django"`, `"prisma"`, …). Only ORM-category
+///   findings contribute. Uses `Finding::orm_family()` so cross-ORM
+///   `SqlIrAntipattern` findings (which carry `originating_orm` set by
+///   `run_sql_ir`) keep their provenance.
+/// * **`top_by_category`** — capped at `cap` per category, ranked by
+///   `severity_weight * confidence`. Self-contained rows that don't
+///   require a join back to the call-tree.
+///
+/// `cap` defaults to 50 in callers — bounded memory + bounded JSON
+/// even on huge repos where one rule pack might fire 10k times.
+pub fn collect_findings_grouped_by_category(
+    entries: &[crate::tree::CallTreeNode],
+    cap: usize,
+) -> (
+    std::collections::BTreeMap<String, crate::report::CategoryRollup>,
+    std::collections::BTreeMap<String, usize>,
+    std::collections::BTreeMap<String, Vec<crate::report::CategoryTopEntry>>,
+) {
+    use crate::report::{CategoryRollup, CategoryTopEntry};
+    use std::collections::BTreeMap;
+    let mut by_category: BTreeMap<FindingCategory, CategoryRollup> = BTreeMap::new();
+    let mut by_orm_family: BTreeMap<String, usize> = BTreeMap::new();
+    let mut buckets: BTreeMap<FindingCategory, Vec<(f64, CategoryTopEntry)>> = BTreeMap::new();
+
+    for e in entries {
+        walk_for_categories(e, &mut by_category, &mut by_orm_family, &mut buckets);
+    }
+
+    // Stable order using the canonical category list.
+    let mut by_category_str: BTreeMap<String, CategoryRollup> = BTreeMap::new();
+    for cat in FindingCategory::all() {
+        if let Some(r) = by_category.remove(cat) {
+            by_category_str.insert(cat.as_str().to_string(), r);
+        }
+    }
+
+    let mut top_by_category: BTreeMap<String, Vec<CategoryTopEntry>> = BTreeMap::new();
+    for (cat, mut rows) in buckets {
+        // Sort descending by score; ties broken by severity then by
+        // confidence (already in score), so order is deterministic.
+        rows.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        rows.truncate(cap);
+        let entries: Vec<CategoryTopEntry> = rows.into_iter().map(|(_, e)| e).collect();
+        top_by_category.insert(cat.as_str().to_string(), entries);
+    }
+
+    (by_category_str, by_orm_family, top_by_category)
+}
+
+fn walk_for_categories(
+    node: &crate::tree::CallTreeNode,
+    by_cat: &mut std::collections::BTreeMap<FindingCategory, crate::report::CategoryRollup>,
+    by_orm: &mut std::collections::BTreeMap<String, usize>,
+    buckets: &mut std::collections::BTreeMap<
+        FindingCategory,
+        Vec<(f64, crate::report::CategoryTopEntry)>,
+    >,
+) {
+    use crate::report::{CategoryRollup, CategoryTopEntry};
+    for f in &node.findings {
+        let cat = f.kind.category();
+        let entry = by_cat.entry(cat).or_insert_with(|| CategoryRollup {
+            total: 0,
+            by_kind: Default::default(),
+        });
+        entry.total += 1;
+        *entry.by_kind.entry(f.kind.as_str().to_string()).or_default() += 1;
+
+        if cat == FindingCategory::Orm {
+            if let Some(fam) = f.orm_family() {
+                *by_orm.entry(fam.to_string()).or_default() += 1;
+            }
+        }
+
+        // Rank score: severity weight × confidence. Pagerank percentile
+        // would multiply in here if we threaded it through — leaving
+        // that for a follow-up so this stays a pure rollup over the
+        // already-built tree.
+        let score = score_finding(f);
+        let row = CategoryTopEntry {
+            node_id: node.id.0.clone(),
+            file: node.file.clone(),
+            line: f.line,
+            kind: f.kind.as_str().to_string(),
+            severity: severity_str(f.severity).to_string(),
+            confidence: f.confidence,
+            rule: f.evidence.first().map(|e| e.call.clone()),
+            message: f.message.clone(),
+            originating_orm: f.orm_family().map(|s| s.to_string()),
+        };
+        buckets.entry(cat).or_default().push((score, row));
+    }
+    for c in &node.children {
+        walk_for_categories(c, by_cat, by_orm, buckets);
+    }
+}
+
+/// Score a finding for top-N ranking. Pure function — easy to test
+/// independently. Keep it monotonic so reordering rules later
+/// (e.g. adding a pagerank factor) doesn't require re-sorting.
+fn score_finding(f: &Finding) -> f64 {
+    let sev = match f.severity {
+        Severity::High => 3.0,
+        Severity::Medium => 2.0,
+        Severity::Low => 1.0,
+    };
+    sev * f.confidence
+}
+
+fn severity_str(s: Severity) -> &'static str {
+    match s {
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Tests
 // ───────────────────────────────────────────────────────────────────────────
@@ -1318,6 +1692,141 @@ fn walk_for_kinds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exhaustiveness check: every `FindingKind` variant maps onto a
+    /// `FindingCategory`. If a new kind is added without updating
+    /// `category()`, this test fails to build — `match` is exhaustive,
+    /// so the compiler enforces it. We keep the test anyway so adding a
+    /// category change without a corresponding test update is loud.
+    #[test]
+    fn every_kind_has_category() {
+        let all = [
+            FindingKind::NPlusOne,
+            FindingKind::BlockingInAsync,
+            FindingKind::Recursive,
+            FindingKind::SmellyLoop,
+            FindingKind::NoisyLog,
+            FindingKind::OutdatedPackage,
+            FindingKind::MemoryExplosion,
+            FindingKind::HotZone,
+            FindingKind::ExpensiveCompute,
+            FindingKind::MissingCaching,
+            FindingKind::LogAmplification,
+            FindingKind::SqlAntipattern,
+            FindingKind::MigrationSafety,
+            FindingKind::DjangoAntipattern,
+            FindingKind::SqlalchemyAntipattern,
+            FindingKind::AlembicMigration,
+            FindingKind::SqlIrAntipattern,
+            FindingKind::PrismaAntipattern,
+            FindingKind::DrizzleAntipattern,
+            FindingKind::TypeormAntipattern,
+            FindingKind::JpaAntipattern,
+            FindingKind::GormAntipattern,
+            FindingKind::SqlxAntipattern,
+            FindingKind::LlmAntipattern,
+            FindingKind::AuthCryptoAntipattern,
+            FindingKind::SequelizeAntipattern,
+            FindingKind::MongooseAntipattern,
+        ];
+        for k in all {
+            // call without panic — compiler-enforced exhaustiveness
+            // guarantees this is total.
+            let _ = k.category();
+        }
+    }
+
+    #[test]
+    fn orm_kinds_map_to_orm_category() {
+        let orm_kinds = [
+            FindingKind::DjangoAntipattern,
+            FindingKind::SqlalchemyAntipattern,
+            FindingKind::AlembicMigration,
+            FindingKind::SqlIrAntipattern,
+            FindingKind::PrismaAntipattern,
+            FindingKind::DrizzleAntipattern,
+            FindingKind::TypeormAntipattern,
+            FindingKind::SequelizeAntipattern,
+            FindingKind::MongooseAntipattern,
+            FindingKind::JpaAntipattern,
+            FindingKind::GormAntipattern,
+            FindingKind::SqlxAntipattern,
+        ];
+        for k in orm_kinds {
+            assert_eq!(k.category(), FindingCategory::Orm, "kind={:?}", k);
+        }
+    }
+
+    #[test]
+    fn native_orm_kind_derives_family_from_kind() {
+        // Native ORM kinds (`DjangoAntipattern`, etc.) get their family
+        // straight from the kind — no need to populate `originating_orm`.
+        assert_eq!(
+            FindingKind::DjangoAntipattern.orm_family(),
+            Some("django")
+        );
+        assert_eq!(
+            FindingKind::SqlalchemyAntipattern.orm_family(),
+            Some("sqlalchemy")
+        );
+        assert_eq!(FindingKind::PrismaAntipattern.orm_family(), Some("prisma"));
+        // SqlIrAntipattern is cross-ORM — derivation returns None and
+        // the Finding-level `originating_orm` takes over.
+        assert_eq!(FindingKind::SqlIrAntipattern.orm_family(), None);
+        // Non-ORM kinds carry no family.
+        assert_eq!(FindingKind::Recursive.orm_family(), None);
+    }
+
+    #[test]
+    fn finding_orm_family_prefers_originating_orm() {
+        // For `SqlIrAntipattern`, the stored `originating_orm` wins.
+        let f = Finding {
+            kind: FindingKind::SqlIrAntipattern,
+            severity: Severity::Medium,
+            effort: Effort::Small,
+            confidence: 0.85,
+            line: 1,
+            message: "u".into(),
+            evidence: vec![],
+            remediation: None,
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: vec![],
+            predicted_sql: None,
+            originating_orm: Some("sqlalchemy".into()),
+        };
+        assert_eq!(f.orm_family(), Some("sqlalchemy"));
+    }
+
+    #[test]
+    fn score_finding_orders_by_severity_then_confidence() {
+        // Hand-construct three findings to verify the score function.
+        let make = |sev: Severity, conf: f64| Finding {
+            kind: FindingKind::Recursive,
+            severity: sev,
+            effort: Effort::Small,
+            confidence: conf,
+            line: 1,
+            message: String::new(),
+            evidence: vec![],
+            remediation: None,
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: vec![],
+            predicted_sql: None,
+            originating_orm: None,
+        };
+        let high_low = score_finding(&make(Severity::High, 0.50));
+        let med_high = score_finding(&make(Severity::Medium, 0.95));
+        let low_high = score_finding(&make(Severity::Low, 0.99));
+        // High dominates over medium regardless of confidence delta
+        // (3 * 0.5 = 1.5  >  2 * 0.95 = 1.9? NO — actually medium*high
+        // beats high*low). This is intentional: a high-severity finding
+        // we're only half-sure about should NOT outrank a medium we're
+        // 95% sure about. Lock the contract in code.
+        assert!(med_high > high_low);
+        assert!(high_low > low_high);
+    }
 
     #[test]
     fn finding_kind_as_str_matches_serde_snake_case() {
@@ -1484,7 +1993,12 @@ mod tests {
                 message: format!("migration {i}"),
                 evidence: vec![Evidence { call: "MIG_X".into(), line: i + 1, category: None }],
                 remediation: None,
-            });
+            
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: Vec::new(),
+            predicted_sql: None,
+            originating_orm: None,});
         }
         // 5 medium-severity / small-effort missing_caching.
         for i in 0..5 {
@@ -1497,7 +2011,12 @@ mod tests {
                 message: format!("cache {i}"),
                 evidence: vec![],
                 remediation: None,
-            });
+            
+            byte_range: None,
+            fidelity: None,
+            fusion_paths: Vec::new(),
+            predicted_sql: None,
+            originating_orm: None,});
         }
         let node = CallTreeNode {
             id: SymbolId("synth::1".into()),

@@ -179,8 +179,17 @@ export default function HomePage() {
     setPriorScans((prev) => prev.filter((s) => s.meta.scanId !== scanId));
   }, []);
 
+  // Top-align when running/error so a tall left column (orb + many
+  // progress rows) doesn't push the right-pane's picker above the
+  // viewport via flex vertical centering. Idle keeps the centered hero
+  // layout.
+  const stageClass =
+    staticScan.kind === "running" || staticScan.kind === "error"
+      ? "stage stage--running"
+      : "stage";
+
   return (
-    <div className="stage">
+    <div className={stageClass}>
       <Orbs />
 
       <div className="home-update-slot">

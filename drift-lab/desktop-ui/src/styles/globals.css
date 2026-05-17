@@ -17,7 +17,7 @@
   --gradient-soft: linear-gradient(135deg, rgba(255, 107, 61, 0.08) 0%, rgba(255, 181, 71, 0.05) 100%);
 }
 
-html, body, #root { height: 100%; }
+html, body, #root { min-height: 100%; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -25,7 +25,8 @@ body {
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background-image:
     radial-gradient(circle at 25% 15%, rgba(255, 181, 71, 0.18) 0%, transparent 45%),
     radial-gradient(circle at 75% 85%, rgba(255, 107, 61, 0.12) 0%, transparent 45%),
@@ -37,13 +38,38 @@ body {
 button { font-family: inherit; }
 
 .stage {
-  height: 100vh;
+  /* min-height (not height) so a tall running-split can grow naturally
+   * instead of being clipped equally top+bottom by justify-content:center
+   * once content exceeds the viewport. body is overflow:hidden, so we
+   * additionally allow .stage to scroll vertically when needed — the
+   * picker / orb stay anchored inside the visible area while extra
+   * progress rows are reachable via scroll. */
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 20px;
+  /* `safe center` falls back to flex-start when content overflows so the
+   * top of the running-split (picker heading, orb) stays reachable instead
+   * of being clipped above the viewport when many progress phases stack
+   * up in the left column. Pure-center would symmetrically clip top+bottom
+   * once content exceeds 100vh. */
+  justify-content: safe center;
+  /* Reserve top space so the absolute-positioned chrome at top:16/18 — the
+   * update banner, active-model badge, settings FAB, local-server links —
+   * doesn't overlay the picker heading or orb when the running-split is
+   * close to viewport height. 60px clears their ~36-46px footprint. */
+  padding: 60px 20px 20px;
   position: relative;
+  overflow-y: auto;
+}
+
+/* Running/error phases of the Home pipeline. The left column packs an
+ * orb + many phase rows and the right column packs the picker — together
+ * they routinely exceed 100vh. `safe center` is great when supported but
+ * Tauri's WebKit-on-macOS doesn't honor it, so we belt-and-braces with an
+ * explicit top alignment here. Idle keeps the centered hero look. */
+.stage--running {
+  justify-content: flex-start;
 }
 
 /* Animated background orbs */
@@ -1060,15 +1086,21 @@ button { font-family: inherit; }
   color: var(--text-dim);
 }
 .active-model-label {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+  /* Inline-block + nowrap so the inner spans render in one line and the
+   * label can ellipsize when the parent badge runs out of width. The
+   * previous inline-flex did not propagate text-overflow:ellipsis to its
+   * own bounding box, so a long provider+model string would push the badge
+   * past .home-active-model-slot's max-width. */
+  display: inline-block;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 .active-model-name { color: var(--text-dim); font-weight: 500; }
-.active-model-sep { color: var(--text-dim); opacity: 0.5; }
+.active-model-sep { color: var(--text-dim); opacity: 0.5; margin: 0 4px; }
 .active-model-model { color: var(--text); font-weight: 600; }
 .active-model-dot {
   width: 8px;
@@ -1094,7 +1126,20 @@ button { font-family: inherit; }
   top: 18px;
   right: 64px;
   z-index: 5;
-  max-width: 40%;
+  /* Hard ceiling so a long provider+model name ("Docker Model Runner
+   * (local) · ai/gemma4:latest") cannot expand the badge over the
+   * running-split's right column. The badge truncates inside this width
+   * instead of crowding the picker heading + search. */
+  max-width: 360px;
+}
+.home-active-model-slot .active-model-badge {
+  max-width: 100%;
+}
+.home-active-model-slot .active-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Floating settings (gear) button on Home */
@@ -1612,7 +1657,7 @@ button { font-family: inherit; }
   width: 100%;
   max-width: 1180px;
   z-index: 1;
-  align-items: start;
+  align-items: stretch;
 }
 .running-split-col {
   min-width: 0;
@@ -1923,6 +1968,26 @@ button { font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Self-contained card so the EntryPicker (search + list) reads as one
+   * bounded surface instead of floating bare content over the page
+   * background. Previously this used `padding-top: 56px` to dodge the
+   * absolute ActiveModelBadge — that created an awkward gap between the
+   * top of the column and the search, making the search look detached.
+   * The card now has its own border / background and the chrome above is
+   * cleared by .stage's top padding (60px), so the badge no longer needs
+   * to be visually negotiated by this pane. */
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px 18px 16px;
+  min-height: 0;
+  /* Cap height so a very long entry list scrolls *inside* the card rather
+   * than pushing the page taller — keeps the orb / progress on the left
+   * column aligned with the picker on the right. */
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
 }
 .right-pane-tabs {
   display: inline-flex;
@@ -1949,7 +2014,16 @@ button { font-family: inherit; }
   color: var(--text);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
-.right-pane-body { min-height: 0; }
+.right-pane-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  /* Inner scroll region — combined with .right-pane's max-height + overflow
+   * hidden, this scopes the entry-picker list scrolling to the card body
+   * instead of bleeding to the page. */
+  overflow: hidden;
+}
 
 /* ---------- BackendLogPane --------------------------------------------- */
 .backend-log {
@@ -2263,6 +2337,15 @@ button { font-family: inherit; }
   margin-top: 18px;
   border-top: 1px solid var(--border);
   padding-top: 16px;
+  /* Pipeline emits up to ~28 phases. Cap height so the left column doesn't
+   * push the running-split past one viewport — the right pane's picker
+   * needs to stay reachable without scrolling. 50vh fits roughly 8-10 rows
+   * which is enough to show the active phase plus a few recent ones. The
+   * 220px floor keeps ~3 rows visible on very short windows (e.g. a half-
+   * height laptop split). */
+  max-height: max(220px, 50vh);
+  overflow-y: auto;
+  width: 100%;
 }
 .scan-progress-row {
   display: grid;
@@ -2298,6 +2381,7 @@ button { font-family: inherit; }
 .scan-progress-row.is-done .scan-progress-icon { color: var(--success); }
 .scan-progress-label {
   display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
 }
 .scan-progress-label-line { font-weight: 500; }
 .scan-progress-label-detail {
@@ -2406,7 +2490,10 @@ button { font-family: inherit; }
 /* Entry-roots picker. Card per root, hover-elevation, a "select" button on
  * the right. Same visual rhythm as the saved-scans list further down. */
 .scan-picker-head {
-  margin: 20px 0 10px;
+  /* No top margin — the picker is now the first child of a card with its
+   * own padding, so the previous 20px would compound into a visible gap
+   * between the card top and the heading. */
+  margin: 0 0 10px;
   font-weight: 600;
   font-size: 13px;
   letter-spacing: 0.04em;
@@ -3499,13 +3586,20 @@ button { font-family: inherit; }
 .scan-picker-list {
   display: grid;
   gap: 10px;
-  /* Viewport-relative cap. 320px reserves room for the orb / phase label
-   * / picker heading + search + status above. Tested at 600px tall
-   * windows — the list still has ~280px of scrollable area. */
-  max-height: calc(100vh - 320px);
-  /* Hard floor so very short windows still show ~3 rows before scrolling
-   * kicks in (rows are ~64px tall). */
-  min-height: 200px;
+  /* The previous `flex: 1 1 0` set flex-basis:0 so the list contributed
+   * ZERO to .right-pane's intrinsic content size. When the left column
+   * was short (early in the scan, before the progress list grew), the
+   * grid row height was small and the list collapsed to 0px — making
+   * the rows invisible even though they were in the DOM.
+   *
+   * Switch to explicit sizing: cap the list at 65vh (still scrolls
+   * inside the card on tall content) and give it a generous min-height
+   * so the rows are always visible regardless of when in the scan the
+   * picker first appears. `overflow-y: auto` keeps the scrollbar inside
+   * the list when entries exceed the cap.
+   */
+  max-height: 65vh;
+  min-height: 280px;
   overflow-y: auto;
   /* Reserve gutter space for the scrollbar so toggling between scrollable
    * and not doesn't shift content horizontally. */

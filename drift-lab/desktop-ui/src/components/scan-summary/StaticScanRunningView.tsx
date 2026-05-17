@@ -115,7 +115,7 @@ export default function StaticScanRunningView({
       </div>
       <div className="running-split-col running-split-col-right">
         <div className="right-pane">
-          <div className="right-pane-body" style={{ padding: "0 14px 14px" }}>
+          <div className="right-pane-body">
             {isPicking && roots ? (
               <EntryPicker roots={roots} onPick={handlePick} />
             ) : (

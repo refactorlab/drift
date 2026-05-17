@@ -79,7 +79,7 @@ utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "8", features = ["axum"] }
 # Embed the built viewer (drift-static-profiler/viewer/dist) into the
 # binary so the desktop app has no filesystem dependency at runtime.
-rust-embed = { version = "8", features = ["mime-guess"] }
+rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 mime_guess = "2"
 tokio-stream = "0.1"
 

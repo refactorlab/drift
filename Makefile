@@ -41,6 +41,7 @@ RESET  := \033[0m
         install check run run-llm db \
         kill-port kill-port-test kill-bun-sock kill-dev \
         dev setup \
+        test test-fast test-all test-profiler test-lab test-clean test-clean-target \
         drift-lab-viewer-bundle \
         drift-lab-build drift-lab-build-release drift-lab-verify \
         drift-lab-export drift-lab-export-clean
@@ -222,6 +223,76 @@ kill-bun-sock: ## Remove stale Bun debugger unix sockets in TMPDIR
 	  done
 
 kill-dev: kill-port kill-port-test kill-bun-sock ## kill-port + kill-port-test + kill-bun-sock (one shot)
+
+### Testing
+#
+# `make test` is the fast green gate (drift-static-profiler ONLY): the
+# 380-ish unit + integration tests for the ORM analyzer. Every test runs
+# against the tiny synthetic fixtures in `drift-static-profiler/tests/
+# fixtures/` — never against any real / large external codebase.
+# Typical wall time on a clean target/: < 5s after the initial build.
+#
+# `make test-all` adds drift-lab/src-tauri tests. Those include heavy
+# live integration tests (openai_live.rs hits Docker Model Runner; the
+# repo carries a 469MB GGUF model in tests/.gguf-cache/) — slow and
+# environment-dependent. Run when you actually need them, not by default.
+
+test: test-profiler test-lab test-clean ## Run every cargo test suite (drift-static-profiler + drift-lab) and tidy up scan artifacts. ≈5s warm, ≈45s cold
+
+test-fast: test-profiler test-clean ## Fast subset: drift-static-profiler only — skips drift-lab's slow live-LLM tests (≈5s warm)
+
+test-all: test ## Alias for `make test` (kept for backwards compatibility)
+
+test-profiler: ## drift-static-profiler tests (380+ tests, all on small synthetic fixtures, ≈5s total)
+	@printf "$(BLUE)▶$(RESET) cargo test — drift-static-profiler\n"
+	@cd drift-static-profiler && cargo test --quiet 2>&1 | tee /tmp/.drift-profiler-test.log | \
+	  grep -E "^test result|FAILED|error\[" || true
+	@if grep -q "FAILED" /tmp/.drift-profiler-test.log 2>/dev/null; then \
+	  printf "$(RED)✗$(RESET) drift-static-profiler tests failed\n"; \
+	  rm -f /tmp/.drift-profiler-test.log; exit 1; \
+	fi
+	@rm -f /tmp/.drift-profiler-test.log
+	@printf "$(GREEN)✓$(RESET) drift-static-profiler tests passed\n"
+
+test-lab: drift-lab-viewer-bundle ## drift-lab/src-tauri tests (depends on viewer bundle for RustEmbed; includes openai_live.rs)
+	@if [ -f drift-lab/src-tauri/Cargo.toml ]; then \
+	  printf "$(BLUE)▶$(RESET) cargo test — drift-lab/src-tauri\n"; \
+	  cd drift-lab/src-tauri && cargo test --quiet 2>&1 | tee /tmp/.drift-lab-test.log | \
+	    grep -E "^test result|FAILED|error\[" || true; \
+	  if grep -q "FAILED" /tmp/.drift-lab-test.log 2>/dev/null; then \
+	    printf "$(RED)✗$(RESET) drift-lab tests failed\n"; \
+	    rm -f /tmp/.drift-lab-test.log; exit 1; \
+	  fi; \
+	  rm -f /tmp/.drift-lab-test.log; \
+	  printf "$(GREEN)✓$(RESET) drift-lab tests passed\n"; \
+	else \
+	  printf "$(YELLOW)!$(RESET) drift-lab/src-tauri/Cargo.toml not found — skipping\n"; \
+	fi
+
+test-clean: ## Remove test scan artifacts (/tmp scans + temp files from older test runs)
+	@DIR="$${TMPDIR:-/tmp}"; \
+	REMOVED=$$( \
+	  find "$$DIR" -maxdepth 2 -name "drift-mg-*" -delete -print 2>/dev/null; \
+	  find /tmp -maxdepth 2 -name "drift-mg-*" -delete -print 2>/dev/null; \
+	  find "$$DIR" -maxdepth 2 -name "drift-walker-*" -delete -print 2>/dev/null; \
+	  find "$$DIR" -maxdepth 2 -name "drift-analyze-*" -delete -print 2>/dev/null; \
+	  rm -rf /tmp/orm-out 2>/dev/null && echo "/tmp/orm-out"; \
+	); \
+	if [ -n "$$REMOVED" ]; then \
+	  printf "$(BLUE)▶$(RESET) cleaned test artifacts:\n"; \
+	  echo "$$REMOVED" | sed 's/^/    /'; \
+	else \
+	  printf "$(GREEN)✓$(RESET) no leftover test artifacts\n"; \
+	fi
+
+test-clean-target: ## Wipe cargo's target/ dirs (frees the ~1.5 GB of test/dep binaries cargo accumulates). Next build will rebuild from scratch
+	@printf "$(BLUE)▶$(RESET) cargo clean (drift-static-profiler)\n"
+	@cd drift-static-profiler && cargo clean 2>&1 | tail -1
+	@if [ -d drift-lab/src-tauri/target ]; then \
+	  printf "$(BLUE)▶$(RESET) cargo clean (drift-lab/src-tauri)\n"; \
+	  cd drift-lab/src-tauri && cargo clean 2>&1 | tail -1; \
+	fi
+	@printf "$(GREEN)✓$(RESET) target/ directories cleaned — next build re-compiles\n"
 
 ### Drift Lab — desktop app
 # These mirror what .github/workflows/{ci,drift-lab-desktop-build}.yml run,

@@ -91,6 +91,55 @@ pub struct Summary {
     /// "scanned files, all clean" — distinguishable from "didn't scan".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sql_files_with_findings: Option<usize>,
+
+    // ── Category rollups (new) ────────────────────────────────────────
+    /// Findings grouped by high-level semantic category. Stable
+    /// surface for consumers (viewer, CLI, dashboards) — new finding
+    /// kinds slot under existing categories without breaking anyone.
+    /// Example: `{"orm": {total: 14, by_kind: {"sql_ir_antipattern": 2}}}`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub findings_by_category: BTreeMap<String, CategoryRollup>,
+
+    /// Per-ORM-family count across all ORM-category findings (both
+    /// native ORM kinds and cross-ORM `SqlIrAntipattern` whose
+    /// origin is preserved on the finding). Only present when any
+    /// ORM finding exists. Lets dashboards say "8 sqlalchemy, 3 prisma".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub findings_by_orm_family: BTreeMap<String, usize>,
+
+    /// Top-N findings within each category — ranked by
+    /// `severity_weight * confidence`. Capped per category (50)
+    /// so the JSON stays bounded on huge repos. Keys are category
+    /// names; values are sorted slices of `CategoryTopEntry`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub findings_top_by_category: BTreeMap<String, Vec<CategoryTopEntry>>,
+}
+
+/// Per-category aggregate carried on `Summary.findings_by_category`.
+/// `total` is the sum of `by_kind`; we emit both so consumers don't
+/// have to re-sum on render.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryRollup {
+    pub total: usize,
+    pub by_kind: BTreeMap<String, usize>,
+}
+
+/// One entry in `Summary.findings_top_by_category`. Self-contained:
+/// the viewer / CLI can render a row without joining back to the
+/// call-tree node. `node_id` is the same identifier used by
+/// `FindingTopRef` so consumers wanting deep-link navigation still can.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryTopEntry {
+    pub node_id: String,
+    pub file: String,
+    pub line: usize,
+    pub kind: String,
+    pub severity: String,
+    pub confidence: f64,
+    pub rule: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub originating_orm: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +295,15 @@ impl Report {
             progress,
             |e| crate::sql_lint::attach_sql_antipatterns(std::slice::from_mut(e)),
         );
+
+        // ORM static-analysis pass. Runs once across all entries so
+        // findings on class-level / module-level decorations (e.g.
+        // `@ManyToOne(fetch=EAGER)` on a JPA entity field) can land on
+        // whichever entry covers the file, not be duplicated across
+        // every entry that names that file.
+        progress.step_start("attaching orm antipattern findings", 1);
+        crate::orm::attach_orm_findings(&mut entries, source_root);
+        progress.step_progress(1, 1);
 
         // `.sql`-file scan pass — plan §3.2 first-class supplementary
         // input. Walks the project root for `*.sql`, runs the same rule
@@ -700,22 +758,26 @@ impl Summary {
         // as part of the silent "assembling report" black box. We
         // surface them as a counted step bar (5 sub-passes / 5)
         // updating after each, so the user sees real progress.
-        progress.step_start("collecting findings rollups", 5);
+        progress.step_start("collecting findings rollups", 6);
         progress.set_current("findings_by_kind");
         let findings_by_kind = insights::collect_findings_by_kind(entries);
-        progress.step_progress(1, 5);
+        progress.step_progress(1, 6);
         progress.set_current("findings_top");
         let findings_top = insights::collect_findings_top(entries, 50);
-        progress.step_progress(2, 5);
+        progress.step_progress(2, 6);
         progress.set_current("roots_overview");
         let roots_overview = insights::collect_roots_overview(entries);
-        progress.step_progress(3, 5);
+        progress.step_progress(3, 6);
         progress.set_current("immediate_fixes");
         let immediate_fixes = insights::collect_immediate_fixes(entries, 50);
-        progress.step_progress(4, 5);
+        progress.step_progress(4, 6);
         progress.set_current("refactor_candidates");
         let refactor_candidates = insights::collect_refactor_candidates(entries, 30);
-        progress.step_progress(5, 5);
+        progress.step_progress(5, 6);
+        progress.set_current("findings_by_category");
+        let (findings_by_category, findings_by_orm_family, findings_top_by_category) =
+            insights::collect_findings_grouped_by_category(entries, 50);
+        progress.step_progress(6, 6);
         progress.step_end();
 
         Self {
@@ -745,6 +807,9 @@ impl Summary {
             // `if let Some(s) = sql_file_stats` block).
             sql_files_scanned: None,
             sql_files_with_findings: None,
+            findings_by_category,
+            findings_by_orm_family,
+            findings_top_by_category,
         }
     }
 }

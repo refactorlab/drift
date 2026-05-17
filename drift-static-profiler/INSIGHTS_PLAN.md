@@ -927,3 +927,59 @@ in parallel as the catalog grows and as we look at more fixtures:
 - [x] Lists open questions explicitly (§8).
 
 When you say "go", step 1 begins.
+
+---
+
+## 10. v0.2 update — Python ORM static analysis
+
+Shipping in v0.2 (see `CALIBRATION.md` for the per-rule tier table and
+`research/ORM_STATIC_ANALYSIS_PLAN.md` for the master design):
+
+### New module — `src/orm/`
+
+| File | What |
+|---|---|
+| `orm/mod.rs` | `attach_orm_findings` dispatcher + `OrmRule` / `MatchHit` shapes |
+| `orm/context.rs` | `PyOrmContext` (byte-range-aware binding map, call chains, loop ranges, class defs) |
+| `orm/dialect.rs` | `OrmDialect` trait (`matches`, `predict_all`) |
+| `orm/sql_ir.rs` | `PredictedSql` IR + `SqlFidelity` (Concrete / Partial / Skeletal) |
+| `orm/sql_ir_rules.rs` | 14 cross-ORM `SqlIrRule`s + 5 `FidelityWeight` archetypes |
+| `orm/fusion.rs` | Multiplicative-complement triangulation |
+| `orm/python/{mod,django,sqlalchemy}.rs` | Per-ORM dialects + rule catalogs |
+
+### New `FindingKind` variants
+
+`DjangoAntipattern`, `SqlalchemyAntipattern`, `AlembicMigration`,
+`SqlIrAntipattern`. Wired through `FindingKind::as_str` and added to
+the JSON schema's enum at [schema/profile.schema.json].
+
+### New optional `Finding` fields
+
+`byte_range`, `fidelity`, `fusion_paths`, `predicted_sql` — all
+`#[serde(default, skip_serializing_if = ...)]` so older fixtures
+round-trip unchanged.
+
+### Pipeline integration
+
+`attach_orm_findings` runs as a `for_each_entry` pass in
+`Report::build_with_progress`, immediately after `attach_sql_antipatterns`.
+Each Python file is parsed once, its `PyOrmContext` built, Django +
+SQLAlchemy rule catalogs run, each dialect's `predict_all` runs, the
+cross-ORM `SqlIrRule`s fire on the predictions, and the fusion engine
+triangulates overlapping ORM + SQL-IR findings into single
+higher-confidence outputs.
+
+### Test coverage
+
+- 26 unit tests in `src/orm/**` covering binding inference, chain
+  reconstruction, fusion math, and per-rule matchers.
+- 10 integration tests in `tests/orm_integration.rs` running the full
+  pipeline against the Django + SQLAlchemy fixtures and asserting
+  specific rules fire on the right symbols.
+- Total: 268 lib + 93 + 10 integration tests, all green.
+
+### Rules shipping
+
+22 ORM rules (12 Django + 10 SQLAlchemy) + 14 cross-ORM SQL-IR rules.
+Tier breakdown in `CALIBRATION.md`. Full corpus calibration on 10 OSS
+projects (sentry, saleor, fastapi, etc.) is the Phase 1.1 follow-up.
