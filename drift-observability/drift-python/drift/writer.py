@@ -36,7 +36,16 @@ import logging
 import queue
 import threading
 from datetime import datetime, timezone
-from typing import Any, Final
+from typing import Any
+
+# Final: stdlib on Python 3.8+ (3.8, 3.9, 3.10, 3.11, 3.12, 3.13); the
+# typing_extensions backport is only needed on Python 3.7 where typing.Final
+# does not exist. typing_extensions.Final on 3.8+ is a re-export of the
+# stdlib symbol, so the fallback path stays behaviorally identical.
+try:
+    from typing import Final
+except ImportError:  # Python 3.7
+    from typing_extensions import Final
 
 from .sinks import Sink
 
