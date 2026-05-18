@@ -3,8 +3,10 @@
 Each configured method is wrapped so every call emits TWO events sharing
 a `call` id:
 
-  - start: {call, qualname, service?, pod?, file?, line?, params, time}
-  - end:   {call, qualname, service?, pod?, file?, line?, status, duration_ms, time, error?}
+  - start: {call, qualname, service?, pod?, file?, line?, params, time,
+            args_bytes?, load?}
+  - end:   {call, qualname, service?, pod?, file?, line?, status,
+            duration_ms, time, load?, error?}
 
 Consumers distinguish start vs end by presence of `params` (start-only) or
 `duration_ms` (end-only) — there is no `phase` field.
@@ -13,30 +15,46 @@ Hot-path design:
 
   - Signature is introspected ONCE at wrap time; simple sigs skip bind_partial.
   - `include_*` flags collapse at wrap time into a precomputed `base` dict
-    and into the choice of caller-capture function (`_find_caller_pair` vs
-    `_no_caller_pair`), so the hot path has zero `if include_*` branches.
+    and into the choice of caller-capture / sizeof / load functions
+    (`_no_caller_pair`, `_zero_bytes`, `_zero_load`), so the hot path has
+    zero `if include_*` branches.
   - `call` is a UUID4 hex string — globally unique across processes/hosts,
     so events from multiple pods can be correlated without collisions.
   - Caller capture returns a 2-tuple unconditionally — hot path is a single
     `caller_file, caller_line = capture_caller()` unpack, no ifs.
+  - System load is sampled at most once per second (TTL cache), shared
+    across all wrapped methods and threads. A single thread refreshes it;
+    the worst race is one redundant `os.getloadavg()` syscall.
+
+Call-graph mode (`config.call_graph.modules`):
+
+  At install time every top-level function and class method defined inside
+  each listed module is auto-wrapped. Auto-wrapped methods record call/return
+  events with `params: {}`. Methods that ALSO appear in `config.methods` are
+  left alone for the explicit entry, which keeps its `params` filter. This is
+  intentionally a wrap-time discovery (not `sys.setprofile`) so there is zero
+  per-call cost beyond the methods we actually decided to record.
 """
 from __future__ import annotations
 
+import atexit
 import importlib
 import inspect
 import logging
 import os
+import signal
 import socket
 import sys
 import threading
 import time
 from collections.abc import Mapping
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 import wrapt
 
-from .config import Config, Method, load
+from . import s3_upload
+from .config import CallGraph, Config, Method, S3Config, load
 from .writer import Writer
 
 logger = logging.getLogger("drift.instrument")
@@ -55,6 +73,20 @@ def _next_call_id() -> str:
 _state_lock = threading.Lock()
 _writer: Writer | None = None
 _wrapped: list[tuple[str, str, Any]] = []  # (module, attr, original)
+
+# End-of-run S3 upload state. Populated by `install()` and consumed by
+# `_uninstall_locked()` once the writer has fully drained. `None` when the
+# active config has no `s3:` block, in which case all of the hook machinery
+# below is a no-op.
+_active_s3: S3Config | None = None
+_active_log_path: str | None = None
+_active_service: str | None = None
+
+# Exit hooks (atexit + SIGINT/SIGTERM) are installed at most once per
+# interpreter to avoid duplicate uploads when the user calls `install()`
+# repeatedly (eg. for tests).
+_hooks_installed = False
+_prev_signal_handlers: dict[int, Any] = {}
 
 
 class _NoopWriter(Writer):
@@ -76,7 +108,7 @@ class _NoopWriter(Writer):
 
 def install(config_path: str) -> Writer:
     """Read YAML, wrap targets, start the writer. Returns the Writer."""
-    global _writer
+    global _writer, _active_s3, _active_log_path, _active_service
 
     if os.environ.get("DRIFT_DISABLED") == "1":
         logger.info("drift disabled via DRIFT_DISABLED=1")
@@ -87,8 +119,26 @@ def install(config_path: str) -> Writer:
             _uninstall_locked()
         cfg = load(config_path)
         _writer = Writer(cfg.build_sink())
+        _active_s3 = cfg.s3
+        _active_log_path = cfg.log_path
+        _active_service = cfg.service
+
+        # Explicit methods first — they may carry a `params` filter that
+        # call-graph auto-wrap must not override.
+        explicit_targets: set[str] = set()
         for method in cfg.methods:
             _wrap_method(method, cfg, _writer)
+            explicit_targets.add(method.target)
+
+        for target in _discover_call_graph_targets(cfg.call_graph):
+            if target in explicit_targets:
+                continue
+            # `params=[]` → capturer emits `{}` for every call.
+            _wrap_method(Method(target=target, params=[]), cfg, _writer)
+
+        if cfg.s3 is not None:
+            _install_exit_hooks_once()
+
         return _writer
 
 
@@ -100,7 +150,7 @@ def uninstall() -> None:
 
 def _uninstall_locked() -> None:
     """Must be called with _state_lock held."""
-    global _writer
+    global _writer, _active_s3, _active_log_path, _active_service
     for module_name, attr, original in _wrapped:
         try:
             mod = importlib.import_module(module_name)
@@ -111,6 +161,73 @@ def _uninstall_locked() -> None:
     if _writer is not None:
         _writer.close()
         _writer = None
+
+    # Writer is fully drained — safe to ship the file. Failures are caught
+    # inside `s3_upload.upload` so the host process can never crash here.
+    if _active_s3 is not None and _active_log_path is not None:
+        try:
+            s3_upload.upload(
+                _active_log_path,
+                _active_s3,
+                service=_active_service or "drift",
+            )
+        except Exception as e:  # belt-and-braces; upload() should never raise
+            logger.warning("drift s3 upload raised unexpectedly: %s", e)
+    _active_s3 = None
+    _active_log_path = None
+    _active_service = None
+
+
+# ---------------------------------------------------------------- exit hooks
+
+def _install_exit_hooks_once() -> None:
+    """Register `atexit` + SIGINT/SIGTERM handlers so the local log file is
+    shipped to S3 even when the host process exits via signal.
+
+    Idempotent: only the first call wins per interpreter. Subsequent calls
+    (eg. when tests re-install with a different config) are no-ops.
+    """
+    global _hooks_installed
+    if _hooks_installed:
+        return
+    atexit.register(_shutdown_for_exit)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            prev = signal.signal(sig, _handle_signal)
+        except (ValueError, OSError):
+            # Not on the main thread, or signal unsupported on this platform.
+            continue
+        _prev_signal_handlers[sig] = prev
+    _hooks_installed = True
+
+
+def _shutdown_for_exit() -> None:
+    """atexit entrypoint — calls uninstall() under a guard so a second hook
+    fire (eg. atexit after a signal handler) is a no-op."""
+    try:
+        uninstall()
+    except Exception as e:  # pragma: no cover
+        logger.warning("drift shutdown handler failed: %s", e)
+
+
+def _handle_signal(signum: int, frame: Any) -> None:
+    """SIGTERM/SIGINT handler. Run our shutdown, then chain to whatever the
+    process had registered before us (or fall back to the default action)."""
+    _shutdown_for_exit()
+    prev = _prev_signal_handlers.get(signum)
+    if callable(prev) and prev not in (signal.SIG_DFL, signal.SIG_IGN):
+        try:
+            prev(signum, frame)
+            return
+        except Exception:  # pragma: no cover
+            pass
+    # Restore default and re-raise so the process exits with the expected
+    # signal status (eg. SIGTERM → 143).
+    try:
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+    except Exception:  # pragma: no cover
+        pass
 
 
 # ---------------------------------------------------------------- wrapping
@@ -157,9 +274,9 @@ def _build_wrapper(method: Method, cfg: Config, writer: Writer, original: Any, *
     capture_params = _build_capturer(sig, method.params, redact)
 
     # Compile specialized start/end event builders ONCE at wrap time.
-    # All include-flag decisions (service/pod/caller) collapse into a
-    # precomputed base dict and a specialized closure body — the hot path
-    # below contains NO `if include_*` branches.
+    # All include-flag decisions (service/pod/caller/args_bytes/cpu) collapse
+    # into a precomputed base dict + specialized closure body so the hot
+    # path contains NO `if include_*` branches.
     build_start, build_end = _compile_event_builders(
         qualname=qualname,
         service=service,
@@ -167,12 +284,16 @@ def _build_wrapper(method: Method, cfg: Config, writer: Writer, original: Any, *
         include_service=include.service,
         include_pod=include.pod,
         include_caller=include_caller,
+        include_args_bytes=include.args_bytes,
+        include_cpu=include.cpu,
     )
 
     # --- hot-path local aliases (faster than attribute lookups) -----------
-    # `capture_caller` is BOUND HERE to one of two functions — both always
-    # return a 2-tuple, so the hot path is a single unpack with zero ifs.
+    # Each of these is BOUND HERE to either the real or zero implementation,
+    # so the per-call path is a straight function call — no if-flag branches.
     capture_caller = _find_caller_pair if include_caller else _no_caller_pair
+    measure_args_bytes = _args_bytes if include.args_bytes else _zero_bytes
+    measure_load = _cached_load if include.cpu else _zero_load
 
     emit = writer.emit
     perf_counter_ns = time.perf_counter_ns
@@ -189,8 +310,12 @@ def _build_wrapper(method: Method, cfg: Config, writer: Writer, original: Any, *
         # Zero per-call branches: capture_caller was specialized at wrap time
         # and is guaranteed to return (file, line) or (None, None).
         caller_file, caller_line = capture_caller()
+        # Cheap measurements: `measure_args_bytes` is O(arity) shallow getsizeof;
+        # `measure_load` is a TTL-cached int compare with a 1-sec refresh.
+        ab = measure_args_bytes(args, kwargs)
+        load = measure_load()
 
-        emit(build_start(call_id, params, time_ns(), caller_file, caller_line))
+        emit(build_start(call_id, params, time_ns(), caller_file, caller_line, ab, load))
         return call_id, perf_counter_ns(), caller_file, caller_line
 
     def _on_end(
@@ -201,7 +326,8 @@ def _build_wrapper(method: Method, cfg: Config, writer: Writer, original: Any, *
         exc: BaseException | None,
     ) -> None:
         duration_ms = round((perf_counter_ns() - t0_ns) / 1_000_000.0, 3)
-        emit(build_end(call_id, time_ns(), caller_file, caller_line, exc, duration_ms))
+        load = measure_load()
+        emit(build_end(call_id, time_ns(), caller_file, caller_line, exc, duration_ms, load))
 
     if is_async:
         async def async_wrapper(wrapped, instance, args, kwargs):
@@ -237,9 +363,11 @@ def _compile_event_builders(
     include_service: bool,
     include_pod: bool,
     include_caller: bool,
+    include_args_bytes: bool,
+    include_cpu: bool,
 ) -> tuple[
-    Callable[[str, dict[str, Any], int, str | None, int | None], dict[str, Any]],
-    Callable[[str, int, str | None, int | None, BaseException | None, float], dict[str, Any]],
+    Callable[[str, dict[str, Any], int, str | None, int | None, int, float], dict[str, Any]],
+    Callable[[str, int, str | None, int | None, BaseException | None, float, float], dict[str, Any]],
 ]:
     """Compile specialized start/end event builders for one wrapped method.
 
@@ -248,7 +376,12 @@ def _compile_event_builders(
       1. a precomputed `base` dict containing the static keys for this
          method's flag combination (`qualname`, plus any of `service`/`pod`);
       2. a builder body specialized on `include_caller` so the hot-path
-         branch is gone when caller capture is disabled.
+         branch is gone when caller capture is disabled;
+      3. closure-captured `include_args_bytes` / `include_cpu` flags — these
+         are read once via `LOAD_DEREF` then branched. The values themselves
+         (`ab`, `load`) are wrap-time-bound to no-op producers when disabled,
+         so they cost ~1 ns to compute, but skipping the dict-write avoids
+         the per-line bytes downstream.
 
     There is no `phase` field — consumers distinguish start from end by
     presence of `params` (start) vs `duration_ms` (end). Saves ~30 ns/call
@@ -267,6 +400,8 @@ def _compile_event_builders(
             time_ns_val: int,
             caller_file: str | None,
             caller_line: int | None,
+            args_bytes_val: int,
+            load_val: float,
         ) -> dict[str, Any]:
             ev = base.copy()
             ev["call"] = call_id
@@ -275,6 +410,10 @@ def _compile_event_builders(
             if caller_file is not None:
                 ev["file"] = caller_file
                 ev["line"] = caller_line
+            if include_args_bytes:
+                ev["args_bytes"] = args_bytes_val
+            if include_cpu:
+                ev["load"] = load_val
             return ev
 
         def build_end(
@@ -284,6 +423,7 @@ def _compile_event_builders(
             caller_line: int | None,
             exc: BaseException | None,
             duration_ms: float,
+            load_val: float,
         ) -> dict[str, Any]:
             ev = base.copy()
             ev["call"] = call_id
@@ -293,6 +433,8 @@ def _compile_event_builders(
             if caller_file is not None:
                 ev["file"] = caller_file
                 ev["line"] = caller_line
+            if include_cpu:
+                ev["load"] = load_val
             if exc is not None:
                 ev["error"] = f"{type(exc).__name__}: {exc}"
             return ev
@@ -306,11 +448,17 @@ def _compile_event_builders(
             time_ns_val: int,
             _caller_file: str | None,
             _caller_line: int | None,
+            args_bytes_val: int,
+            load_val: float,
         ) -> dict[str, Any]:
             ev = base.copy()
             ev["call"] = call_id
             ev["params"] = params
             ev["time"] = time_ns_val
+            if include_args_bytes:
+                ev["args_bytes"] = args_bytes_val
+            if include_cpu:
+                ev["load"] = load_val
             return ev
 
         def build_end(
@@ -320,12 +468,15 @@ def _compile_event_builders(
             _caller_line: int | None,
             exc: BaseException | None,
             duration_ms: float,
+            load_val: float,
         ) -> dict[str, Any]:
             ev = base.copy()
             ev["call"] = call_id
             ev["time"] = time_ns_val
             ev["status"] = "error" if exc else "ok"
             ev["duration_ms"] = duration_ms
+            if include_cpu:
+                ev["load"] = load_val
             if exc is not None:
                 ev["error"] = f"{type(exc).__name__}: {exc}"
             return ev
@@ -542,3 +693,106 @@ def _setattr_dotted(obj: Any, attr: str, value: Any) -> None:
     for name in parts[:-1]:
         obj = getattr(obj, name)
     setattr(obj, parts[-1], value)
+
+
+# ---------------------------------------------------------------- args size
+
+# Local alias makes the hot path one LOAD_FAST instead of LOAD_ATTR.
+_getsizeof = sys.getsizeof
+
+
+def _args_bytes(args: tuple, kwargs: dict) -> int:
+    """Shallow memory footprint of input args + kwargs (bytes).
+
+    `sys.getsizeof` is a C built-in that returns the object's own size
+    excluding referenced objects, so this is O(arity) — typically <10 items.
+    Deep recursion is intentionally NOT used: walking arbitrary user payloads
+    could be unbounded and would defeat the "no perf hit" goal. Treat the
+    value as a footprint signal, not a deep accounting.
+    """
+    n = _getsizeof(args) + _getsizeof(kwargs)
+    for v in args:
+        n += _getsizeof(v)
+    for v in kwargs.values():
+        n += _getsizeof(v)
+    return n
+
+
+def _zero_bytes(_args: tuple, _kwargs: dict) -> int:
+    """Wrap-time-bound when `include.args_bytes` is False."""
+    return 0
+
+
+# ---------------------------------------------------------------- system load
+
+# Refresh the load average at most once per second. The cache is global —
+# every wrapped method shares one syscall budget.
+_LOAD_TTL_NS: int = 1_000_000_000
+_last_load_check_ns: int = 0
+_last_load_value: float = 0.0
+
+
+def _cached_load() -> float:
+    """1-second-cached system 1-min load average.
+
+    Reads `os.getloadavg()[0]` at most once per second across the whole
+    process. The TTL check is intentionally lock-free: under the GIL the
+    update is race-safe, and in free-threaded Python the worst race is one
+    redundant syscall — never a crash, never a torn read.
+
+    Returns 0.0 on platforms where `os.getloadavg` is unavailable (Windows)
+    or fails (sandboxed environments).
+    """
+    global _last_load_check_ns, _last_load_value
+    now = time.monotonic_ns()
+    if now - _last_load_check_ns > _LOAD_TTL_NS:
+        try:
+            _last_load_value = os.getloadavg()[0]
+        except (OSError, AttributeError):
+            _last_load_value = 0.0
+        _last_load_check_ns = now
+    return _last_load_value
+
+
+def _zero_load() -> float:
+    """Wrap-time-bound when `include.cpu` is False."""
+    return 0.0
+
+
+# ---------------------------------------------------------------- call graph
+
+def _discover_call_graph_targets(cg: CallGraph) -> Iterator[str]:
+    """Yield dotted-path targets for every function/method to auto-wrap.
+
+    For each module listed under `call_graph.modules`, import it and walk
+    its top-level namespace. Yield:
+
+      - top-level `def` / `async def` whose `__module__` matches (skipping
+        re-exports from other modules),
+      - methods of top-level classes whose `__module__` matches.
+
+    Names starting with `_` are skipped (dunders, conventionally-private).
+    Properties, staticmethod/classmethod descriptors, and non-function
+    callables are skipped — wrapt would not have a clean attribute path
+    for them anyway.
+    """
+    for module_name in cg.modules:
+        try:
+            mod = importlib.import_module(module_name)
+        except ImportError as e:
+            logger.warning("call_graph: cannot import %s: %s", module_name, e)
+            continue
+        for name, obj in list(vars(mod).items()):
+            if name.startswith("_"):
+                continue
+            if inspect.isfunction(obj) or inspect.iscoroutinefunction(obj):
+                if getattr(obj, "__module__", None) == module_name:
+                    yield f"{module_name}.{name}"
+            elif inspect.isclass(obj):
+                if getattr(obj, "__module__", None) != module_name:
+                    continue
+                for attr_name, attr_obj in list(vars(obj).items()):
+                    if attr_name.startswith("_"):
+                        continue
+                    if inspect.isfunction(attr_obj) or inspect.iscoroutinefunction(attr_obj):
+                        yield f"{module_name}.{name}.{attr_name}"
