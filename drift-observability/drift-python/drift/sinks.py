@@ -11,7 +11,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Protocol
+# Protocol: stdlib on Python 3.8+ (3.8, 3.9, 3.10, 3.11, 3.12, 3.13); the
+# typing_extensions backport is only needed on Python 3.7 where typing.Protocol
+# does not exist. typing_extensions.Protocol on 3.8+ is a re-export of the
+# stdlib symbol, so the fallback path stays behaviorally identical.
+try:
+    from typing import Protocol
+except ImportError:  # Python 3.7
+    from typing_extensions import Protocol
 
 logger = logging.getLogger("drift.sinks")
 

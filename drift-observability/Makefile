@@ -18,7 +18,13 @@
 
 # --- Config -------------------------------------------------------------------
 
-PY_IMAGE     ?= python:3.11-slim
+# Build image: modern Python is fine — the produced wheel is `py3-none-any`
+# (pure Python), so the build interpreter does not leak into the artifact.
+# Test matrix: space-separated images. test-export-drift-python smoke-tests
+# the wheel on each, so the lowest AND highest supported runtimes are gated
+# in one command. Bump these independently.
+PY_BUILD_IMAGE  ?= python:3.11-slim
+PY_TEST_IMAGES  ?= python:3.7-slim python:3.13-slim
 DRIFT_DIR    := drift-python
 DRIFT_OUT    := dist/drift-python
 
@@ -95,7 +101,7 @@ test-drift: $(VENV)/bin/python ## Run drift unit tests in the host venv
 ### Drift Python package — production export (Dockerized)
 #
 # `export-drift-python` is the one-shot production build:
-#   - Builds wheel + sdist inside $(PY_IMAGE) (no host Python required)
+#   - Builds wheel + sdist inside $(PY_BUILD_IMAGE) (no host Python required)
 #   - Drops everything into dist/drift-python/<version>/ (relative to this
 #     Makefile), so the artifact is right next to the repo root, including:
 #       drift-<v>-py3-none-any.whl    # pip install / poetry add target
@@ -127,7 +133,7 @@ export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<
 	printf "\n$(CYAN)[2/5]$(RESET) preparing output dir $(CYAN)$$OUT$(RESET)\n"; \
 	rm -rf "$$OUT"; mkdir -p "$$OUT"; \
 	printf "  $(GREEN)✓$(RESET) clean\n"; \
-	printf "\n$(CYAN)[3/5]$(RESET) building wheel + sdist inside $(CYAN)$(PY_IMAGE)$(RESET)\n"; \
+	printf "\n$(CYAN)[3/5]$(RESET) building wheel + sdist inside $(CYAN)$(PY_BUILD_IMAGE)$(RESET)\n"; \
 	docker run --rm \
 	  -u $$(id -u):$$(id -g) \
 	  -v "$$PWD/$(DRIFT_DIR)":/src:ro \
@@ -135,7 +141,7 @@ export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<
 	  -e HOME=/tmp \
 	  -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
 	  -e PIP_ROOT_USER_ACTION=ignore \
-	  $(PY_IMAGE) \
+	  $(PY_BUILD_IMAGE) \
 	  sh -c 'set -e; \
 	    cp -r /src /tmp/build && cd /tmp/build && \
 	    pip install --quiet --no-cache-dir build && \
@@ -167,7 +173,7 @@ export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<
 	ABS_OUT=$$(cd "$$OUT" && pwd); \
 	ABS_WHEEL="$$ABS_OUT/$$WHEEL"; \
 	printf "\n$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(GREEN)✓ drift v$$VERSION exported (built inside $(PY_IMAGE))$(RESET)\n"; \
+	printf "$(GREEN)✓ drift v$$VERSION exported (built inside $(PY_BUILD_IMAGE))$(RESET)\n"; \
 	printf "$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
 	printf "  $(BOLD)Location$(RESET)  $(CYAN)$$ABS_OUT$(RESET)\n"; \
 	printf "  $(BOLD)Contents$(RESET)\n"; \
@@ -186,11 +192,13 @@ export-drift-python-clean: ## Wipe dist/drift-python/ so the next export starts 
 	@rm -rf $(DRIFT_OUT)
 	@printf "$(GREEN)✓$(RESET) cleaned\n"
 
-# `test-export-drift-python` — installs the exported wheel in a clean
-# python:3.11-slim container (no drift-python source mounted), then runs a
-# tiny smoke test that imports drift and verifies the public API
-# (`install` / `uninstall` symbols) is reachable. If the wheel is missing,
-# it falls back to running the export first.
+# `test-export-drift-python` — installs the exported wheel in clean
+# containers (no drift-python source mounted) and runs a tiny smoke test
+# that imports drift and verifies the public API (`install` / `uninstall`
+# symbols) is reachable. Iterates over $(PY_TEST_IMAGES) so the LOWEST and
+# HIGHEST supported runtimes are gated in one command — failures on any
+# image are collected and reported together. If the wheel is missing, it
+# falls back to running the export first.
 test-export-drift-python: ## Install the exported wheel into a fresh container and smoke-test it
 	@VERSION=$$(awk -F'"' '/^version *= */ {print $$2; exit}' $(DRIFT_DIR)/pyproject.toml); \
 	OUT="$(DRIFT_OUT)/$$VERSION"; \
@@ -204,7 +212,7 @@ test-export-drift-python: ## Install the exported wheel into a fresh container a
 	printf "\n$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
 	printf "$(BLUE)test-export-drift-python$(RESET) — smoke-test $$WHEEL_NAME\n"; \
 	printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "\n$(CYAN)[1/3]$(RESET) writing smoke-test script\n"; \
+	printf "\n$(CYAN)[1/2]$(RESET) writing smoke-test script\n"; \
 	{ \
 	  echo 'import drift, inspect, sys'; \
 	  echo "assert callable(drift.install), 'drift.install missing'"; \
@@ -216,22 +224,38 @@ test-export-drift-python: ## Install the exported wheel into a fresh container a
 	  echo "print('  python          :', sys.version.split()[0])"; \
 	} > "$$OUT/.smoke_test.py"; \
 	printf "  $(GREEN)✓$(RESET) $$OUT/.smoke_test.py\n"; \
-	printf "$(CYAN)[2/3]$(RESET) pip install $$WHEEL_NAME (inside clean $(CYAN)$(PY_IMAGE)$(RESET))\n"; \
-	printf "$(CYAN)[3/3]$(RESET) python /wheels/.smoke_test.py\n\n"; \
-	docker run --rm \
-	  -u $$(id -u):$$(id -g) \
-	  -v "$$PWD/$$OUT":/wheels:ro \
-	  -e HOME=/tmp \
-	  -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-	  -e PIP_ROOT_USER_ACTION=ignore \
-	  $(PY_IMAGE) \
-	  sh -c "set -e; \
-	    pip install --quiet --no-cache-dir /wheels/$$WHEEL_NAME && \
-	    python /wheels/.smoke_test.py" \
-	  || { rm -f "$$OUT/.smoke_test.py"; printf "\n$(RED)✗$(RESET) smoke test failed\n"; exit 1; }; \
+	IMAGES="$(PY_TEST_IMAGES)"; \
+	TOTAL=$$(printf '%s\n' $$IMAGES | wc -l | tr -d ' '); \
+	printf "$(CYAN)[2/2]$(RESET) smoke-testing on $$TOTAL image(s): $(CYAN)$$IMAGES$(RESET)\n"; \
+	IDX=0; FAILED=""; \
+	for IMG in $$IMAGES; do \
+	  IDX=$$((IDX+1)); \
+	  printf "\n$(BLUE)── [$$IDX/$$TOTAL]$(RESET) $(CYAN)$$IMG$(RESET)\n"; \
+	  if docker run --rm \
+	    -u $$(id -u):$$(id -g) \
+	    -v "$$PWD/$$OUT":/wheels:ro \
+	    -e HOME=/tmp \
+	    -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+	    -e PIP_ROOT_USER_ACTION=ignore \
+	    $$IMG \
+	    sh -c "set -e; \
+	      pip install --quiet --no-cache-dir /wheels/$$WHEEL_NAME && \
+	      python /wheels/.smoke_test.py"; then \
+	    printf "  $(GREEN)✓$(RESET) $$IMG\n"; \
+	  else \
+	    printf "  $(RED)✗$(RESET) $$IMG\n"; \
+	    FAILED="$$FAILED $$IMG"; \
+	  fi; \
+	done; \
 	rm -f "$$OUT/.smoke_test.py"; \
+	if [ -n "$$FAILED" ]; then \
+	  printf "\n$(RED)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
+	  printf "$(RED)✗ smoke test failed on:$$FAILED$(RESET)\n"; \
+	  printf "$(RED)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
+	  exit 1; \
+	fi; \
 	printf "\n$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(GREEN)✓ wheel installs cleanly and imports$(RESET)\n"; \
+	printf "$(GREEN)✓ wheel installs cleanly and imports on all $$TOTAL image(s)$(RESET)\n"; \
 	printf "$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"
 
 # Pretty-print a README.md to stdout. Detects glow → mdcat → bat → awk fallback.

@@ -3,8 +3,10 @@
 # Build context must be the repo root so both `drift-python/dist/` (the
 # prebuilt wheel) and `test-python-web-server/` are visible. See dev/Tiltfile.
 #
-# The drift wheel is produced by `make export-drift-python` (runs in a
-# python:3.11-slim sidecar container) and mirrored to drift-python/dist/.
+# The drift wheel is produced by `make export-drift-python` (runs in the
+# `$(PY_BUILD_IMAGE)` sidecar container, default `python:3.11-slim`) and
+# mirrored to drift-python/dist/. The wheel is `py3-none-any`, so it installs
+# on any Python ≥ the package's `requires-python` regardless of build image.
 # This image does NOT build the wheel itself — it consumes the prebuilt one.
 # Run `make export-drift-python` before building this image standalone; under
 # Tilt, the `drift-python-wheel` local_resource takes care of it.
