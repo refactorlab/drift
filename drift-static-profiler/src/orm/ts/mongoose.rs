@@ -11,6 +11,7 @@
 
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{CallChain, ChainRoot, PyOrmContext};
+use crate::orm::shape::{matches_by_shape, ComboRule, RootPredicate, ShapeSpec};
 use crate::orm::{Framework, MatchHit, OrmRule};
 
 fn hit(chain: &CallChain, note: &str) -> MatchHit {
@@ -109,6 +110,41 @@ fn matches_mng_raw_004(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
     out
 }
 
+/// Shape-based fallback for Mongoose. Distinctive method spellings
+/// (`findByIdAndUpdate`, `findOneAndReplace`) and the `Schema` factory
+/// are unique to Mongoose. The combo `<Model>.findById(...)` /
+/// `<Model>.find(...).populate(...)` is the canonical Mongoose pattern.
+/// We require `.populate(...)` in the continuation because plain
+/// `Model.find(...)` overlaps with Sequelize.
+pub const MONGOOSE_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "findByIdAndUpdate",
+        "findByIdAndRemove",
+        "findByIdAndDelete",
+        "findOneAndUpdate",
+        "findOneAndReplace",
+        "findOneAndDelete",
+        "markModified",
+    ],
+    combos: &[ComboRule {
+        first_method: "find",
+        root: RootPredicate::FirstCharUppercase,
+        continuation_any: &["populate", "lean", "select", "exec"],
+    }],
+};
+
+/// Public detection helper used by `orm::mod`'s TS dispatcher. Matches
+/// when an explicit `mongoose` import is present OR when the file's
+/// chains exhibit a Mongoose shape (factory-wrapped client).
+pub fn matches_mongoose(ctx: &PyOrmContext<'_>) -> bool {
+    let imported = ctx
+        .imports
+        .modules
+        .keys()
+        .any(|m| m == "mongoose" || m.starts_with("mongoose/"));
+    imported || matches_by_shape(&ctx.chains, &MONGOOSE_SHAPE)
+}
+
 pub const MONGOOSE_RULES: &[OrmRule] = &[
     OrmRule {
         id: "MNG-POP-001",
@@ -188,9 +224,49 @@ mod tests {
     }
 
     #[test]
+    fn mng_n1_002_safe_outside_loop() {
+        let src = "const u = await User.findById(id);\n";
+        let hits = run_rule("MNG-N1-002", src);
+        assert!(hits.is_empty(), "MNG-N1-002 must NOT fire outside a loop");
+    }
+
+    #[test]
+    fn mng_n1_002_safe_with_in_batch() {
+        // `find({ _id: { $in: ids } })` is the canonical fix for N+1.
+        let src = "const us = await User.find({ _id: { $in: ids } });\n";
+        let hits = run_rule("MNG-N1-002", src);
+        assert!(hits.is_empty(), "MNG-N1-002 must NOT fire on $in batch query");
+    }
+
+    #[test]
     fn mng_raw_004_fires_on_where_interp() {
         let src = "User.find({ $where: `this.name === '${name}'` });\n";
         let hits = run_rule("MNG-RAW-004", src);
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn shape_anchor_find_by_id_and_update_fires_without_import() {
+        // No `import mongoose` — only the distinctive method name.
+        let src = "const u = await User.findByIdAndUpdate(id, { name });\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &MONGOOSE_SHAPE));
+        assert!(matches_mongoose(&c));
+    }
+
+    #[test]
+    fn shape_combo_model_find_populate_fires() {
+        let src = "const u = await User.find({ active: true }).populate('posts');\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &MONGOOSE_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_plain_array_find_does_not_fire() {
+        // `xs.find(p)` on a lowercase root with no Mongoose-style
+        // continuation must not trigger.
+        let src = "const x = items.find(i => i.id === 1);\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &MONGOOSE_SHAPE));
     }
 }

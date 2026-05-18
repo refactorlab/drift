@@ -43,22 +43,43 @@ fn matches_sa_exec_009(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
 }
 
 // ─── SA-N1-001: iteration over session.scalars(...).all() + .<rel> ──────
+//
+// Two-tier detection mirrors Django's DJ-N1-001:
+//
+// Primary (LoopScope path): uses the shared `n_plus_one::detect` pipeline —
+//   prefetch-tree aware, model-graph aware, `.values()` short-circuit.
+//   Fires only when the loop variable can be traced to a `select(...)` binding
+//   whose `options(joinedload/selectinload/...)` were recorded at bind time.
+//
+// Fallback (heuristic): preserves the prior broad check for patterns where
+//   the SA binding chain cannot be traced (e.g. `for u in session.scalars(
+//   select(User)).all():` with no stored stmt variable).  When the model
+//   graph is available it filters out scalar field access so only relation
+//   traversals fire.
 
 fn matches_sa_n1_001(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
-    let mut out = Vec::new();
-    for chain in &ctx.chains {
+    // Primary: LoopScope-based, prefetch-aware. `handled` is the byte-range
+    // set of chains whose verdict (Safe OR Unsafe) the analyzer already
+    // owns — the heuristic must not second-guess them.
+    let (mut out, handled) =
+        crate::orm::n_plus_one::detect_with_handled(ctx, "SA-N1-001");
+
+    // Fallback heuristic for SA chains not resolvable via LoopScope.
+    'chains: for chain in &ctx.chains {
+        if handled.contains(&(chain.byte_range.start, chain.byte_range.end)) {
+            continue;
+        }
         if !chain.in_loop {
             continue;
         }
         let methods: Vec<&str> = chain.steps.iter().map(|s| s.method.as_str()).collect();
+        // Skip chains that already express eager loading — the user solved it.
         if methods.iter().any(|m| {
-            *m == "joinedload" || *m == "selectinload" || *m == "raiseload"
+            matches!(*m, "joinedload" | "selectinload" | "raiseload" | "contains_eager")
         }) {
             continue;
         }
-        // Skip chains that look like writes / session mutations — those
-        // are caught by SA-SESS-007 and SA-PERF-005. We only want
-        // *attribute-access* chains on a loop-var row (canonical N+1).
+        // Skip write/session operations; SA-SESS-007 and SA-PERF-005 own those.
         let is_write = matches!(
             methods.last().copied().unwrap_or(""),
             "add" | "delete" | "commit" | "flush" | "execute" | "bulk_save_objects"
@@ -67,30 +88,41 @@ fn matches_sa_n1_001(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
         if is_write {
             continue;
         }
-        // Require root to be a loop-var-shaped identifier (lowercase
-        // leading char and resolvable to a loop binding).
+        // Root must be a lowercase identifier — loop-var heuristic.
         let root_text = match &chain.root {
-            super::super::context::ChainRoot::Binding(t)
-            | super::super::context::ChainRoot::LoopVar(t)
-            | super::super::context::ChainRoot::Identifier(t) => t.clone(),
+            ChainRoot::Binding(t) | ChainRoot::LoopVar(t) | ChainRoot::Identifier(t) => t.clone(),
             _ => continue,
         };
-        if root_text
-            .chars()
-            .next()
-            .map(|c| !c.is_lowercase())
-            .unwrap_or(true)
-        {
+        if root_text.chars().next().map(|c| !c.is_lowercase()).unwrap_or(true) {
             continue;
         }
-        // Must have at least one attribute step (e.g. `.posts.count()`)
-        // beyond the trivial root-only chain.
+        // Need at least one attribute step beyond the root.
         if methods.len() < 2 {
             continue;
+        }
+        // Model-graph filter: if a graph is loaded, only fire when the
+        // first accessed field is a relation (not a scalar like `.name`).
+        if let Some(g) = ctx.model_graph {
+            if !g.is_empty() {
+                // Infer model name from loop var by capitalizing the first char.
+                // `user` → `User`, `order` → `Order` — covers the common case.
+                let model = capitalize_first(&root_text);
+                if !g.is_relation_field(&model, &methods[0]) {
+                    continue 'chains;
+                }
+            }
         }
         out.push(hit(chain, "SA-N1-001"));
     }
     out
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut it = s.chars();
+    match it.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + it.as_str(),
+    }
 }
 
 // ─── SA-N1-002: joinedload on *-to-many ────────────────────────────────
@@ -697,5 +729,55 @@ mod tests {
             !crate::orm::shape::matches_by_shape(&c.chains, &SA_SHAPE),
             "pandas-style filter() chain must not false-trigger SA"
         );
+    }
+
+    // ─── SA-N1-001 LoopScope + PrefetchTree tests ───────────────────────
+
+    #[test]
+    fn sa_n1_001_fires_on_unprefetched_relation_in_loop() {
+        // Classic SA N+1: loop over scalars(select(User)).all() and access .posts.
+        // No options(joinedload) → must fire.
+        let src = "stmt = select(User)\nusers = session.scalars(stmt).all()\nfor user in users:\n    user.posts.count()\n";
+        let hits = run_rule("SA-N1-001", src);
+        assert!(!hits.is_empty(), "SA-N1-001 must fire for unprefetched .posts in loop");
+    }
+
+    #[test]
+    fn sa_n1_001_safe_with_joinedload_via_options() {
+        // stmt = select(User).options(joinedload(User.posts)) — posts is prefetched.
+        // LoopScope resolves; PrefetchTree shows 'posts' covered → Safe.
+        let src = "stmt = select(User).options(joinedload(User.posts))\nusers = session.scalars(stmt).all()\nfor user in users:\n    user.posts.count()\n";
+        let hits = run_rule("SA-N1-001", src);
+        assert!(hits.is_empty(), "SA-N1-001 must NOT fire when posts is eagerly loaded via joinedload");
+    }
+
+    #[test]
+    fn sa_n1_001_safe_with_selectinload_via_options() {
+        let src = "stmt = select(User).options(selectinload(User.posts))\nusers = session.scalars(stmt).all()\nfor user in users:\n    user.posts.count()\n";
+        let hits = run_rule("SA-N1-001", src);
+        assert!(hits.is_empty(), "SA-N1-001 must NOT fire when posts is loaded via selectinload");
+    }
+
+    #[test]
+    fn sa_n1_001_fires_on_different_relation_than_prefetched() {
+        // posts is prefetched, but loop accesses .orders (not prefetched).
+        let src = "stmt = select(User).options(joinedload(User.posts))\nusers = session.scalars(stmt).all()\nfor user in users:\n    user.orders.count()\n";
+        let hits = run_rule("SA-N1-001", src);
+        assert!(!hits.is_empty(), "SA-N1-001 must fire when .orders is not prefetched");
+    }
+
+    #[test]
+    fn sa_n1_001_direct_loop_over_stmt_fires() {
+        // Pattern D: `for user in stmt:` where stmt has no eager loads.
+        let src = "stmt = select(User)\nfor user in stmt:\n    user.posts.count()\n";
+        let hits = run_rule("SA-N1-001", src);
+        assert!(!hits.is_empty(), "SA-N1-001 must fire on direct iteration of plain select(User)");
+    }
+
+    #[test]
+    fn sa_n1_001_direct_loop_over_stmt_safe_with_joinedload() {
+        let src = "stmt = select(User).options(joinedload(User.posts))\nfor user in stmt:\n    user.posts.count()\n";
+        let hits = run_rule("SA-N1-001", src);
+        assert!(hits.is_empty(), "SA-N1-001 must not fire when direct-iterating a joinedload'd stmt");
     }
 }

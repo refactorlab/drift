@@ -10,3 +10,4 @@ action/node_modules/
 # belong on GitHub Releases, not in git.
 /dist/
 drift-static-profiler/research/code-production-repositories
+drift-static-profiler/research/django-check

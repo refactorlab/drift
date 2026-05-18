@@ -53,7 +53,7 @@ pub enum BindingKind {
     DjangoQuerySet(QuerySetFacts),
     DjangoManager { model: Option<String> },
     DjangoModelInst(ModelInstFacts),
-    SaSelect { entity: Option<String>, api: SaApiVersion },
+    SaSelect { entity: Option<String>, api: SaApiVersion, facts: QuerySetFacts },
     SaSession,
     AlembicOp,
     /// A TypeScript/JavaScript ORM client binding (Prisma model, Drizzle
@@ -83,15 +83,20 @@ pub enum TsClientKind {
 }
 
 /// Facts about a Django queryset accumulated along its call chain.
-/// `prefetched`/`select_related`/`only_fields` are what the rules check
-/// to decide whether a later `.related` access is loaded or N+1.
+///
+/// `prefetched` / `select_related` are trie-shaped so a nested path like
+/// `'orders__items__sku'` is preserved verbatim and consulted by the N+1
+/// analyzer one segment at a time. `is_values_query` short-circuits all
+/// safety checks because `.values()` / `.values_list()` reduces rows to
+/// dicts/tuples and cannot trigger relation lazy-loads.
 #[derive(Debug, Clone, Default)]
 pub struct QuerySetFacts {
     pub model: Option<String>,
-    pub prefetched: Vec<String>,
-    pub select_related: Vec<String>,
+    pub prefetched: crate::orm::n_plus_one::prefetch_tree::PrefetchTree,
+    pub select_related: crate::orm::n_plus_one::prefetch_tree::PrefetchTree,
     pub only_fields: Vec<String>,
     pub sliced: bool,
+    pub is_values_query: bool,
 }
 
 /// A `qs.first()` / loop-var-of-qs instance. `source_queryset` is the

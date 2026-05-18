@@ -9,6 +9,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{CallChain, ChainRoot, PyOrmContext};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ComboRule, RootPredicate, ShapeSpec};
 use crate::orm::sql_ir::{
     OrmKind, PredictedSql, PredictedStatement, Projection, SqlDialect, SqlFidelity, SqlOp,
     TableRef,
@@ -189,6 +190,29 @@ pub const SEQUELIZE_RULES: &[OrmRule] = &[
     },
 ];
 
+/// Shape-based fallback for Sequelize. The distinctive Sequelize
+/// method spellings are `findAndCountAll`, `findOrCreate`, `bulkCreate`,
+/// `findByPk` — none collide with the other ORMs. The combo
+/// `<UpperCamelModel>.findAll(...)` matches the canonical Sequelize
+/// manager pattern; `<Model>.findOne` overlaps with Mongoose but
+/// Mongoose's import detection catches that separately first.
+pub(crate) const SEQUELIZE_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "findAndCountAll",
+        "findOrCreate",
+        "findCreateFind",
+        "bulkCreate",
+        "findByPk",
+        "increment",
+        "decrement",
+    ],
+    combos: &[ComboRule {
+        first_method: "findAll",
+        root: RootPredicate::FirstCharUppercase,
+        continuation_any: &[],
+    }],
+};
+
 pub struct SequelizeDialect;
 
 impl OrmDialect for SequelizeDialect {
@@ -207,6 +231,7 @@ impl OrmDialect for SequelizeDialect {
                 .values()
                 .flatten()
                 .any(|v| v == "Sequelize" || v == "Model" || v == "DataTypes")
+            || matches_by_shape(&ctx.chains, &SEQUELIZE_SHAPE)
     }
 
     fn predict_all(&self, ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -277,6 +302,21 @@ mod tests {
     }
 
     #[test]
+    fn seq_n1_001_safe_outside_loop() {
+        let src = "const u = await User.findByPk(1);\n";
+        let hits = run_rule("SEQ-N1-001", src);
+        assert!(hits.is_empty(), "SEQ-N1-001 must NOT fire outside a loop");
+    }
+
+    #[test]
+    fn seq_n1_001_safe_with_findall_batch() {
+        // `findAll({ where: { id: ids } })` is the canonical fix for N+1.
+        let src = "const us = await User.findAll({ where: { id: ids } });\n";
+        let hits = run_rule("SEQ-N1-001", src);
+        assert!(hits.is_empty(), "SEQ-N1-001 must NOT fire on batched findAll");
+    }
+
+    #[test]
     fn seq_raw_002_fires_on_template_interp() {
         let src = "sequelize.query(`SELECT * FROM users WHERE name = '${name}'`);\n";
         let hits = run_rule("SEQ-RAW-002", src);
@@ -288,5 +328,27 @@ mod tests {
         let src = "sequelize.sync({ force: true });\n";
         let hits = run_rule("SEQ-SYNC-004", src);
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn shape_anchor_find_by_pk_fires_without_import() {
+        let src = "const u = await User.findByPk(1);\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &SEQUELIZE_SHAPE));
+    }
+
+    #[test]
+    fn shape_combo_model_find_all_fires() {
+        let src = "const users = await User.findAll({ where: { active: true } });\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &SEQUELIZE_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_lowercase_find_all_does_not_fire() {
+        // Lowercase root means it's a binding, not a Sequelize model class.
+        let src = "const xs = users.findAll();\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &SEQUELIZE_SHAPE));
     }
 }

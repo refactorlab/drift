@@ -6,6 +6,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{CallChain, ChainRoot, PyOrmContext};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ComboRule, RootPredicate, ShapeSpec};
 use crate::orm::sql_ir::{OrmKind, PredictedSql};
 use crate::orm::{Framework, MatchHit, OrmRule};
 
@@ -131,6 +132,31 @@ pub const SQLX_RULES: &[OrmRule] = &[
     },
 ];
 
+/// Shape-based fallback for sqlx. The compile-time macros
+/// (`sqlx::query!`, `sqlx::query_as!`) typically appear as bare
+/// identifier roots in chains. The fetch_*/execute methods are sqlx
+/// conventions — `fetch_optional`, `fetch_one`, `fetch_all` are not
+/// in std nor in popular Rust DB crates outside sqlx/sea-orm. The
+/// combo gates on `pool` / `conn` / `executor` style roots that
+/// indicate a sqlx executor handle.
+pub(crate) const SQLX_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "fetch_optional",
+        "fetch_one",
+        "fetch_all",
+        "execute_many",
+        "query_as",
+        "query_scalar",
+        "query_with",
+        "query_as_with",
+    ],
+    combos: &[ComboRule {
+        first_method: "execute",
+        root: RootPredicate::ContainsIgnoreCase("pool"),
+        continuation_any: &[],
+    }],
+};
+
 pub struct SqlxDialect;
 
 impl OrmDialect for SqlxDialect {
@@ -143,6 +169,7 @@ impl OrmDialect for SqlxDialect {
             .modules
             .keys()
             .any(|m| m.starts_with("sqlx") || m.contains("::sqlx"))
+            || matches_by_shape(&ctx.chains, &SQLX_SHAPE)
     }
 
     fn predict_all(&self, _ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -186,5 +213,70 @@ mod tests {
         let src = "fn f(pool: &Pool, ids: Vec<i64>) {\nfor id in ids {\n  let _ = sqlx::query!(\"SELECT * FROM u WHERE id = $1\", id);\n}\n}\n";
         let hits = run_rule("SQLX-N1-002", src);
         assert!(!hits.is_empty(), "sqlx::query! macro in for-loop must fire");
+    }
+
+    #[test]
+    fn sqlx_n1_002_safe_outside_loop() {
+        // Single sqlx::query at top level — not N+1.
+        let src = "fn f(pool: &Pool, id: i64) { let _ = sqlx::query!(\"SELECT * FROM u WHERE id = $1\", id); }\n";
+        let hits = run_rule("SQLX-N1-002", src);
+        assert!(hits.is_empty(), "SQLX-N1-002 must NOT fire outside a loop");
+    }
+
+    #[test]
+    fn sqlx_n1_002_safe_with_any_batch() {
+        // `WHERE id = ANY($1)` is the canonical batched fix.
+        let src = "fn f(pool: &Pool, ids: Vec<i64>) { let _ = sqlx::query!(\"SELECT * FROM u WHERE id = ANY($1)\", &ids); }\n";
+        let hits = run_rule("SQLX-N1-002", src);
+        assert!(hits.is_empty(), "SQLX-N1-002 must NOT fire on ANY($1) batch query");
+    }
+
+    #[test]
+    fn shape_anchor_fetch_one_fires_without_import() {
+        // No `use sqlx` — only the distinctive fetch_one method.
+        let src = "async fn f(q: Query<'_>) { let _ = q.fetch_one(&pool).await; }\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &SQLX_SHAPE));
+    }
+
+    #[test]
+    fn shape_combo_pool_execute_fires() {
+        let src = "async fn f(pool: &Pool) { let _ = pool.execute(\"SELECT 1\").await; }\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &SQLX_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_unrelated_fetch_does_not_fire() {
+        // `client.fetch(url)` is reqwest-style; no sqlx-specific spelling.
+        let src = "async fn f() { let _ = client.fetch(\"http://x\").await; }\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &SQLX_SHAPE));
+    }
+
+    // ─── sqlx N+1 — additional coverage ──────────────────────────────────
+
+    #[test]
+    fn sqlx_n1_002_does_not_fire_outside_loop() {
+        // Top-level single query — fine.
+        let src = "fn f(pool: &Pool) { let _ = sqlx::query!(\"SELECT 1\"); }\n";
+        let hits = run_rule("SQLX-N1-002", src);
+        assert!(hits.is_empty(), "SQLX-N1-002 must not fire on a single top-level query");
+    }
+
+    #[test]
+    fn sqlx_n1_002_does_not_fire_on_bulk_in_query() {
+        // The fix for the N+1: use IN ($1) with the slice. Single query → no fire.
+        let src = "fn f(pool: &Pool, ids: Vec<i64>) { let _ = sqlx::query!(\"SELECT * FROM u WHERE id = ANY($1)\", &ids); }\n";
+        let hits = run_rule("SQLX-N1-002", src);
+        assert!(hits.is_empty(), "SQLX-N1-002 must not fire when one query handles all ids");
+    }
+
+    #[test]
+    fn sqlx_n1_002_fires_on_query_as_in_loop() {
+        // `sqlx::query_as!` is just as bad as `sqlx::query!` in a loop.
+        let src = "fn f(pool: &Pool, ids: Vec<i64>) {\nfor id in ids {\n  let _ = sqlx::query_as!(User, \"SELECT * FROM u WHERE id = $1\", id);\n}\n}\n";
+        let hits = run_rule("SQLX-N1-002", src);
+        assert!(!hits.is_empty(), "SQLX-N1-002 must fire on sqlx::query_as! in loop");
     }
 }

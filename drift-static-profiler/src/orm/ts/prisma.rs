@@ -9,6 +9,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{BindingKind, CallChain, ChainRoot, PyOrmContext, TsClientKind};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ShapeSpec};
 use crate::orm::sql_ir::{
     LimitSpec, OffsetSpec, OrmKind, PredictedSql, PredictedStatement, Projection, SqlDialect,
     SqlFidelity, SqlOp, TableRef, WhereExpr,
@@ -242,6 +243,44 @@ pub const PRISMA_RULES: &[OrmRule] = &[
 
 // ─── PrismaDialect — predict_all ────────────────────────────────────────
 
+/// Shape-based fallback for Prisma. The Prisma client is usually
+/// imported directly, but factory wrappers (`getPrisma()`) and global
+/// singletons exported from a `db.ts` module hide the import in the
+/// leaf file.
+///
+/// Two evidence classes:
+///   1. **Dollar-prefixed methods** (`$queryRaw`, `$executeRaw`, …) —
+///      uniquely Prisma; one occurrence proves usage.
+///   2. **Prisma-exclusive verb spellings** (`findMany`, `findUnique`,
+///      `findUniqueOrThrow`, `findFirstOrThrow`, `createMany`,
+///      `groupBy`, `upsert`) — TypeORM/Sequelize/Mongoose use different
+///      names (`find`, `findOne`, `findOneOrFail`, `findAll`, …).
+///
+/// We deliberately do NOT use a `ModuleAttrEquals` combo: the TS
+/// chain reconstructor records `prisma.user.findMany()` as
+/// `ChainRoot::Identifier("prisma")` with methods `["user",
+/// "findMany"]`, not as a `ModuleAttr` root. The anchor list is
+/// sufficient because every Prisma chain ends in one of these verbs.
+pub(crate) const PRISMA_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "$queryRaw",
+        "$queryRawUnsafe",
+        "$executeRaw",
+        "$executeRawUnsafe",
+        "$transaction",
+        "$connect",
+        "$disconnect",
+        "findUniqueOrThrow",
+        "findFirstOrThrow",
+        "findUnique",
+        "findMany",
+        "createMany",
+        "upsert",
+        "groupBy",
+    ],
+    combos: &[],
+};
+
 pub struct PrismaDialect;
 
 impl OrmDialect for PrismaDialect {
@@ -264,6 +303,7 @@ impl OrmDialect for PrismaDialect {
                 .values()
                 .flatten()
                 .any(|v| v == "PrismaClient")
+            || matches_by_shape(&ctx.chains, &PRISMA_SHAPE)
     }
 
     fn predict_all(&self, ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -387,6 +427,22 @@ mod tests {
     }
 
     #[test]
+    fn pri_n1_002_fires_inside_for_each() {
+        // Array-method callbacks register as loop bodies in TS.
+        let src = "ids.forEach(async (id) => { await prisma.user.findUnique({ where: { id } }); });\n";
+        let hits = run_rule("PRI-N1-002", src);
+        assert!(!hits.is_empty(), "findUnique inside .forEach must fire N+1");
+    }
+
+    #[test]
+    fn pri_n1_002_does_not_fire_on_find_many_bulk() {
+        // The correct batch form — single round-trip.
+        let src = "await prisma.user.findMany({ where: { id: { in: ids } } });\n";
+        let hits = run_rule("PRI-N1-002", src);
+        assert!(hits.is_empty(), "findMany with `in` is the fix; must not fire");
+    }
+
+    #[test]
     fn pri_inc_001_fires_on_deep_include() {
         let src = "await prisma.user.findMany({ include: { posts: { include: { comments: { include: { author: true } } } } } });\n";
         let hits = run_rule("PRI-INC-001", src);
@@ -398,5 +454,30 @@ mod tests {
         let src = "import { PrismaClient } from '@prisma/client';\nconst prisma = new PrismaClient();\n";
         let (c, _t) = ctx(src);
         assert!(PrismaDialect.matches(&c));
+    }
+
+    #[test]
+    fn shape_anchor_dollar_query_raw_fires_without_import() {
+        // Factory-wrapped client, no `@prisma/client` import in this file.
+        let src = "const rows = await db.$queryRaw(`SELECT 1`);\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &PRISMA_SHAPE));
+        assert!(PrismaDialect.matches(&c));
+    }
+
+    #[test]
+    fn shape_anchor_find_many_fires_without_import() {
+        // `findMany` is a Prisma-exclusive verb spelling — no other ORM uses it.
+        let src = "const users = await db.user.findMany({ where: { active: true } });\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &PRISMA_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_typeorm_find_one_does_not_fire() {
+        // TypeORM-style `find()` / `findOne()` must NOT register as Prisma.
+        let src = "const u = await repo.findOne({ where: { id: 1 } });\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &PRISMA_SHAPE));
     }
 }

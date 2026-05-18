@@ -33,6 +33,10 @@ pub fn build_context<'a>(source: &'a str, tree: &'a Tree) -> PyOrmContext<'a> {
         }
         "class_definition" => handle_class_def(node, source, &mut ctx),
         "for_statement" => handle_for_loop(node, source, &mut ctx),
+        "list_comprehension"
+        | "set_comprehension"
+        | "dictionary_comprehension"
+        | "generator_expression" => handle_comprehension(node, source, &mut ctx),
         "decorated_definition" => handle_decorator(node, source, &mut ctx),
         "function_definition" => handle_function(node, source, &mut ctx),
         "call" => {
@@ -133,30 +137,111 @@ fn handle_class_def(node: Node, source: &str, ctx: &mut PyOrmContext<'_>) {
 }
 
 fn handle_for_loop(node: Node, source: &str, ctx: &mut PyOrmContext<'_>) {
-    let var = node
-        .child_by_field_name("left")
-        .and_then(|l| l.utf8_text(source.as_bytes()).ok())
-        .unwrap_or("")
-        .to_string();
-    let iter = node
-        .child_by_field_name("right")
-        .and_then(|r| r.utf8_text(source.as_bytes()).ok())
-        .unwrap_or("")
-        .to_string();
+    let var = field_text(node, "left", source);
+    let iter = field_text(node, "right", source);
     let Some(body) = node.child_by_field_name("body") else {
         return;
     };
+    // Use the parent-aware variant: tree-sitter Python sometimes hands us
+    // a `block` whose byte_range collapses to a point on certain
+    // multi-statement inputs. The variant falls back to the for_statement's
+    // end so `in_loop` still covers chains in the body.
+    push_iteration_node(ctx, var, iter, node, body, IterKind::ForLoop);
+}
+
+/// Treat `[expr for x in xs ...]`, `{...}`, `{k: v for ...}` and
+/// `(expr for ...)` as loops so the N+1 analyzer sees attribute access
+/// inside them. Tree-sitter exposes the loop var / iterable on a
+/// `for_in_clause` child of the comprehension node.
+fn handle_comprehension(node: Node, source: &str, ctx: &mut PyOrmContext<'_>) {
+    let Some(clause) = find_named_child(node, "for_in_clause") else {
+        return;
+    };
+    let var = field_text(clause, "left", source);
+    let iter = field_text(clause, "right", source);
+    // No explicit "body" — the whole comprehension node IS the body.
+    // The body range gates `in_loop` for chains inside the expression.
+    push_iteration(ctx, var, iter, node, IterKind::Comprehension);
+}
+
+fn push_iteration(
+    ctx: &mut PyOrmContext<'_>,
+    var: String,
+    iter: String,
+    body: Node,
+    kind: IterKind,
+) {
+    if var.is_empty() {
+        return;
+    }
+    let body_range = body.byte_range();
+    let line_range = body.start_position().row + 1..body.end_position().row + 1;
     ctx.for_loops.push(LoopRange {
-        iterable_var: iter.clone(),
+        iterable_var: iter,
         loop_var: var.clone(),
-        body_range: body.byte_range(),
-        line_range: body.start_position().row + 1..body.end_position().row + 1,
+        body_range: body_range.clone(),
+        line_range,
     });
     ctx.iteration_markers.push(IterationMarker {
-        kind: IterKind::ForLoop,
+        kind,
         loop_var: var,
-        body_range: body.byte_range(),
+        body_range,
     });
+}
+
+/// Parent-aware variant of [`push_iteration`] for `for_statement` nodes.
+///
+/// Tree-sitter's `block` node occasionally reports a collapsed byte_range
+/// (start == end) for some inputs. When that happens we fall back to the
+/// for-statement's `end_byte()` so the loop body still covers chains in
+/// the indented body — `in_loop` checks depend on this range being non-empty.
+fn push_iteration_node(
+    ctx: &mut PyOrmContext<'_>,
+    var: String,
+    iter: String,
+    stmt: Node,
+    body: Node,
+    kind: IterKind,
+) {
+    if var.is_empty() {
+        return;
+    }
+    let body_byte = body.byte_range();
+    let effective = if body_byte.start == body_byte.end {
+        body_byte.start..stmt.end_byte()
+    } else {
+        body_byte
+    };
+    let line_range = body.start_position().row + 1..stmt.end_position().row + 1;
+    ctx.for_loops.push(LoopRange {
+        iterable_var: iter,
+        loop_var: var.clone(),
+        body_range: effective.clone(),
+        line_range,
+    });
+    ctx.iteration_markers.push(IterationMarker {
+        kind,
+        loop_var: var,
+        body_range: effective,
+    });
+}
+
+fn field_text(node: Node, field: &str, source: &str) -> String {
+    node.child_by_field_name(field)
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn find_named_child<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+    let count = node.named_child_count();
+    for i in 0..count {
+        let child = node.named_child(i)?;
+        if child.kind() == kind {
+            return Some(child);
+        }
+    }
+    None
 }
 
 fn handle_decorator(node: Node, source: &str, ctx: &mut PyOrmContext<'_>) {
@@ -395,22 +480,31 @@ fn infer_bindings(source: &str, ctx: &mut PyOrmContext<'_>) {
         let pre = &source[stmt_start..chain.byte_range.start];
         if let Some(eq) = pre.rfind('=') {
             let lhs = pre[..eq].trim();
-            if lhs.chars().all(|c| c.is_alphanumeric() || c == '_') && !lhs.is_empty() {
-                // Always record the binding — kind defaults to Unknown
-                // for chains we don't specifically classify (Django /
-                // SQLAlchemy). Rules that just need "is this variable
-                // the result of <this chain>?" use binding byte_range
-                // equality regardless of kind.
-                let kind = classify_chain(chain).unwrap_or(BindingKind::Unknown);
-                ctx.bindings
-                    .entry(lhs.to_string())
-                    .or_insert_with(Vec::new)
-                    .push(Binding {
-                        kind,
-                        byte_range: chain.byte_range.clone(),
-                        scope: ScopeId(0),
-                    });
+            if !lhs.chars().all(|c| c.is_alphanumeric() || c == '_') || lhs.is_empty() {
+                continue;
             }
+            // Reject sub-expressions: there must be only whitespace between
+            // the `=` and the chain start. Otherwise this chain is an inner
+            // call (e.g. `joinedload(...)` inside `options(...)`) — recording
+            // it would shadow the real outer assignment for the same `lhs`.
+            let after_eq = &pre[eq + 1..];
+            if !after_eq.chars().all(|c| c.is_whitespace()) {
+                continue;
+            }
+            // Always record the binding — kind defaults to Unknown
+            // for chains we don't specifically classify (Django /
+            // SQLAlchemy). Rules that just need "is this variable
+            // the result of <this chain>?" use binding byte_range
+            // equality regardless of kind.
+            let kind = classify_chain(chain).unwrap_or(BindingKind::Unknown);
+            ctx.bindings
+                .entry(lhs.to_string())
+                .or_insert_with(Vec::new)
+                .push(Binding {
+                    kind,
+                    byte_range: chain.byte_range.clone(),
+                    scope: ScopeId(0),
+                });
         }
     }
 }
@@ -451,18 +545,16 @@ fn classify_chain(chain: &CallChain) -> Option<BindingKind> {
         for step in &chain.steps {
             match step.method.as_str() {
                 "select_related" => {
-                    facts.select_related.extend(
-                        step.args_text
-                            .iter()
-                            .map(|a| a.trim_matches(['"', '\'']).to_string()),
-                    );
+                    for raw in &step.args_text {
+                        let path = raw.trim_matches(['"', '\'']);
+                        facts.select_related.insert_dunder_path(path);
+                    }
                 }
                 "prefetch_related" => {
-                    facts.prefetched.extend(
-                        step.args_text
-                            .iter()
-                            .map(|a| a.trim_matches(['"', '\'']).to_string()),
-                    );
+                    for raw in &step.args_text {
+                        let path = raw.trim_matches(['"', '\'']);
+                        facts.prefetched.insert_dunder_path(path);
+                    }
                 }
                 "only" => {
                     facts.only_fields.extend(
@@ -470,6 +562,13 @@ fn classify_chain(chain: &CallChain) -> Option<BindingKind> {
                             .iter()
                             .map(|a| a.trim_matches(['"', '\'']).to_string()),
                     );
+                }
+                "values" | "values_list" => {
+                    // `.values()` / `.values_list()` reduces rows to
+                    // dicts / tuples — no relation can be lazy-loaded
+                    // from such a row, so the queryset is permanently
+                    // safe for the N+1 analyzer.
+                    facts.is_values_query = true;
                 }
                 _ => {}
             }
@@ -486,19 +585,71 @@ fn classify_chain(chain: &CallChain) -> Option<BindingKind> {
     // SQLAlchemy 2.x: `select(Model)` is a bare call with root = Identifier("select").
     if first.method == "select" {
         let entity = first.args_text.first().cloned();
+        let mut facts = QuerySetFacts {
+            model: entity.clone(),
+            ..Default::default()
+        };
+        // Collect eager-load paths from `.options(joinedload(...), selectinload(...), ...)`.
+        for step in &chain.steps {
+            if step.method == "options" {
+                for arg in &step.args_text {
+                    if let Some(path) = extract_sa_eager_field(arg) {
+                        facts.prefetched.insert_dunder_path(&path);
+                    }
+                }
+            }
+        }
         return Some(BindingKind::SaSelect {
             entity,
             api: SaApiVersion::V2,
+            facts,
         });
     }
 
     None
 }
 
+/// Extract the relation path from an SA eager-load call.
+///
+/// `"joinedload(User.posts)"` → `"posts"`
+/// `"selectinload(User.orders.items)"` → `"orders__items"`
+/// `"lazyload(User.comments)"` → `None` (not an eager load)
+fn extract_sa_eager_field(arg: &str) -> Option<String> {
+    let is_eager = arg.starts_with("joinedload(")
+        || arg.starts_with("selectinload(")
+        || arg.starts_with("contains_eager(");
+    if !is_eager {
+        return None;
+    }
+    let inner = arg.split_once('(')?.1.trim_end_matches(')').trim();
+    // inner = "User.posts" or "User.posts.author" — skip the model name (first segment).
+    let dot_idx = inner.find('.')?;
+    let path = &inner[dot_idx + 1..];
+    // Replace '.' with '__' for nested paths so PrefetchTree.insert_dunder_path works.
+    Some(path.replace('.', "__"))
+}
+
 /// After chain/binding inference, walk the for-loop list and bind each
 /// loop variable to an instance of the iterable's row type, scoped to
 /// the loop body byte range.
 fn propagate_loop_bindings(ctx: &mut PyOrmContext<'_>) {
+    // Snapshot all SaSelect bindings up front — used by the embedded /
+    // transitive lookups below. Doing this once avoids quadratic scans
+    // and side-steps the borrow conflict with `ctx.bindings.entry(...)`.
+    let sa_selects: Vec<(String, QuerySetFacts)> = ctx
+        .bindings
+        .iter()
+        .filter_map(|(name, binds)| {
+            binds.iter().rev().find_map(|b| {
+                if let BindingKind::SaSelect { facts, .. } = &b.kind {
+                    Some((name.clone(), facts.clone()))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
     let pairs: Vec<(String, String, std::ops::Range<usize>)> = ctx
         .for_loops
         .iter()
@@ -506,34 +657,147 @@ fn propagate_loop_bindings(ctx: &mut PyOrmContext<'_>) {
         .collect();
     for (loop_var, iter_var, body_range) in pairs {
         let inner = iter_var.trim();
-        // ONLY bind the loop var as a DjangoModelInst when the
-        // iterable is itself a tracked DjangoQuerySet. Without this
-        // gate, `for x in [1,2,3]:` and `for u in some_function():`
-        // would bind their loop vars as Django model instances, and
-        // rules like DJ-PERF-006 would false-positive on `u.save()`
-        // even when no Django is involved.
-        let qs_facts = ctx.binding_at(inner, body_range.start).and_then(|b| {
-            if let BindingKind::DjangoQuerySet(f) = &b.kind {
-                Some(f.clone())
+
+        // ── Django path ──────────────────────────────────────────────────
+        // Only bind when the iterable is a tracked DjangoQuerySet — same
+        // gate as before so `for x in [1,2,3]:` doesn't false-fire.
+        let dj_facts = ctx.binding_at(inner, body_range.start).and_then(|b| {
+            if let BindingKind::DjangoQuerySet(f) = &b.kind { Some(f.clone()) } else { None }
+        });
+        if let Some(f) = dj_facts {
+            push_model_inst_binding(
+                &mut ctx.bindings,
+                &loop_var,
+                body_range,
+                f.model,
+                Some(inner.to_string()),
+            );
+            continue;
+        }
+
+        // ── SQLAlchemy path ──────────────────────────────────────────────
+        // Two sub-patterns:
+        //
+        // (A) `for user in stmt:` — iterable IS the SA select binding.
+        let sa_direct = ctx.binding_at(inner, body_range.start).and_then(|b| {
+            if let BindingKind::SaSelect { facts, .. } = &b.kind {
+                Some((inner.to_string(), facts.clone()))
             } else {
                 None
             }
         });
-        let Some(qs_facts) = qs_facts else {
+        if let Some((sa_name, f)) = sa_direct {
+            push_model_inst_binding(
+                &mut ctx.bindings,
+                &loop_var,
+                body_range,
+                f.model,
+                Some(sa_name),
+            );
             continue;
-        };
-        ctx.bindings
-            .entry(loop_var.clone())
-            .or_insert_with(Vec::new)
-            .push(Binding {
-                kind: BindingKind::DjangoModelInst(ModelInstFacts {
-                    model: qs_facts.model,
-                    source_queryset: Some(inner.to_string()),
-                }),
-                byte_range: body_range,
-                scope: ScopeId(1),
+        }
+
+        // (B) `for user in session.scalars(stmt).all():` — a known SA
+        // select binding name appears as a word inside the iter expression.
+        let sa_embedded = sa_selects
+            .iter()
+            .find(|(name, _)| word_in_text(inner, name))
+            .cloned();
+        if let Some((sa_name, f)) = sa_embedded {
+            push_model_inst_binding(
+                &mut ctx.bindings,
+                &loop_var,
+                body_range,
+                f.model,
+                Some(sa_name),
+            );
+            continue;
+        }
+
+        // (C) Transitive: `users = <expr referencing stmt>; for user in users:`.
+        // The iter_var is itself a binding whose producing chain references
+        // an SA select binding in its args. Walk one hop further.
+        let sa_transitive = ctx
+            .binding_at(inner, body_range.start)
+            .and_then(|b| {
+                let chain = ctx
+                    .chains
+                    .iter()
+                    .find(|c| c.byte_range == b.byte_range)?;
+                for step in &chain.steps {
+                    for arg in &step.args_text {
+                        for (name, facts) in &sa_selects {
+                            if word_in_text(arg, name) {
+                                return Some((name.clone(), facts.clone()));
+                            }
+                        }
+                    }
+                }
+                None
             });
+        if let Some((sa_name, f)) = sa_transitive {
+            push_model_inst_binding(
+                &mut ctx.bindings,
+                &loop_var,
+                body_range,
+                f.model,
+                Some(sa_name),
+            );
+        }
     }
+}
+
+/// Push a `DjangoModelInst` binding for a loop variable.
+///
+/// Shared by the Django and SQLAlchemy propagation paths — the binding
+/// shape is identical; only the source queryset name differs.
+fn push_model_inst_binding(
+    bindings: &mut super::context::BindingMap,
+    loop_var: &str,
+    body_range: std::ops::Range<usize>,
+    model: Option<String>,
+    source_queryset: Option<String>,
+) {
+    bindings
+        .entry(loop_var.to_string())
+        .or_insert_with(Vec::new)
+        .push(Binding {
+            kind: BindingKind::DjangoModelInst(ModelInstFacts { model, source_queryset }),
+            byte_range: body_range,
+            scope: ScopeId(1),
+        });
+}
+
+/// Returns `true` if `word` appears as a complete identifier token inside
+/// `text` (i.e. not adjacent to alphanumeric chars or underscores).
+///
+/// `word_in_text("session.scalars(stmt).all()", "stmt")` → `true`
+/// `word_in_text("session.scalars(stmtx).all()", "stmt")` → `false`
+fn word_in_text(text: &str, word: &str) -> bool {
+    let wlen = word.len();
+    let bytes = text.as_bytes();
+    let wbytes = word.as_bytes();
+    let mut start = 0;
+    while start + wlen <= bytes.len() {
+        if let Some(rel) = bytes[start..].windows(wlen).position(|w| w == wbytes) {
+            let abs = start + rel;
+            let before_ok = abs
+                .checked_sub(1)
+                .map(|i| !bytes[i].is_ascii_alphanumeric() && bytes[i] != b'_')
+                .unwrap_or(true);
+            let after_ok = bytes
+                .get(abs + wlen)
+                .map(|&c| !c.is_ascii_alphanumeric() && c != b'_')
+                .unwrap_or(true);
+            if before_ok && after_ok {
+                return true;
+            }
+            start = abs + 1;
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -583,7 +847,10 @@ mod tests {
         let ctx = build_context(src, &tree);
         let b = ctx.binding("qs").unwrap();
         if let BindingKind::DjangoQuerySet(f) = &b.kind {
-            assert!(f.prefetched.contains(&"posts".to_string()));
+            assert!(crate::orm::n_plus_one::prefetch_tree::contains_top_level(
+                &f.prefetched,
+                "posts"
+            ));
         } else {
             panic!("expected DjangoQuerySet");
         }
