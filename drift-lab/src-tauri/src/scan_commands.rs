@@ -147,9 +147,14 @@ pub async fn list_static_scans() -> Result<Vec<storage::ScanMeta>, String> {
 }
 
 /// Return a previously-saved scan envelope (scan_id + saved_at + Report).
+///
+/// IPC wire format is the compact 1.1 envelope — same shape as the
+/// browser HTTP route, so the desktop UI's `decompressReport` rehydrates
+/// it. Saves 60–80 % of the IPC payload compared to the inline form.
 #[tauri::command]
-pub async fn load_static_scan(scan_id: String) -> Result<storage::StoredScan, String> {
-    storage::load_envelope(&scan_id).map_err(|e| format!("{e:#}"))
+pub async fn load_static_scan(scan_id: String) -> Result<serde_json::Value, String> {
+    let stored = storage::load_envelope(&scan_id).map_err(|e| format!("{e:#}"))?;
+    Ok(storage::to_compact_envelope(&stored))
 }
 
 /// Return a previously-saved scan envelope **without** each entry's
@@ -163,20 +168,26 @@ pub async fn load_static_scan(scan_id: String) -> Result<storage::StoredScan, St
 #[tauri::command]
 pub async fn load_static_scan_summary(
     scan_id: String,
-) -> Result<storage::StoredScan, String> {
-    storage::load_envelope_summary(&scan_id).map_err(|e| format!("{e:#}"))
+) -> Result<serde_json::Value, String> {
+    let stored = storage::load_envelope_summary(&scan_id).map_err(|e| format!("{e:#}"))?;
+    Ok(storage::to_compact_envelope(&stored))
 }
 
 /// Return the full `CallTreeNode` (with `children` populated recursively)
 /// for one entry of a saved scan, indexed by 0-based position in the
 /// envelope's `entries` array. Out-of-range surfaces as a clean error
 /// that the UI can show inline.
+///
+/// Returns the compact `CompactEntryDoc` shape — desktop UI's
+/// `decompressEntry` expands it back to a bare `CallTreeNode`.
 #[tauri::command]
 pub async fn load_scan_entry(
     scan_id: String,
     entry_index: usize,
-) -> Result<drift_static_profiler::tree::CallTreeNode, String> {
-    storage::load_scan_entry(&scan_id, entry_index).map_err(|e| format!("{e:#}"))
+) -> Result<drift_static_profiler::compact::CompactEntryDoc, String> {
+    let node = storage::load_scan_entry(&scan_id, entry_index)
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(storage::to_compact_entry(&node))
 }
 
 /// Delete a saved scan from `~/.drift/scans/`. Best-effort: any per-finding

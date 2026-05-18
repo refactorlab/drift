@@ -1,0 +1,77 @@
+openapi: 3.0.3
+info:
+  title: drift observability-server
+  version: 0.1.0
+  description: |
+    Tails a shared JSONL file written by drift-instrumented services,
+    broadcasts events to /live_logs (SSE), snapshots them at /events.
+    No auth — local/dev use only.
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      summary: Liveness check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /events:
+    get:
+      summary: Recent history of events (in-memory ring buffer)
+      responses:
+        '200':
+          description: JSON array of event objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+
+  /live_logs:
+    get:
+      summary: SSE stream of new events
+      description: |
+        Each `data:` frame contains one JSON event. Open
+        [/live](/live) for a browser-friendly viewer.
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+components:
+  schemas:
+    Event:
+      type: object
+      description: |
+        Two events per call, sharing the same `call` id (process-local int).
+
+        There is no `phase` field. Consumers distinguish events by content:
+          - `params` present  → start
+          - `duration_ms` present → end
+
+        `file` and `line` (caller location) appear on BOTH events when
+        `include.caller` is true (default). `service`, `pod`, and `caller`
+        can be turned off per-deployment via the drift config's `include:`
+        section.
+      properties:
+        call:        { type: integer, description: ID shared by start+end of one call }
+        qualname:    { type: string, example: orders.OrderService.create, description: "Fully-qualified name of the wrapped callable" }
+        service:     { type: string }
+        pod:         { type: string }
+        time:        { type: string, format: date-time }
+        file:        { type: string, description: "Caller's file path (both events when include.caller=true)" }
+        line:        { type: integer, description: "Caller's line number (both events when include.caller=true)" }
+        params:      { type: object, additionalProperties: true, description: "Redacted args — start event only" }
+        status:      { type: string, enum: [ok, error], description: "End event only" }
+        duration_ms: { type: number, description: "End event only" }
+        error:       { type: string, description: "End event only, when status=error" }

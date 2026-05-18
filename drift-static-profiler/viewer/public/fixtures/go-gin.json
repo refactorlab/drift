@@ -1,11 +1,134 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "mode": "static",
   "generator": {
     "tool": "drift-static-profiler",
-    "version": "0.1.0",
-    "source_root": "tests/fixtures/go-gin"
+    "version": "0.6.0",
+    "source_root": "tests/fixtures/go-gin",
+    "captured_at": "2026-05-18T03:03:29Z"
   },
+  "string_table": [
+    "",
+    "CreateOrder",
+    "handlers/orders_handler.go",
+    "service/orders_service.go",
+    "buildOrder",
+    "validate",
+    "Save",
+    "repo/orders_repo.go",
+    "Exec",
+    "db",
+    "receiver name `db` matches db pattern",
+    "INSERT INTO orders (customer_email, total_cents, currency) VALUES ($1, $2, $3)",
+    "Error",
+    "http",
+    "receiver `http` imported from `net/http`",
+    "tests/fixtures/go-gin/service/orders_service.go",
+    "tests/fixtures/go-gin/repo/orders_repo.go",
+    "tests/fixtures/go-gin/handlers/orders_handler.go",
+    "NewOrdersHandler",
+    "NewOrdersRepository",
+    "FindByID",
+    "NewOrdersService"
+  ],
+  "frames": [
+    {
+      "name": 1,
+      "file": 2,
+      "line": 24,
+      "kind": 1
+    },
+    {
+      "name": 1,
+      "file": 3,
+      "line": 18,
+      "kind": 1
+    },
+    {
+      "name": 1,
+      "file": 2,
+      "line": 24,
+      "kind": 0
+    },
+    {
+      "name": 4,
+      "file": 3,
+      "line": 29,
+      "kind": 1
+    },
+    {
+      "name": 1,
+      "file": 3,
+      "line": 18,
+      "kind": 0
+    },
+    {
+      "name": 5,
+      "file": 3,
+      "line": 40,
+      "kind": 1
+    },
+    {
+      "name": 6,
+      "file": 7,
+      "line": 23,
+      "kind": 1
+    },
+    {
+      "name": 1,
+      "file": 15,
+      "line": 18,
+      "kind": 0
+    },
+    {
+      "name": 6,
+      "file": 16,
+      "line": 23,
+      "kind": 0
+    },
+    {
+      "name": 4,
+      "file": 15,
+      "line": 29,
+      "kind": 0
+    },
+    {
+      "name": 5,
+      "file": 15,
+      "line": 40,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 17,
+      "line": 24,
+      "kind": 0
+    },
+    {
+      "name": 18,
+      "file": 17,
+      "line": 14,
+      "kind": 0
+    },
+    {
+      "name": 19,
+      "file": 16,
+      "line": 19,
+      "kind": 0
+    },
+    {
+      "name": 20,
+      "file": 16,
+      "line": 34,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 15,
+      "line": 14,
+      "kind": 0
+    }
+  ],
   "summary": {
     "languages": [
       "go"
@@ -24,47 +147,29 @@
     },
     "top_callers": [
       {
-        "name": "CreateOrder",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 18,
-        "parent_class": null,
+        "frame": 7,
         "count": 1
       },
       {
-        "name": "Save",
-        "file": "tests/fixtures/go-gin/repo/orders_repo.go",
-        "line": 23,
-        "parent_class": null,
+        "frame": 8,
         "count": 1
       },
       {
-        "name": "buildOrder",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 29,
-        "parent_class": null,
+        "frame": 9,
         "count": 1
       },
       {
-        "name": "validate",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 40,
-        "parent_class": null,
+        "frame": 10,
         "count": 1
       }
     ],
     "top_callees": [
       {
-        "name": "CreateOrder",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 18,
-        "parent_class": null,
+        "frame": 7,
         "count": 3
       },
       {
-        "name": "CreateOrder",
-        "file": "tests/fixtures/go-gin/handlers/orders_handler.go",
-        "line": 24,
-        "parent_class": null,
+        "frame": 11,
         "count": 1
       }
     ],
@@ -88,97 +193,58 @@
     ],
     "dead_code": [
       {
-        "name": "NewOrdersHandler",
-        "file": "tests/fixtures/go-gin/handlers/orders_handler.go",
-        "line": 14,
-        "parent_class": null,
+        "frame": 12,
         "count": 0
       },
       {
-        "name": "NewOrdersRepository",
-        "file": "tests/fixtures/go-gin/repo/orders_repo.go",
-        "line": 19,
-        "parent_class": null,
+        "frame": 13,
         "count": 0
       },
       {
-        "name": "FindByID",
-        "file": "tests/fixtures/go-gin/repo/orders_repo.go",
-        "line": 34,
-        "parent_class": null,
+        "frame": 14,
         "count": 0
       },
       {
-        "name": "NewOrdersService",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 14,
-        "parent_class": null,
+        "frame": 15,
         "count": 0
       }
     ],
     "pagerank_top": [
       {
-        "name": "CreateOrder",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 18,
-        "parent_class": null,
-        "score": 0.1662356241980774
+        "frame": 7,
+        "score": 0.16196112087707007
       },
       {
-        "name": "Save",
-        "file": "tests/fixtures/go-gin/repo/orders_repo.go",
-        "line": 23,
-        "parent_class": null,
-        "score": 0.13577645815916128
+        "frame": 8,
+        "score": 0.13343544199885266
       },
       {
-        "name": "buildOrder",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 29,
-        "parent_class": null,
-        "score": 0.13577645815916128
+        "frame": 9,
+        "score": 0.13343544199885266
       },
       {
-        "name": "validate",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 40,
-        "parent_class": null,
-        "score": 0.13577645815916128
+        "frame": 10,
+        "score": 0.13343544199885266
       },
       {
-        "name": "CreateOrder",
-        "file": "tests/fixtures/go-gin/handlers/orders_handler.go",
-        "line": 24,
-        "parent_class": null,
-        "score": 0.08528700026488772
+        "frame": 11,
+        "score": 0.08754651062527435
       },
       {
-        "name": "NewOrdersHandler",
-        "file": "tests/fixtures/go-gin/handlers/orders_handler.go",
-        "line": 14,
-        "parent_class": null,
-        "score": 0.08528700026488772
+        "frame": 12,
+        "score": 0.08754651062527435
       },
       {
-        "name": "FindByID",
-        "file": "tests/fixtures/go-gin/repo/orders_repo.go",
-        "line": 34,
-        "parent_class": null,
-        "score": 0.08528700026488772
+        "frame": 14,
+        "score": 0.08754651062527435
       },
       {
-        "name": "NewOrdersRepository",
-        "file": "tests/fixtures/go-gin/repo/orders_repo.go",
-        "line": 19,
-        "parent_class": null,
-        "score": 0.08528700026488772
+        "frame": 13,
+        "score": 0.08754651062527435
       },
       {
-        "name": "NewOrdersService",
-        "file": "tests/fixtures/go-gin/service/orders_service.go",
-        "line": 14,
-        "parent_class": null,
-        "score": 0.08528700026488772
+        "frame": 15,
+        "score": 0.08754651062527435
       }
     ],
     "recursive_symbols": [],
@@ -195,255 +261,152 @@
     "profiled_language_percent": 100.0,
     "roots_overview": [
       {
-        "node_id": "tests/fixtures/go-gin/handlers/orders_handler.go::::CreateOrder",
-        "name": "CreateOrder",
-        "file": "handlers/orders_handler.go",
-        "line": 24,
-        "kind": "Method",
+        "frame": 0,
         "subtree_size": 5,
         "percent_of_all_roots": 100.0,
         "categories_reached": {
           "db": 2,
           "network": 3
         },
-        "findings_by_severity": {},
         "findings_total": 0,
-        "callers": [],
         "first_callees": [
           {
-            "node_id": "tests/fixtures/go-gin/service/orders_service.go::::CreateOrder",
-            "name": "CreateOrder",
-            "file": "service/orders_service.go",
-            "line": 18,
+            "frame": 4,
             "subtree_size": 4
           }
         ]
       }
-    ]
+    ],
+    "sql_files_scanned": 0,
+    "sql_files_with_findings": 0
   },
   "entries": [
     {
-      "id": "tests/fixtures/go-gin/handlers/orders_handler.go::::CreateOrder",
-      "name": "CreateOrder",
-      "kind": "Method",
-      "file": "handlers/orders_handler.go",
-      "line": 24,
-      "depth": 0,
-      "parent_class": null,
+      "frame": 0,
       "children": [
         {
-          "id": "tests/fixtures/go-gin/service/orders_service.go::::CreateOrder",
-          "name": "CreateOrder",
-          "kind": "Method",
-          "file": "service/orders_service.go",
-          "line": 18,
+          "frame": 1,
           "depth": 1,
-          "parent_class": null,
           "children": [
             {
-              "id": "tests/fixtures/go-gin/service/orders_service.go::::buildOrder",
-              "name": "buildOrder",
-              "kind": "Method",
-              "file": "service/orders_service.go",
-              "line": 29,
+              "frame": 3,
               "depth": 2,
-              "parent_class": null,
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/go-gin/service/orders_service.go::::CreateOrder",
-                  "name": "CreateOrder",
-                  "file": "service/orders_service.go",
-                  "line": 18,
-                  "parent_class": null
-                }
+                4
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": null,
-              "categories_reached": {},
-              "external_calls": [],
               "complexity": 2,
               "loc": 10,
               "nesting_depth": 1,
               "parameter_count": 3,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.13577645815916128,
+              "pagerank": 0.13343544199885266,
               "percent_total": 20.0,
-              "percent_parent": 25.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 25.0
             },
             {
-              "id": "tests/fixtures/go-gin/service/orders_service.go::::validate",
-              "name": "validate",
-              "kind": "Method",
-              "file": "service/orders_service.go",
-              "line": 40,
+              "frame": 5,
               "depth": 2,
-              "parent_class": null,
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/go-gin/service/orders_service.go::::CreateOrder",
-                  "name": "CreateOrder",
-                  "file": "service/orders_service.go",
-                  "line": 18,
-                  "parent_class": null
-                }
+                4
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": null,
-              "categories_reached": {},
-              "external_calls": [],
               "complexity": 3,
               "loc": 9,
               "nesting_depth": 1,
               "parameter_count": 1,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.13577645815916128,
+              "pagerank": 0.13343544199885266,
               "percent_total": 20.0,
-              "percent_parent": 25.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 25.0
             },
             {
-              "id": "tests/fixtures/go-gin/repo/orders_repo.go::::Save",
-              "name": "Save",
-              "kind": "Method",
-              "file": "repo/orders_repo.go",
-              "line": 23,
+              "frame": 6,
               "depth": 2,
-              "parent_class": null,
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/go-gin/service/orders_service.go::::CreateOrder",
-                  "name": "CreateOrder",
-                  "file": "service/orders_service.go",
-                  "line": 18,
-                  "parent_class": null
-                }
+                4
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": "db",
+              "category_self": 1,
               "categories_reached": {
                 "db": 2
               },
               "external_calls": [
                 {
-                  "name": "Exec",
-                  "receiver": "db",
-                  "category": "db",
-                  "tier": "receiver_pattern",
-                  "evidence": "receiver name `db` matches db pattern",
+                  "name": 8,
+                  "receiver": 9,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 10,
                   "line": 24,
-                  "in_loop": false,
-                  "in_await": false
+                  "sql_literal": 11
                 }
               ],
               "complexity": 2,
               "loc": 10,
               "nesting_depth": 1,
               "parameter_count": 1,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.13577645815916128,
+              "pagerank": 0.13343544199885266,
               "percent_total": 20.0,
-              "percent_parent": 25.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 25.0
             }
           ],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/go-gin/handlers/orders_handler.go::::CreateOrder",
-              "name": "CreateOrder",
-              "file": "handlers/orders_handler.go",
-              "line": 24,
-              "parent_class": null
-            }
+            2
           ],
           "callers_count": 1,
           "callees_count": 3,
           "subtree_size": 4,
-          "category_self": null,
           "categories_reached": {
             "db": 2
           },
-          "external_calls": [],
           "complexity": 3,
           "loc": 10,
           "nesting_depth": 1,
           "parameter_count": 3,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.1662356241980774,
+          "pagerank": 0.16196112087707007,
           "percent_total": 80.0,
-          "percent_parent": 80.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 80.0
         }
       ],
-      "truncated_reason": null,
-      "callers": [],
-      "callers_count": 0,
       "callees_count": 1,
       "subtree_size": 5,
-      "category_self": "network",
+      "category_self": 2,
       "categories_reached": {
         "db": 2,
         "network": 3
       },
       "external_calls": [
         {
-          "name": "Error",
-          "receiver": "http",
-          "category": "network",
-          "tier": "imported_module",
-          "evidence": "receiver `http` imported from `net/http`",
-          "line": 27,
-          "in_loop": false,
-          "in_await": false
+          "name": 12,
+          "receiver": 13,
+          "category": 2,
+          "tier": 0,
+          "evidence": 14,
+          "line": 27
         },
         {
-          "name": "Error",
-          "receiver": "http",
-          "category": "network",
-          "tier": "imported_module",
-          "evidence": "receiver `http` imported from `net/http`",
-          "line": 32,
-          "in_loop": false,
-          "in_await": false
+          "name": 12,
+          "receiver": 13,
+          "category": 2,
+          "tier": 0,
+          "evidence": 14,
+          "line": 32
         }
       ],
       "complexity": 3,
       "loc": 14,
       "nesting_depth": 1,
       "parameter_count": 2,
-      "is_async": false,
       "call_site_count": 1,
-      "is_recursive": false,
-      "pagerank": 0.08528700026488772,
+      "pagerank": 0.08754651062527435,
       "percent_total": 100.0,
-      "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false
+      "percent_parent": 100.0
     }
   ]
 }

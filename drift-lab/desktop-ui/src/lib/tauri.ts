@@ -13,6 +13,8 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
+import { decompressReport } from "./decompress";
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return tauriInvoke<T>(cmd, args);
 }
@@ -799,7 +801,11 @@ export async function listStaticScans(): Promise<ScanMeta[]> {
 }
 
 export async function loadStaticScan(scanId: string): Promise<StoredScan> {
-  return invoke<StoredScan>("load_static_scan", { scanId });
+  // The backend now returns a compact-encoded envelope ({string_table,
+  // frames, entries:[{f, …}]}). Decompress so callers continue to see
+  // the denormalized in-memory shape.
+  const env = await invoke<StoredScan>("load_static_scan", { scanId });
+  return rehydrateEnvelope(env);
 }
 
 /** Sliced fetch — returns the same `StoredScan` shape as `loadStaticScan`
@@ -810,17 +816,109 @@ export async function loadStaticScan(scanId: string): Promise<StoredScan> {
 export async function loadStaticScanSummary(
   scanId: string,
 ): Promise<StoredScan> {
-  return invoke<StoredScan>("load_static_scan_summary", { scanId });
+  const env = await invoke<StoredScan>("load_static_scan_summary", { scanId });
+  return rehydrateEnvelope(env);
 }
 
 /** Fetch one entry's full call-tree subtree (with `children` populated
  *  recursively). `entryIndex` is the 0-based position in the envelope's
- *  `entries` array — same index the summary payload carries. */
+ *  `entries` array — same index the summary payload carries.
+ *
+ *  Returns a denormalized `CallTreeNode`-shaped value: the IPC wire form
+ *  is a `CompactEntryDoc` ({string_table, frames, entry}); callers stay
+ *  on the legacy inline shape via `decompressEntry`. */
 export async function loadScanEntry(
   scanId: string,
   entryIndex: number,
 ): Promise<unknown> {
-  return invoke<unknown>("load_scan_entry", { scanId, entryIndex });
+  const raw = await invoke<unknown>("load_scan_entry", { scanId, entryIndex });
+  return decompressEntryDoc(raw);
+}
+
+/** Re-hydrate the `report` field of a [`StoredScan`] envelope returned by
+ *  the backend. Decompress happens here, at the IPC boundary, so callers
+ *  never see the wire shape. */
+function rehydrateEnvelope(env: StoredScan): StoredScan {
+  return { ...env, report: decompressReport(env.report) };
+}
+
+/** Wire shape of a Frame inside the compact 1.1 form. Matches the
+ *  readable field names emitted by `drift_static_profiler::compact::Frame`. */
+interface WireFrame {
+  name: number;
+  file: number;
+  line: number;
+  parent_class?: number;
+  kind: number;
+  /** non-canonical id; omitted when the id is `{file}::{parent_class}::{name}`. */
+  id?: number;
+}
+
+/** Detect compact `CompactEntryDoc` (top-level `string_table` + `frames` +
+ *  `entry`) and rebuild the inline `CallTreeNode`. Per-entry sidecars
+ *  carry no `source_root` so the canonical-id reconstruction falls back
+ *  to the prefix-less `{file}::{parent_class}::{name}` shape — matching
+ *  what the Rust `expand_entry` produces for sidecar-only encodings. */
+function decompressEntryDoc(raw: unknown): unknown {
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    !Array.isArray((raw as Record<string, unknown>).string_table) ||
+    !Array.isArray((raw as Record<string, unknown>).frames) ||
+    !(raw as Record<string, unknown>).entry
+  ) {
+    return raw;
+  }
+  const doc = raw as {
+    string_table: string[];
+    frames: WireFrame[];
+    entry: unknown;
+  };
+  return expandNodeWith(doc.entry, doc.string_table, doc.frames);
+}
+
+/** Recursive expansion mirroring `viewer/src/decompress.ts` — kept inline
+ *  here so the desktop UI bundle doesn't pull in the viewer's decompress
+ *  module (different `Report` typing). */
+function expandNodeWith(
+  raw: unknown,
+  strings: string[],
+  frames: WireFrame[],
+): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const n = raw as Record<string, unknown> & {
+    frame?: number;
+    children?: unknown[];
+  };
+  const frameIx = typeof n.frame === "number" ? n.frame : 0;
+  const fr = frames[frameIx] ?? { name: 0, file: 0, line: 0, parent_class: 0, kind: 0, id: 0 };
+  const KINDS = ["Function", "Method", "Class"] as const;
+  const kind = KINDS[fr.kind] ?? "Function";
+  const sx = (ix: number | undefined): string =>
+    ix === undefined || ix === null ? "" : strings[ix] ?? "";
+  const sxOpt = (ix: number | undefined): string | null => {
+    const v = sx(ix);
+    return v.length > 0 ? v : null;
+  };
+  // Canonical id reconstruction — mirrors `StringRead::frame_id` and
+  // `frameId` on the viewer side. Synthetic nodes (custom id_ix) keep
+  // their stored value verbatim.
+  const id =
+    fr.id && fr.id !== 0
+      ? sx(fr.id)
+      : `${sx(fr.file)}::${sx(fr.parent_class)}::${sx(fr.name)}`;
+  return {
+    ...n,
+    id,
+    name: sx(fr.name),
+    kind,
+    file: sx(fr.file),
+    line: fr.line,
+    parent_class: sxOpt(fr.parent_class),
+    children: ((n.children as unknown[]) ?? []).map((c) =>
+      expandNodeWith(c, strings, frames),
+    ),
+  };
 }
 
 /** Delete a saved scan from `~/.drift/scans/`. Idempotent — calling for a

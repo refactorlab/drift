@@ -1,0 +1,47 @@
+# Go
+webservice/bin/
+*.test
+*.out
+
+# Python
+client-python/build/
+client-python/dist/
+client-python/*.egg-info/
+drift-python/build/
+drift-python/dist/
+drift-python/*.egg-info/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+.venv-*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Build artifacts (export-drift-python output, etc.)
+dist/
+
+# Java
+client-java/build/
+client-java/.gradle/
+*.class
+*.jar
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Local dev
+.tilt-state/
+tilt_modules/
+.DS_Store
+
+.venv-drift

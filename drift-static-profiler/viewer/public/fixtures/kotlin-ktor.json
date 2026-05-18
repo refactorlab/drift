@@ -1,0 +1,542 @@
+{
+  "schema_version": "1.1",
+  "mode": "static",
+  "generator": {
+    "tool": "drift-static-profiler",
+    "version": "0.6.0",
+    "source_root": "tests/fixtures/kotlin-ktor",
+    "captured_at": "2026-05-18T03:03:29Z"
+  },
+  "string_table": [
+    "",
+    "createOrder",
+    "src/main/kotlin/com/example/handlers/OrdersHandler.kt",
+    "OrdersHandler",
+    "src/main/kotlin/com/example/services/OrdersService.kt",
+    "OrdersService",
+    "buildOrder",
+    "Order",
+    "src/main/kotlin/com/example/repos/OrdersRepository.kt",
+    "findById",
+    "OrdersRepository",
+    "validate",
+    "save",
+    "prepareStatement",
+    "conn",
+    "receiver name `conn` matches db pattern",
+    "setString",
+    "stmt",
+    "receiver name `stmt` matches db pattern",
+    "setLong",
+    "executeUpdate",
+    "executeQuery",
+    "tests/fixtures/kotlin-ktor/src/main/kotlin/com/example/repos/OrdersRepository.kt",
+    "tests/fixtures/kotlin-ktor/src/main/kotlin/com/example/services/OrdersService.kt",
+    "tests/fixtures/kotlin-ktor/src/main/kotlin/com/example/handlers/OrdersHandler.kt",
+    "<module>",
+    "tests/fixtures/kotlin-ktor/build.gradle.kts",
+    "CreateOrderDto"
+  ],
+  "frames": [
+    {
+      "name": 1,
+      "file": 2,
+      "line": 13,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 4,
+      "line": 8,
+      "parent_class": 5,
+      "kind": 0
+    },
+    {
+      "name": 6,
+      "file": 4,
+      "line": 14,
+      "parent_class": 5,
+      "kind": 0
+    },
+    {
+      "name": 7,
+      "file": 8,
+      "line": 6,
+      "kind": 2
+    },
+    {
+      "name": 9,
+      "file": 8,
+      "line": 30,
+      "parent_class": 10,
+      "kind": 0
+    },
+    {
+      "name": 11,
+      "file": 4,
+      "line": 23,
+      "parent_class": 5,
+      "kind": 0
+    },
+    {
+      "name": 12,
+      "file": 8,
+      "line": 15,
+      "parent_class": 10,
+      "kind": 0
+    },
+    {
+      "name": 7,
+      "file": 22,
+      "line": 6,
+      "kind": 0
+    },
+    {
+      "name": 6,
+      "file": 23,
+      "line": 14,
+      "parent_class": 5,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 23,
+      "line": 8,
+      "parent_class": 5,
+      "kind": 0
+    },
+    {
+      "name": 12,
+      "file": 22,
+      "line": 15,
+      "parent_class": 10,
+      "kind": 0
+    },
+    {
+      "name": 11,
+      "file": 23,
+      "line": 23,
+      "parent_class": 5,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 24,
+      "line": 13,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 9,
+      "file": 22,
+      "line": 30,
+      "parent_class": 10,
+      "kind": 0
+    },
+    {
+      "name": 25,
+      "file": 26,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 27,
+      "file": 24,
+      "line": 5,
+      "kind": 0
+    },
+    {
+      "name": 3,
+      "file": 24,
+      "line": 11,
+      "kind": 0
+    },
+    {
+      "name": 10,
+      "file": 22,
+      "line": 13,
+      "kind": 0
+    },
+    {
+      "name": 7,
+      "file": 8,
+      "line": 6,
+      "kind": 0
+    }
+  ],
+  "summary": {
+    "languages": [
+      "kotlin"
+    ],
+    "files": 4,
+    "symbols": 12,
+    "edges": 6,
+    "categories": {
+      "cache": 0,
+      "compute": 0,
+      "db": 10,
+      "io": 0,
+      "log": 0,
+      "network": 0,
+      "queue": 0
+    },
+    "top_callers": [
+      {
+        "frame": 7,
+        "count": 2
+      },
+      {
+        "frame": 8,
+        "count": 1
+      },
+      {
+        "frame": 9,
+        "count": 1
+      },
+      {
+        "frame": 10,
+        "count": 1
+      },
+      {
+        "frame": 11,
+        "count": 1
+      }
+    ],
+    "top_callees": [
+      {
+        "frame": 9,
+        "count": 3
+      },
+      {
+        "frame": 8,
+        "count": 1
+      },
+      {
+        "frame": 12,
+        "count": 1
+      },
+      {
+        "frame": 13,
+        "count": 1
+      }
+    ],
+    "hot_paths": [
+      {
+        "frames": [
+          "OrdersHandler.createOrder",
+          "OrdersService.createOrder",
+          "OrdersRepository.save"
+        ],
+        "depth": 2,
+        "terminal_category": "db"
+      },
+      {
+        "frames": [
+          "OrdersRepository.findById"
+        ],
+        "depth": 0,
+        "terminal_category": "db"
+      }
+    ],
+    "dead_code": [
+      {
+        "frame": 14,
+        "count": 0
+      }
+    ],
+    "pagerank_top": [
+      {
+        "frame": 7,
+        "score": 0.18985594071080342
+      },
+      {
+        "frame": 9,
+        "score": 0.11166068558739198
+      },
+      {
+        "frame": 10,
+        "score": 0.09199445686356116
+      },
+      {
+        "frame": 8,
+        "score": 0.09199445686356116
+      },
+      {
+        "frame": 11,
+        "score": 0.09199445686356116
+      },
+      {
+        "frame": 14,
+        "score": 0.060357143301588714
+      },
+      {
+        "frame": 15,
+        "score": 0.060357143301588714
+      },
+      {
+        "frame": 16,
+        "score": 0.060357143301588714
+      },
+      {
+        "frame": 12,
+        "score": 0.060357143301588714
+      },
+      {
+        "frame": 17,
+        "score": 0.060357143301588714
+      }
+    ],
+    "recursive_symbols": [],
+    "language_breakdown": [
+      {
+        "language": "Kotlin",
+        "bytes": 2810,
+        "files": 4,
+        "percent": 100.0,
+        "supported": true
+      }
+    ],
+    "profiled_language": "Kotlin",
+    "profiled_language_percent": 100.0,
+    "roots_overview": [
+      {
+        "frame": 0,
+        "subtree_size": 6,
+        "percent_of_all_roots": 75.0,
+        "categories_reached": {
+          "db": 6
+        },
+        "findings_total": 0,
+        "first_callees": [
+          {
+            "frame": 1,
+            "subtree_size": 5
+          }
+        ]
+      },
+      {
+        "frame": 4,
+        "subtree_size": 2,
+        "percent_of_all_roots": 25.0,
+        "categories_reached": {
+          "db": 4
+        },
+        "findings_total": 0,
+        "first_callees": [
+          {
+            "frame": 18,
+            "subtree_size": 1
+          }
+        ]
+      }
+    ],
+    "sql_files_scanned": 0,
+    "sql_files_with_findings": 0
+  },
+  "entries": [
+    {
+      "frame": 0,
+      "children": [
+        {
+          "frame": 1,
+          "depth": 1,
+          "children": [
+            {
+              "frame": 2,
+              "depth": 2,
+              "children": [
+                {
+                  "frame": 3,
+                  "depth": 3,
+                  "callers": [
+                    4,
+                    2
+                  ],
+                  "callers_count": 2,
+                  "subtree_size": 1,
+                  "call_site_count": 2,
+                  "pagerank": 0.18985594071080342,
+                  "percent_total": 16.666666666666664,
+                  "percent_parent": 50.0
+                }
+              ],
+              "callers": [
+                1
+              ],
+              "callers_count": 1,
+              "callees_count": 1,
+              "subtree_size": 2,
+              "complexity": 1,
+              "loc": 8,
+              "call_site_count": 1,
+              "pagerank": 0.09199445686356116,
+              "percent_total": 33.33333333333333,
+              "percent_parent": 40.0
+            },
+            {
+              "frame": 5,
+              "depth": 2,
+              "callers": [
+                1
+              ],
+              "callers_count": 1,
+              "subtree_size": 1,
+              "complexity": 3,
+              "loc": 8,
+              "nesting_depth": 1,
+              "call_site_count": 1,
+              "pagerank": 0.09199445686356116,
+              "percent_total": 16.666666666666664,
+              "percent_parent": 20.0
+            },
+            {
+              "frame": 6,
+              "depth": 2,
+              "callers": [
+                1
+              ],
+              "callers_count": 1,
+              "subtree_size": 1,
+              "category_self": 1,
+              "categories_reached": {
+                "db": 6
+              },
+              "external_calls": [
+                {
+                  "name": 13,
+                  "receiver": 14,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 15,
+                  "line": 16
+                },
+                {
+                  "name": 16,
+                  "receiver": 17,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 18,
+                  "line": 21
+                },
+                {
+                  "name": 19,
+                  "receiver": 17,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 18,
+                  "line": 22
+                },
+                {
+                  "name": 16,
+                  "receiver": 17,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 18,
+                  "line": 23
+                },
+                {
+                  "name": 20,
+                  "receiver": 17,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 18,
+                  "line": 24
+                }
+              ],
+              "complexity": 1,
+              "loc": 14,
+              "call_site_count": 1,
+              "pagerank": 0.09199445686356116,
+              "percent_total": 16.666666666666664,
+              "percent_parent": 20.0
+            }
+          ],
+          "callers": [
+            0
+          ],
+          "callers_count": 1,
+          "callees_count": 3,
+          "subtree_size": 5,
+          "categories_reached": {
+            "db": 6
+          },
+          "complexity": 1,
+          "loc": 5,
+          "call_site_count": 1,
+          "pagerank": 0.11166068558739198,
+          "percent_total": 83.33333333333334,
+          "percent_parent": 83.33333333333334
+        }
+      ],
+      "callees_count": 1,
+      "subtree_size": 6,
+      "categories_reached": {
+        "db": 6
+      },
+      "complexity": 1,
+      "loc": 3,
+      "call_site_count": 1,
+      "pagerank": 0.060357143301588714,
+      "percent_total": 100.0,
+      "percent_parent": 100.0
+    },
+    {
+      "frame": 4,
+      "children": [
+        {
+          "frame": 3,
+          "depth": 1,
+          "callers": [
+            4,
+            2
+          ],
+          "callers_count": 2,
+          "subtree_size": 1,
+          "call_site_count": 2,
+          "pagerank": 0.18985594071080342,
+          "percent_total": 50.0,
+          "percent_parent": 50.0
+        }
+      ],
+      "callees_count": 1,
+      "subtree_size": 2,
+      "category_self": 1,
+      "categories_reached": {
+        "db": 4
+      },
+      "external_calls": [
+        {
+          "name": 13,
+          "receiver": 14,
+          "category": 1,
+          "tier": 1,
+          "evidence": 15,
+          "line": 31
+        },
+        {
+          "name": 19,
+          "receiver": 17,
+          "category": 1,
+          "tier": 1,
+          "evidence": 18,
+          "line": 34
+        },
+        {
+          "name": 21,
+          "receiver": 17,
+          "category": 1,
+          "tier": 1,
+          "evidence": 18,
+          "line": 35
+        }
+      ],
+      "complexity": 2,
+      "loc": 14,
+      "nesting_depth": 1,
+      "pagerank": 0.060357143301588714,
+      "percent_total": 100.0,
+      "percent_parent": 100.0
+    }
+  ]
+}

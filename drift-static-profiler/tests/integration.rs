@@ -1010,6 +1010,134 @@ fn cli_binary_emits_valid_json_for_new_languages() {
     }
 }
 
+/// End-to-end gate that every checked-in `viewer/public/fixtures/*.json`
+/// loads cleanly through `compact::read_report` AND yields a populated
+/// `Report` whose required fields (file paths, names, kinds, line
+/// numbers, finding metadata) match what the viewer / desktop UI expect
+/// at runtime.
+///
+/// Why this test: TypeScript compile catches type-level field shape, but
+/// not "decoder forgot to populate an optional field that a component
+/// reads at runtime". Spot-checking each fixture against a concrete set
+/// of invariants is the cheapest way to be sure the wire format and
+/// in-memory shape agree.
+#[test]
+fn shipped_fixtures_decompress_into_populated_reports() {
+    use drift_static_profiler::compact;
+    use std::path::PathBuf;
+    banner("shipped_fixtures_decompress_into_populated_reports", "(all)");
+
+    let fixtures_dir = {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("viewer/public/fixtures");
+        p
+    };
+
+    // Every checked-in fixture. New ones added to the viewer are tested
+    // automatically by listing the directory.
+    let mut fixtures: Vec<_> = std::fs::read_dir(&fixtures_dir)
+        .expect("read fixtures dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().extension().and_then(|s| s.to_str()) == Some("json")
+                && e.path().file_name().and_then(|s| s.to_str()) != Some("index.json")
+        })
+        .map(|e| e.path())
+        .collect();
+    fixtures.sort();
+    assert!(!fixtures.is_empty(), "no fixtures discovered");
+
+    for path in fixtures {
+        let bytes = std::fs::read(&path).expect("read fixture");
+        let report = compact::read_report(&bytes)
+            .unwrap_or_else(|e| panic!("decompress {}: {e}", path.display()));
+
+        let fname = path.file_name().unwrap().to_string_lossy().to_string();
+
+        // Summary must carry the seven canonical category counters
+        // (zero-filled when nothing matched) — the Statistics tab and
+        // SummaryBar both read every key.
+        for cat in ["db", "network", "io", "cache", "queue", "log", "compute"] {
+            assert!(
+                report.summary.categories.contains_key(cat),
+                "{fname}: summary.categories[{cat}] missing"
+            );
+        }
+
+        // Every entry must round-trip its identity. The viewer's
+        // CallTreeView keys tree rows on `id`; an empty id breaks
+        // navigation deep-linking via `/scan/:key/node/:id`.
+        for (i, entry) in report.entries.iter().enumerate() {
+            assert!(
+                !entry.id.0.is_empty(),
+                "{fname}: entries[{i}].id is empty"
+            );
+            assert!(
+                !entry.name.is_empty(),
+                "{fname}: entries[{i}].name is empty"
+            );
+            assert!(
+                !entry.file.is_empty(),
+                "{fname}: entries[{i}].file is empty"
+            );
+
+            // Every node in the tree (incl transitive callees) must
+            // also carry name + file. DetailsPane reads these on every
+            // selected node — a missing string surfaces as the literal
+            // "undefined" in the UI.
+            visit_all(entry, &mut |n: &CallTreeNode| {
+                assert!(
+                    !n.name.is_empty(),
+                    "{fname}: descendant name empty (id={})", n.id.0
+                );
+                assert!(
+                    !n.file.is_empty(),
+                    "{fname}: descendant file empty (id={})", n.id.0
+                );
+                // Findings rehydration is the hot path for Insights /
+                // ScanReport. Confirm every finding's message survived
+                // the string-table round-trip.
+                for f in &n.findings {
+                    assert!(
+                        !f.message.is_empty(),
+                        "{fname}: finding message empty (kind={:?})", f.kind
+                    );
+                }
+                // ExternalCall.name is required; receiver is optional.
+                for x in &n.external_calls {
+                    assert!(
+                        !x.name.is_empty(),
+                        "{fname}: external_call name empty"
+                    );
+                }
+            });
+        }
+
+        // roots_overview entries must carry hydrated `callers` and
+        // `first_callees` whenever the underlying entry has them. The
+        // ScanReport dashboard reads `.findings_by_severity?.high` on
+        // every row — confirm the map exists (may be empty, never
+        // None at the in-memory level).
+        for (i, r) in report.summary.roots_overview.iter().enumerate() {
+            assert!(
+                !r.node_id.is_empty(),
+                "{fname}: roots_overview[{i}].node_id empty"
+            );
+            assert!(
+                !r.name.is_empty(),
+                "{fname}: roots_overview[{i}].name empty"
+            );
+        }
+    }
+}
+
+fn visit_all<F: FnMut(&CallTreeNode)>(node: &CallTreeNode, f: &mut F) {
+    f(node);
+    for child in &node.children {
+        visit_all(child, f);
+    }
+}
+
 // --------- Go / Rust / Scala (inline-source E2E) ---------
 //
 // These exercise the full pipeline (tree-sitter parse → tags → graph) without

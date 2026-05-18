@@ -1,5 +1,6 @@
 pub mod api;
 pub mod categories;
+pub mod compact;
 pub mod diff;
 pub mod docker;
 pub mod graph;
