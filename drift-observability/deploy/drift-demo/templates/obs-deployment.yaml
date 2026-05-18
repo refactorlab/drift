@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "drift-demo.obsName" . }}
+  labels:
+    {{- include "drift-demo.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+spec:
+  replicas: {{ .Values.observability.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: observability
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: observability
+    spec:
+      containers:
+        - name: observability-server
+          image: "{{ .Values.observability.image.repository }}:{{ .Values.observability.image.tag }}"
+          imagePullPolicy: {{ .Values.observability.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.observability.port }}
+          env:
+            - name: LISTEN_ADDR
+              value: ":{{ .Values.observability.port }}"
+            - name: TRACE_PATH
+              value: "{{ .Values.sharedVolume.mountPath }}/events.log"
+          volumeMounts:
+            - name: trace
+              mountPath: {{ .Values.sharedVolume.mountPath }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.observability.resources | nindent 12 }}
+      volumes:
+        - name: trace
+          hostPath:
+            path: {{ .Values.sharedVolume.hostPath }}
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "drift-demo.obsName" . }}
+  labels:
+    {{- include "drift-demo.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.observability.port }}
+      targetPort: http
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: observability

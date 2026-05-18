@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { fetchScanEntry, fetchScanSummary } from '../api/scanApi';
+import { decompressReport } from '../decompress';
 import { FIXTURES } from '../fixtures';
 import { useUserScans } from '../userScans';
 import type { CallTreeNode, FixtureSpec, Report } from '../types';
@@ -56,14 +57,20 @@ export function useReport(): {
     setLoading(true);
     fetch(fixture.json, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: Report | { report: Report }) => {
-        // drift-lab saves scans as a StoredScan envelope ({scan_id, saved_at, report}),
-        // while built-in fixtures are the bare Report. Unwrap when needed.
-        const unwrapped =
-          data && typeof data === 'object' && 'report' in data && !('entries' in data)
-            ? (data as { report: Report }).report
-            : (data as Report);
-        setReport(unwrapped);
+      .then((data: unknown) => {
+        // drift-lab saves scans as a StoredScan envelope ({scan_id,
+        // saved_at, report}); built-in fixtures are the bare Report;
+        // both can ship in legacy 1.0 inline form or compact 1.1
+        // (string_table + frames). Unwrap envelope first, then run
+        // through `decompressReport` so the rest of the viewer keeps
+        // seeing the canonical denormalized shape.
+        const inner =
+          data && typeof data === 'object' &&
+          'report' in (data as Record<string, unknown>) &&
+          !('entries' in (data as Record<string, unknown>))
+            ? (data as { report: unknown }).report
+            : data;
+        setReport(decompressReport(inner));
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));

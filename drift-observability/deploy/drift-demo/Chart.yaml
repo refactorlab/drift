@@ -1,0 +1,6 @@
+apiVersion: v2
+name: drift-demo
+description: Minimal demo — test FastAPI app + observability-server in one pod
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

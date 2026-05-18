@@ -1,11 +1,154 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "mode": "static",
   "generator": {
     "tool": "drift-static-profiler",
-    "version": "0.1.0",
-    "source_root": "tests/fixtures/docker-app"
+    "version": "0.6.0",
+    "source_root": "tests/fixtures/docker-app",
+    "captured_at": "2026-05-18T03:03:30Z"
   },
+  "string_table": [
+    "",
+    "<module>",
+    "app/main.py",
+    "main",
+    "process_order",
+    "app/service.py",
+    "info",
+    "log",
+    "receiver name `log` matches log pattern",
+    "send_notification",
+    "Dockerfile ENTRYPOINT",
+    "compose:api command",
+    "package.json main",
+    "package.json:bin.docker-app",
+    "package.json:scripts.start",
+    "deno:tasks.start",
+    "pyproject:scripts.docker-app",
+    "pyproject:scripts.legacy-cli",
+    "getLogger",
+    "logging",
+    "receiver `logging` imported from `logging`",
+    "run",
+    "worker.py",
+    "compose:worker entrypoint",
+    "package.json:scripts.worker",
+    "deno:tasks.worker",
+    "pyproject:scripts.docker-app-worker",
+    "tests/fixtures/docker-app/app/main.py",
+    "tests/fixtures/docker-app/app/service.py",
+    "tests/fixtures/docker-app/worker.py",
+    "tests/fixtures/docker-app/Dockerfile",
+    "[\"python\", \"-m\", \"app.main\"]",
+    "python",
+    "-m",
+    "app.main",
+    "/srv",
+    "`python -m app.main` → app/main.py",
+    "[\"--prod\"]",
+    "--prod",
+    "tests/fixtures/docker-app/docker-compose.yml",
+    "python app/main.py",
+    "api",
+    "argv token `app/main.py` matches parsed file",
+    "python worker.py",
+    "worker",
+    "argv token `worker.py` matches parsed file",
+    "tests/fixtures/docker-app/package.json",
+    "./app/main.py",
+    "argv token `./app/main.py` matches parsed file",
+    "docker-app",
+    "python -m app.main",
+    "start",
+    "pytest",
+    "test",
+    "tests/fixtures/docker-app/deno.json",
+    "deno run --allow-net app/main.py",
+    "deno",
+    "--allow-net",
+    "deno run worker.py",
+    "tests/fixtures/docker-app/pyproject.toml",
+    "app.main:main",
+    "`app.main:main` → app/main.py:main",
+    "worker:run",
+    "docker-app-worker",
+    "`worker:run` → worker.py:run",
+    "legacy-cli"
+  ],
+  "frames": [
+    {
+      "name": 1,
+      "file": 2,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 3,
+      "file": 2,
+      "line": 4,
+      "kind": 0
+    },
+    {
+      "name": 4,
+      "file": 5,
+      "line": 6,
+      "kind": 0
+    },
+    {
+      "name": 9,
+      "file": 5,
+      "line": 11,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 5,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 22,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 3,
+      "file": 27,
+      "line": 4,
+      "kind": 0
+    },
+    {
+      "name": 4,
+      "file": 28,
+      "line": 6,
+      "kind": 0
+    },
+    {
+      "name": 9,
+      "file": 28,
+      "line": 11,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 27,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 28,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 29,
+      "line": 1,
+      "kind": 0
+    }
+  ],
   "summary": {
     "languages": [
       "python"
@@ -24,40 +167,25 @@
     },
     "top_callers": [
       {
-        "name": "main",
-        "file": "tests/fixtures/docker-app/app/main.py",
-        "line": 4,
-        "parent_class": null,
+        "frame": 6,
         "count": 1
       },
       {
-        "name": "process_order",
-        "file": "tests/fixtures/docker-app/app/service.py",
-        "line": 6,
-        "parent_class": null,
+        "frame": 7,
         "count": 1
       },
       {
-        "name": "send_notification",
-        "file": "tests/fixtures/docker-app/app/service.py",
-        "line": 11,
-        "parent_class": null,
+        "frame": 8,
         "count": 1
       }
     ],
     "top_callees": [
       {
-        "name": "main",
-        "file": "tests/fixtures/docker-app/app/main.py",
-        "line": 4,
-        "parent_class": null,
+        "frame": 6,
         "count": 2
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/docker-app/app/main.py",
-        "line": 1,
-        "parent_class": null,
+        "frame": 9,
         "count": 1
       }
     ],
@@ -107,46 +235,28 @@
     "dead_code": [],
     "pagerank_top": [
       {
-        "name": "main",
-        "file": "tests/fixtures/docker-app/app/main.py",
-        "line": 4,
-        "parent_class": null,
-        "score": 0.2226017981521649
+        "frame": 6,
+        "score": 0.21964978081602143
       },
       {
-        "name": "process_order",
-        "file": "tests/fixtures/docker-app/app/service.py",
-        "line": 6,
-        "parent_class": null,
-        "score": 0.21573225465069387
+        "frame": 7,
+        "score": 0.21208073889373213
       },
       {
-        "name": "send_notification",
-        "file": "tests/fixtures/docker-app/app/service.py",
-        "line": 11,
-        "parent_class": null,
-        "score": 0.21573225465069387
+        "frame": 8,
+        "score": 0.21208073889373213
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/docker-app/app/main.py",
-        "line": 1,
-        "parent_class": null,
-        "score": 0.11531123084881577
+        "frame": 9,
+        "score": 0.1187295804655048
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/docker-app/app/service.py",
-        "line": 1,
-        "parent_class": null,
-        "score": 0.11531123084881577
+        "frame": 10,
+        "score": 0.1187295804655048
       },
       {
-        "name": "run",
-        "file": "tests/fixtures/docker-app/worker.py",
-        "line": 1,
-        "parent_class": null,
-        "score": 0.11531123084881577
+        "frame": 11,
+        "score": 0.1187295804655048
       }
     ],
     "recursive_symbols": [],
@@ -170,756 +280,499 @@
     "profiled_language_percent": 74.35233160621762,
     "roots_overview": [
       {
-        "node_id": "tests/fixtures/docker-app/app/main.py::::<module>",
-        "name": "<module>",
-        "file": "app/main.py",
-        "line": 1,
-        "kind": "Function",
+        "frame": 0,
         "subtree_size": 4,
         "percent_of_all_roots": 44.44444444444444,
         "categories_reached": {
           "log": 4
         },
-        "findings_by_severity": {},
         "findings_total": 0,
-        "callers": [],
         "first_callees": [
           {
-            "node_id": "tests/fixtures/docker-app/app/main.py::::main",
-            "name": "main",
-            "file": "app/main.py",
-            "line": 4,
+            "frame": 1,
             "subtree_size": 3
           }
         ]
       },
       {
-        "node_id": "tests/fixtures/docker-app/app/main.py::::main",
-        "name": "main",
-        "file": "app/main.py",
-        "line": 4,
-        "kind": "Function",
+        "frame": 1,
         "subtree_size": 3,
         "percent_of_all_roots": 33.33333333333333,
         "categories_reached": {
           "log": 4
         },
-        "findings_by_severity": {},
         "findings_total": 0,
         "callers": [
-          {
-            "node_id": "tests/fixtures/docker-app/app/main.py::::<module>",
-            "name": "<module>",
-            "file": "app/main.py",
-            "line": 1
-          }
+          0
         ],
         "first_callees": [
           {
-            "node_id": "tests/fixtures/docker-app/app/service.py::::process_order",
-            "name": "process_order",
-            "file": "app/service.py",
-            "line": 6,
+            "frame": 2,
             "subtree_size": 1
           },
           {
-            "node_id": "tests/fixtures/docker-app/app/service.py::::send_notification",
-            "name": "send_notification",
-            "file": "app/service.py",
-            "line": 11,
+            "frame": 3,
             "subtree_size": 1
           }
         ]
       },
       {
-        "node_id": "tests/fixtures/docker-app/app/service.py::::<module>",
-        "name": "<module>",
-        "file": "app/service.py",
-        "line": 1,
-        "kind": "Function",
+        "frame": 4,
         "subtree_size": 1,
         "percent_of_all_roots": 11.11111111111111,
         "categories_reached": {
           "log": 2
         },
-        "findings_by_severity": {},
-        "findings_total": 0,
-        "callers": [],
-        "first_callees": []
+        "findings_total": 0
       },
       {
-        "node_id": "tests/fixtures/docker-app/worker.py::::run",
-        "name": "run",
-        "file": "worker.py",
-        "line": 1,
-        "kind": "Function",
+        "frame": 5,
         "subtree_size": 1,
         "percent_of_all_roots": 11.11111111111111,
-        "categories_reached": {},
-        "findings_by_severity": {},
-        "findings_total": 0,
-        "callers": [],
-        "first_callees": []
+        "findings_total": 0
       }
     ],
     "entry_declarations": [
       {
-        "file": "tests/fixtures/docker-app/Dockerfile",
+        "file": 30,
         "line": 9,
         "kind": "dockerfile_entrypoint",
-        "raw": "[\"python\", \"-m\", \"app.main\"]",
+        "raw": 31,
         "argv": [
-          "python",
-          "-m",
-          "app.main"
+          32,
+          33,
+          34
         ],
-        "workdir": "/srv",
+        "workdir": 35,
         "matched": {
           "confidence": "likely",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "`python -m app.main` → app/main.py"
+          "frame": 6,
+          "evidence": 36
         }
       },
       {
-        "file": "tests/fixtures/docker-app/Dockerfile",
+        "file": 30,
         "line": 10,
         "kind": "dockerfile_cmd",
-        "raw": "[\"--prod\"]",
+        "raw": 37,
         "argv": [
-          "--prod"
+          38
         ],
-        "workdir": "/srv"
+        "workdir": 35
       },
       {
-        "file": "tests/fixtures/docker-app/docker-compose.yml",
+        "file": 39,
         "line": 1,
         "kind": "compose_command",
-        "raw": "python app/main.py",
+        "raw": 40,
         "argv": [
-          "python",
-          "app/main.py"
+          32,
+          2
         ],
-        "service": "api",
+        "service": 41,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "argv token `app/main.py` matches parsed file"
+          "frame": 6,
+          "evidence": 42
         }
       },
       {
-        "file": "tests/fixtures/docker-app/docker-compose.yml",
+        "file": 39,
         "line": 1,
         "kind": "compose_entrypoint",
-        "raw": "python worker.py",
+        "raw": 43,
         "argv": [
-          "python",
-          "worker.py"
+          32,
+          22
         ],
-        "service": "worker",
-        "workdir": "/srv",
+        "service": 44,
+        "workdir": 35,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/worker.py::::run",
-          "symbol_name": "run",
-          "symbol_file": "tests/fixtures/docker-app/worker.py",
-          "symbol_line": 1,
-          "evidence": "argv token `worker.py` matches parsed file"
+          "frame": 11,
+          "evidence": 45
         }
       },
       {
-        "file": "tests/fixtures/docker-app/package.json",
+        "file": 46,
         "line": 1,
         "kind": "package_json_main",
-        "raw": "./app/main.py",
+        "raw": 47,
         "argv": [
-          "./app/main.py"
+          47
         ],
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "argv token `./app/main.py` matches parsed file"
+          "frame": 6,
+          "evidence": 48
         }
       },
       {
-        "file": "tests/fixtures/docker-app/package.json",
+        "file": 46,
         "line": 1,
         "kind": "package_json_bin",
-        "raw": "./app/main.py",
+        "raw": 47,
         "argv": [
-          "./app/main.py"
+          47
         ],
-        "service": "docker-app",
+        "service": 49,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "argv token `./app/main.py` matches parsed file"
+          "frame": 6,
+          "evidence": 48
         }
       },
       {
-        "file": "tests/fixtures/docker-app/package.json",
+        "file": 46,
         "line": 1,
         "kind": "package_json_script",
-        "raw": "python -m app.main",
+        "raw": 50,
         "argv": [
-          "python",
-          "-m",
-          "app.main"
+          32,
+          33,
+          34
         ],
-        "service": "start",
+        "service": 51,
         "matched": {
           "confidence": "likely",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "`python -m app.main` → app/main.py"
+          "frame": 6,
+          "evidence": 36
         }
       },
       {
-        "file": "tests/fixtures/docker-app/package.json",
+        "file": 46,
         "line": 1,
         "kind": "package_json_script",
-        "raw": "pytest",
+        "raw": 52,
         "argv": [
-          "pytest"
+          52
         ],
-        "service": "test"
+        "service": 53
       },
       {
-        "file": "tests/fixtures/docker-app/package.json",
+        "file": 46,
         "line": 1,
         "kind": "package_json_script",
-        "raw": "python worker.py",
+        "raw": 43,
         "argv": [
-          "python",
-          "worker.py"
+          32,
+          22
         ],
-        "service": "worker",
+        "service": 44,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/worker.py::::run",
-          "symbol_name": "run",
-          "symbol_file": "tests/fixtures/docker-app/worker.py",
-          "symbol_line": 1,
-          "evidence": "argv token `worker.py` matches parsed file"
+          "frame": 11,
+          "evidence": 45
         }
       },
       {
-        "file": "tests/fixtures/docker-app/deno.json",
+        "file": 54,
         "line": 1,
         "kind": "deno_task",
-        "raw": "deno run --allow-net app/main.py",
+        "raw": 55,
         "argv": [
-          "deno",
-          "run",
-          "--allow-net",
-          "app/main.py"
+          56,
+          21,
+          57,
+          2
         ],
-        "service": "start",
+        "service": 51,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "argv token `app/main.py` matches parsed file"
+          "frame": 6,
+          "evidence": 42
         }
       },
       {
-        "file": "tests/fixtures/docker-app/deno.json",
+        "file": 54,
         "line": 1,
         "kind": "deno_task",
-        "raw": "deno run worker.py",
+        "raw": 58,
         "argv": [
-          "deno",
-          "run",
-          "worker.py"
+          56,
+          21,
+          22
         ],
-        "service": "worker",
+        "service": 44,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/worker.py::::run",
-          "symbol_name": "run",
-          "symbol_file": "tests/fixtures/docker-app/worker.py",
-          "symbol_line": 1,
-          "evidence": "argv token `worker.py` matches parsed file"
+          "frame": 11,
+          "evidence": 45
         }
       },
       {
-        "file": "tests/fixtures/docker-app/pyproject.toml",
+        "file": 59,
         "line": 1,
         "kind": "pyproject_script",
-        "raw": "app.main:main",
+        "raw": 60,
         "argv": [
-          "app.main:main"
+          60
         ],
-        "service": "docker-app",
+        "service": 49,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "`app.main:main` → app/main.py:main"
+          "frame": 6,
+          "evidence": 61
         }
       },
       {
-        "file": "tests/fixtures/docker-app/pyproject.toml",
+        "file": 59,
         "line": 1,
         "kind": "pyproject_script",
-        "raw": "worker:run",
+        "raw": 62,
         "argv": [
-          "worker:run"
+          62
         ],
-        "service": "docker-app-worker",
+        "service": 63,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/worker.py::::run",
-          "symbol_name": "run",
-          "symbol_file": "tests/fixtures/docker-app/worker.py",
-          "symbol_line": 1,
-          "evidence": "`worker:run` → worker.py:run"
+          "frame": 11,
+          "evidence": 64
         }
       },
       {
-        "file": "tests/fixtures/docker-app/pyproject.toml",
+        "file": 59,
         "line": 1,
         "kind": "pyproject_script",
-        "raw": "app.main:main",
+        "raw": 60,
         "argv": [
-          "app.main:main"
+          60
         ],
-        "service": "legacy-cli",
+        "service": 65,
         "matched": {
           "confidence": "exact",
-          "symbol_id": "tests/fixtures/docker-app/app/main.py::::main",
-          "symbol_name": "main",
-          "symbol_file": "tests/fixtures/docker-app/app/main.py",
-          "symbol_line": 4,
-          "evidence": "`app.main:main` → app/main.py:main"
+          "frame": 6,
+          "evidence": 61
         }
       }
-    ]
+    ],
+    "sql_files_scanned": 0,
+    "sql_files_with_findings": 0
   },
   "entries": [
     {
-      "id": "tests/fixtures/docker-app/app/main.py::::<module>",
-      "name": "<module>",
-      "kind": "Function",
-      "file": "app/main.py",
-      "line": 1,
-      "depth": 0,
-      "parent_class": null,
+      "frame": 0,
       "children": [
         {
-          "id": "tests/fixtures/docker-app/app/main.py::::main",
-          "name": "main",
-          "kind": "Function",
-          "file": "app/main.py",
-          "line": 4,
+          "frame": 1,
           "depth": 1,
-          "parent_class": null,
           "children": [
             {
-              "id": "tests/fixtures/docker-app/app/service.py::::process_order",
-              "name": "process_order",
-              "kind": "Function",
-              "file": "app/service.py",
-              "line": 6,
+              "frame": 2,
               "depth": 2,
-              "parent_class": null,
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/docker-app/app/main.py::::main",
-                  "name": "main",
-                  "file": "app/main.py",
-                  "line": 4,
-                  "parent_class": null
-                }
+                1
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": "log",
+              "category_self": 6,
               "categories_reached": {
                 "log": 2
               },
               "external_calls": [
                 {
-                  "name": "info",
-                  "receiver": "log",
-                  "category": "log",
-                  "tier": "receiver_pattern",
-                  "evidence": "receiver name `log` matches log pattern",
-                  "line": 7,
-                  "in_loop": false,
-                  "in_await": false
+                  "name": 6,
+                  "receiver": 7,
+                  "category": 6,
+                  "tier": 1,
+                  "evidence": 8,
+                  "line": 7
                 }
               ],
               "complexity": 1,
               "loc": 2,
-              "nesting_depth": 0,
               "parameter_count": 1,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.21573225465069387,
+              "pagerank": 0.21208073889373213,
               "percent_total": 25.0,
-              "percent_parent": 33.33333333333333,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 33.33333333333333
             },
             {
-              "id": "tests/fixtures/docker-app/app/service.py::::send_notification",
-              "name": "send_notification",
-              "kind": "Function",
-              "file": "app/service.py",
-              "line": 11,
+              "frame": 3,
               "depth": 2,
-              "parent_class": null,
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/docker-app/app/main.py::::main",
-                  "name": "main",
-                  "file": "app/main.py",
-                  "line": 4,
-                  "parent_class": null
-                }
+                1
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": "log",
+              "category_self": 6,
               "categories_reached": {
                 "log": 2
               },
               "external_calls": [
                 {
-                  "name": "info",
-                  "receiver": "log",
-                  "category": "log",
-                  "tier": "receiver_pattern",
-                  "evidence": "receiver name `log` matches log pattern",
-                  "line": 12,
-                  "in_loop": false,
-                  "in_await": false
+                  "name": 6,
+                  "receiver": 7,
+                  "category": 6,
+                  "tier": 1,
+                  "evidence": 8,
+                  "line": 12
                 }
               ],
               "complexity": 1,
               "loc": 1,
-              "nesting_depth": 0,
               "parameter_count": 1,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.21573225465069387,
+              "pagerank": 0.21208073889373213,
               "percent_total": 25.0,
-              "percent_parent": 33.33333333333333,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 33.33333333333333
             }
           ],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/docker-app/app/main.py::::<module>",
-              "name": "<module>",
-              "file": "app/main.py",
-              "line": 1,
-              "parent_class": null
-            }
+            0
           ],
           "callers_count": 1,
           "callees_count": 2,
           "subtree_size": 3,
-          "category_self": null,
           "categories_reached": {
             "log": 4
           },
-          "external_calls": [],
           "complexity": 1,
           "loc": 3,
-          "nesting_depth": 0,
-          "parameter_count": 0,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.2226017981521649,
+          "pagerank": 0.21964978081602143,
           "percent_total": 75.0,
-          "percent_parent": 75.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 75.0
         }
       ],
-      "truncated_reason": null,
-      "callers": [],
-      "callers_count": 0,
       "callees_count": 1,
       "subtree_size": 4,
-      "category_self": null,
       "categories_reached": {
         "log": 4
       },
-      "external_calls": [],
       "complexity": 1,
       "loc": 11,
-      "nesting_depth": 0,
-      "parameter_count": 0,
-      "is_async": false,
-      "call_site_count": 0,
-      "is_recursive": false,
-      "pagerank": 0.11531123084881577,
+      "pagerank": 0.1187295804655048,
       "percent_total": 100.0,
-      "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false
+      "percent_parent": 100.0
     },
     {
-      "id": "tests/fixtures/docker-app/app/main.py::::main",
-      "name": "main",
-      "kind": "Function",
-      "file": "app/main.py",
-      "line": 4,
-      "depth": 0,
-      "parent_class": null,
+      "frame": 1,
       "children": [
         {
-          "id": "tests/fixtures/docker-app/app/service.py::::process_order",
-          "name": "process_order",
-          "kind": "Function",
-          "file": "app/service.py",
-          "line": 6,
+          "frame": 2,
           "depth": 1,
-          "parent_class": null,
-          "children": [],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/docker-app/app/main.py::::main",
-              "name": "main",
-              "file": "app/main.py",
-              "line": 4,
-              "parent_class": null
-            }
+            1
           ],
           "callers_count": 1,
-          "callees_count": 0,
           "subtree_size": 1,
-          "category_self": "log",
+          "category_self": 6,
           "categories_reached": {
             "log": 2
           },
           "external_calls": [
             {
-              "name": "info",
-              "receiver": "log",
-              "category": "log",
-              "tier": "receiver_pattern",
-              "evidence": "receiver name `log` matches log pattern",
-              "line": 7,
-              "in_loop": false,
-              "in_await": false
+              "name": 6,
+              "receiver": 7,
+              "category": 6,
+              "tier": 1,
+              "evidence": 8,
+              "line": 7
             }
           ],
           "complexity": 1,
           "loc": 2,
-          "nesting_depth": 0,
           "parameter_count": 1,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.21573225465069387,
+          "pagerank": 0.21208073889373213,
           "percent_total": 33.33333333333333,
-          "percent_parent": 33.33333333333333,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 33.33333333333333
         },
         {
-          "id": "tests/fixtures/docker-app/app/service.py::::send_notification",
-          "name": "send_notification",
-          "kind": "Function",
-          "file": "app/service.py",
-          "line": 11,
+          "frame": 3,
           "depth": 1,
-          "parent_class": null,
-          "children": [],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/docker-app/app/main.py::::main",
-              "name": "main",
-              "file": "app/main.py",
-              "line": 4,
-              "parent_class": null
-            }
+            1
           ],
           "callers_count": 1,
-          "callees_count": 0,
           "subtree_size": 1,
-          "category_self": "log",
+          "category_self": 6,
           "categories_reached": {
             "log": 2
           },
           "external_calls": [
             {
-              "name": "info",
-              "receiver": "log",
-              "category": "log",
-              "tier": "receiver_pattern",
-              "evidence": "receiver name `log` matches log pattern",
-              "line": 12,
-              "in_loop": false,
-              "in_await": false
+              "name": 6,
+              "receiver": 7,
+              "category": 6,
+              "tier": 1,
+              "evidence": 8,
+              "line": 12
             }
           ],
           "complexity": 1,
           "loc": 1,
-          "nesting_depth": 0,
           "parameter_count": 1,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.21573225465069387,
+          "pagerank": 0.21208073889373213,
           "percent_total": 33.33333333333333,
-          "percent_parent": 33.33333333333333,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 33.33333333333333
         }
       ],
-      "truncated_reason": null,
       "callers": [
-        {
-          "id": "tests/fixtures/docker-app/app/main.py::::<module>",
-          "name": "<module>",
-          "file": "app/main.py",
-          "line": 1,
-          "parent_class": null
-        }
+        0
       ],
       "callers_count": 1,
       "callees_count": 2,
       "subtree_size": 3,
-      "category_self": null,
       "categories_reached": {
         "log": 4
       },
-      "external_calls": [],
       "complexity": 1,
       "loc": 3,
-      "nesting_depth": 0,
-      "parameter_count": 0,
-      "is_async": false,
       "call_site_count": 1,
-      "is_recursive": false,
-      "pagerank": 0.2226017981521649,
+      "pagerank": 0.21964978081602143,
       "percent_total": 100.0,
       "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false,
       "entry_labels": [
-        "Dockerfile ENTRYPOINT",
-        "compose:api command",
-        "package.json main",
-        "package.json:bin.docker-app",
-        "package.json:scripts.start",
-        "deno:tasks.start",
-        "pyproject:scripts.docker-app",
-        "pyproject:scripts.legacy-cli"
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
       ]
     },
     {
-      "id": "tests/fixtures/docker-app/app/service.py::::<module>",
-      "name": "<module>",
-      "kind": "Function",
-      "file": "app/service.py",
-      "line": 1,
-      "depth": 0,
-      "parent_class": null,
-      "children": [],
-      "truncated_reason": null,
-      "callers": [],
-      "callers_count": 0,
-      "callees_count": 0,
+      "frame": 4,
       "subtree_size": 1,
-      "category_self": "log",
+      "category_self": 6,
       "categories_reached": {
         "log": 2
       },
       "external_calls": [
         {
-          "name": "getLogger",
-          "receiver": "logging",
-          "category": "log",
-          "tier": "imported_module",
-          "evidence": "receiver `logging` imported from `logging`",
-          "line": 3,
-          "in_loop": false,
-          "in_await": false
+          "name": 18,
+          "receiver": 19,
+          "category": 6,
+          "tier": 0,
+          "evidence": 20,
+          "line": 3
         }
       ],
       "complexity": 1,
       "loc": 12,
-      "nesting_depth": 0,
-      "parameter_count": 0,
-      "is_async": false,
-      "call_site_count": 0,
-      "is_recursive": false,
-      "pagerank": 0.11531123084881577,
+      "pagerank": 0.1187295804655048,
       "percent_total": 100.0,
-      "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false
+      "percent_parent": 100.0
     },
     {
-      "id": "tests/fixtures/docker-app/worker.py::::run",
-      "name": "run",
-      "kind": "Function",
-      "file": "worker.py",
-      "line": 1,
-      "depth": 0,
-      "parent_class": null,
-      "children": [],
-      "truncated_reason": null,
-      "callers": [],
-      "callers_count": 0,
-      "callees_count": 0,
+      "frame": 5,
       "subtree_size": 1,
-      "category_self": null,
-      "categories_reached": {},
-      "external_calls": [],
       "complexity": 2,
       "loc": 3,
       "nesting_depth": 1,
-      "parameter_count": 0,
-      "is_async": false,
-      "call_site_count": 0,
-      "is_recursive": false,
-      "pagerank": 0.11531123084881577,
+      "pagerank": 0.1187295804655048,
       "percent_total": 100.0,
       "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false,
       "entry_labels": [
-        "compose:worker entrypoint",
-        "package.json:scripts.worker",
-        "deno:tasks.worker",
-        "pyproject:scripts.docker-app-worker"
+        23,
+        24,
+        25,
+        26
       ]
     }
   ]

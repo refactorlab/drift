@@ -198,7 +198,10 @@ pub async fn api_list_scans() -> Response {
 )]
 pub async fn api_get_scan(Path(id): Path<String>) -> Response {
     match storage::load_envelope(&id) {
-        Ok(stored) => Json(stored).into_response(),
+        // Emit the compact 1.1 envelope: 60–80 % smaller on the wire
+        // than the denormalized in-memory shape, with the viewer's
+        // `decompressReport` rehydrating on the way in.
+        Ok(stored) => Json(storage::to_compact_envelope(&stored)).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, format!("{e:#}")),
     }
 }
@@ -224,7 +227,7 @@ pub async fn api_get_scan(Path(id): Path<String>) -> Response {
 )]
 pub async fn api_get_scan_summary(Path(id): Path<String>) -> Response {
     match storage::load_envelope_summary(&id) {
-        Ok(stored) => Json(stored).into_response(),
+        Ok(stored) => Json(storage::to_compact_envelope(&stored)).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, format!("{e:#}")),
     }
 }
@@ -247,7 +250,7 @@ pub async fn api_get_scan_summary(Path(id): Path<String>) -> Response {
 )]
 pub async fn api_get_scan_entry(Path((id, idx)): Path<(String, usize)>) -> Response {
     match storage::load_scan_entry(&id, idx) {
-        Ok(node) => Json(node).into_response(),
+        Ok(node) => Json(storage::to_compact_entry(&node)).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, format!("{e:#}")),
     }
 }

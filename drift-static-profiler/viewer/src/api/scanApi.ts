@@ -25,6 +25,7 @@
  * by trying the API first, then falling back to the fixture URL.
  */
 
+import { decompressEntry, decompressReport } from '../decompress';
 import type { CallTreeNode, Finding, Report } from '../types';
 
 /** Inner Report inside a `StoredScan` envelope. We treat the envelope as
@@ -84,11 +85,13 @@ export async function fetchScanEntry(
   entryIndex: number,
   fixtureJsonUrl: string,
 ): Promise<CallTreeNode> {
-  // Path 1 — drift-lab HTTP server.
+  // Path 1 — drift-lab HTTP server. Sidecar may arrive in legacy
+  // bare-`CallTreeNode` form or new 1.1 `CompactEntryDoc` form;
+  // `decompressEntry` handles both.
   const apiUrl = `/api/scans/${encodeURIComponent(scanKey)}/entry/${entryIndex}`;
   const apiTry = await tryFetchJson(apiUrl);
   if (apiTry.ok) {
-    return apiTry.value as CallTreeNode;
+    return decompressEntry(apiTry.value);
   }
   // Path 2 — fall back to the fixture URL and pick the entry out
   // ourselves. This costs a full-Report fetch, but it's the right
@@ -109,17 +112,23 @@ export async function fetchScanEntry(
 /** Mirror of `useReport`'s envelope unwrap: drift-lab writes scans as a
  *  `StoredScan` envelope, built-in fixtures ship the bare Report. Detect
  *  by checking for a top-level `entries` field — only the Report has it
- *  at the root. */
+ *  at the root. After unwrapping we ALWAYS run the result through
+ *  `decompressReport` so the rest of the viewer keeps seeing the
+ *  denormalized 1.0 shape regardless of whether the wire payload was
+ *  legacy or 1.1 interned. */
 function unwrapReport(data: unknown): Report {
+  let inner: unknown;
   if (
     data &&
     typeof data === 'object' &&
     'report' in (data as Record<string, unknown>) &&
     !('entries' in (data as Record<string, unknown>))
   ) {
-    return (data as { report: Report }).report;
+    inner = (data as { report: unknown }).report;
+  } else {
+    inner = data;
   }
-  return data as Report;
+  return decompressReport(inner);
 }
 
 /** Try a fetch + JSON parse, return Ok/Err discriminated. Treats every

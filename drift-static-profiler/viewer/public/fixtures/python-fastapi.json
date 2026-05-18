@@ -1,11 +1,210 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "mode": "static",
   "generator": {
     "tool": "drift-static-profiler",
-    "version": "0.1.0",
-    "source_root": "tests/fixtures/python-fastapi"
+    "version": "0.6.0",
+    "source_root": "tests/fixtures/python-fastapi",
+    "captured_at": "2026-05-18T03:03:29Z"
   },
+  "string_table": [
+    "",
+    "create_order",
+    "app/services.py",
+    "OrderService",
+    "app/routes.py",
+    "build_order",
+    "Order",
+    "app/models.py",
+    "validate",
+    "save",
+    "app/repositories.py",
+    "OrderRepository",
+    "add",
+    "session",
+    "receiver name `session` matches db pattern",
+    "commit",
+    "refresh",
+    "tests/fixtures/python-fastapi/app/models.py",
+    "tests/fixtures/python-fastapi/app/repositories.py",
+    "tests/fixtures/python-fastapi/app/services.py",
+    "tests/fixtures/python-fastapi/app/routes.py",
+    "<module>",
+    "tests/fixtures/python-fastapi/app/db.py",
+    "get_session",
+    "tests/fixtures/python-fastapi/app/main.py",
+    "__init__",
+    "find_by_id"
+  ],
+  "frames": [
+    {
+      "name": 1,
+      "file": 2,
+      "line": 9,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 4,
+      "line": 11,
+      "kind": 0
+    },
+    {
+      "name": 5,
+      "file": 2,
+      "line": 14,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 6,
+      "file": 7,
+      "line": 7,
+      "kind": 2
+    },
+    {
+      "name": 8,
+      "file": 2,
+      "line": 21,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 9,
+      "file": 10,
+      "line": 8,
+      "parent_class": 11,
+      "kind": 0
+    },
+    {
+      "name": 11,
+      "file": 10,
+      "line": 4,
+      "kind": 2
+    },
+    {
+      "name": 3,
+      "file": 2,
+      "line": 5,
+      "kind": 2
+    },
+    {
+      "name": 6,
+      "file": 17,
+      "line": 7,
+      "kind": 0
+    },
+    {
+      "name": 11,
+      "file": 18,
+      "line": 4,
+      "kind": 0
+    },
+    {
+      "name": 3,
+      "file": 19,
+      "line": 5,
+      "kind": 0
+    },
+    {
+      "name": 5,
+      "file": 19,
+      "line": 14,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 19,
+      "line": 9,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 9,
+      "file": 18,
+      "line": 8,
+      "parent_class": 11,
+      "kind": 0
+    },
+    {
+      "name": 8,
+      "file": 19,
+      "line": 21,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 1,
+      "file": 20,
+      "line": 11,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 22,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 23,
+      "file": 22,
+      "line": 8,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 24,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 17,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 25,
+      "file": 18,
+      "line": 5,
+      "parent_class": 11,
+      "kind": 0
+    },
+    {
+      "name": 26,
+      "file": 18,
+      "line": 14,
+      "parent_class": 11,
+      "kind": 0
+    },
+    {
+      "name": 21,
+      "file": 20,
+      "line": 1,
+      "kind": 0
+    },
+    {
+      "name": 25,
+      "file": 19,
+      "line": 6,
+      "parent_class": 3,
+      "kind": 0
+    },
+    {
+      "name": 11,
+      "file": 10,
+      "line": 4,
+      "kind": 0
+    },
+    {
+      "name": 3,
+      "file": 2,
+      "line": 5,
+      "kind": 0
+    }
+  ],
   "summary": {
     "languages": [
       "python"
@@ -24,75 +223,45 @@
     },
     "top_callers": [
       {
-        "name": "Order",
-        "file": "tests/fixtures/python-fastapi/app/models.py",
-        "line": 7,
-        "parent_class": null,
+        "frame": 8,
         "count": 1
       },
       {
-        "name": "OrderRepository",
-        "file": "tests/fixtures/python-fastapi/app/repositories.py",
-        "line": 4,
-        "parent_class": null,
+        "frame": 9,
         "count": 1
       },
       {
-        "name": "OrderService",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 5,
-        "parent_class": null,
+        "frame": 10,
         "count": 1
       },
       {
-        "name": "build_order",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 14,
-        "parent_class": "OrderService",
+        "frame": 11,
         "count": 1
       },
       {
-        "name": "create_order",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 9,
-        "parent_class": "OrderService",
+        "frame": 12,
         "count": 1
       },
       {
-        "name": "save",
-        "file": "tests/fixtures/python-fastapi/app/repositories.py",
-        "line": 8,
-        "parent_class": "OrderRepository",
+        "frame": 13,
         "count": 1
       },
       {
-        "name": "validate",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 21,
-        "parent_class": "OrderService",
+        "frame": 14,
         "count": 1
       }
     ],
     "top_callees": [
       {
-        "name": "create_order",
-        "file": "tests/fixtures/python-fastapi/app/routes.py",
-        "line": 11,
-        "parent_class": null,
+        "frame": 15,
         "count": 3
       },
       {
-        "name": "create_order",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 9,
-        "parent_class": "OrderService",
+        "frame": 12,
         "count": 3
       },
       {
-        "name": "build_order",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 14,
-        "parent_class": "OrderService",
+        "frame": 11,
         "count": 1
       }
     ],
@@ -117,132 +286,78 @@
     ],
     "dead_code": [
       {
-        "name": "<module>",
-        "file": "tests/fixtures/python-fastapi/app/db.py",
-        "line": 1,
-        "parent_class": null,
+        "frame": 16,
         "count": 0
       },
       {
-        "name": "get_session",
-        "file": "tests/fixtures/python-fastapi/app/db.py",
-        "line": 8,
-        "parent_class": null,
+        "frame": 17,
         "count": 0
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/python-fastapi/app/main.py",
-        "line": 1,
-        "parent_class": null,
+        "frame": 18,
         "count": 0
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/python-fastapi/app/models.py",
-        "line": 1,
-        "parent_class": null,
+        "frame": 19,
         "count": 0
       },
       {
-        "name": "__init__",
-        "file": "tests/fixtures/python-fastapi/app/repositories.py",
-        "line": 5,
-        "parent_class": "OrderRepository",
+        "frame": 20,
         "count": 0
       },
       {
-        "name": "find_by_id",
-        "file": "tests/fixtures/python-fastapi/app/repositories.py",
-        "line": 14,
-        "parent_class": "OrderRepository",
+        "frame": 21,
         "count": 0
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/python-fastapi/app/routes.py",
-        "line": 1,
-        "parent_class": null,
+        "frame": 22,
         "count": 0
       },
       {
-        "name": "__init__",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 6,
-        "parent_class": "OrderService",
+        "frame": 23,
         "count": 0
       }
     ],
     "pagerank_top": [
       {
-        "name": "Order",
-        "file": "tests/fixtures/python-fastapi/app/models.py",
-        "line": 7,
-        "parent_class": null,
-        "score": 0.12066033116580309
+        "frame": 8,
+        "score": 0.11304083458752755
       },
       {
-        "name": "save",
-        "file": "tests/fixtures/python-fastapi/app/repositories.py",
-        "line": 8,
-        "parent_class": "OrderRepository",
-        "score": 0.07226494864380016
+        "frame": 13,
+        "score": 0.07139360575863575
       },
       {
-        "name": "build_order",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 14,
-        "parent_class": "OrderService",
-        "score": 0.07226494864380016
+        "frame": 11,
+        "score": 0.07139360575863575
       },
       {
-        "name": "validate",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 21,
-        "parent_class": "OrderService",
-        "score": 0.07226494864380016
+        "frame": 14,
+        "score": 0.07139360575863575
       },
       {
-        "name": "OrderRepository",
-        "file": "tests/fixtures/python-fastapi/app/repositories.py",
-        "line": 4,
-        "parent_class": null,
-        "score": 0.06724102568790574
+        "frame": 9,
+        "score": 0.06719056958415448
       },
       {
-        "name": "OrderService",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 5,
-        "parent_class": null,
-        "score": 0.06724102568790574
+        "frame": 10,
+        "score": 0.06719056958415448
       },
       {
-        "name": "create_order",
-        "file": "tests/fixtures/python-fastapi/app/services.py",
-        "line": 9,
-        "parent_class": "OrderService",
-        "score": 0.06724102568790574
+        "frame": 12,
+        "score": 0.06719056958415448
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/python-fastapi/app/db.py",
-        "line": 1,
-        "parent_class": null,
-        "score": 0.05120241620434216
+        "frame": 16,
+        "score": 0.052356293264900176
       },
       {
-        "name": "get_session",
-        "file": "tests/fixtures/python-fastapi/app/db.py",
-        "line": 8,
-        "parent_class": null,
-        "score": 0.05120241620434216
+        "frame": 17,
+        "score": 0.052356293264900176
       },
       {
-        "name": "<module>",
-        "file": "tests/fixtures/python-fastapi/app/main.py",
-        "line": 1,
-        "parent_class": null,
-        "score": 0.05120241620434216
+        "frame": 18,
+        "score": 0.052356293264900176
       }
     ],
     "recursive_symbols": [],
@@ -259,658 +374,334 @@
     "profiled_language_percent": 100.0,
     "roots_overview": [
       {
-        "node_id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-        "name": "create_order",
-        "file": "app/routes.py",
-        "line": 11,
-        "kind": "Function",
+        "frame": 1,
         "subtree_size": 8,
         "percent_of_all_roots": 61.53846153846154,
         "categories_reached": {
           "db": 4
         },
-        "findings_by_severity": {},
         "findings_total": 0,
-        "callers": [],
         "first_callees": [
           {
-            "node_id": "tests/fixtures/python-fastapi/app/repositories.py::::OrderRepository",
-            "name": "OrderRepository",
-            "file": "app/repositories.py",
-            "line": 4,
+            "frame": 24,
             "subtree_size": 1
           },
           {
-            "node_id": "tests/fixtures/python-fastapi/app/services.py::::OrderService",
-            "name": "OrderService",
-            "file": "app/services.py",
-            "line": 5,
+            "frame": 25,
             "subtree_size": 1
           },
           {
-            "node_id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-            "name": "create_order",
-            "file": "app/services.py",
-            "line": 9,
-            "parent_class": "OrderService",
+            "frame": 0,
             "subtree_size": 5
           }
         ]
       },
       {
-        "node_id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-        "name": "create_order",
-        "file": "app/services.py",
-        "line": 9,
-        "parent_class": "OrderService",
-        "kind": "Function",
+        "frame": 0,
         "subtree_size": 5,
         "percent_of_all_roots": 38.46153846153847,
         "categories_reached": {
           "db": 4
         },
-        "findings_by_severity": {},
         "findings_total": 0,
         "callers": [
-          {
-            "node_id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-            "name": "create_order",
-            "file": "app/routes.py",
-            "line": 11
-          }
+          1
         ],
         "first_callees": [
           {
-            "node_id": "tests/fixtures/python-fastapi/app/services.py::OrderService::build_order",
-            "name": "build_order",
-            "file": "app/services.py",
-            "line": 14,
-            "parent_class": "OrderService",
+            "frame": 2,
             "subtree_size": 2
           },
           {
-            "node_id": "tests/fixtures/python-fastapi/app/services.py::OrderService::validate",
-            "name": "validate",
-            "file": "app/services.py",
-            "line": 21,
-            "parent_class": "OrderService",
+            "frame": 4,
             "subtree_size": 1
           },
           {
-            "node_id": "tests/fixtures/python-fastapi/app/repositories.py::OrderRepository::save",
-            "name": "save",
-            "file": "app/repositories.py",
-            "line": 8,
-            "parent_class": "OrderRepository",
+            "frame": 5,
             "subtree_size": 1
           }
         ]
       }
-    ]
+    ],
+    "sql_files_scanned": 0,
+    "sql_files_with_findings": 0
   },
   "entries": [
     {
-      "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-      "name": "create_order",
-      "kind": "Function",
-      "file": "app/services.py",
-      "line": 9,
-      "depth": 0,
-      "parent_class": "OrderService",
+      "frame": 0,
       "children": [
         {
-          "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::build_order",
-          "name": "build_order",
-          "kind": "Function",
-          "file": "app/services.py",
-          "line": 14,
+          "frame": 2,
           "depth": 1,
-          "parent_class": "OrderService",
           "children": [
             {
-              "id": "tests/fixtures/python-fastapi/app/models.py::::Order",
-              "name": "Order",
-              "kind": "Class",
-              "file": "app/models.py",
-              "line": 7,
+              "frame": 3,
               "depth": 2,
-              "parent_class": null,
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::build_order",
-                  "name": "build_order",
-                  "file": "app/services.py",
-                  "line": 14,
-                  "parent_class": "OrderService"
-                }
+                2
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": null,
-              "categories_reached": {},
-              "external_calls": [],
-              "complexity": 0,
-              "loc": 0,
-              "nesting_depth": 0,
-              "parameter_count": 0,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.12066033116580309,
+              "pagerank": 0.11304083458752755,
               "percent_total": 20.0,
-              "percent_parent": 50.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 50.0
             }
           ],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-              "name": "create_order",
-              "file": "app/services.py",
-              "line": 9,
-              "parent_class": "OrderService"
-            }
+            0
           ],
           "callers_count": 1,
           "callees_count": 1,
           "subtree_size": 2,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
           "complexity": 1,
           "loc": 5,
-          "nesting_depth": 0,
           "parameter_count": 2,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.07226494864380016,
+          "pagerank": 0.07139360575863575,
           "percent_total": 40.0,
-          "percent_parent": 40.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 40.0
         },
         {
-          "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::validate",
-          "name": "validate",
-          "kind": "Function",
-          "file": "app/services.py",
-          "line": 21,
+          "frame": 4,
           "depth": 1,
-          "parent_class": "OrderService",
-          "children": [],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-              "name": "create_order",
-              "file": "app/services.py",
-              "line": 9,
-              "parent_class": "OrderService"
-            }
+            0
           ],
           "callers_count": 1,
-          "callees_count": 0,
           "subtree_size": 1,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
           "complexity": 3,
           "loc": 4,
           "nesting_depth": 1,
           "parameter_count": 2,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.07226494864380016,
+          "pagerank": 0.07139360575863575,
           "percent_total": 20.0,
-          "percent_parent": 20.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 20.0
         },
         {
-          "id": "tests/fixtures/python-fastapi/app/repositories.py::OrderRepository::save",
-          "name": "save",
-          "kind": "Function",
-          "file": "app/repositories.py",
-          "line": 8,
+          "frame": 5,
           "depth": 1,
-          "parent_class": "OrderRepository",
-          "children": [],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-              "name": "create_order",
-              "file": "app/services.py",
-              "line": 9,
-              "parent_class": "OrderService"
-            }
+            0
           ],
           "callers_count": 1,
-          "callees_count": 0,
           "subtree_size": 1,
-          "category_self": "db",
+          "category_self": 1,
           "categories_reached": {
             "db": 4
           },
           "external_calls": [
             {
-              "name": "add",
-              "receiver": "session",
-              "category": "db",
-              "tier": "receiver_pattern",
-              "evidence": "receiver name `session` matches db pattern",
-              "line": 9,
-              "in_loop": false,
-              "in_await": false
+              "name": 12,
+              "receiver": 13,
+              "category": 1,
+              "tier": 1,
+              "evidence": 14,
+              "line": 9
             },
             {
-              "name": "commit",
-              "receiver": "session",
-              "category": "db",
-              "tier": "receiver_pattern",
-              "evidence": "receiver name `session` matches db pattern",
-              "line": 10,
-              "in_loop": false,
-              "in_await": false
+              "name": 15,
+              "receiver": 13,
+              "category": 1,
+              "tier": 1,
+              "evidence": 14,
+              "line": 10
             },
             {
-              "name": "refresh",
-              "receiver": "session",
-              "category": "db",
-              "tier": "receiver_pattern",
-              "evidence": "receiver name `session` matches db pattern",
-              "line": 11,
-              "in_loop": false,
-              "in_await": false
+              "name": 16,
+              "receiver": 13,
+              "category": 1,
+              "tier": 1,
+              "evidence": 14,
+              "line": 11
             }
           ],
           "complexity": 1,
           "loc": 4,
-          "nesting_depth": 0,
           "parameter_count": 2,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.07226494864380016,
+          "pagerank": 0.07139360575863575,
           "percent_total": 20.0,
-          "percent_parent": 20.0,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 20.0
         }
       ],
-      "truncated_reason": null,
       "callers": [
-        {
-          "id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-          "name": "create_order",
-          "file": "app/routes.py",
-          "line": 11,
-          "parent_class": null
-        }
+        1
       ],
       "callers_count": 1,
       "callees_count": 3,
       "subtree_size": 5,
-      "category_self": null,
       "categories_reached": {
         "db": 4
       },
-      "external_calls": [],
       "complexity": 1,
       "loc": 3,
-      "nesting_depth": 0,
       "parameter_count": 2,
-      "is_async": false,
       "call_site_count": 1,
-      "is_recursive": false,
-      "pagerank": 0.06724102568790574,
+      "pagerank": 0.06719056958415448,
       "percent_total": 100.0,
-      "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false
+      "percent_parent": 100.0
     },
     {
-      "id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-      "name": "create_order",
-      "kind": "Function",
-      "file": "app/routes.py",
-      "line": 11,
-      "depth": 0,
-      "parent_class": null,
+      "frame": 1,
       "children": [
         {
-          "id": "tests/fixtures/python-fastapi/app/repositories.py::::OrderRepository",
-          "name": "OrderRepository",
-          "kind": "Class",
-          "file": "app/repositories.py",
-          "line": 4,
+          "frame": 6,
           "depth": 1,
-          "parent_class": null,
-          "children": [],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-              "name": "create_order",
-              "file": "app/routes.py",
-              "line": 11,
-              "parent_class": null
-            }
+            1
           ],
           "callers_count": 1,
-          "callees_count": 0,
           "subtree_size": 1,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
-          "complexity": 0,
-          "loc": 0,
-          "nesting_depth": 0,
-          "parameter_count": 0,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.06724102568790574,
+          "pagerank": 0.06719056958415448,
           "percent_total": 12.5,
-          "percent_parent": 12.5,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 12.5
         },
         {
-          "id": "tests/fixtures/python-fastapi/app/services.py::::OrderService",
-          "name": "OrderService",
-          "kind": "Class",
-          "file": "app/services.py",
-          "line": 5,
+          "frame": 7,
           "depth": 1,
-          "parent_class": null,
-          "children": [],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-              "name": "create_order",
-              "file": "app/routes.py",
-              "line": 11,
-              "parent_class": null
-            }
+            1
           ],
           "callers_count": 1,
-          "callees_count": 0,
           "subtree_size": 1,
-          "category_self": null,
-          "categories_reached": {},
-          "external_calls": [],
-          "complexity": 0,
-          "loc": 0,
-          "nesting_depth": 0,
-          "parameter_count": 0,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.06724102568790574,
+          "pagerank": 0.06719056958415448,
           "percent_total": 12.5,
-          "percent_parent": 12.5,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 12.5
         },
         {
-          "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-          "name": "create_order",
-          "kind": "Function",
-          "file": "app/services.py",
-          "line": 9,
+          "frame": 0,
           "depth": 1,
-          "parent_class": "OrderService",
           "children": [
             {
-              "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::build_order",
-              "name": "build_order",
-              "kind": "Function",
-              "file": "app/services.py",
-              "line": 14,
+              "frame": 2,
               "depth": 2,
-              "parent_class": "OrderService",
               "children": [
                 {
-                  "id": "tests/fixtures/python-fastapi/app/models.py::::Order",
-                  "name": "Order",
-                  "kind": "Class",
-                  "file": "app/models.py",
-                  "line": 7,
+                  "frame": 3,
                   "depth": 3,
-                  "parent_class": null,
-                  "children": [],
-                  "truncated_reason": null,
                   "callers": [
-                    {
-                      "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::build_order",
-                      "name": "build_order",
-                      "file": "app/services.py",
-                      "line": 14,
-                      "parent_class": "OrderService"
-                    }
+                    2
                   ],
                   "callers_count": 1,
-                  "callees_count": 0,
                   "subtree_size": 1,
-                  "category_self": null,
-                  "categories_reached": {},
-                  "external_calls": [],
-                  "complexity": 0,
-                  "loc": 0,
-                  "nesting_depth": 0,
-                  "parameter_count": 0,
-                  "is_async": false,
                   "call_site_count": 1,
-                  "is_recursive": false,
-                  "pagerank": 0.12066033116580309,
+                  "pagerank": 0.11304083458752755,
                   "percent_total": 12.5,
-                  "percent_parent": 50.0,
-                  "n_plus_one_risk": false,
-                  "blocking_in_async": false
+                  "percent_parent": 50.0
                 }
               ],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-                  "name": "create_order",
-                  "file": "app/services.py",
-                  "line": 9,
-                  "parent_class": "OrderService"
-                }
+                0
               ],
               "callers_count": 1,
               "callees_count": 1,
               "subtree_size": 2,
-              "category_self": null,
-              "categories_reached": {},
-              "external_calls": [],
               "complexity": 1,
               "loc": 5,
-              "nesting_depth": 0,
               "parameter_count": 2,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.07226494864380016,
+              "pagerank": 0.07139360575863575,
               "percent_total": 25.0,
-              "percent_parent": 40.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 40.0
             },
             {
-              "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::validate",
-              "name": "validate",
-              "kind": "Function",
-              "file": "app/services.py",
-              "line": 21,
+              "frame": 4,
               "depth": 2,
-              "parent_class": "OrderService",
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-                  "name": "create_order",
-                  "file": "app/services.py",
-                  "line": 9,
-                  "parent_class": "OrderService"
-                }
+                0
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": null,
-              "categories_reached": {},
-              "external_calls": [],
               "complexity": 3,
               "loc": 4,
               "nesting_depth": 1,
               "parameter_count": 2,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.07226494864380016,
+              "pagerank": 0.07139360575863575,
               "percent_total": 12.5,
-              "percent_parent": 20.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 20.0
             },
             {
-              "id": "tests/fixtures/python-fastapi/app/repositories.py::OrderRepository::save",
-              "name": "save",
-              "kind": "Function",
-              "file": "app/repositories.py",
-              "line": 8,
+              "frame": 5,
               "depth": 2,
-              "parent_class": "OrderRepository",
-              "children": [],
-              "truncated_reason": null,
               "callers": [
-                {
-                  "id": "tests/fixtures/python-fastapi/app/services.py::OrderService::create_order",
-                  "name": "create_order",
-                  "file": "app/services.py",
-                  "line": 9,
-                  "parent_class": "OrderService"
-                }
+                0
               ],
               "callers_count": 1,
-              "callees_count": 0,
               "subtree_size": 1,
-              "category_self": "db",
+              "category_self": 1,
               "categories_reached": {
                 "db": 4
               },
               "external_calls": [
                 {
-                  "name": "add",
-                  "receiver": "session",
-                  "category": "db",
-                  "tier": "receiver_pattern",
-                  "evidence": "receiver name `session` matches db pattern",
-                  "line": 9,
-                  "in_loop": false,
-                  "in_await": false
+                  "name": 12,
+                  "receiver": 13,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 14,
+                  "line": 9
                 },
                 {
-                  "name": "commit",
-                  "receiver": "session",
-                  "category": "db",
-                  "tier": "receiver_pattern",
-                  "evidence": "receiver name `session` matches db pattern",
-                  "line": 10,
-                  "in_loop": false,
-                  "in_await": false
+                  "name": 15,
+                  "receiver": 13,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 14,
+                  "line": 10
                 },
                 {
-                  "name": "refresh",
-                  "receiver": "session",
-                  "category": "db",
-                  "tier": "receiver_pattern",
-                  "evidence": "receiver name `session` matches db pattern",
-                  "line": 11,
-                  "in_loop": false,
-                  "in_await": false
+                  "name": 16,
+                  "receiver": 13,
+                  "category": 1,
+                  "tier": 1,
+                  "evidence": 14,
+                  "line": 11
                 }
               ],
               "complexity": 1,
               "loc": 4,
-              "nesting_depth": 0,
               "parameter_count": 2,
-              "is_async": false,
               "call_site_count": 1,
-              "is_recursive": false,
-              "pagerank": 0.07226494864380016,
+              "pagerank": 0.07139360575863575,
               "percent_total": 12.5,
-              "percent_parent": 20.0,
-              "n_plus_one_risk": false,
-              "blocking_in_async": false
+              "percent_parent": 20.0
             }
           ],
-          "truncated_reason": null,
           "callers": [
-            {
-              "id": "tests/fixtures/python-fastapi/app/routes.py::::create_order",
-              "name": "create_order",
-              "file": "app/routes.py",
-              "line": 11,
-              "parent_class": null
-            }
+            1
           ],
           "callers_count": 1,
           "callees_count": 3,
           "subtree_size": 5,
-          "category_self": null,
           "categories_reached": {
             "db": 4
           },
-          "external_calls": [],
           "complexity": 1,
           "loc": 3,
-          "nesting_depth": 0,
           "parameter_count": 2,
-          "is_async": false,
           "call_site_count": 1,
-          "is_recursive": false,
-          "pagerank": 0.06724102568790574,
+          "pagerank": 0.06719056958415448,
           "percent_total": 62.5,
-          "percent_parent": 62.5,
-          "n_plus_one_risk": false,
-          "blocking_in_async": false
+          "percent_parent": 62.5
         }
       ],
-      "truncated_reason": null,
-      "callers": [],
-      "callers_count": 0,
       "callees_count": 3,
       "subtree_size": 8,
-      "category_self": null,
       "categories_reached": {
         "db": 4
       },
-      "external_calls": [],
       "complexity": 1,
       "loc": 4,
-      "nesting_depth": 0,
       "parameter_count": 2,
-      "is_async": false,
       "call_site_count": 1,
-      "is_recursive": false,
-      "pagerank": 0.05120241620434216,
+      "pagerank": 0.052356293264900176,
       "percent_total": 100.0,
-      "percent_parent": 100.0,
-      "n_plus_one_risk": false,
-      "blocking_in_async": false
+      "percent_parent": 100.0
     }
   ]
 }

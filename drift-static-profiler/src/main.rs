@@ -478,13 +478,16 @@ fn run_diff(
     json: bool,
     no_fail: bool,
 ) -> Result<()> {
-    use drift_static_profiler::{diff, report::Report};
-    let base: Report = serde_json::from_slice(
+    use drift_static_profiler::{compact, diff};
+    // `compact::read_report` accepts both legacy 1.0 (denormalized) and
+    // new 1.1 (interned) reports — auto-detected via the presence of
+    // `string_table` at the top level. Lets `diff` cross 1.0↔1.1.
+    let base = compact::read_report(
         &std::fs::read(baseline)
             .with_context(|| format!("read baseline {}", baseline.display()))?,
     )
     .context("parse baseline JSON")?;
-    let cur: Report = serde_json::from_slice(
+    let cur = compact::read_report(
         &std::fs::read(current)
             .with_context(|| format!("read current {}", current.display()))?,
     )
@@ -534,9 +537,14 @@ fn run_analyze(
     }
 
     if json {
+        // Emit the interned 1.1 wire form so analyze --json output
+        // matches what `scan` writes to disk — same shape, same
+        // dedup. Consumers must use `compact::read_report` (or the
+        // viewer's decompress.ts) to load it.
+        let compact = drift_static_profiler::compact::CompactReport::from_report(&outcome.report);
         println!(
             "{}",
-            serde_json::to_string_pretty(&outcome.report).context("serialize")?
+            serde_json::to_string_pretty(&compact).context("serialize")?
         );
     } else {
         for r in &outcome.report.entries {
@@ -648,7 +656,13 @@ fn write_report_with_progress(
     let file = std::fs::File::create(&out_path)
         .with_context(|| format!("create report file {}", out_path.display()))?;
     let mut writer = BufWriter::with_capacity(256 * 1024, file);
-    serde_json::to_writer_pretty(&mut writer, &outcome.report).context("serialize")?;
+    // Emit the 1.1 interned wire form. Strings (file paths, symbol
+    // names, finding messages, SQL literals) and symbol frames are
+    // deduped through `string_table` + `frames` — typical reduction
+    // on real polyglot repos is 60-80% vs. the legacy 1.0 inline form.
+    // Viewer / diff auto-detect and expand on read.
+    drift_static_profiler::compact::write_report_pretty(&mut writer, &outcome.report)
+        .context("serialize")?;
     // Flush the BufWriter before closing so a partial write surfaces
     // as an io::Error here, not as a silently-truncated JSON file
     // discovered later by the viewer.

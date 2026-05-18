@@ -9,8 +9,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0",
-      "description": "Profile-format schema version, MAJOR.MINOR. Bump major on breaking change."
+      "enum": ["1.0", "1.1"],
+      "description": "Profile-format schema version, MAJOR.MINOR. 1.0 = denormalized inline form (every CallTreeNode carries name/file/line). 1.1 = interned form with top-level `string_table` + `frames`; each node references a frame by `f: u32` and long strings are pulled into the table. Same data, 60-90% smaller on real scans."
     },
     "mode": {
       "type": "string",

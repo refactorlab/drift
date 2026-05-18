@@ -1,0 +1,89 @@
+# dev/Tiltfile — brings up the drift demo on minikube as two independent
+# Kubernetes Deployments connected over a ClusterIP Service.
+#
+#   make up
+#
+# Once tilt is up:
+#   - http://localhost:8000/docs   → FastAPI app   (test-python-web-server)
+#   - http://localhost:8080/docs/  → observability-server Swagger UI
+#   - http://localhost:8080/live   → live SSE viewer
+
+REPO_ROOT = '..'
+NAMESPACE = 'local'
+SHARED_VOLUME_PATH = '/tmp/drift-trace'   # hostPath on the minikube node
+
+# Wipe the shared trace volume on the minikube node before deploying so a
+# fresh `tilt up` never replays events from a prior code version. Errors are
+# ignored (the dir may not exist yet on first run).
+local(
+    'minikube ssh -- "sudo rm -rf %s/* 2>/dev/null || true" >/dev/null' % SHARED_VOLUME_PATH,
+    quiet=True,
+)
+
+k8s_yaml(blob("""
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+""" % NAMESPACE))
+
+# --- drift wheel (Dockerized build) ---------------------------------------
+# Build the drift-python wheel via `make export-drift-python`, which runs
+# `python -m build` inside a python:3.11-slim sidecar container and mirrors
+# the output to drift-python/dist/ (where the Dockerfile picks it up).
+# Tilt re-fires this when anything under drift-python/drift/ or its
+# pyproject.toml changes — so the wheel always reflects live source.
+local_resource(
+    'drift-python-wheel',
+    cmd='make -C %s export-drift-python' % REPO_ROOT,
+    deps=[
+        REPO_ROOT + '/drift-python/drift/',
+        REPO_ROOT + '/drift-python/pyproject.toml',
+    ],
+    labels=['drift-demo'],
+)
+
+# --- Images ----------------------------------------------------------------
+# test-python-web-server's Dockerfile consumes the prebuilt wheel from
+# drift-python/dist/ (produced by the drift-python-wheel resource above) —
+# so its build context is the repo root.
+docker_build(
+    'test-python-web-server',
+    context=REPO_ROOT,
+    dockerfile=REPO_ROOT + '/test-python-web-server/Dockerfile',
+    only=[
+        'drift-python/dist/',
+        'test-python-web-server/',
+    ],
+)
+
+docker_build(
+    'observability-server',
+    context=REPO_ROOT + '/observability-server',
+    dockerfile=REPO_ROOT + '/observability-server/Dockerfile',
+)
+
+# --- Helm chart ------------------------------------------------------------
+k8s_yaml(helm(
+    REPO_ROOT + '/deploy/drift-demo',
+    name='demo',
+    namespace=NAMESPACE,
+))
+
+# --- Tilt resources --------------------------------------------------------
+# Each Deployment becomes its own Tilt resource. We register them explicitly
+# so the sidebar names + port-forwards are clean.
+k8s_resource(
+    'demo-obs',
+    new_name='observability-server',
+    port_forwards=[port_forward(8080, 8080, name='obs')],
+    labels=['drift-demo'],
+)
+
+k8s_resource(
+    'demo-app',
+    new_name='test-python-web-server',
+    port_forwards=[port_forward(8000, 8000, name='app')],
+    resource_deps=['observability-server', 'drift-python-wheel'],
+    labels=['drift-demo'],
+)
