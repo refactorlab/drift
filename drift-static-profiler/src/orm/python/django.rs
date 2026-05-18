@@ -119,38 +119,14 @@ fn matches_dj_perf_007(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
 
 // ─── DJ-N1-001: queryset iter + related access without prefetch ─────────
 
+/// DJ-N1-001 dispatcher.
+///
+/// All the work lives in the generic [`crate::orm::n_plus_one`] pipeline:
+/// resolve the loop scope, walk the chain against the prefetch tree and
+/// the model graph, emit a `MatchHit` per unsafe segment. Adding a new
+/// per-ORM N+1 rule is one line.
 fn matches_dj_n1_001(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
-    let mut out = Vec::new();
-    for chain in &ctx.chains {
-        if !chain.in_loop {
-            continue;
-        }
-        if !is_model_inst_chain(chain, ctx) {
-            continue;
-        }
-        // chain.root.binding → source_queryset → look up that queryset's prefetched
-        let root_name = match &chain.root {
-            ChainRoot::Binding(n) | ChainRoot::LoopVar(n) | ChainRoot::Identifier(n) => n.clone(),
-            _ => continue,
-        };
-        let Some(b) = ctx.binding_at(&root_name, chain.byte_range.start) else { continue };
-        let source_qs = match &b.kind {
-            BindingKind::DjangoModelInst(m) => m.source_queryset.clone(),
-            _ => None,
-        };
-        let Some(qs_name) = source_qs else { continue };
-        let Some(qs_binding) = ctx.binding_at(&qs_name, chain.byte_range.start) else { continue };
-        let prefetched = match &qs_binding.kind {
-            BindingKind::DjangoQuerySet(f) => f.prefetched.clone(),
-            _ => Vec::new(),
-        };
-        // chain.steps[0] is the related attribute, e.g. `posts` in `u.posts.count()`
-        let first_attr = chain.steps.first().map(|s| s.method.as_str()).unwrap_or("");
-        if !first_attr.is_empty() && !prefetched.iter().any(|p| p == first_attr) {
-            out.push(hit(chain, "DJ-N1-001"));
-        }
-    }
-    out
+    crate::orm::n_plus_one::detect(ctx, "DJ-N1-001")
 }
 
 // ─── DJ-N1-002: .count() then later use of same qs ──────────────────────
@@ -920,6 +896,65 @@ mod tests {
         let src = "qs = User.objects.filter(active=True).prefetch_related('posts')\nfor u in qs:\n    u.posts.count()\n";
         let hits = run_rule("DJ-N1-001", src);
         assert!(hits.is_empty(), "prefetch_related should suppress");
+    }
+
+    #[test]
+    fn dj_n1_001_does_not_fire_after_values_list() {
+        // `.values_list(...)` collapses rows to tuples — any later
+        // attribute access cannot trigger a lazy relation load.
+        let src = "qs = User.objects.filter(active=True).values_list('id', 'name')\nfor u in qs:\n    u.posts.count()\n";
+        let hits = run_rule("DJ-N1-001", src);
+        assert!(hits.is_empty(), ".values_list() must short-circuit");
+    }
+
+    #[test]
+    fn dj_n1_001_does_not_fire_after_values() {
+        let src = "qs = User.objects.filter(active=True).values('id')\nfor u in qs:\n    u.posts.count()\n";
+        let hits = run_rule("DJ-N1-001", src);
+        assert!(hits.is_empty(), ".values() must short-circuit");
+    }
+
+    #[test]
+    fn dj_n1_001_fires_inside_list_comprehension() {
+        let src = "qs = User.objects.filter(active=True)\ncounts = [u.posts.count() for u in qs]\n";
+        let hits = run_rule("DJ-N1-001", src);
+        assert!(
+            !hits.is_empty(),
+            "N+1 inside list comprehension must fire"
+        );
+    }
+
+    #[test]
+    fn dj_n1_001_fires_inside_generator_expression() {
+        let src = "qs = User.objects.filter(active=True)\ntotal = sum(u.posts.count() for u in qs)\n";
+        let hits = run_rule("DJ-N1-001", src);
+        assert!(
+            !hits.is_empty(),
+            "N+1 inside generator expression must fire"
+        );
+    }
+
+    #[test]
+    fn dj_n1_001_does_not_fire_in_comp_with_prefetch() {
+        let src = "qs = User.objects.filter(active=True).prefetch_related('posts')\ncounts = [u.posts.count() for u in qs]\n";
+        let hits = run_rule("DJ-N1-001", src);
+        assert!(
+            hits.is_empty(),
+            "prefetch_related must suppress N+1 in list comp"
+        );
+    }
+
+    #[test]
+    fn dj_n1_001_does_not_fire_with_nested_prefetch() {
+        // Nested `__` path — only `orders__items` is declared, and
+        // `u.orders.first().items` traverses both segments. Should be
+        // suppressed by the prefetch tree.
+        let src = "qs = User.objects.filter(active=True).prefetch_related('orders__items')\nfor u in qs:\n    u.orders.first()\n";
+        let hits = run_rule("DJ-N1-001", src);
+        assert!(
+            hits.is_empty(),
+            "nested prefetch `orders__items` must suppress access to `orders`"
+        );
     }
 
     #[test]

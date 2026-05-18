@@ -10,6 +10,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{CallChain, ChainRoot, PyOrmContext};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ShapeSpec};
 use crate::orm::sql_ir::{
     OrmKind, PredictedSql, PredictedStatement, Projection, SqlDialect, SqlFidelity, SqlOp,
     TableRef, WhereExpr,
@@ -185,6 +186,30 @@ pub const TYPEORM_RULES: &[OrmRule] = &[
     },
 ];
 
+/// Shape-based fallback for TypeORM. Catches NestJS-style code where
+/// repositories are dependency-injected (`@InjectRepository`) and the
+/// leaf service file has no direct `import 'typeorm'`. The anchor list
+/// uses TypeORM-exclusive method spellings (`findOneByOrFail`,
+/// `softDelete`, `softRemove`) so substring collisions with custom
+/// helpers stay below noise. `createQueryBuilder` is also distinctive
+/// — Sequelize uses `QueryTypes`, Prisma uses `$queryRaw`.
+pub(crate) const TYPEORM_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "createQueryBuilder",
+        "getRepository",
+        "getCustomRepository",
+        "softDelete",
+        "softRemove",
+        "restore",
+        "findOneBy",
+        "findOneByOrFail",
+        "findOneOrFail",
+        "findAndCount",
+        "getManager",
+    ],
+    combos: &[],
+};
+
 pub struct TypeormDialect;
 
 impl OrmDialect for TypeormDialect {
@@ -194,6 +219,7 @@ impl OrmDialect for TypeormDialect {
 
     fn matches(&self, ctx: &PyOrmContext<'_>) -> bool {
         ctx.imports.has_any_starting_with("typeorm")
+            || matches_by_shape(&ctx.chains, &TYPEORM_SHAPE)
     }
 
     fn predict_all(&self, ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -301,9 +327,49 @@ mod tests {
     }
 
     #[test]
+    fn to_n1_001_safe_outside_loop() {
+        // Single findOne at module level — not N+1.
+        let src = "const u = await userRepo.findOne({ where: { id: 1 } });\n";
+        let hits = run_rule("TO-N1-001", src);
+        assert!(hits.is_empty(), "TO-N1-001 must NOT fire outside a loop");
+    }
+
+    #[test]
+    fn to_n1_001_safe_with_in_batch() {
+        // `findBy({ id: In(ids) })` is the canonical fix for N+1.
+        let src = "const us = await userRepo.findBy({ id: In(ids) });\n";
+        let hits = run_rule("TO-N1-001", src);
+        assert!(hits.is_empty(), "TO-N1-001 must NOT fire on In(...) batch query");
+    }
+
+    #[test]
     fn to_eager_002_fires_on_onetomany_eager() {
         let src = "class User {\n  @OneToMany(() => Post, p => p.user, { eager: true })\n  posts: Post[];\n}\n";
         let hits = run_rule("TO-EAGER-002", src);
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn shape_anchor_create_query_builder_fires_without_import() {
+        // NestJS DI: no `import 'typeorm'` in this file, but the
+        // injected repository's `createQueryBuilder` call is uniquely TypeORM.
+        let src = "const qb = this.userRepo.createQueryBuilder('u').where('u.id = :id', { id });\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &TYPEORM_SHAPE));
+    }
+
+    #[test]
+    fn shape_anchor_find_one_by_or_fail_fires() {
+        let src = "const u = await repo.findOneByOrFail({ id: 1 });\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &TYPEORM_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_plain_find_does_not_fire() {
+        // Generic `arr.find(...)` is a JS built-in — must not trigger.
+        let src = "const u = users.find(u => u.id === 1);\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &TYPEORM_SHAPE));
     }
 }

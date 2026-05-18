@@ -39,7 +39,7 @@ fn orm_scan_python_sqlalchemy_finds_expected_rules() {
     let root = fixture("python-sqlalchemy");
     let findings = scan_workspace(&root, 1000);
     let ids = rule_ids(&findings);
-    for expected in ["SA-EXEC-009", "SA-LAZY-008", "SA-SESS-007"] {
+    for expected in ["SA-EXEC-009", "SA-LAZY-008", "SA-SESS-007", "SA-N1-001"] {
         assert!(
             ids.iter().any(|r| r == expected),
             "orm-scan must fire {expected} on python-sqlalchemy fixture; got: {ids:?}"

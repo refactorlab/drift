@@ -9,6 +9,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{CallChain, ChainRoot, PyOrmContext};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ComboRule, RootPredicate, ShapeSpec};
 use crate::orm::sql_ir::{
     OrmKind, PredictedSql, PredictedStatement, Projection, SqlDialect, SqlFidelity, SqlOp,
     TableRef, WhereExpr,
@@ -52,10 +53,20 @@ fn matches_jpa_n1_001(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
             .last()
             .map(|s| s.method.as_str())
             .unwrap_or("");
+        // Determine whether the root is an EntityManager (em / entityManager).
+        // `em.find(Entity.class, id)` is the canonical EntityManager N+1 form.
+        let root_text = match &chain.root {
+            ChainRoot::Identifier(t) | ChainRoot::Binding(t) | ChainRoot::LoopVar(t) => {
+                t.trim_start_matches("this.").trim().to_string()
+            }
+            _ => String::new(),
+        };
+        let is_entity_manager = root_text == "em" || root_text == "entityManager";
         if last == "findById"
             || last == "getOne"
             || last == "getReferenceById"
             || (last.starts_with("findBy") && last.len() > 6)
+            || (is_entity_manager && last == "find")
         {
             out.push(hit(chain, "JPA-N1-001"));
         }
@@ -183,6 +194,40 @@ pub const JPA_RULES: &[OrmRule] = &[
     },
 ];
 
+/// Shape-based fallback for JPA / Hibernate / Spring Data. Most JPA
+/// usage is annotation-driven (`@Entity`, `@Repository`, `@Query`)
+/// and already caught by the decorator check, but services that
+/// receive a `JpaRepository<T, ID>` via constructor injection in a
+/// file that only imports the entity class would slip through.
+///
+/// Anchors: distinctive Hibernate / `EntityManager` methods that
+/// don't appear in plain Java APIs (`getResultList`, `getSingleResult`,
+/// `createNamedQuery`, `createNativeQuery`, `getResultStream`).
+/// Spring Data's `findAllBy*` derived methods are too generic to anchor on.
+pub(crate) const JPA_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "getResultList",
+        "getSingleResult",
+        "getSingleResultOrNull",
+        "getResultStream",
+        "createNamedQuery",
+        "createNativeQuery",
+        "createTypedQuery",
+        "saveAndFlush",
+        "saveAllAndFlush",
+        "findAllById",
+        "deleteAllInBatch",
+    ],
+    combos: &[
+        // `entityManager.find(Foo.class, id)` shape — distinctive root.
+        ComboRule {
+            first_method: "find",
+            root: RootPredicate::ContainsIgnoreCase("entitymanager"),
+            continuation_any: &[],
+        },
+    ],
+};
+
 pub struct JpaDialect;
 
 impl OrmDialect for JpaDialect {
@@ -200,6 +245,7 @@ impl OrmDialect for JpaDialect {
                     || d.decorator_expr.contains("@Repository")
                     || d.decorator_expr.contains("@Query")
             })
+            || matches_by_shape(&ctx.chains, &JPA_SHAPE)
     }
 
     fn predict_all(&self, ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -315,5 +361,62 @@ mod tests {
         let src = "class X { void f(List<User> us) { for (User u : us) { userRepo.save(u); } } }\n";
         let hits = run_rule("JPA-SAVE-004", src);
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn shape_anchor_get_result_list_fires_without_import() {
+        // No JPA imports, no annotations — only the distinctive method name.
+        let src = "class X { void f() { var rs = query.getResultList(); } }\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &JPA_SHAPE));
+    }
+
+    #[test]
+    fn shape_combo_entity_manager_find_fires() {
+        let src = "class X { void f() { var u = entityManager.find(User.class, 1L); } }\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &JPA_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_generic_find_does_not_fire() {
+        // Generic `map.find(k)` on a non-EntityManager root must not trigger.
+        let src = "class X { void f() { var v = cache.find(key); } }\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &JPA_SHAPE));
+    }
+
+    // ─── JPA N+1 — additional coverage ────────────────────────────────────
+
+    #[test]
+    fn jpa_n1_001_does_not_fire_outside_loop() {
+        // Single `userRepo.findById(id)` — fine.
+        let src = "class X { void f(Long id) { userRepo.findById(id); } }\n";
+        let hits = run_rule("JPA-N1-001", src);
+        assert!(hits.is_empty(), "JPA-N1-001 must not fire on a single findById call");
+    }
+
+    #[test]
+    fn jpa_n1_001_fires_on_derived_findby_in_loop() {
+        // Derived query method `findByEmail` inside a loop — still N+1.
+        let src = "class X { void f(List<String> emails) { for (String e : emails) { userRepo.findByEmail(e); } } }\n";
+        let hits = run_rule("JPA-N1-001", src);
+        assert!(!hits.is_empty(), "JPA-N1-001 must fire on findBy* derived methods in loop");
+    }
+
+    #[test]
+    fn jpa_n1_001_fires_on_entity_manager_in_loop() {
+        // `entityManager.find(User.class, id)` in loop — same N+1 pattern.
+        let src = "class X { void f(EntityManager em, List<Long> ids) { for (Long id : ids) { em.find(User.class, id); } } }\n";
+        let hits = run_rule("JPA-N1-001", src);
+        assert!(!hits.is_empty(), "JPA-N1-001 must fire on entityManager.find in loop");
+    }
+
+    #[test]
+    fn jpa_save_004_does_not_fire_on_save_all() {
+        // `saveAll` is the correct batched form.
+        let src = "class X { void f(List<User> us) { userRepo.saveAll(us); } }\n";
+        let hits = run_rule("JPA-SAVE-004", src);
+        assert!(hits.is_empty(), "JPA-SAVE-004 must not fire on saveAll");
     }
 }

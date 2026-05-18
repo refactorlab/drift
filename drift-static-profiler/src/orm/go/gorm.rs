@@ -7,6 +7,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{CallChain, ChainRoot, PyOrmContext};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ComboRule, RootPredicate, ShapeSpec};
 use crate::orm::sql_ir::{
     OrmKind, PredictedSql, PredictedStatement, Projection, SqlDialect, SqlFidelity, SqlOp,
     TableRef,
@@ -165,6 +166,41 @@ pub const GORM_RULES: &[OrmRule] = &[
     },
 ];
 
+/// Shape-based fallback for GORM. Anchors target GORM-unique methods:
+/// `AutoMigrate`, `Preload`, `Joins`, `FirstOrCreate`, `FirstOrInit`,
+/// `Scopes`, `Pluck`. Most chain methods (`Where`, `Find`, `Save`) are
+/// too generic for an anchor; the combo gates on root binding being
+/// `db` / `tx` to disambiguate from custom builders.
+pub(crate) const GORM_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "AutoMigrate",
+        "Preload",
+        "Joins",
+        "FirstOrCreate",
+        "FirstOrInit",
+        "Scopes",
+        "Pluck",
+        "Omit",
+    ],
+    combos: &[
+        ComboRule {
+            first_method: "Where",
+            root: RootPredicate::Equals("db"),
+            continuation_any: &["Find", "First", "Take", "Last", "Count"],
+        },
+        ComboRule {
+            first_method: "Where",
+            root: RootPredicate::Equals("tx"),
+            continuation_any: &["Find", "First", "Take", "Last", "Count"],
+        },
+        ComboRule {
+            first_method: "Model",
+            root: RootPredicate::Equals("db"),
+            continuation_any: &["Updates", "Update", "Where"],
+        },
+    ],
+};
+
 pub struct GormDialect;
 
 impl OrmDialect for GormDialect {
@@ -177,6 +213,7 @@ impl OrmDialect for GormDialect {
             .modules
             .keys()
             .any(|m| m.contains("gorm.io") || m.contains("jinzhu/gorm"))
+            || matches_by_shape(&ctx.chains, &GORM_SHAPE)
     }
 
     fn predict_all(&self, ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -248,6 +285,22 @@ mod tests {
     }
 
     #[test]
+    fn gorm_n1_001_safe_outside_loop() {
+        // Single First at top level — not N+1.
+        let src = "package main\nfunc f(db *Gorm, id int64) {\n  var u User\n  db.First(&u, id)\n}\n";
+        let hits = run_rule("GORM-N1-001", src);
+        assert!(hits.is_empty(), "GORM-N1-001 must NOT fire outside a loop");
+    }
+
+    #[test]
+    fn gorm_n1_001_safe_with_find_in_batch() {
+        // `db.Find(&users, ids)` is the canonical batched fix for N+1.
+        let src = "package main\nfunc f(db *Gorm, ids []int64) {\n  var users []User\n  db.Find(&users, ids)\n}\n";
+        let hits = run_rule("GORM-N1-001", src);
+        assert!(hits.is_empty(), "GORM-N1-001 must NOT fire on batched Find");
+    }
+
+    #[test]
     fn gorm_raw_002_fires_on_sprintf() {
         let src = "package main\nfunc f(db *Gorm, name string) {\ndb.Raw(fmt.Sprintf(\"SELECT * FROM u WHERE name='%s'\", name))\n}\n";
         let hits = run_rule("GORM-RAW-002", src);
@@ -266,5 +319,61 @@ mod tests {
         let src = "package main\nfunc f(db *Gorm, us []User) {\nfor _, u := range us {\n  db.Create(&u)\n}\n}\n";
         let hits = run_rule("GORM-SAVE-004", src);
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn shape_anchor_auto_migrate_fires_without_import() {
+        let src = "package main\nfunc f(db *Gorm) { db.AutoMigrate(&User{}) }\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &GORM_SHAPE));
+    }
+
+    #[test]
+    fn shape_combo_db_where_find_fires() {
+        let src = "package main\nfunc f(db *Gorm) { var u User; db.Where(\"id = ?\", 1).Find(&u) }\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &GORM_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_unrelated_where_does_not_fire() {
+        // Custom builder with `xs.Where(...)` — lowercase non-`db`/`tx` root.
+        let src = "package main\nfunc f(xs []int) { xs.Where(\"x\") }\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &GORM_SHAPE));
+    }
+
+    // ─── GORM N+1 — additional coverage ──────────────────────────────────
+
+    #[test]
+    fn gorm_n1_001_does_not_fire_outside_loop() {
+        // `db.First(&u, id)` at the top level is a single query — not N+1.
+        let src = "package main\nfunc f(db *Gorm) { var u User; db.First(&u, 1) }\n";
+        let hits = run_rule("GORM-N1-001", src);
+        assert!(hits.is_empty(), "GORM-N1-001 must not fire outside a loop");
+    }
+
+    #[test]
+    fn gorm_n1_001_does_not_fire_on_bulk_find() {
+        // `db.Where("id IN ?", ids).Find(&users)` is the correct bulk pattern.
+        let src = "package main\nfunc f(db *Gorm, ids []int64) { var us []User; db.Where(\"id IN ?\", ids).Find(&us) }\n";
+        let hits = run_rule("GORM-N1-001", src);
+        assert!(hits.is_empty(), "GORM-N1-001 must not fire on a single bulk Find call");
+    }
+
+    #[test]
+    fn gorm_n1_001_fires_on_tx_first_in_loop() {
+        // `tx.First(&u, id)` inside a loop — same N+1 pattern as `db`.
+        let src = "package main\nfunc f(tx *Gorm, ids []int64) {\nfor _, id := range ids {\n  var u User\n  tx.First(&u, id)\n}\n}\n";
+        let hits = run_rule("GORM-N1-001", src);
+        assert!(!hits.is_empty(), "GORM-N1-001 must fire on tx.First in loop");
+    }
+
+    #[test]
+    fn gorm_save_004_does_not_fire_outside_loop() {
+        // Single `db.Create(&u)` is fine — only the in-loop variant is N+1.
+        let src = "package main\nfunc f(db *Gorm) { var u User; db.Create(&u) }\n";
+        let hits = run_rule("GORM-SAVE-004", src);
+        assert!(hits.is_empty(), "GORM-SAVE-004 must not fire on a single Create call");
     }
 }

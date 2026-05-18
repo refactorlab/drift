@@ -95,16 +95,26 @@ fn handle_for_loop(node: Node, source: &str, ctx: &mut PyOrmContext<'_>) {
     let Some(body) = node.child_by_field_name("body") else {
         return;
     };
+    // Fall back to the for_statement's end if tree-sitter collapses the
+    // body block's range to a point (an observed quirk on certain inputs).
+    // Mirrors the Python walker's `push_iteration_node` fallback.
+    let body_byte = body.byte_range();
+    let effective = if body_byte.start == body_byte.end {
+        body_byte.start..node.end_byte()
+    } else {
+        body_byte
+    };
+    let line_range = body.start_position().row + 1..node.end_position().row + 1;
     ctx.for_loops.push(LoopRange {
         iterable_var: iter,
         loop_var: var.clone(),
-        body_range: body.byte_range(),
-        line_range: body.start_position().row + 1..body.end_position().row + 1,
+        body_range: effective.clone(),
+        line_range,
     });
     ctx.iteration_markers.push(IterationMarker {
         kind: IterKind::ForLoop,
         loop_var: var,
-        body_range: body.byte_range(),
+        body_range: effective,
     });
 }
 

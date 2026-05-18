@@ -133,6 +133,11 @@ impl ModelGraph {
     }
 
     /// True if `model.field` is a relationship of any kind.
+    ///
+    /// **Unknown fields return `false`** — callers that need "definitely NOT
+    /// a relation" (e.g. the N+1 analyzer) should pair this with
+    /// [`ModelGraph::is_confirmed_scalar`] and treat neither-known as
+    /// potentially unsafe.
     pub fn is_relation_field(&self, model: &str, field: &str) -> bool {
         let Some(m) = self.models.get(model) else {
             return false;
@@ -141,6 +146,19 @@ impl ModelGraph {
             f.name == field
                 && !matches!(f.kind, FieldKind::Scalar)
         })
+    }
+
+    /// True if `model.field` is **confirmed** as a scalar (non-relation)
+    /// column. Returns `false` for unknown fields — reverse FK accessors
+    /// (`User.posts` from `Post.author related_name="posts"`) are not in
+    /// the forward-scan registry and must not be misclassified as safe.
+    pub fn is_confirmed_scalar(&self, model: &str, field: &str) -> bool {
+        let Some(m) = self.models.get(model) else {
+            return false;
+        };
+        m.fields
+            .iter()
+            .any(|f| f.name == field && matches!(f.kind, FieldKind::Scalar))
     }
 
     /// Look up the target model for a relation.

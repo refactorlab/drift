@@ -8,6 +8,7 @@
 use crate::insights::{Effort, Evidence, Severity};
 use crate::orm::context::{BindingKind, CallChain, ChainRoot, PyOrmContext, TsClientKind};
 use crate::orm::dialect::OrmDialect;
+use crate::orm::shape::{matches_by_shape, ComboRule, RootPredicate, ShapeSpec};
 use crate::orm::sql_ir::{
     LimitSpec, OrmKind, PredictedSql, PredictedStatement, Projection, SqlDialect, SqlFidelity,
     SqlOp, TableRef, WhereExpr,
@@ -159,6 +160,49 @@ pub const DRIZZLE_RULES: &[OrmRule] = &[
 
 // ─── DrizzleDialect — predict_all ───────────────────────────────────────
 
+/// Shape-based fallback for Drizzle. The schema-declaration functions
+/// (`pgTable`, `mysqlTable`, `sqliteTable`) and TS-only inference
+/// helpers (`$inferSelect`, `$inferInsert`) are uniquely Drizzle.
+/// `inArray` / `notInArray` are Drizzle's array operators.
+/// The combo `db.select().from(...)` is the canonical query shape and
+/// the chain root being a singleton `db` / `tx` / `drizzle` reliably
+/// distinguishes it from a custom builder.
+pub(crate) const DRIZZLE_SHAPE: ShapeSpec = ShapeSpec {
+    anchors: &[
+        "$inferSelect",
+        "$inferInsert",
+        "pgTable",
+        "mysqlTable",
+        "sqliteTable",
+        "inArray",
+        "notInArray",
+        "arrayContains",
+        "arrayContained",
+    ],
+    combos: &[
+        ComboRule {
+            first_method: "select",
+            root: RootPredicate::Equals("db"),
+            continuation_any: &["from"],
+        },
+        ComboRule {
+            first_method: "insert",
+            root: RootPredicate::Equals("db"),
+            continuation_any: &["values"],
+        },
+        ComboRule {
+            first_method: "update",
+            root: RootPredicate::Equals("db"),
+            continuation_any: &["set"],
+        },
+        ComboRule {
+            first_method: "delete",
+            root: RootPredicate::Equals("db"),
+            continuation_any: &["where"],
+        },
+    ],
+};
+
 pub struct DrizzleDialect;
 
 impl OrmDialect for DrizzleDialect {
@@ -169,6 +213,7 @@ impl OrmDialect for DrizzleDialect {
     fn matches(&self, ctx: &PyOrmContext<'_>) -> bool {
         ctx.imports.has_any_starting_with("drizzle-orm")
             || ctx.imports.has_any_starting_with("drizzle")
+            || matches_by_shape(&ctx.chains, &DRIZZLE_SHAPE)
     }
 
     fn predict_all(&self, ctx: &PyOrmContext<'_>) -> Vec<PredictedSql> {
@@ -284,5 +329,43 @@ mod tests {
         let src = "for (const id of ids) {\n  await db.select().from(users).where(eq(users.id, id));\n}\n";
         let hits = run_rule("DRZ-N1-002", src);
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn drz_n1_002_safe_outside_loop() {
+        // Single query at module level — not N+1.
+        let src = "const rows = await db.select().from(users).where(eq(users.id, 1));\n";
+        let hits = run_rule("DRZ-N1-002", src);
+        assert!(hits.is_empty(), "DRZ-N1-002 must NOT fire outside a loop");
+    }
+
+    #[test]
+    fn drz_n1_002_safe_with_in_array_batch() {
+        // `inArray` is the canonical fix for N+1 — single query for many ids.
+        let src = "const rows = await db.select().from(users).where(inArray(users.id, ids));\n";
+        let hits = run_rule("DRZ-N1-002", src);
+        assert!(hits.is_empty(), "DRZ-N1-002 must NOT fire on inArray batch query");
+    }
+
+    #[test]
+    fn shape_anchor_pg_table_fires_without_import() {
+        let src = "export const users = pgTable('users', { id: serial('id').primaryKey() });\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &DRIZZLE_SHAPE));
+    }
+
+    #[test]
+    fn shape_combo_db_select_from_fires_without_import() {
+        let src = "const rows = await db.select().from(users);\n";
+        let (c, _t) = ctx(src);
+        assert!(matches_by_shape(&c.chains, &DRIZZLE_SHAPE));
+    }
+
+    #[test]
+    fn shape_negative_bare_select_does_not_fire() {
+        // Plain `select(...)` without `db.` root must NOT trigger Drizzle.
+        let src = "const x = select(User).where(eq(User.id, 1));\n";
+        let (c, _t) = ctx(src);
+        assert!(!matches_by_shape(&c.chains, &DRIZZLE_SHAPE));
     }
 }

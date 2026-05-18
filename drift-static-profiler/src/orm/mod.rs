@@ -14,6 +14,7 @@ pub mod fusion;
 pub mod go;
 pub mod jvm;
 pub mod model_graph;
+pub mod n_plus_one;
 pub mod parallel;
 pub mod python;
 pub mod rust_lang;
@@ -888,15 +889,11 @@ fn analyze_with_tree(
             }
 
             // Mongoose: rules only (no SQL-IR — document store).
-            // Run unconditionally so files importing mongoose are
-            // detected by the rule matchers themselves rather than
-            // requiring a centralised dialect.matches() gate.
-            let mongoose_imported = ctx
-                .imports
-                .modules
-                .keys()
-                .any(|m| m == "mongoose" || m.starts_with("mongoose/"));
-            if mongoose_imported {
+            // Gate via `matches_mongoose` which checks both the explicit
+            // import AND the shape-based fallback so factory-wrapped
+            // usage (no direct mongoose import in the leaf file) still
+            // triggers the rule matchers.
+            if ts::mongoose::matches_mongoose(&ctx) {
                 run_rules_with_kind(
                     &ts::mongoose::MONGOOSE_RULES,
                     &ctx,
