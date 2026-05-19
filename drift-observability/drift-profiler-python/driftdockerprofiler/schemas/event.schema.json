@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RefactorLabs/drift-observability/driftdockerprofiler/event.schema.json",
+  "title": "driftdockerprofiler Event",
+  "description": "One JSONL line written by driftdockerprofiler.writer.JsonlWriter to /trace/events.log. Every event is exactly one of the four variants below, discriminated by the `type` field. The combined `$defs` are the source of truth — observability-server's openapi.yaml mirrors this shape under components.schemas.",
+  "oneOf": [
+    { "$ref": "#/$defs/WallTraceEvent" },
+    { "$ref": "#/$defs/CPUTraceEvent" },
+    { "$ref": "#/$defs/WallProfileEvent" },
+    { "$ref": "#/$defs/CPUProfileEvent" },
+    { "$ref": "#/$defs/FunctionCallEvent" }
+  ],
+  "$defs": {
+    "Frame": {
+      "type": "object",
+      "description": "One stack frame, leaf-first. Mirrors pprof's Location+Line+Function triple, flattened for JSON.",
+      "required": ["name", "file", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Function name (CPython co_name)." },
+        "file": { "type": "string", "description": "Source file (CPython co_filename)." },
+        "line": { "type": "integer", "minimum": 0, "description": "Line currently executing (CPython f_lineno)." }
+      }
+    },
+
+    "ValueType": {
+      "type": "object",
+      "description": "pprof-style (type, unit) pair, e.g. ('wall', 'nanoseconds').",
+      "required": ["type", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "unit": { "type": "string" }
+      }
+    },
+
+    "Sample": {
+      "type": "object",
+      "description": "One unique call stack with its tick count. Only appears inside bundle events (samples[]).",
+      "required": ["count", "value_ns", "frames", "labels"],
+      "additionalProperties": false,
+      "properties": {
+        "count":    { "type": "integer", "minimum": 1, "description": "Ticks hitting this stack." },
+        "value_ns": { "type": "integer", "minimum": 0, "description": "count * period_ns — total time attributed to this stack." },
+        "frames":   { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Frame" } },
+        "labels":   {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Optional key/value labels (reserved; currently always empty)."
+        }
+      }
+    },
+
+    "EventBase": {
+      "type": "object",
+      "description": "Fields shared by every event variant. Realised via allOf in each variant so the on-disk JSON is flat.",
+      "required": [
+        "type", "time", "service", "pod",
+        "period_ns", "duration_ns",
+        "cpu", "memory_bytes"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["wall_trace", "cpu_trace", "wall_profile", "cpu_profile", "function_call"],
+          "description": "Discriminator. Use this to pick the matching $defs entry."
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+          "description": "ISO-8601 UTC, microsecond precision, ending in 'Z'. Window-close timestamp."
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Service label passed to driftdockerprofiler.start(service=...)."
+        },
+        "service_version": {
+          "type": "string",
+          "description": "Optional version label (env GAE_VERSION / K_REVISION)."
+        },
+        "pod": {
+          "type": "string",
+          "minLength": 1,
+          "description": "$HOSTNAME or socket.gethostname()."
+        },
+        "period_ns": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Sampling interval in ns. 10_000_000 = 10 ms (default)."
+        },
+        "duration_ns": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Profile-window length in ns. 10_000_000_000 = 10 s (default)."
+        },
+        "cpu": {
+          "type": "number",
+          "minimum": 0,
+          "description": "1-min system load average at window close (os.getloadavg()[0])."
+        },
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Process RSS at window close (Linux: /proc/self/statm; macOS: getrusage().ru_maxrss)."
+        },
+        "memory_peak_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Peak RSS observed since process start (getrusage().ru_maxrss). Monotonic non-decreasing. Useful for spotting transient spikes that the current-RSS probe may have missed."
+        }
+      }
+    },
+
+    "WallTraceEvent": {
+      "title": "WallTraceEvent",
+      "description": "Per-trace mode, wall-clock sampler. One event per unique call stack per window. Wall ticks fire every period_ns whether the process is on-CPU or sleeping.",
+      "allOf": [
+        { "$ref": "#/$defs/EventBase" },
+        {
+          "type": "object",
+          "required": ["type", "count", "frames"],
+          "properties": {
+            "type":   { "const": "wall_trace" },
+            "count":  { "type": "integer", "minimum": 1 },
+            "frames": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Frame" } }
+          }
+        }
+      ],
+      "examples": [
+        {
+          "type": "wall_trace",
+          "time": "2026-05-19T12:34:50.012345Z",
+          "service": "test-python-web-server",
+          "pod": "test-python-web-server-7d4c-xkqzn",
+          "period_ns": 10000000,
+          "duration_ns": 10000000000,
+          "count": 42,
+          "cpu": 0.42,
+          "memory_bytes": 87654321,
+          "frames": [
+            { "name": "create_order", "file": "/app/app.py", "line": 52 },
+            { "name": "app",          "file": "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", "line": 273 }
+          ]
+        }
+      ]
+    },
+
+    "CPUTraceEvent": {
+      "title": "CPUTraceEvent",
+      "description": "Per-trace mode, CPU sampler (C++ extension, SIGPROF). One event per unique call stack per window. CPU ticks fire only when the process is on-CPU — idle time is not counted.",
+      "allOf": [
+        { "$ref": "#/$defs/EventBase" },
+        {
+          "type": "object",
+          "required": ["type", "count", "frames"],
+          "properties": {
+            "type":   { "const": "cpu_trace" },
+            "count":  { "type": "integer", "minimum": 1 },
+            "frames": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Frame" } }
+          }
+        }
+      ],
+      "examples": [
+        {
+          "type": "cpu_trace",
+          "time": "2026-05-19T12:35:00.034567Z",
+          "service": "test-python-web-server",
+          "pod": "test-python-web-server-7d4c-xkqzn",
+          "period_ns": 10000000,
+          "duration_ns": 10000000000,
+          "count": 31,
+          "cpu": 0.55,
+          "memory_bytes": 88012544,
+          "frames": [
+            { "name": "create",       "file": "/app/orders.py", "line": 14 },
+            { "name": "create_order", "file": "/app/app.py",    "line": 52 }
+          ]
+        }
+      ]
+    },
+
+    "WallProfileEvent": {
+      "title": "WallProfileEvent",
+      "description": "Bundle mode, wall-clock sampler. One event per window with every unique stack inlined under samples[]. Closer to pprof's model than per-trace mode.",
+      "allOf": [
+        { "$ref": "#/$defs/EventBase" },
+        { "$ref": "#/$defs/ProfileBundleFields" },
+        {
+          "type": "object",
+          "required": ["type", "profile_type"],
+          "properties": {
+            "type":         { "const": "wall_profile" },
+            "profile_type": { "const": "wall" }
+          }
+        }
+      ]
+    },
+
+    "CPUProfileEvent": {
+      "title": "CPUProfileEvent",
+      "description": "Bundle mode, CPU sampler (C++ extension). One event per window with every unique stack inlined under samples[].",
+      "allOf": [
+        { "$ref": "#/$defs/EventBase" },
+        { "$ref": "#/$defs/ProfileBundleFields" },
+        {
+          "type": "object",
+          "required": ["type", "profile_type"],
+          "properties": {
+            "type":         { "const": "cpu_profile" },
+            "profile_type": { "const": "cpu" }
+          }
+        }
+      ]
+    },
+
+    "FunctionCallEvent": {
+      "title": "FunctionCallEvent",
+      "description": "Deterministic-tracer event. One emitted per call of a function decorated with `@driftdockerprofiler.trace`. Catches every invocation regardless of duration — useful for methods too fast to be sampled by `wall_trace`/`cpu_trace` (anything below ~one sample period). The two layers coexist in the same JSONL file; consumers filter by `type`.",
+      "type": "object",
+      "required": [
+        "type", "time", "service", "pod", "qualname",
+        "duration_ns", "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type":            { "const": "function_call" },
+        "time":            { "type": "string", "format": "date-time", "description": "ISO-8601 UTC, end of call." },
+        "service":         { "type": "string", "minLength": 1 },
+        "service_version": { "type": "string" },
+        "pod":             { "type": "string", "minLength": 1 },
+        "qualname":        { "type": "string", "description": "Fully-qualified Python name, e.g. `orders.OrderService.create`." },
+        "file":            { "type": "string", "description": "Source file (`co_filename`)." },
+        "line":            { "type": "integer", "minimum": 0, "description": "First line of the function (`co_firstlineno`)." },
+        "duration_ns":     { "type": "integer", "minimum": 0, "description": "Wall-time the call took, in nanoseconds." },
+        "status":          { "type": "string", "enum": ["ok", "error"], "description": "`error` if the function raised any exception." }
+      },
+      "examples": [
+        {
+          "type": "function_call",
+          "time": "2026-05-19T12:34:50.012345Z",
+          "service": "test-python-web-server",
+          "pod": "test-python-web-server-7d4c-xkqzn",
+          "qualname": "orders.OrderService.create",
+          "file": "/app/orders.py",
+          "line": 14,
+          "duration_ns": 3284,
+          "status": "ok"
+        }
+      ]
+    },
+
+    "ProfileBundleFields": {
+      "type": "object",
+      "description": "Bundle-only fields shared by WallProfileEvent + CPUProfileEvent.",
+      "required": ["time_ns", "sample_type", "samples"],
+      "properties": {
+        "time_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Window-close timestamp as ns int. Same instant as `time` (ISO) — pprof carryover."
+        },
+        "sample_type": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ValueType" },
+          "minItems": 2,
+          "description": "pprof-style value-type vector. [0] is always ('sample','count'); [1] is the profile-specific value type — ('wall','nanoseconds') or ('cpu','nanoseconds')."
+        },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Sample" },
+          "description": "All unique stacks seen in the window."
+        },
+        "default_sample_type": { "type": ["string", "null"] },
+        "comment": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

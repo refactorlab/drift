@@ -1,0 +1,22 @@
+# Keep the docker build context tight.
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.so
+*.egg-info
+build/
+dist/
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tox
+.coverage
+*.log
+kokoro/
+# Generated artifacts that should never be sent to the build host.
+driftdockerprofiler/_profiler*.so
+driftdockerprofiler/_profiler*.pyd

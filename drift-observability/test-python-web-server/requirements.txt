@@ -1,2 +1,7 @@
-fastapi>=0.110
-uvicorn[standard]>=0.27
+# Pinned for python:3.7-slim — the last versions still on PyPI for 3.7.
+# fastapi 0.104+ requires 3.8; uvicorn 0.23+ requires 3.8.
+fastapi>=0.103,<0.104
+uvicorn[standard]>=0.22,<0.23
+# pydantic v1 — fastapi 0.103.x is the last line that supports both v1
+# and v2; pinning v1 keeps the test app on a well-trodden combination.
+pydantic>=1.10,<2

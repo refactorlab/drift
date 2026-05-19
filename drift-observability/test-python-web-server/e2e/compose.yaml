@@ -1,0 +1,60 @@
+# End-to-end compose for the driftdockerprofiler swap.
+#
+# Boots two services wired through one shared volume:
+#
+#   app  ──writes──► /trace/events.log ──reads──►  obs
+#
+# `app` is test-python-web-server profiled by driftdockerprofiler.
+# `obs` is observability-server, tailing the events file and serving
+# /live_logs (SSE), /events (ring buffer), /events/all (full read).
+#
+# Run via the smoke test:
+#   bash test-python-web-server/e2e/smoke_test.sh
+#
+# Or by hand:
+#   docker compose -f test-python-web-server/e2e/compose.yaml up --build
+#   curl http://localhost:8000/healthz
+#   curl http://localhost:8080/events
+
+# Build contexts are anchored at the repo root (drift-observability/)
+# so they can see both `test-python-web-server/` and the prebuilt
+# `drift-profiler-python/dist/*.whl`. The compose file lives two levels
+# down; we use ../.. for the context.
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: test-python-web-server/Dockerfile
+    image: driftdocker-e2e-app:latest
+    environment:
+      DRIFT_SERVICE: e2e-app
+      DRIFT_EVENTS_PATH: /trace/events.log
+      # All knobs read shell env first (`${VAR:-default}`), so ad-hoc
+      # `DRIFT_PERIOD_MS=1 docker compose up app obs` works without
+      # editing this file.
+      DRIFT_PERIOD_MS: "${DRIFT_PERIOD_MS:-10}"
+      DRIFT_DURATION_MS: "${DRIFT_DURATION_MS:-2000}"
+      DRIFT_EMIT_MODE: "${DRIFT_EMIT_MODE:-per_trace}"
+    volumes:
+      - trace:/trace
+    ports:
+      - "8000:8000"
+
+  obs:
+    build:
+      context: ../../observability-server
+    image: driftdocker-e2e-obs:latest
+    environment:
+      TRACE_PATH: /trace/events.log
+      LISTEN_ADDR: ":8080"
+      HISTORY_CAP: "1000"
+    volumes:
+      - trace:/trace
+    ports:
+      - "8080:8080"
+    depends_on:
+      - app
+
+volumes:
+  trace:

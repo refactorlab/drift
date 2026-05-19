@@ -1085,3 +1085,156 @@ export function messageText(m: ChatMessage): string {
 export function messageRole(m: ChatMessage): string {
   return (m as { role?: string }).role ?? "unknown";
 }
+
+// =====================================================================
+// events.log aggregation (drift-observability JSONL → snakeviz tree)
+// =====================================================================
+
+/** One file row in the LiveScan landing list. */
+export interface EventLogMeta {
+  path: string;
+  displayName: string;
+  sizeBytes: number;
+  modifiedIso: string | null;
+}
+
+/** Per-call record after start/end pairing + parent assignment. */
+export interface EventLogCall {
+  callId: string;
+  qualname: string;
+  startUs: number;
+  endUs: number;
+  durationUs: number;
+  status: string;
+  file: string | null;
+  line: number | null;
+  cpu: number | null;
+  parentCallId: string | null;
+  depth: number;
+  params?: unknown;
+}
+
+/** Per-qualname rollup. `totalUs` is exclusive (self) time, `cumulativeUs`
+ *  is inclusive (self + descendants). Sorted by `cumulativeUs` desc. */
+export interface EventLogFunctionStat {
+  qualname: string;
+  ncalls: number;
+  totalUs: number;
+  cumulativeUs: number;
+  percallUs: number;
+  errors: number;
+  cpuAvg: number | null;
+  file: string | null;
+  line: number | null;
+}
+
+/** One node in the aggregated tree. `value` is inclusive μs on this path
+ *  through the tree; `selfValue` is the exclusive portion at this node.
+ *  Children are sorted by `value` desc. */
+export interface EventLogTreeNode {
+  name: string;
+  value: number;
+  selfValue: number;
+  ncalls: number;
+  depth: number;
+  file: string | null;
+  line: number | null;
+  children: EventLogTreeNode[];
+}
+
+/** Full snakeviz-style report. */
+export interface EventLogReport {
+  sourceFile: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationUs: number;
+  totalEvents: number;
+  totalCalls: number;
+  unmatchedStarts: number;
+  unmatchedEnds: number;
+  services: string[];
+  pods: string[];
+  functions: EventLogFunctionStat[];
+  tree: EventLogTreeNode;
+  calls: EventLogCall[];
+  callsTruncated: boolean;
+}
+
+/** Live-tail event payloads (mirrors `event_log_commands::topic`). */
+export interface LiveAggPayload {
+  liveScanId: string;
+  report: EventLogReport;
+}
+export interface LiveErrorPayload {
+  liveScanId: string;
+  message: string;
+}
+
+/** Pick an `events.log` (or .jsonl) via the system file dialog. */
+export async function selectEventLogFile(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({
+    multiple: false,
+    title: "Choose events.log",
+    filters: [
+      { name: "Event log", extensions: ["log", "jsonl"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (result === null) return null;
+  return Array.isArray(result) ? (result[0] ?? null) : result;
+}
+
+/** List `.log`/`.jsonl` files in `~/.drift/event_logs/` (or `dir` if set),
+ *  newest-first. Returns `[]` when the default dir doesn't exist yet. */
+export async function listEventLogs(dir?: string): Promise<EventLogMeta[]> {
+  return invoke<EventLogMeta[]>("list_event_logs", { dir: dir ?? null });
+}
+
+/** One-shot aggregation of an event log at `path`. Reads the file fully;
+ *  the `calls[]` array is truncated for very large traces (the aggregates
+ *  and tree stay exact). */
+export async function aggregateEventLog(path: string): Promise<EventLogReport> {
+  return invoke<EventLogReport>("aggregate_event_log", { path });
+}
+
+/** Start a live-tail aggregator. Returns `live_scan_id`; the backend emits
+ *  a fresh `EventLogReport` over `event_log://aggregate` at ~1Hz, and
+ *  any read error over `event_log://error`. */
+export async function startLiveEventScan(path: string): Promise<string> {
+  return invoke<string>("start_live_event_scan", { path });
+}
+
+/** Stop a live-tail aggregator. Idempotent — returns `false` when no
+ *  scan with `liveScanId` is registered. */
+export async function stopLiveEventScan(liveScanId: string): Promise<boolean> {
+  return invoke<boolean>("stop_live_event_scan", { liveScanId });
+}
+
+export interface DownloadedEventLog {
+  /** Absolute path on disk where the file was saved. */
+  path: string;
+  sizeBytes: number;
+}
+
+/** Fetch the JSONL events file from an observability-server's `/events/log`
+ *  endpoint and save it to `~/.drift/event_logs/downloaded-<stamp>.jsonl`.
+ *  Returns the saved path so callers can feed it back into
+ *  `aggregateEventLog` or `startLiveEventScan`. */
+export async function downloadEventLog(
+  url: string,
+): Promise<DownloadedEventLog> {
+  return invoke<DownloadedEventLog>("download_event_log", { url });
+}
+
+export async function onLiveEventAgg(
+  cb: (p: LiveAggPayload) => void,
+): Promise<() => void> {
+  return listen<LiveAggPayload>("event_log://aggregate", cb);
+}
+
+export async function onLiveEventErr(
+  cb: (p: LiveErrorPayload) => void,
+): Promise<() => void> {
+  return listen<LiveErrorPayload>("event_log://error", cb);
+}

@@ -6,6 +6,8 @@ mod backend;
 mod commands;
 mod db;
 mod docker;
+pub mod event_log;
+mod event_log_commands;
 pub mod events;
 mod history;
 mod http_server;
@@ -374,6 +376,12 @@ pub fn run() {
             // LLM-driven single-location patch (streaming → card → apply).
             patch::commands::start_patch,
             patch::commands::apply_patch,
+            // events.log JSONL aggregator — snakeviz-style profiling view.
+            event_log_commands::list_event_logs,
+            event_log_commands::aggregate_event_log,
+            event_log_commands::start_live_event_scan,
+            event_log_commands::stop_live_event_scan,
+            event_log_commands::download_event_log,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

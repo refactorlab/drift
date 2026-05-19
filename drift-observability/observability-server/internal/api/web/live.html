@@ -2,28 +2,57 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>drift — live logs</title>
+  <title>driftdockerprofiler — live samples</title>
   <style>
-    body { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 0; background: #0d1117; color: #e6edf3; }
-    header { padding: 10px 14px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; gap: 12px; align-items: center; }
+    :root {
+      --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3;
+      --muted:#8b949e; --wall:#58a6ff; --cpu:#f0b21f; --leaf:#7ee787;
+      --bundle:#d2a8ff;
+    }
+    body { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+    header { padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     header h1 { margin: 0; font-size: 14px; font-weight: 600; }
-    header a { color: #58a6ff; text-decoration: none; font-size: 12px; }
-    #status { font-size: 11px; color: #8b949e; }
+    header a { color: var(--wall); text-decoration: none; font-size: 12px; }
+    #status { font-size: 11px; color: var(--muted); }
     main { padding: 8px 14px; }
-    .ev { padding: 4px 8px; margin-bottom: 4px; border-left: 3px solid #30363d; border-radius: 2px; background: #0d1117; }
-    .ev.start { border-color: #58a6ff; }
-    .ev.end-ok { border-color: #3fb950; }
-    .ev.end-error { border-color: #f85149; }
-    .meta { color: #8b949e; }
-    .method { color: #d2a8ff; }
-    .caller { color: #7ee787; }
-    .json { color: #a5d6ff; white-space: pre-wrap; word-break: break-all; }
+
+    .ev { padding: 6px 10px; margin-bottom: 6px; border-left: 3px solid var(--border); border-radius: 2px; background: var(--bg); }
+    .ev.wall_trace   { border-color: var(--wall); }
+    .ev.cpu_trace    { border-color: var(--cpu); }
+    .ev.wall_profile { border-color: var(--bundle); }
+    .ev.cpu_profile  { border-color: var(--bundle); }
+
+    .header-row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .tag { padding: 1px 6px; border-radius: 3px; background: var(--panel); font-size: 11px; }
+    .tag.wall_trace   { color: var(--wall); }
+    .tag.cpu_trace    { color: var(--cpu); }
+    .tag.wall_profile, .tag.cpu_profile { color: var(--bundle); }
+    .leaf      { color: var(--leaf); font-weight: 600; }
+    .meta      { color: var(--muted); }
+    .stack     { margin-top: 4px; padding-left: 12px; border-left: 1px dashed var(--border); }
+    .frame     { color: #a5d6ff; }
+    .frame .fname { color: var(--leaf); }
+    .frame .floc  { color: var(--muted); }
+    .json { color: var(--muted); white-space: pre-wrap; word-break: break-all; font-size: 11px; margin-top: 4px; cursor: pointer; }
+    .json.collapsed { max-height: 1.4em; overflow: hidden; }
+
+    label { color: var(--muted); font-size: 11px; }
+    select { background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font: inherit; }
   </style>
 </head>
 <body>
   <header>
-    <h1>drift — live logs</h1>
+    <h1>driftdockerprofiler — live samples</h1>
     <span id="status">connecting…</span>
+    <label>filter:
+      <select id="filter">
+        <option value="">all events</option>
+        <option value="wall_trace">wall_trace only</option>
+        <option value="cpu_trace">cpu_trace only</option>
+        <option value="wall_profile">wall_profile only</option>
+        <option value="cpu_profile">cpu_profile only</option>
+      </select>
+    </label>
     <a href="/docs/">API docs</a>
     <a href="/events">snapshot</a>
   </header>
@@ -32,8 +61,12 @@
   <script>
     const $log = document.getElementById('log');
     const $status = document.getElementById('status');
+    const $filter = document.getElementById('filter');
     const MAX = 500;
 
+    // ------------------------------------------------------------------
+    // SSE wiring.
+    // ------------------------------------------------------------------
     const es = new EventSource('/live_logs');
     es.onopen = () => $status.textContent = 'streaming';
     es.onerror = () => $status.textContent = 'disconnected (retrying)';
@@ -42,35 +75,104 @@
       try { ev = JSON.parse(msg.data); }
       catch { return; }
 
-      let summary;
-      const name = ev.qualname ?? ev.method ?? '?';        // tolerate legacy field
-      // No `phase` field on the wire — derive: params → start, duration_ms → end.
-      const isStart = 'params' in ev;
+      const filter = $filter.value;
+      if (filter && ev.type !== filter) return;
 
       const div = document.createElement('div');
-      const cls = isStart
-        ? 'start'
-        : (ev.status === 'error' ? 'end-error' : 'end-ok');
-      div.className = 'ev ' + cls;
-      const callerStr = ev.file
-        ? `${ev.file}:${ev.line ?? '?'}`
-        : (ev.caller_file ? `${ev.caller_file}:${ev.caller_line}` : ev.caller);
-      const callerSpan = callerStr
-        ? `  <span class="caller">${escape(callerStr)}</span>` : '';
-      if (isStart) {
-        summary = `▶ <span class="method">${escape(name)}</span>${callerSpan}` +
-                  `  <span class="meta">${escape(ev.time)}</span>`;
-      } else {
-        const mark = ev.status === 'error' ? '✗' : '✓';
-        summary = `■ <span class="method">${escape(name)}</span>${callerSpan}  ${mark}` +
-                  `  <span class="meta">${ev.duration_ms ?? '?'}ms</span>` +
-                  `  <span class="meta">${escape(ev.time)}</span>`;
-      }
-      div.innerHTML = summary + `<div class="json">${escape(JSON.stringify(ev))}</div>`;
+      div.className = 'ev ' + (ev.type || 'unknown');
+      div.innerHTML = render(ev);
+      // Click anywhere on the JSON to toggle expand.
+      const j = div.querySelector('.json');
+      if (j) j.addEventListener('click', () => j.classList.toggle('collapsed'));
 
       $log.prepend(div);
       while ($log.childElementCount > MAX) $log.removeChild($log.lastChild);
     };
+
+    // ------------------------------------------------------------------
+    // Render one event by type.
+    // ------------------------------------------------------------------
+    function render(ev) {
+      const t = ev.type || '?';
+      switch (t) {
+        case 'wall_trace':
+        case 'cpu_trace':
+          return renderPerTrace(ev);
+        case 'wall_profile':
+        case 'cpu_profile':
+          return renderBundle(ev);
+        default:
+          return renderUnknown(ev);
+      }
+    }
+
+    function renderPerTrace(ev) {
+      const periodMs = (ev.period_ns / 1e6).toFixed(0);
+      // count × period_ns ≈ wall-time / cpu-time attributed to this stack
+      const attribMs = ((ev.count * ev.period_ns) / 1e6).toFixed(1);
+      const frames = ev.frames || [];
+      const leaf = frames[0] || { name: '?', file: '?', line: 0 };
+
+      const tag = `<span class="tag ${ev.type}">${ev.type}</span>`;
+      const meta = `<span class="meta">@ ${escape(ev.time)} · ${ev.count} ticks (~${attribMs}ms / ${periodMs}ms period) · cpu=${(ev.cpu ?? 0).toFixed(2)} · rss=${humanBytes(ev.memory_bytes)}</span>`;
+      const head = `<div class="header-row">${tag} <span class="leaf">${escape(leaf.name)}</span> <span class="meta">${escape(shortPath(leaf.file))}:${leaf.line}</span> ${meta}</div>`;
+
+      const stack = renderStack(frames);
+      const json  = `<div class="json collapsed">${escape(JSON.stringify(ev))}</div>`;
+      return head + stack + json;
+    }
+
+    function renderBundle(ev) {
+      const n = (ev.samples || []).length;
+      const tag = `<span class="tag ${ev.type}">${ev.type}</span>`;
+      const meta = `<span class="meta">@ ${escape(ev.time)} · ${n} unique stacks · window=${(ev.duration_ns/1e9).toFixed(1)}s · cpu=${(ev.cpu ?? 0).toFixed(2)} · rss=${humanBytes(ev.memory_bytes)}</span>`;
+      const head = `<div class="header-row">${tag} <span class="leaf">${escape(ev.service || '?')}</span> ${meta}</div>`;
+
+      // Top 5 samples by count.
+      const top = (ev.samples || []).slice().sort((a, b) => b.count - a.count).slice(0, 5);
+      const body = top.map((s) => {
+        const leaf = (s.frames || [])[0] || { name: '?', file: '?', line: 0 };
+        return `<div class="frame">  <span class="fname">${escape(leaf.name)}</span> <span class="floc">${escape(shortPath(leaf.file))}:${leaf.line}</span> <span class="meta">×${s.count}</span></div>`;
+      }).join('');
+      const more = (ev.samples || []).length > 5
+        ? `<div class="frame floc">  …and ${ev.samples.length - 5} more (open JSON below)</div>` : '';
+      const json = `<div class="json collapsed">${escape(JSON.stringify(ev))}</div>`;
+      return head + `<div class="stack">${body}${more}</div>` + json;
+    }
+
+    function renderUnknown(ev) {
+      const tag = `<span class="tag">${escape(ev.type || 'unknown')}</span>`;
+      const json = `<div class="json">${escape(JSON.stringify(ev))}</div>`;
+      return `<div class="header-row">${tag}</div>${json}`;
+    }
+
+    function renderStack(frames) {
+      if (!frames || !frames.length) return '';
+      const rows = frames.map((f, i) => {
+        const cls = i === 0 ? 'fname' : 'floc';
+        return `<div class="frame">  <span class="${cls}">${escape(f.name || '?')}</span> <span class="floc">${escape(shortPath(f.file))}:${f.line ?? '?'}</span></div>`;
+      }).join('');
+      return `<div class="stack">${rows}</div>`;
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers.
+    // ------------------------------------------------------------------
+    function shortPath(p) {
+      if (!p) return '?';
+      // Trim site-packages noise to make stacks legible.
+      const idx = p.indexOf('/site-packages/');
+      if (idx >= 0) return '…' + p.slice(idx + 14);
+      return p;
+    }
+
+    function humanBytes(b) {
+      if (b == null) return '?';
+      const u = ['B', 'KiB', 'MiB', 'GiB'];
+      let i = 0; let n = b;
+      while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+      return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i];
+    }
 
     function escape(s) {
       return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));

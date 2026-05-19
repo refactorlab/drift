@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app_config::AppConfig;
 use crate::backend::ResolvedBackend;
+use crate::event_log_commands::LiveScans;
 use crate::events::BackendStatus;
 use crate::history::Conversation;
 use crate::model_config::ModelBackend;
@@ -69,6 +70,12 @@ pub struct AppState {
     /// runtimes), closing must actually exit — otherwise the app
     /// disappears with no way to bring it back.
     pub tray_available: Arc<AtomicBool>,
+
+    /// Live `events.log` tailer registry: `live_scan_id` → cancellation
+    /// token. The stop-button path drops the entry; the task exits on the
+    /// next tick. Shared with the (future) shutdown path so quitting the
+    /// app cancels every in-flight tail at once.
+    pub live_event_scans: LiveScans,
 }
 
 impl AppState {
@@ -85,6 +92,7 @@ impl AppState {
             scan_cancels: Arc::new(ScanCancelRegistry::new()),
             shutdown: CancellationToken::new(),
             tray_available: Arc::new(AtomicBool::new(false)),
+            live_event_scans: Arc::new(Mutex::new(Default::default())),
         }
     }
 }

@@ -1,31 +1,64 @@
-"""FastAPI test app — exercises `drift` end-to-end."""
+"""FastAPI test app — exercises `driftdockerprofiler` end-to-end.
+
+Unlike the old `drift-python` trace agent, this profiler is a stack
+sampler (SIGALRM wall + SIGPROF CPU). It does NOT wrap functions and
+does NOT need to see them defined before install — so we start it at
+the top of the module rather than the bottom. The sampler runs in
+background threads and emits one JSONL event per unique call stack per
+profile window.
+
+All knobs are env vars so the same image runs cleanly under docker
+compose, Tilt, and a bare `uvicorn` invocation:
+
+  DRIFT_SERVICE       service label stamped on every event
+                      (default: 'test-python-web-server')
+  DRIFT_EVENTS_PATH   JSONL output file shared with observability-server
+                      (default: /trace/events.log — same as TRACE_PATH on
+                      the Go side)
+  DRIFT_PERIOD_MS     sampling interval                 (default: 10)
+  DRIFT_DURATION_MS   profile-window length             (default: 10000)
+  DRIFT_EMIT_MODE     'per_trace' | 'bundle'            (default: per_trace)
+"""
 from __future__ import annotations
 
 import os
 import uuid
-from pathlib import Path
+# typing.List / typing.Dict instead of the 3.9+ `list[...]` /
+# `dict[...]` builtin generics — pydantic v1 evals annotation strings
+# at runtime, and `list[dict]` raises `'type' object is not
+# subscriptable` on python:3.7-slim.
+from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+# Start the profiler BEFORE FastAPI / handlers exist. Stack sampling
+# captures whatever's on the stack at signal time — it doesn't need to
+# walk the module to discover routes the way the old trace agent did.
+import driftdockerprofiler
 
-import drift
-from orders import OrderService
-
-DRIFT_CONFIG = os.environ.get(
-    "DRIFT_CONFIG",
-    str(Path(__file__).parent / "trace-config.yaml"),
+driftdockerprofiler.start(
+    service=os.environ.get("DRIFT_SERVICE", "test-python-web-server"),
+    output_path=os.environ.get("DRIFT_EVENTS_PATH", "/trace/events.log"),
+    period_ms=int(os.environ.get("DRIFT_PERIOD_MS", "10")),
+    duration_ms=int(os.environ.get("DRIFT_DURATION_MS", "10000")),
+    emit_mode=os.environ.get("DRIFT_EMIT_MODE", "per_trace"),
+    exclude_paths=("/driftdockerprofiler/", "/_profiler.cpython"),
 )
-drift.install(DRIFT_CONFIG)
+
+from fastapi import FastAPI, HTTPException  # noqa: E402 — after profiler.start()
+from pydantic import BaseModel  # noqa: E402
+
+from orders import OrderService  # noqa: E402
 
 app = FastAPI(
-    title="drift test-python-web-server",
+    title="driftdockerprofiler test-python-web-server",
     description=(
-        "Sample FastAPI service whose `OrderService` methods are wrapped by "
-        "drift. Each call emits start+end events to the observability-server "
-        "configured via `DRIFT_ENDPOINT`. Use this Swagger UI to fire calls; "
-        "watch them stream into [the observability-server live log viewer](http://localhost:8080/live)."
+        "Sample FastAPI service profiled by **driftdockerprofiler**. The "
+        "wall + CPU stack samplers run continuously and emit one JSONL "
+        "event per unique call stack per profile window to "
+        "`/trace/events.log`. The observability-server tails that file "
+        "and streams events to "
+        "[the live viewer](http://localhost:8080/live)."
     ),
-    version="0.1.0",
+    version="0.2.0",
 )
 service = OrderService()
 
@@ -33,13 +66,13 @@ service = OrderService()
 class CreateBody(BaseModel):
     customer_id: str
     customer_tier: str = "standard"
-    items: list[dict] = []
+    items: List[Dict[str, Any]] = []
 
 
 class ChargeBody(BaseModel):
     amount_value: float
     amount_currency: str = "USD"
-    password: str  # demonstrates redaction
+    password: str  # carried verbatim — sampler does not capture args
 
 
 @app.get("/healthz")
@@ -55,7 +88,9 @@ def create_order(body: CreateBody) -> dict:
         customer={"id": body.customer_id, "tier": body.customer_tier},
         items=body.items,
     )
-    return result | {"order_id": order_id}
+    # `{**result, "order_id": ...}` instead of `result | {...}` — the
+    # latter is Python 3.9+ and this app runs on python:3.7-slim.
+    return {**result, "order_id": order_id}
 
 
 @app.post("/orders/{order_id}/charge")

@@ -1,13 +1,28 @@
 openapi: 3.0.3
 info:
   title: drift observability-server
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Tails a shared JSONL file written by drift-instrumented services,
-    broadcasts events to /live_logs (SSE), snapshots them at /events.
-    No auth — local/dev use only.
+    Tails a shared JSONL file written by **driftdockerprofiler**-instrumented
+    services and broadcasts events to `/live_logs` (SSE), snapshotting them
+    at `/events` and `/events/all`. No auth — local/dev use only.
+
+    ## Breaking change from 0.1.x
+
+    The event schema changed completely. The previous version emitted one
+    event per Python function call (the drift-python trace agent). This
+    version emits **stack-sampling** events — one entry per unique call
+    stack seen during each profile window:
+
+      - `wall_trace` / `cpu_trace`  (per-trace mode, default)
+      - `wall_profile` / `cpu_profile`  (bundle mode, one event per window)
+
+    Old `qualname` / `params` / `duration_ms` / `status` fields are GONE.
+    See the `Event` `oneOf` below.
+
 servers:
   - url: /
+
 paths:
   /health:
     get:
@@ -25,6 +40,10 @@ paths:
   /events:
     get:
       summary: Recent history of events (in-memory ring buffer)
+      description: |
+        Returns up to `HISTORY_CAP` (default 1000) most-recent events
+        from the in-memory ring buffer. New events arriving while the
+        request is in flight are NOT included.
       responses:
         '200':
           description: JSON array of event objects
@@ -35,12 +54,62 @@ paths:
                 items:
                   $ref: '#/components/schemas/Event'
 
+  /events/all:
+    get:
+      summary: Every event from the on-disk trace file
+      description: |
+        Reads the trace file (configured by `TRACE_PATH`, default
+        `/trace/events.log`) end-to-end and returns one JSON array
+        containing every event ever written. Unlike `/events`, this
+        is not bounded by the in-memory ring buffer. Returns `[]` if
+        the file does not yet exist.
+      responses:
+        '200':
+          description: JSON array of every event in the trace file
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+
+  /events/log:
+    get:
+      summary: Raw JSONL events file (download)
+      description: |
+        Streams the on-disk JSONL events file VERBATIM — one event per
+        `\n`-terminated line, no commas, no array brackets. This is the
+        canonical input for the desktop UI's `event_log` aggregator and
+        for any pipe-oriented tool (`jq -c`, `awk`, …).
+
+        Differs from `/events/all` in two ways:
+
+          - **Format**: raw NDJSON, not a JSON array.
+          - **Content-Disposition**: includes `attachment; filename="events.log"`
+            so browsers offer a "save as" dialog.
+
+        Returns 200 with an empty body when the file doesn't exist yet
+        (no events written).
+      responses:
+        '200':
+          description: Newline-delimited JSON, one event per line
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: '`attachment; filename="events.log"`'
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: 'One `Event` (see schema below) per `\n`-terminated line.'
+
   /live_logs:
     get:
       summary: SSE stream of new events
       description: |
-        Each `data:` frame contains one JSON event. Open
-        [/live](/live) for a browser-friendly viewer.
+        Each `data:` frame contains exactly one JSON event matching one
+        of the variants below. Open [/live](/live) for a
+        browser-friendly viewer.
       responses:
         '200':
           description: SSE stream
@@ -50,28 +119,251 @@ paths:
 
 components:
   schemas:
+    # ----------------------------------------------------------------------
+    # Top-level union: every event written by driftdockerprofiler is ONE
+    # of these four shapes, discriminated by `type`.
+    # ----------------------------------------------------------------------
     Event:
+      oneOf:
+        - $ref: '#/components/schemas/WallTraceEvent'
+        - $ref: '#/components/schemas/CPUTraceEvent'
+        - $ref: '#/components/schemas/WallProfileEvent'
+        - $ref: '#/components/schemas/CPUProfileEvent'
+        - $ref: '#/components/schemas/FunctionCallEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          wall_trace:    '#/components/schemas/WallTraceEvent'
+          cpu_trace:     '#/components/schemas/CPUTraceEvent'
+          wall_profile:  '#/components/schemas/WallProfileEvent'
+          cpu_profile:   '#/components/schemas/CPUProfileEvent'
+          function_call: '#/components/schemas/FunctionCallEvent'
+
+    # ----------------------------------------------------------------------
+    # Shared base — every event has these fields. Realized via allOf in
+    # each variant so codegen tools produce flat structs.
+    # ----------------------------------------------------------------------
+    EventBase:
+      type: object
+      required:
+        - type
+        - time
+        - service
+        - pod
+        - period_ns
+        - duration_ns
+        - cpu
+        - memory_bytes
+      properties:
+        type:
+          type: string
+          description: Discriminator — see `Event.oneOf`.
+        time:
+          type: string
+          format: date-time
+          description: |
+            ISO-8601 UTC at window close, microsecond precision, suffixed
+            with `Z`. Example `2026-05-19T12:34:50.012345Z`.
+        service:
+          type: string
+          description: Service name passed to `driftdockerprofiler.start(service=…)`.
+        service_version:
+          type: string
+          nullable: true
+          description: Optional version label (env `GAE_VERSION` / `K_REVISION`).
+        pod:
+          type: string
+          description: '`$HOSTNAME` or `socket.gethostname()` — pod / host identifier.'
+        period_ns:
+          type: integer
+          format: int64
+          description: Sampling interval in nanoseconds (e.g. 10_000_000 = 10 ms).
+        duration_ns:
+          type: integer
+          format: int64
+          description: Profile-window length in nanoseconds (e.g. 10_000_000_000 = 10 s).
+        cpu:
+          type: number
+          format: double
+          description: 1-min system load average at window close (`os.getloadavg()[0]`).
+        memory_bytes:
+          type: integer
+          format: int64
+          description: |
+            Process RSS at window close. Linux: read from `/proc/self/statm`
+            second column × `SC_PAGE_SIZE`. macOS: `getrusage().ru_maxrss`.
+        memory_peak_bytes:
+          type: integer
+          format: int64
+          description: |
+            Peak RSS observed since process start
+            (`getrusage(RUSAGE_SELF).ru_maxrss`). Monotonic
+            non-decreasing — catches transient spikes the current-RSS
+            probe may have missed.
+
+    # ----------------------------------------------------------------------
+    # Per-trace mode — one line per unique call stack per window.
+    # Cheap to tail, easy to grep, ~10–100 events per window.
+    # ----------------------------------------------------------------------
+    WallTraceEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, count, frames]
+          properties:
+            type:   { type: string, enum: [wall_trace] }
+            count:
+              type: integer
+              format: int64
+              description: |
+                Ticks that hit this exact stack in this window. Wall ticks
+                fire every `period_ns` regardless of whether the process
+                is on-CPU — sleeping / idle time is included.
+            frames:
+              type: array
+              minItems: 1
+              items: { $ref: '#/components/schemas/Frame' }
+              description: Call stack, leaf-first.
+
+    CPUTraceEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, count, frames]
+          properties:
+            type:   { type: string, enum: [cpu_trace] }
+            count:
+              type: integer
+              format: int64
+              description: |
+                Ticks that hit this exact stack in this window. CPU ticks
+                fire only when the process is on-CPU (POSIX `SIGPROF` /
+                `ITIMER_PROF`), so idle time is NOT counted.
+            frames:
+              type: array
+              minItems: 1
+              items: { $ref: '#/components/schemas/Frame' }
+
+    # ----------------------------------------------------------------------
+    # Bundle mode — one line per window carrying the whole `Profile`.
+    # Mirrors pprof's structure. All samples inlined.
+    # ----------------------------------------------------------------------
+    WallProfileEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - $ref: '#/components/schemas/ProfileBundleFields'
+        - type: object
+          required: [type, profile_type]
+          properties:
+            type:         { type: string, enum: [wall_profile] }
+            profile_type: { type: string, enum: [wall] }
+
+    CPUProfileEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - $ref: '#/components/schemas/ProfileBundleFields'
+        - type: object
+          required: [type, profile_type]
+          properties:
+            type:         { type: string, enum: [cpu_profile] }
+            profile_type: { type: string, enum: [cpu] }
+
+    ProfileBundleFields:
+      type: object
+      required: [time_ns, sample_type, samples]
+      properties:
+        time_ns:
+          type: integer
+          format: int64
+          description: Window-end timestamp as ns int. Same instant as `time` (ISO).
+        sample_type:
+          type: array
+          items: { $ref: '#/components/schemas/ValueType' }
+          example:
+            - { type: sample, unit: count }
+            - { type: wall,   unit: nanoseconds }
+          description: |
+            pprof-style value-type vector. Element `[0]` always
+            `(sample, count)`; element `[1]` is the profile-specific
+            value type — `(wall, nanoseconds)` or `(cpu, nanoseconds)`.
+        samples:
+          type: array
+          items: { $ref: '#/components/schemas/Sample' }
+        default_sample_type:
+          type: string
+          nullable: true
+        comment:
+          type: array
+          items: { type: string }
+
+    # ----------------------------------------------------------------------
+    # Sub-schemas
+    # ----------------------------------------------------------------------
+    Frame:
+      type: object
+      required: [name, file, line]
+      properties:
+        name: { type: string, example: create_order, description: 'Function name (`co_name`).' }
+        file: { type: string, example: /app/app.py,  description: 'Source file (`co_filename`).' }
+        line: { type: integer, example: 52,          description: 'Line currently executing (`f_lineno`).' }
+
+    ValueType:
+      type: object
+      required: [type, unit]
+      properties:
+        type: { type: string, example: wall }
+        unit: { type: string, example: nanoseconds }
+
+    FunctionCallEvent:
       type: object
       description: |
-        Two events per call, sharing the same `call` id (process-local int).
+        Deterministic-tracer event. One emitted per call of a function
+        decorated with `@driftdockerprofiler.trace` in the Python agent.
+        Catches every invocation regardless of duration — useful for
+        methods too fast to be caught by `wall_trace`/`cpu_trace`
+        (anything below ~one sample period of wall/CPU time).
 
-        There is no `phase` field. Consumers distinguish events by content:
-          - `params` present  → start
-          - `duration_ms` present → end
-
-        `file` and `line` (caller location) appear on BOTH events when
-        `include.caller` is true (default). `service`, `pod`, and `caller`
-        can be turned off per-deployment via the drift config's `include:`
-        section.
+        Sampler events and `function_call` events coexist in the same
+        JSONL stream; consumers filter by `type`.
+      required: [type, time, service, pod, qualname, duration_ns, status]
       properties:
-        call:        { type: integer, description: ID shared by start+end of one call }
-        qualname:    { type: string, example: orders.OrderService.create, description: "Fully-qualified name of the wrapped callable" }
-        service:     { type: string }
-        pod:         { type: string }
-        time:        { type: string, format: date-time }
-        file:        { type: string, description: "Caller's file path (both events when include.caller=true)" }
-        line:        { type: integer, description: "Caller's line number (both events when include.caller=true)" }
-        params:      { type: object, additionalProperties: true, description: "Redacted args — start event only" }
-        status:      { type: string, enum: [ok, error], description: "End event only" }
-        duration_ms: { type: number, description: "End event only" }
-        error:       { type: string, description: "End event only, when status=error" }
+        type: { type: string, enum: [function_call] }
+        time: { type: string, format: date-time, description: 'ISO-8601 UTC, end of call.' }
+        service: { type: string }
+        service_version: { type: string, nullable: true }
+        pod: { type: string }
+        qualname:
+          type: string
+          example: 'orders.OrderService.create'
+          description: 'Fully-qualified Python name (Python `__qualname__`).'
+        file: { type: string, example: '/app/orders.py' }
+        line: { type: integer, example: 14 }
+        duration_ns:
+          type: integer
+          format: int64
+          example: 3284
+          description: 'Wall-time the call took, in nanoseconds.'
+        status:
+          type: string
+          enum: [ok, error]
+          description: '`error` if the function raised any exception.'
+
+    Sample:
+      type: object
+      required: [count, value_ns, frames, labels]
+      properties:
+        count:
+          type: integer
+          format: int64
+          description: Ticks that hit this stack.
+        value_ns:
+          type: integer
+          format: int64
+          description: '`count × period_ns` — total time attributed to this stack.'
+        frames:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Frame' }
+        labels:
+          type: object
+          additionalProperties: { type: string }

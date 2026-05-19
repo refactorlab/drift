@@ -2,15 +2,19 @@
 # drift-observability — repo-level orchestration
 #
 # === The handful you'll actually use ===
-#   make help                       # this menu (auto-generated)
-#   make up                         # boot the local cluster via Tilt + minikube
-#   make wheel                      # quick local wheel (uses a venv on the host)
-#   make export-drift-python        # Dockerized build → dist/drift-python/<v>/
-#   make test-export-drift-python   # install the exported wheel in a clean
-#                                   #   container and smoke-test it
+#   make help                            # this menu (auto-generated)
+#   make up                              # boot the local cluster via Tilt + minikube
+#   make test-driftdockerprofiler        # host-side pytest for driftdockerprofiler
+#   make export-driftdockerprofiler      # Dockerized wheel build → dist/driftdockerprofiler/<v>/
+#                                        #   produces a wheel WITH the C++ ext baked in
+#   make test-export-driftdockerprofiler # install the exported wheel in a clean
+#                                        #   container and assert the C++ ext loads end-to-end
+#   make smoke-driftdockerprofiler       # build the smoke-test docker image and run it
 #
-# Cluster targets delegate to dev/Makefile. The Drift Python package lives in
-# drift-python/ and exports a pip/poetry-installable wheel into dist/.
+# Cluster targets delegate to dev/Makefile. The driftdockerprofiler agent
+# (wall + CPU stack sampler, ships a compiled .so) lives in
+# drift-profiler-python/ and exports a pip-installable wheel into
+# dist/driftdockerprofiler/<version>/.
 #
 # Help is auto-generated: add `## doc string` after any target ':' and it
 # shows up in `make help`. `### Section name` lines start a new help section.
@@ -18,15 +22,14 @@
 
 # --- Config -------------------------------------------------------------------
 
-# Build image: modern Python is fine — the produced wheel is `py3-none-any`
-# (pure Python), so the build interpreter does not leak into the artifact.
-# Test matrix: space-separated images. test-export-drift-python smoke-tests
-# the wheel on each, so the lowest AND highest supported runtimes are gated
-# in one command. Bump these independently.
-PY_BUILD_IMAGE  ?= python:3.11-slim
-PY_TEST_IMAGES  ?= python:3.7-slim python:3.13-slim
-DRIFT_DIR    := drift-python
-DRIFT_OUT    := dist/drift-python
+# driftdockerprofiler — the wall + CPU stack-sampling agent.
+# Build image MUST be a full `python:VER` image (not -slim) — the
+# wheel embeds a compiled C++ extension and slim images skip gcc/g++.
+# Test image is -slim because the wheel ships the .so prebuilt.
+DRIFTDOCKER_DIR        := drift-profiler-python
+DRIFTDOCKER_OUT        := dist/driftdockerprofiler
+DRIFTDOCKER_BUILD_IMG  ?= python:3.7
+DRIFTDOCKER_TEST_IMG   ?= python:3.7-slim
 
 BLUE   := \033[1;34m
 GREEN  := \033[1;32m
@@ -40,10 +43,12 @@ RESET  := \033[0m
 .DEFAULT_GOAL := help
 .PHONY: help \
         install up down stop reset-data nuke \
-        wheel test-drift \
-        export-drift-python export-drift-python-clean \
-        test-export-drift-python export-drift-python-readme \
-        images images-app images-obs
+        wheel-driftdockerprofiler test-driftdockerprofiler test-cpp-driftdockerprofiler \
+        export-driftdockerprofiler export-driftdockerprofiler-clean \
+        test-export-driftdockerprofiler smoke-driftdockerprofiler \
+        export-driftdockerprofiler-readme \
+        images images-app images-obs \
+        e2e-driftdockerprofiler
 
 ### Tier 1 (the ones you'll use)
 
@@ -77,55 +82,64 @@ reset-data: ## Reset persistent data volumes
 nuke: ## tilt down + minikube delete
 	@$(MAKE) --no-print-directory -C dev nuke
 
-### Drift Python package — local dev loop (host venv)
+### driftdockerprofiler — local dev loop (host pytest)
 
-VENV := .venv-drift
+test-driftdockerprofiler: ## Run driftdockerprofiler Python unit tests on the host (uses your system python3)
+	@printf "$(BLUE)▶$(RESET) pytest driftdockerprofiler (host)\n"
+	@cd $(DRIFTDOCKER_DIR) && PYTHONPATH=. python3 -m pytest tests/ --ignore=tests/cpp -q
 
-$(VENV)/bin/python:
-	@printf "$(BLUE)▶$(RESET) creating venv at $(CYAN)$(VENV)$(RESET)\n"
-	@python3 -m venv $(VENV)
-	@$(VENV)/bin/pip install -q --upgrade pip
-	@$(VENV)/bin/pip install -q -e "$(DRIFT_DIR)[dev]"
-	@printf "$(GREEN)✓$(RESET) venv ready\n"
+# C++ unit tests for the native sampler internals (clock, stacktraces).
+# Run inside the build image (python:3.11) so gcc/g++ + Python.h are
+# both available; the test binary executes during `docker build`, so
+# failures abort the build.
+test-cpp-driftdockerprofiler: ## Compile + run the C++ unit tests inside Docker (verifies the .cc files we ship)
+	@printf "$(BLUE)▶$(RESET) building + running C++ tests inside $(DRIFTDOCKER_BUILD_IMG)\n"
+	@cd $(DRIFTDOCKER_DIR) && docker build --target cpp-test --progress=plain -t driftdockerprofiler-cpp-test . 2>&1 | grep -E "^#11|Running |PASS|FAIL|Cases:|Assertion" | sed 's/^#11 [0-9.]* //' ; \
+	  if docker image inspect driftdockerprofiler-cpp-test >/dev/null 2>&1; then \
+	    printf "$(GREEN)✓$(RESET) C++ tests passed\n" ; \
+	  else \
+	    printf "$(RED)✗$(RESET) C++ tests FAILED — see output above\n" ; \
+	    exit 1 ; \
+	  fi
 
-wheel: $(VENV)/bin/python ## Quick local wheel build (uses host venv) → drift-python/dist/
-	@printf "$(BLUE)▶$(RESET) building wheel (host venv)\n"
-	@rm -rf $(DRIFT_DIR)/dist
-	@$(VENV)/bin/python -m build --wheel $(DRIFT_DIR) -o $(DRIFT_DIR)/dist >/dev/null
-	@printf "$(GREEN)✓$(RESET) artifacts:\n"
-	@ls -1 $(DRIFT_DIR)/dist | sed 's/^/    /'
-
-test-drift: $(VENV)/bin/python ## Run drift unit tests in the host venv
-	@$(VENV)/bin/pytest -q $(DRIFT_DIR)/tests/
-
-### Drift Python package — production export (Dockerized)
+### driftdockerprofiler — production export (Dockerized, ships C++ extension)
 #
-# `export-drift-python` is the one-shot production build:
-#   - Builds wheel + sdist inside $(PY_BUILD_IMAGE) (no host Python required)
-#   - Drops everything into dist/drift-python/<version>/ (relative to this
-#     Makefile), so the artifact is right next to the repo root, including:
-#       drift-<v>-py3-none-any.whl    # pip install / poetry add target
-#       drift-<v>.tar.gz              # source distribution
-#       README.md                     # copied verbatim
-#       INSTALL.md                    # generated pip + poetry recipes
-#       SHA256SUMS                    # checksum manifest
-#   - Prints absolute export path + pip/poetry recipe at the end
-#   - Pretty-renders README.md so you can eyeball the docs immediately
+# `export-driftdockerprofiler` is the one-shot production build:
+#   - Builds the wheel inside $(DRIFTDOCKER_BUILD_IMG) (gcc/g++ present),
+#     so the .so for the SIGPROF-based CPU sampler gets baked in.
+#   - Drops everything into dist/driftdockerprofiler/<version>/ — sits
+#     right next to the repo root and contains:
+#       driftdockerprofiler-<v>-cpXX-cpXX-linux_<arch>.whl   # pip target
+#       README.md                                            # copied verbatim
+#       INSTALL.md                                           # generated pip + poetry recipes
+#       SHA256SUMS                                           # checksum manifest
+#   - Pretty-renders README.md after the build so you can eyeball the docs.
 #
-# `test-export-drift-python` then exercises the wheel in a clean container —
-# `pip install` it, import drift, verify the public API. Hermetic; touches
-# nothing on the host.
+# `test-export-driftdockerprofiler` then exercises the wheel in a clean
+# `python:3.11-slim` container — pip-installs it, asserts the C++
+# extension is loadable (`cpu_profiling_available() is True`), starts
+# the agent, burns CPU, stops, and validates the on-the-wire event
+# schema (cpu + memory_bytes included). Hermetic; touches nothing on
+# the host. The C++ extension is the most fragile thing in this
+# project, so this is the bar for "the wheel actually works".
 #
 # Idempotent — re-runs wipe the version directory before rebuilding.
 
-export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<version>/ + render README
-	@VERSION=$$(awk -F'"' '/^version *= */ {print $$2; exit}' $(DRIFT_DIR)/pyproject.toml); \
+wheel-driftdockerprofiler: ## Quick local wheel build (still via Docker — C++ ext needs gcc/g++) → drift-profiler-python/dist/
+	@printf "$(BLUE)▶$(RESET) building driftdockerprofiler wheel via Docker ($(DRIFTDOCKER_BUILD_IMG))\n"
+	@cd $(DRIFTDOCKER_DIR) && rm -rf dist && mkdir -p dist && \
+	  docker build --output type=local,dest=./dist --target wheel-export . ; \
+	  printf "$(GREEN)✓$(RESET) artifacts:\n" ; \
+	  ls -1 dist | sed 's/^/    /'
+
+export-driftdockerprofiler: ## Dockerized build → dist/driftdockerprofiler/<v>/ (.whl + README + INSTALL.md + SHA256SUMS)
+	@VERSION=$$(awk -F"'" '/^__version__/ {print $$2; exit}' $(DRIFTDOCKER_DIR)/driftdockerprofiler/__version__.py); \
 	if [ -z "$$VERSION" ]; then \
-	  printf "$(RED)✗$(RESET) couldn't read version from $(DRIFT_DIR)/pyproject.toml\n"; exit 1; \
+	  printf "$(RED)✗$(RESET) couldn't read version from $(DRIFTDOCKER_DIR)/driftdockerprofiler/__version__.py\n"; exit 1; \
 	fi; \
-	OUT="$(DRIFT_OUT)/$$VERSION"; \
+	OUT="$(DRIFTDOCKER_OUT)/$$VERSION"; \
 	printf "\n$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(BLUE)drift-python / export$(RESET) — building v$$VERSION via Docker\n"; \
+	printf "$(BLUE)driftdockerprofiler / export$(RESET) — building v$$VERSION via Docker\n"; \
 	printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
 	printf "\n$(CYAN)[1/5]$(RESET) pre-flight: docker available?\n"; \
 	docker version >/dev/null 2>&1 || { printf "$(RED)✗$(RESET) Docker daemon not reachable\n"; exit 1; }; \
@@ -133,37 +147,27 @@ export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<
 	printf "\n$(CYAN)[2/5]$(RESET) preparing output dir $(CYAN)$$OUT$(RESET)\n"; \
 	rm -rf "$$OUT"; mkdir -p "$$OUT"; \
 	printf "  $(GREEN)✓$(RESET) clean\n"; \
-	printf "\n$(CYAN)[3/5]$(RESET) building wheel + sdist inside $(CYAN)$(PY_BUILD_IMAGE)$(RESET)\n"; \
-	docker run --rm \
-	  -u $$(id -u):$$(id -g) \
-	  -v "$$PWD/$(DRIFT_DIR)":/src:ro \
-	  -v "$$PWD/$$OUT":/out \
-	  -e HOME=/tmp \
-	  -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-	  -e PIP_ROOT_USER_ACTION=ignore \
-	  $(PY_BUILD_IMAGE) \
-	  sh -c 'set -e; \
-	    cp -r /src /tmp/build && cd /tmp/build && \
-	    pip install --quiet --no-cache-dir build && \
-	    python -m build --outdir /out . 2>&1 | sed "s/^/    /"' \
+	printf "\n$(CYAN)[3/5]$(RESET) building wheel + C++ extension inside $(CYAN)$(DRIFTDOCKER_BUILD_IMG)$(RESET)\n"; \
+	( cd $(DRIFTDOCKER_DIR) && \
+	  docker build --build-arg PYTHON_VERSION=3.11 \
+	    --output type=local,dest="$$OLDPWD/$$OUT" \
+	    --target wheel-export . ) \
 	  || { printf "$(RED)✗$(RESET) docker build failed\n"; exit 1; }; \
-	printf "  $(GREEN)✓$(RESET) wheel + sdist built\n"; \
-	printf "\n$(CYAN)[4/5]$(RESET) copying README + writing INSTALL.md + populating $(CYAN)$(DRIFT_DIR)/dist/$(RESET)\n"; \
-	cp $(DRIFT_DIR)/README.md "$$OUT/README.md"; \
-	[ -f $(DRIFT_DIR)/LICENSE ] && cp $(DRIFT_DIR)/LICENSE "$$OUT/LICENSE" || true; \
+	printf "  $(GREEN)✓$(RESET) wheel built (C++ extension baked in)\n"; \
+	printf "\n$(CYAN)[4/5]$(RESET) copying README + writing INSTALL.md + mirroring to $(CYAN)$(DRIFTDOCKER_DIR)/dist/$(RESET)\n"; \
+	cp $(DRIFTDOCKER_DIR)/README.md "$$OUT/README.md"; \
+	[ -f $(DRIFTDOCKER_DIR)/LICENSE ] && cp $(DRIFTDOCKER_DIR)/LICENSE "$$OUT/LICENSE" || true; \
 	WHEEL=$$(ls "$$OUT"/*.whl 2>/dev/null | head -1 | xargs -n1 basename); \
-	SDIST=$$(ls "$$OUT"/*.tar.gz 2>/dev/null | head -1 | xargs -n1 basename); \
-	rm -rf $(DRIFT_DIR)/dist; mkdir -p $(DRIFT_DIR)/dist; \
-	cp "$$OUT/$$WHEEL" $(DRIFT_DIR)/dist/; \
-	cp "$$OUT/$$SDIST" $(DRIFT_DIR)/dist/; \
-	printf "  $(GREEN)✓$(RESET) wheel mirrored to $(CYAN)$(DRIFT_DIR)/dist/$$WHEEL$(RESET) (used by Tilt + Dockerfile)\n"; \
+	rm -rf $(DRIFTDOCKER_DIR)/dist; mkdir -p $(DRIFTDOCKER_DIR)/dist; \
+	cp "$$OUT/$$WHEEL" $(DRIFTDOCKER_DIR)/dist/; \
+	printf "  $(GREEN)✓$(RESET) wheel mirrored to $(CYAN)$(DRIFTDOCKER_DIR)/dist/$$WHEEL$(RESET)\n"; \
 	{ \
-	  printf '# Installing drift v%s\n\n' "$$VERSION"; \
-	  printf 'This directory ships a built wheel (`%s`) and an sdist (`%s`).\n\n' "$$WHEEL" "$$SDIST"; \
+	  printf '# Installing driftdockerprofiler v%s\n\n' "$$VERSION"; \
+	  printf 'This directory ships a built wheel (`%s`) including the\n' "$$WHEEL"; \
+	  printf 'compiled `driftdockerprofiler._profiler` C++ extension (SIGPROF CPU sampler).\n\n'; \
 	  printf '## pip\n\n```bash\npip install ./%s\n```\n\n' "$$WHEEL"; \
 	  printf '## poetry\n\n```bash\npoetry add ./%s\n```\n\n' "$$WHEEL"; \
-	  printf '## From sdist (no wheel)\n\n```bash\npip install ./%s\n```\n\n' "$$SDIST"; \
-	  printf '## Verify\n\n```bash\nshasum -a 256 -c SHA256SUMS\n```\n'; \
+	  printf '## Verify\n\n```bash\nshasum -a 256 -c SHA256SUMS\npython -c "import driftdockerprofiler; print(driftdockerprofiler.cpu_profiling_available())"\n```\n'; \
 	} > "$$OUT/INSTALL.md"; \
 	printf "  $(GREEN)✓$(RESET) README.md + INSTALL.md in place\n"; \
 	printf "\n$(CYAN)[5/5]$(RESET) computing SHA256SUMS\n"; \
@@ -173,7 +177,7 @@ export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<
 	ABS_OUT=$$(cd "$$OUT" && pwd); \
 	ABS_WHEEL="$$ABS_OUT/$$WHEEL"; \
 	printf "\n$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(GREEN)✓ drift v$$VERSION exported (built inside $(PY_BUILD_IMAGE))$(RESET)\n"; \
+	printf "$(GREEN)✓ driftdockerprofiler v$$VERSION exported (built inside $(DRIFTDOCKER_BUILD_IMG))$(RESET)\n"; \
 	printf "$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
 	printf "  $(BOLD)Location$(RESET)  $(CYAN)$$ABS_OUT$(RESET)\n"; \
 	printf "  $(BOLD)Contents$(RESET)\n"; \
@@ -183,92 +187,92 @@ export-drift-python: ## Dockerized build of drift-python → dist/drift-python/<
 	printf "    $(CYAN)pip install $$ABS_WHEEL$(RESET)\n\n"; \
 	printf "    $(YELLOW)# poetry$(RESET)\n"; \
 	printf "    $(CYAN)poetry add $$ABS_WHEEL$(RESET)\n\n"; \
-	printf "    $(YELLOW)# smoke-test in a clean container$(RESET)\n"; \
-	printf "    $(CYAN)make test-export-drift-python$(RESET)\n"; \
-	$(MAKE) --no-print-directory export-drift-python-readme README_PATH="$$OUT/README.md" VERSION="$$VERSION"
+	printf "    $(YELLOW)# smoke-test in a clean container (verifies C++ ext loads)$(RESET)\n"; \
+	printf "    $(CYAN)make test-export-driftdockerprofiler$(RESET)\n"; \
+	$(MAKE) --no-print-directory export-driftdockerprofiler-readme README_PATH="$$OUT/README.md" VERSION="$$VERSION"
 
-export-drift-python-clean: ## Wipe dist/drift-python/ so the next export starts fresh
-	@printf "$(BLUE)▶$(RESET) rm -rf $(DRIFT_OUT)\n"
-	@rm -rf $(DRIFT_OUT)
+export-driftdockerprofiler-clean: ## Wipe dist/driftdockerprofiler/ so the next export starts fresh
+	@printf "$(BLUE)▶$(RESET) rm -rf $(DRIFTDOCKER_OUT)\n"
+	@rm -rf $(DRIFTDOCKER_OUT)
 	@printf "$(GREEN)✓$(RESET) cleaned\n"
 
-# `test-export-drift-python` — installs the exported wheel in clean
-# containers (no drift-python source mounted) and runs a tiny smoke test
-# that imports drift and verifies the public API (`install` / `uninstall`
-# symbols) is reachable. Iterates over $(PY_TEST_IMAGES) so the LOWEST and
-# HIGHEST supported runtimes are gated in one command — failures on any
-# image are collected and reported together. If the wheel is missing, it
-# falls back to running the export first.
-test-export-drift-python: ## Install the exported wheel into a fresh container and smoke-test it
-	@VERSION=$$(awk -F'"' '/^version *= */ {print $$2; exit}' $(DRIFT_DIR)/pyproject.toml); \
-	OUT="$(DRIFT_OUT)/$$VERSION"; \
+# `test-export-driftdockerprofiler` — installs the exported wheel in a
+# fresh container (no source mounted), asserts the C++ extension loads,
+# runs the agent end-to-end, and validates the on-the-wire schema
+# (cpu + memory_bytes fields present). This is the gate for "the wheel
+# actually works in production" — anything that breaks here is shipping
+# broken bits.
+test-export-driftdockerprofiler: ## Install the exported wheel in a fresh container + assert C++ ext + schema (end-to-end)
+	@VERSION=$$(awk -F"'" '/^__version__/ {print $$2; exit}' $(DRIFTDOCKER_DIR)/driftdockerprofiler/__version__.py); \
+	OUT="$(DRIFTDOCKER_OUT)/$$VERSION"; \
 	WHEEL=$$(ls "$$OUT"/*.whl 2>/dev/null | head -1); \
 	if [ -z "$$WHEEL" ]; then \
-	  printf "$(YELLOW)!$(RESET) no wheel in $$OUT — running export first\n"; \
-	  $(MAKE) --no-print-directory export-drift-python; \
+	  printf "$(YELLOW)!$(RESET) no wheel in $$OUT — running export-driftdockerprofiler first\n"; \
+	  $(MAKE) --no-print-directory export-driftdockerprofiler; \
 	  WHEEL=$$(ls "$$OUT"/*.whl 2>/dev/null | head -1); \
 	fi; \
 	WHEEL_NAME=$$(basename "$$WHEEL"); \
-	printf "\n$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(BLUE)test-export-drift-python$(RESET) — smoke-test $$WHEEL_NAME\n"; \
-	printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "\n$(CYAN)[1/2]$(RESET) writing smoke-test script\n"; \
+	SMOKE="$$OUT/.smoke_test.py"; \
 	{ \
-	  echo 'import drift, inspect, sys'; \
-	  echo "assert callable(drift.install), 'drift.install missing'"; \
-	  echo "assert callable(drift.uninstall), 'drift.uninstall missing'"; \
-	  echo "print('  drift module    :', drift.__file__)"; \
-	  echo "print('  drift.install   :', inspect.signature(drift.install))"; \
-	  echo "print('  drift.uninstall :', inspect.signature(drift.uninstall))"; \
-	  echo "print('  drift __all__   :', drift.__all__)"; \
-	  echo "print('  python          :', sys.version.split()[0])"; \
-	} > "$$OUT/.smoke_test.py"; \
-	printf "  $(GREEN)✓$(RESET) $$OUT/.smoke_test.py\n"; \
-	IMAGES="$(PY_TEST_IMAGES)"; \
-	TOTAL=$$(printf '%s\n' $$IMAGES | wc -l | tr -d ' '); \
-	printf "$(CYAN)[2/2]$(RESET) smoke-testing on $$TOTAL image(s): $(CYAN)$$IMAGES$(RESET)\n"; \
-	IDX=0; FAILED=""; \
-	for IMG in $$IMAGES; do \
-	  IDX=$$((IDX+1)); \
-	  printf "\n$(BLUE)── [$$IDX/$$TOTAL]$(RESET) $(CYAN)$$IMG$(RESET)\n"; \
-	  if docker run --rm \
-	    -u $$(id -u):$$(id -g) \
-	    -v "$$PWD/$$OUT":/wheels:ro \
-	    -e HOME=/tmp \
-	    -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-	    -e PIP_ROOT_USER_ACTION=ignore \
-	    $$IMG \
-	    sh -c "set -e; \
-	      pip install --quiet --no-cache-dir /wheels/$$WHEEL_NAME && \
-	      python /wheels/.smoke_test.py"; then \
-	    printf "  $(GREEN)✓$(RESET) $$IMG\n"; \
-	  else \
-	    printf "  $(RED)✗$(RESET) $$IMG\n"; \
-	    FAILED="$$FAILED $$IMG"; \
-	  fi; \
-	done; \
-	rm -f "$$OUT/.smoke_test.py"; \
-	if [ -n "$$FAILED" ]; then \
-	  printf "\n$(RED)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	  printf "$(RED)✗ smoke test failed on:$$FAILED$(RESET)\n"; \
-	  printf "$(RED)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	  exit 1; \
+	  echo "import json, time, timeit, driftdockerprofiler"; \
+	  echo "assert driftdockerprofiler.cpu_profiling_available(), \"native C++ ext missing\""; \
+	  echo "driftdockerprofiler.start(service=\"wheel-smoke\", period_ms=10, duration_ms=300)"; \
+	  echo "n = 0; deadline = timeit.default_timer() + 0.9"; \
+	  echo "while timeit.default_timer() < deadline:"; \
+	  echo "    for _ in range(10000): n += 1"; \
+	  echo "driftdockerprofiler.stop()"; \
+	  echo "evs = [json.loads(l) for l in open(\"/tmp/drift/events.jsonl\")]"; \
+	  echo "assert evs, \"no events emitted\""; \
+	  echo "REQUIRED = (\"type\",\"time\",\"service\",\"period_ns\",\"duration_ns\",\"count\",\"cpu\",\"memory_bytes\",\"frames\")"; \
+	  echo "for e in evs:"; \
+	  echo "    for k in REQUIRED:"; \
+	  echo "        assert k in e, \"missing key %r in event %r\" % (k, e)"; \
+	  echo "wall = sum(1 for e in evs if e[\"type\"] == \"wall_trace\")"; \
+	  echo "cpu  = sum(1 for e in evs if e[\"type\"] == \"cpu_trace\")"; \
+	  echo "print(\"OK total=\", len(evs), \" wall=\", wall, \" cpu=\", cpu)"; \
+	  echo "print(\"   cpu_load=\", evs[0][\"cpu\"], \" memory_bytes=\", evs[0][\"memory_bytes\"])"; \
+	  echo "print(\"   leaf frame:\", evs[0][\"frames\"][0])"; \
+	} > "$$SMOKE"; \
+	printf "\n$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
+	printf "$(BLUE)test-export-driftdockerprofiler$(RESET) — smoke-test $$WHEEL_NAME in $(DRIFTDOCKER_TEST_IMG)\n"; \
+	printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
+	docker run --rm \
+	  -v "$$PWD/$$OUT":/wheels:ro \
+	  -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+	  $(DRIFTDOCKER_TEST_IMG) \
+	  sh -c "pip install --quiet --no-cache-dir /wheels/$$WHEEL_NAME && python /wheels/.smoke_test.py"; \
+	STATUS=$$?; \
+	rm -f "$$SMOKE"; \
+	if [ $$STATUS -ne 0 ]; then \
+	  printf "$(RED)✗$(RESET) smoke test failed — wheel is broken\n"; exit $$STATUS; \
 	fi; \
 	printf "\n$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(GREEN)✓ wheel installs cleanly and imports on all $$TOTAL image(s)$(RESET)\n"; \
+	printf "$(GREEN)✓ wheel installs, C++ extension loads, schema verified$(RESET)\n"; \
 	printf "$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"
 
+# `smoke-driftdockerprofiler` — Dockerfile-driven smoke test that lives
+# INSIDE the project's Dockerfile (the multi-stage `smoke-test` target).
+# Use this when you want to verify a fresh `python:3.11-slim` install
+# WITHOUT first running the export pipeline.
+smoke-driftdockerprofiler: ## Build the project's smoke-test docker image and run it (verifies C++ ext loads)
+	@printf "$(BLUE)▶$(RESET) building smoke-test image (target=smoke-test in $(DRIFTDOCKER_DIR)/Dockerfile)\n"
+	@cd $(DRIFTDOCKER_DIR) && docker build --target smoke-test -t driftdockerprofiler-smoke . ; \
+	  printf "$(GREEN)✓$(RESET) image built\n"
+	@printf "$(BLUE)▶$(RESET) running end-to-end smoke test inside the container\n"
+	@printf "  (start agent → burn CPU → stop → read /tmp/drift/events.jsonl)\n\n"
+	@docker run --rm driftdockerprofiler-smoke
+
 # Pretty-print a README.md to stdout. Detects glow → mdcat → bat → awk fallback.
-# Called by export-drift-python with README_PATH=... VERSION=... but also
-# runnable standalone: `make export-drift-python-readme README_PATH=path/to/README.md`.
-export-drift-python-readme: ## Pretty-render a README.md (auto-detects glow/mdcat/bat, falls back to awk)
-	@README_PATH=$${README_PATH:-$(DRIFT_DIR)/README.md}; \
-	VERSION=$${VERSION:-$$(awk -F'"' '/^version *= */ {print $$2; exit}' $(DRIFT_DIR)/pyproject.toml)}; \
+# Called by export-driftdockerprofiler with README_PATH=... VERSION=... but
+# also runnable standalone: `make export-driftdockerprofiler-readme README_PATH=path/to/README.md`.
+export-driftdockerprofiler-readme: ## Pretty-render a README.md (auto-detects glow/mdcat/bat, falls back to awk)
+	@README_PATH=$${README_PATH:-$(DRIFTDOCKER_DIR)/README.md}; \
+	VERSION=$${VERSION:-$$(awk -F"'" '/^__version__/ {print $$2; exit}' $(DRIFTDOCKER_DIR)/driftdockerprofiler/__version__.py)}; \
 	if [ ! -f "$$README_PATH" ]; then \
 	  printf "$(RED)✗$(RESET) README not found at $$README_PATH\n"; exit 1; \
 	fi; \
 	printf "\n$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"; \
-	printf "$(BLUE)README$(RESET) — drift v$$VERSION  $(DIM)($$README_PATH)$(RESET)\n"; \
+	printf "$(BLUE)README$(RESET) — driftdockerprofiler v$$VERSION  $(DIM)($$README_PATH)$(RESET)\n"; \
 	printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n\n"; \
 	if command -v glow >/dev/null 2>&1; then \
 	  glow -s dark "$$README_PATH"; \
@@ -295,7 +299,11 @@ export-drift-python-readme: ## Pretty-render a README.md (auto-detects glow/mdca
 
 images: images-app images-obs ## Build both app + observability images
 
-images-app: ## Build test-python-web-server:dev
+# images-app depends on the prebuilt driftdockerprofiler wheel — the
+# app Dockerfile only COPYs the wheel; it doesn't compile it. Letting
+# `make images-app` rebuild the wheel on demand means a fresh checkout
+# can just run `make images` without remembering the build order.
+images-app: wheel-driftdockerprofiler ## Build test-python-web-server:dev (depends on driftdockerprofiler wheel)
 	@printf "$(BLUE)▶$(RESET) docker build test-python-web-server:dev\n"
 	@docker build -f test-python-web-server/Dockerfile -t test-python-web-server:dev .
 	@printf "$(GREEN)✓$(RESET) test-python-web-server:dev built\n"
@@ -304,3 +312,20 @@ images-obs: ## Build observability-server:dev
 	@printf "$(BLUE)▶$(RESET) docker build observability-server:dev\n"
 	@docker build -t observability-server:dev observability-server
 	@printf "$(GREEN)✓$(RESET) observability-server:dev built\n"
+
+### End-to-end (driftdockerprofiler → observability-server in Docker)
+
+# `e2e-driftdockerprofiler` is the integration goalpost: it boots the
+# test-python-web-server (profiled by driftdockerprofiler) and the
+# observability-server in a docker compose stack wired through a
+# shared volume, pumps HTTP traffic, then asserts:
+#   - the JSONL events file at /trace/events.log fills up
+#   - every event carries the new schema (cpu + memory_bytes + frames)
+#   - BOTH `wall_trace` AND `cpu_trace` events appear (the C++ extension
+#     fires under load — the whole point of the wheel)
+#   - the SSE stream at /live_logs emits `data:` frames
+# Tears the stack down on exit. Takes ~30-45 s end-to-end.
+
+.PHONY: e2e-driftdockerprofiler
+e2e-driftdockerprofiler: wheel-driftdockerprofiler ## End-to-end smoke test: app + observability-server in docker, assert schema + C++ ext + SSE
+	@bash test-python-web-server/e2e/smoke_test.sh
