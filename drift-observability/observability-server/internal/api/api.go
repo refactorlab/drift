@@ -2,9 +2,15 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"embed"
+	"errors"
+	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/company/drift-observability/observability-server/internal/events"
@@ -14,12 +20,17 @@ import (
 var webFS embed.FS
 
 // Mux returns the HTTP handler for the observability-server.
-func Mux(b *events.Broadcaster) http.Handler {
+func Mux(b *events.Broadcaster, tracePath string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /live_logs", liveLogsHandler(b))
 	mux.HandleFunc("GET /events", eventsHandler(b))
+	mux.HandleFunc("GET /events/all", allEventsHandler(tracePath))
+	// `/events/log` returns the on-disk JSONL file verbatim — one event
+	// per line, no array wrapping. Desktop / pprof-style tools download
+	// this and replay it locally.
+	mux.HandleFunc("GET /events/log", eventsLogHandler(tracePath))
 
 	// Static assets
 	subFS, _ := fs.Sub(webFS, "web")
@@ -92,6 +103,91 @@ func eventsHandler(b *events.Broadcaster) http.HandlerFunc {
 			_, _ = w.Write(line)
 		}
 		_, _ = w.Write([]byte("]"))
+	}
+}
+
+// allEventsHandler streams every line of the on-disk trace file as a JSON array.
+// Each line in the file is one JSON event; we concatenate them with commas
+// without parsing, so output stays a single valid JSON array. If the file
+// doesn't exist yet (no events have been written), we return an empty array.
+func allEventsHandler(tracePath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		f, err := os.Open(tracePath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
+			http.Error(w, "failed to open events file", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		w.Header().Set("Content-Type", "application/json")
+		scanner := bufio.NewScanner(f)
+		// Allow long single-line events; ring buffer in drift can produce
+		// payloads larger than the default 64KiB scanner cap.
+		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+
+		_, _ = w.Write([]byte("["))
+		first := true
+		for scanner.Scan() {
+			line := bytes.TrimSpace(scanner.Bytes())
+			if len(line) == 0 {
+				continue
+			}
+			if !first {
+				_, _ = w.Write([]byte(","))
+			}
+			_, _ = w.Write(line)
+			first = false
+		}
+		_, _ = w.Write([]byte("]"))
+	}
+}
+
+// eventsLogHandler streams the on-disk events JSONL file verbatim.
+//
+// Unlike `/events/all` (which wraps the lines in `[…]` for clients that
+// want a single JSON document), this endpoint preserves the original
+// JSONL: one JSON object per `\n`-terminated line, no commas, no array
+// brackets. That's the format the desktop UI's event_log aggregator
+// expects and the format every tail-oriented tool (jq -c, awk, etc.)
+// reads natively.
+//
+// Returns 404 with `[]`-like JSON (for backward-compatibility with
+// /events/all consumers) when the file doesn't exist yet, and a
+// Content-Disposition header so browsers offer a "save as" dialog
+// rather than rendering the bytes inline.
+func eventsLogHandler(tracePath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		f, err := os.Open(tracePath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				// Empty JSONL stream is the empty document.
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				return
+			}
+			http.Error(w, "failed to open events file", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		// application/x-ndjson is the conventional MIME for newline-
+		// delimited JSON. Suggesting a download with a stable filename
+		// lets the desktop UI save it under a known name without
+		// renaming dance.
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="events.log"`)
+		// Best-effort Content-Length — if Stat fails (race), let the
+		// transfer be chunked.
+		if st, errStat := f.Stat(); errStat == nil {
+			w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+		}
+		// io.Copy handles backpressure and short writes; we copy the
+		// raw bytes without parsing, so this scales to huge files.
+		_, _ = io.Copy(w, f)
 	}
 }
 

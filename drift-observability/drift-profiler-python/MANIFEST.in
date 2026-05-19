@@ -1,0 +1,12 @@
+include MANIFEST.in
+include LICENSE
+
+# Header files are not by default included in the source distribution created
+# by sdist.
+recursive-include driftdockerprofiler *.h
+
+# JSON Schemas (Draft 2026-05) shipped alongside the Python modules so
+# runtime callers of driftdockerprofiler.event_schema() find them in
+# the installed wheel. package_data in setup.py covers the wheel; this
+# line covers the sdist.
+recursive-include driftdockerprofiler/schemas *.json

@@ -36,7 +36,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           api.Mux(bus),
+		Handler:           api.Mux(bus, tracePath),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go shutdownOnSignal(srv, cancel)

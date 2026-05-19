@@ -265,6 +265,17 @@ export default function HomePage() {
             {priorScans.length > 0 &&
               " Or pick where to resume from a previous scan on the right."}
           </div>
+
+          <div className="home-secondary-row">
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => navigate("/live-scan")}
+              title="Open the events.log profiler — snakeviz-style icicle chart over any drift trace. Pick a past run, or tail a file live at ~1Hz."
+            >
+              ⏵ live_scan · profile an events.log
+            </button>
+          </div>
         </>
       )}
 

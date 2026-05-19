@@ -5,6 +5,7 @@ import Onboarding from "./components/Onboarding";
 import { AppConfig, getAppConfig, onOpenSettings } from "./lib/tauri";
 import { useStaticScanSubscription } from "./lib/useStaticScanSubscription";
 import HomePage from "./pages/Home";
+import LiveScanPage from "./pages/LiveScan";
 import ReportPage from "./pages/Report";
 import ScanReportPage from "./pages/ScanReport";
 import SettingsPage from "./pages/Settings";
@@ -44,6 +45,7 @@ function RoutedApp() {
       <Route path="/" element={<HomePage />} />
       <Route path="/scan/:scanId" element={<ScanReportPage />} />
       <Route path="/report/:runId" element={<ReportPage />} />
+      <Route path="/live-scan" element={<LiveScanPage />} />
       <Route path="/settings" element={<SettingsPage />} />
     </Routes>
   );

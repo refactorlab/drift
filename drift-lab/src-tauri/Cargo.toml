@@ -94,6 +94,8 @@ custom-protocol = ["tauri/custom-protocol"]
 [dev-dependencies]
 # Mock HTTP server for the LLM stream / agent-turn integration test.
 wiremock = "0.6"
+# Temp file fixtures for the event_log JSONL parser tests.
+tempfile = "3"
 
 # Known Dependabot alert: RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g
 # (`glib::VariantStrIter` unsoundness). `glib 0.18.5` is pulled in

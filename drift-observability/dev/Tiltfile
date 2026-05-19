@@ -27,32 +27,36 @@ metadata:
   name: %s
 """ % NAMESPACE))
 
-# --- drift wheel (Dockerized build) ---------------------------------------
-# Build the drift-python wheel via `make export-drift-python`, which runs
-# `python -m build` inside a python:3.11-slim sidecar container and mirrors
-# the output to drift-python/dist/ (where the Dockerfile picks it up).
-# Tilt re-fires this when anything under drift-python/drift/ or its
-# pyproject.toml changes — so the wheel always reflects live source.
+# --- driftdockerprofiler wheel (Dockerized build) -------------------------
+# Build the driftdockerprofiler wheel via `make wheel-driftdockerprofiler`,
+# which runs `python -m build` inside a python:3.11 sidecar (needs gcc/g++
+# because the wheel ships a compiled C++ extension — the SIGPROF CPU
+# sampler) and mirrors the .whl to drift-profiler-python/dist/, which
+# test-python-web-server's Dockerfile copies from.
+#
+# Tilt re-fires this when anything under driftdockerprofiler/ or its
+# setup.py / C++ sources change — wheel always reflects live source.
 local_resource(
-    'drift-python-wheel',
-    cmd='make -C %s export-drift-python' % REPO_ROOT,
+    'driftdockerprofiler-wheel',
+    cmd='make -C %s wheel-driftdockerprofiler' % REPO_ROOT,
     deps=[
-        REPO_ROOT + '/drift-python/drift/',
-        REPO_ROOT + '/drift-python/pyproject.toml',
+        REPO_ROOT + '/drift-profiler-python/driftdockerprofiler/',
+        REPO_ROOT + '/drift-profiler-python/setup.py',
+        REPO_ROOT + '/drift-profiler-python/Dockerfile',
     ],
     labels=['drift-demo'],
 )
 
 # --- Images ----------------------------------------------------------------
 # test-python-web-server's Dockerfile consumes the prebuilt wheel from
-# drift-python/dist/ (produced by the drift-python-wheel resource above) —
-# so its build context is the repo root.
+# drift-profiler-python/dist/ (produced by the driftdockerprofiler-wheel
+# resource above) — so its build context is the repo root.
 docker_build(
     'test-python-web-server',
     context=REPO_ROOT,
     dockerfile=REPO_ROOT + '/test-python-web-server/Dockerfile',
     only=[
-        'drift-python/dist/',
+        'drift-profiler-python/dist/',
         'test-python-web-server/',
     ],
 )
@@ -84,6 +88,6 @@ k8s_resource(
     'demo-app',
     new_name='test-python-web-server',
     port_forwards=[port_forward(8000, 8000, name='app')],
-    resource_deps=['observability-server', 'drift-python-wheel'],
+    resource_deps=['observability-server', 'driftdockerprofiler-wheel'],
     labels=['drift-demo'],
 )

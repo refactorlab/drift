@@ -1,29 +1,39 @@
 # syntax=docker/dockerfile:1.7
 #
-# Build context must be the repo root so both `drift-python/dist/` (the
-# prebuilt wheel) and `test-python-web-server/` are visible. See dev/Tiltfile.
+# Build context must be the repo root so both
+# `drift-profiler-python/dist/` (the prebuilt wheel) and this directory
+# are visible. See dev/Tiltfile.
 #
-# The drift wheel is produced by `make export-drift-python` (runs in the
-# `$(PY_BUILD_IMAGE)` sidecar container, default `python:3.11-slim`) and
-# mirrored to drift-python/dist/. The wheel is `py3-none-any`, so it installs
-# on any Python ≥ the package's `requires-python` regardless of build image.
-# This image does NOT build the wheel itself — it consumes the prebuilt one.
-# Run `make export-drift-python` before building this image standalone; under
-# Tilt, the `drift-python-wheel` local_resource takes care of it.
+# The driftdockerprofiler wheel is produced by
+#   `make export-driftdockerprofiler`  (or the lighter `make wheel-driftdockerprofiler`)
+# inside a `python:3.7` container, mirrored to
+# `drift-profiler-python/dist/driftdockerprofiler-*.whl`. The wheel
+# embeds a compiled C++ extension (the SIGPROF-based CPU sampler), so
+# it is platform/python-version-specific — pick a Python here that
+# matches the wheel's tag (we ship cp37 wheels, so the runtime image
+# must be `python:3.7*`).
 
-FROM python:3.12-slim
+FROM python:3.7-slim
 WORKDIR /app
 
 COPY test-python-web-server/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Prebuilt drift wheel from `make export-drift-python` (mirrored to
-# drift-python/dist/ alongside the canonical dist/drift-python/<v>/ output).
-COPY drift-python/dist/drift-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/drift-*.whl && rm /tmp/drift-*.whl
+# Prebuilt driftdockerprofiler wheel — must match the runtime Python ABI
+# tag (cp311). The build job in Makefile / Tilt produces this file.
+COPY drift-profiler-python/dist/driftdockerprofiler-*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/driftdockerprofiler-*.whl && \
+    rm /tmp/driftdockerprofiler-*.whl && \
+    python -c "import driftdockerprofiler; \
+assert driftdockerprofiler.cpu_profiling_available(), \
+    'native C++ extension did not load — wheel is broken'"
 
-COPY test-python-web-server/app.py test-python-web-server/orders.py \
-     test-python-web-server/trace-config.yaml /app/
+COPY test-python-web-server/app.py test-python-web-server/orders.py /app/
+
+# JSONL events go here. The observability-server's tailer reads the
+# same path (TRACE_PATH defaults to /trace/events.log). Mount a shared
+# volume at /trace to wire them together.
+ENV DRIFT_EVENTS_PATH=/trace/events.log
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
