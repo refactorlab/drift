@@ -53,6 +53,49 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Event'
+    post:
+      summary: Publish one event (or a small batch)
+      description: |
+        Accepts events from a drift-instrumented service (the Python
+        `driftdockerprofiler.sinks.HttpServerSink` is the reference
+        publisher). The body MAY be:
+
+          - a single JSON object: `{"type":"wall_trace", ...}`
+          - a JSON array of objects: `[{...},{...},...]`
+          - NDJSON: one object per `\n`-terminated line.
+
+        Each accepted event is appended to the on-disk trace file
+        (configured by `TRACE_PATH`). The file tailer picks the new
+        lines up and broadcasts them to every `/live_logs` and
+        `/realtime/v1/websocket` subscriber — there is exactly one
+        fanout path regardless of whether the event arrived via POST
+        or via a shared-volume file write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/Event'
+                - type: array
+                  items: { $ref: '#/components/schemas/Event' }
+          application/x-ndjson:
+            schema:
+              type: string
+              description: 'One `Event` (see schema below) per `\n`-terminated line.'
+      responses:
+        '202':
+          description: Accepted. Body reports how many events were stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: integer, example: 1 }
+        '400':
+          description: Malformed body (not JSON / unsupported shape).
+        '500':
+          description: Server failed to durably append the event.
 
   /events/all:
     get:
@@ -116,6 +159,200 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
+
+  /events/bulk:
+    post:
+      summary: Publish a batch as NDJSON
+      description: |
+        Sibling to `/events` with an unambiguous Content-Type contract.
+        Body is `application/x-ndjson` — one JSON event per
+        `\n`-terminated line, no array wrapping. Lines that aren't
+        valid JSON are skipped and counted out of `accepted`.
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+      responses:
+        '202':
+          description: Accepted. Body reports how many lines were stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: integer }
+        '500':
+          description: Server failed to durably append a line.
+
+  /channels/publish:
+    post:
+      summary: Publish a payload to a channel
+      description: |
+        First-class HTTP **publish** verb. The request body is a JSON
+        value (any shape — object, array, string, number); the server
+        fans it out to every subscriber of the named channel:
+
+          - WebSocket sessions joined to `?topic=…` via `phx_join` —
+            they receive a standard Phoenix `broadcast` envelope.
+          - HTTP listeners on `/channels/subscribe?topic=…` — they
+            receive the payload verbatim as one SSE `data:` line.
+
+        With `?persist=1`, the payload is also appended to the on-disk
+        trace file (so `/events/all` and `/events/log` see it). Off by
+        default — publish is in-memory by nature.
+      parameters:
+        - in: query
+          name: topic
+          required: true
+          schema: { type: string, example: 'realtime:drift-profiler-events' }
+          description: Phoenix topic.
+        - in: query
+          name: persist
+          required: false
+          schema: { type: string, enum: ['0', '1'] }
+          description: 'If `1`, also append the payload to the trace file.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Any JSON value.
+      responses:
+        '202':
+          description: Accepted. Body reports the topic and subscriber count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: integer, example: 1 }
+                  topic: { type: string }
+                  subscribers: { type: integer }
+        '400':
+          description: Missing or empty topic, or body is not valid JSON.
+
+  /channels/subscribe:
+    get:
+      summary: Subscribe to a channel (SSE)
+      description: |
+        First-class HTTP **subscribe** verb. Streams every payload
+        published to `?topic=…` as Server-Sent Events. One `data:`
+        line per payload. Unlike `/channels/live`, this endpoint
+        delivers payloads only — no Phoenix envelopes, no
+        joins/heartbeats.
+
+        On connect, the topic's history ring (if any) is replayed
+        first, then new publishes are streamed live. Periodic `: ka`
+        keepalive comments are sent every 15 s so an idle channel
+        keeps the connection alive through proxies.
+      parameters:
+        - in: query
+          name: topic
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: SSE stream of payloads.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /channels:
+    get:
+      summary: List active channels and their subscriber counts
+      description: |
+        Returns a snapshot of every Phoenix topic currently joined by
+        at least one WebSocket session. Keys are the full topic
+        (`realtime:<channel>`); values are the count of sessions
+        joined to that topic. Empty `{}` when no client is connected.
+      responses:
+        '200':
+          description: Topic → subscriber count.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: integer }
+                example: { 'realtime:drift-profiler-events': 2 }
+
+  /channels/messages:
+    get:
+      summary: Recent Phoenix frames (ring buffer)
+      description: |
+        Returns the most-recent `CHANNEL_HISTORY_CAP` (default 500)
+        wire-level Phoenix envelopes the broker has seen, in
+        chronological order. Both directions (`in` / `out`) are
+        included so you can see what the client sent and what the
+        server replied with. Use `?topic=realtime:<channel>` to narrow
+        to one channel.
+      parameters:
+        - in: query
+          name: topic
+          schema: { type: string, example: 'realtime:drift-profiler-events' }
+          required: false
+          description: Phoenix topic filter. Omit to include every topic.
+      responses:
+        '200':
+          description: Array of Frame objects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ChannelFrame' }
+
+  /channels/live:
+    get:
+      summary: SSE stream of new Phoenix frames
+      description: |
+        Server-Sent Events stream of every Phoenix frame the broker
+        processes after the request is opened. Existing ring contents
+        are NOT replayed — call `/channels/messages` for a snapshot.
+        Use `?topic=realtime:<channel>` to filter.
+      parameters:
+        - in: query
+          name: topic
+          schema: { type: string }
+          required: false
+      responses:
+        '200':
+          description: SSE stream of Frame objects.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /realtime/v1/websocket:
+    get:
+      summary: Phoenix-Channels-emulating WebSocket subscriber
+      description: |
+        Drop-in replacement for Supabase Realtime for the drift event
+        stream. Implements the minimum Phoenix Channels v1.0.0 subset
+        the drift-lab desktop UI uses:
+
+          - inbound `phx_join` on `realtime:<channel>` → reply ok
+          - inbound `heartbeat` on `phoenix` → reply ok
+          - inbound `phx_leave` → reply ok, unsubscribe
+          - outbound `broadcast` envelopes for each event the server
+            received via POST or via the file tailer.
+
+        Authentication is NOT enforced — `?apikey=…` is accepted and
+        ignored. Intended for local / self-hosted use; put a proxy in
+        front if you need access control.
+      parameters:
+        - in: query
+          name: apikey
+          schema: { type: string }
+          required: false
+          description: Accepted for compatibility, not validated.
+        - in: query
+          name: vsn
+          schema: { type: string, example: '1.0.0' }
+          required: false
+      responses:
+        '101':
+          description: Switching Protocols — WebSocket upgrade succeeded.
 
 components:
   schemas:
@@ -347,6 +584,38 @@ components:
           type: string
           enum: [ok, error]
           description: '`error` if the function raised any exception.'
+
+    ChannelFrame:
+      type: object
+      description: |
+        One Phoenix-Channels envelope observed by the broker, plus
+        metadata. The `frame` field carries the byte-for-byte JSON the
+        broker put on the wire (or received from a client), so a
+        consumer that already speaks Phoenix can replay the traffic
+        without re-encoding.
+      required: [topic, direction, event, time, frame]
+      properties:
+        topic:
+          type: string
+          example: 'realtime:drift-profiler-events'
+          description: Phoenix topic — `realtime:<channel>` for joined channels, `phoenix` for heartbeats, empty for malformed inbound frames.
+        direction:
+          type: string
+          enum: [in, out]
+          description: |
+            `in` — frame received from a WebSocket client.
+            `out` — frame written by the server to a WebSocket client.
+        event:
+          type: string
+          enum: [phx_join, phx_reply, phx_leave, heartbeat, broadcast, presence_state, system]
+          example: broadcast
+        time:
+          type: string
+          format: date-time
+          description: 'ISO-8601 UTC when the broker observed the frame.'
+        frame:
+          type: object
+          description: The raw Phoenix envelope (`{"topic":…,"event":…,"payload":…,"ref":…,"join_ref":…}`).
 
     Sample:
       type: object

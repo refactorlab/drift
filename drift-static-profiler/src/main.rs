@@ -283,7 +283,14 @@ enum Cmd {
 
 fn run_orm_scan(path: &std::path::Path, out: Option<&std::path::Path>, max_files: usize) -> Result<()> {
     let start = std::time::Instant::now();
-    let findings = drift_static_profiler::orm::scan_workspace(path, max_files);
+    // Mirror the desktop default posture: walk respecting gitignore /
+    // driftignore / default-ignore dirs, but with `exclude_tests=false`
+    // so `orm-scan` keeps surfacing test-file findings unless a future
+    // `--no-tests` flag is wired in. The fix here is structural — the
+    // walk is no longer bespoke — even though the default behavior of
+    // this command stays the same.
+    let walk_opts = drift_static_profiler::walker::WalkOpts::default();
+    let findings = drift_static_profiler::orm::scan_workspace(path, max_files, &walk_opts);
     let elapsed_ms = start.elapsed().as_millis();
 
     // Group by rule_id for a tidy summary.

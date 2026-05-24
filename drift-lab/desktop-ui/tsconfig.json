@@ -24,6 +24,10 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src"],
+  "include": [
+    "src",
+    "../../drift-static-profiler/viewer/src/callGraph.ts",
+    "../../drift-static-profiler/viewer/src/CallGraphView.tsx"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

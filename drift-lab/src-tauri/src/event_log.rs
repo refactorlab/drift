@@ -158,6 +158,16 @@ struct RawEvent {
     pod: Option<String>,
     #[serde(default)]
     cpu: Option<f64>,
+
+    // Runtime metrics. Emitted by drift-profiler-python on every event
+    // (see `EventBase` in driftdockerprofiler/schemas/event.schema.json:
+    // memory_bytes is process RSS at window close; memory_peak_bytes is
+    // peak RSS since process start, monotonic non-decreasing). Optional
+    // here because legacy events.log files predate the fields.
+    #[serde(default)]
+    memory_bytes: Option<i64>,
+    #[serde(default)]
+    memory_peak_bytes: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +210,41 @@ pub struct FunctionStat {
     pub cpu_avg: Option<f64>,
     pub file: Option<String>,
     pub line: Option<u32>,
+
+    // ---- Recent-window slice (last RECENT_WINDOW_US µs) --------------
+    //
+    // Drives the "Where am I running mostly NOW" panel — top-N by
+    // `recent_cumulative_us` is the answer to that question, and
+    // comparing it to the all-time `cumulative_us` top-N shows what's
+    // gotten hotter / cooler over the last 15s. Always populated; 0
+    // when the function had no samples in the window.
+
+    /// Exclusive time within the recent window (μs).
+    pub recent_self_us: i64,
+    /// Inclusive time within the recent window (μs).
+    pub recent_cumulative_us: i64,
+    /// Sample count (ticks) within the recent window.
+    pub recent_ncalls: u32,
+
+    // ---- Per-method runtime correlation ------------------------------
+    //
+    // Sampler caveat: a stack-sampling profiler CANNOT attribute the
+    // allocator to a specific frame. These fields are CORRELATIONS:
+    // "process RSS averaged X bytes during the windows where this
+    // function was on the stack (deduped within stack, same population
+    // as cumulative_us)." Useful for spotting memory-hungry codepaths;
+    // not useful as a per-function allocation budget. The UI labels
+    // them "mem observed" not "mem allocated" for this reason.
+
+    /// Mean RSS across the (deduped-per-stack) samples that hit this
+    /// function. None when no source event carried memory_bytes —
+    /// older events.log files predate the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_memory_bytes: Option<i64>,
+    /// Max RSS across the same population — surfaces transient
+    /// spikes the mean would smooth out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_memory_bytes: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -243,6 +288,92 @@ pub struct TreeNode {
     /// profiler-self.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_system: Option<bool>,
+
+    // ---- Per-node runtime correlation --------------------------------
+    //
+    // Same semantics as the matching FunctionStat fields (correlation,
+    // not causation) but scoped to THIS unique path through the tree
+    // rather than all occurrences of the function name. Lets the flame
+    // chart paint memory weight per-path so a hot-path call to `read()`
+    // can show a different memory footprint than a cold-path one.
+
+    /// Mean process RSS across samples whose stack contained this exact
+    /// path from root. None when no source event carried memory_bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_memory_bytes: Option<i64>,
+    /// Max process RSS across the same population.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_memory_bytes: Option<i64>,
+    /// Mean 1-min loadavg across the same population.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_cpu: Option<f64>,
+}
+
+/// Runtime metrics over time — derived from the `memory_bytes`,
+/// `memory_peak_bytes`, and `cpu` fields the Python profiler stamps on
+/// every event. Powers the live overview cards (current/peak memory,
+/// current/peak CPU, sparklines) and the spike counter.
+#[derive(Debug, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSeries {
+    /// Most-recent reading. None when no events with timestamps have
+    /// arrived yet.
+    pub current: Option<RuntimeSample>,
+    /// Peak RSS observed across the entire run.
+    pub peak_memory_bytes: i64,
+    /// Peak RSS observed within the last SPIKE_WINDOW_US.
+    pub peak_memory_bytes_recent: i64,
+    /// Minimum RSS observed within the last SPIKE_WINDOW_US — paired
+    /// with `peak_memory_bytes_recent` it gives the band the process
+    /// has been oscillating in. Useful for spotting a leak (band drifts
+    /// up) vs a workload spike (band stays flat after).
+    pub min_memory_bytes_recent: i64,
+    /// Max loadavg across the run.
+    pub peak_cpu: f64,
+    /// Number of readings in the last SPIKE_WINDOW_US whose memory
+    /// exceeded `(mean + SPIKE_SIGMA * stddev)` across the same window.
+    /// Surfaces "memory went haywire just now" without the user having
+    /// to read the sparkline themselves.
+    pub spike_count_recent: u32,
+    /// Downsampled series (LTTB-style) capped at MAX_SERIES_POINTS.
+    /// Oldest → newest. Empty for legacy events.log files that don't
+    /// carry memory_bytes — the UI hides the sparkline in that case.
+    pub samples: Vec<RuntimeSample>,
+    /// Total number of raw readings (before downsampling) — lets the
+    /// UI show "downsampled X → Y" when the series is huge.
+    pub samples_total: u32,
+}
+
+/// "What was the most recent event doing?" — drives the overview's
+/// "Where am I running RIGHT NOW" card. None when no event with a
+/// timestamp and stack has arrived.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RightNowSnapshot {
+    pub time_us: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pod: Option<String>,
+    /// Leaf-frame name (innermost function on the stack).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf_module: Option<String>,
+    /// Mirrors the `is_system` filter outcome on the leaf — when true
+    /// the UI can dim the card so users know they're looking at
+    /// stdlib / runtime activity, not their own code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf_is_system: Option<bool>,
+    pub stack_depth: u32,
+    /// Microseconds since this snapshot was taken (relative to the
+    /// snapshot's `max_t`). Lets the UI render "0.4 s ago" without
+    /// needing local wall-clock alignment.
+    pub age_us: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -269,6 +400,16 @@ pub struct AggregateReport {
     /// Always empty for sampler input — see module docstring.
     pub calls: Vec<CallRecord>,
     pub calls_truncated: bool,
+
+    /// Runtime metrics (memory + cpu) over time. See [`RuntimeSeries`].
+    pub runtime: RuntimeSeries,
+    /// "Where am I running RIGHT NOW?" — None until first stack arrives.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_now: Option<RightNowSnapshot>,
+    /// Width of the "recent" window applied to `functions[].recent_*`
+    /// and the spike counter (microseconds). Exposed so the UI can label
+    /// the panel ("Last 15 s") without hard-coding the value.
+    pub recent_window_us: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -278,6 +419,13 @@ pub struct EventLogMeta {
     pub display_name: String,
     pub size_bytes: u64,
     pub modified_iso: Option<String>,
+    /// Source bucket for this log: `"legacy"` for the flat
+    /// `~/.drift/event_logs/` directory, or a folder fingerprint
+    /// (e.g. `"f0a9…"`) for files under
+    /// `~/.drift/scans/<fingerprint>/event_logs/`. The UI uses this
+    /// to group / filter the past-scans rail and to deletion-allowlist
+    /// the path — only logs with a known source can be deleted.
+    pub source: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +439,75 @@ struct StackSample {
     tick_count: i64,
     /// 1-min loadavg, if known; rolled into FunctionStat.cpu_avg.
     cpu: Option<f64>,
+    /// Event timestamp (μs since epoch). Needed so the rollup can slice
+    /// out a "last N seconds" window for the live overview's "where am I
+    /// running RIGHT NOW" panel.
+    time_us: Option<i64>,
+    /// Process RSS at this sample window's close. Rolled up per-function
+    /// and per-tree-node so the UI can show "memory observed while this
+    /// codepath was active". NOTE: this is correlation, not causation —
+    /// a sampling profiler cannot attribute the allocator to a specific
+    /// frame; it can only report what RSS was when the frame was on the
+    /// stack. The UI labels accordingly.
+    memory_bytes: Option<i64>,
+    /// Peak RSS since process start at this sample window. Folded into
+    /// the per-function peak so a brief spike between samples surfaces.
+    memory_peak_bytes: Option<i64>,
 }
+
+/// One runtime metrics reading. Emitted for every event we ingest —
+/// independent of whether the event carries a usable stack — because
+/// `memory_bytes` / `cpu` are on the EventBase, not on `samples[]`.
+/// The desktop UI plots these as sparklines + headline cards.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSample {
+    /// Microseconds since epoch.
+    pub time_us: i64,
+    /// Process RSS at this instant. 0 if the wire didn't carry the field.
+    pub memory_bytes: i64,
+    /// Peak RSS since process start (monotonic non-decreasing). Useful
+    /// for spotting transient spikes the live RSS probe may have missed.
+    /// 0 if the wire didn't carry the field.
+    pub memory_peak_bytes: i64,
+    /// 1-min loadavg. 0.0 if the wire didn't carry the field.
+    pub cpu: f64,
+}
+
+/// Latched "what was happening at the most-recent event" — drives the
+/// "Where am I running RIGHT NOW" overview card.
+#[derive(Debug, Clone)]
+struct LastStackInfo {
+    time_us: i64,
+    service: Option<String>,
+    pod: Option<String>,
+    leaf_name: Option<String>,
+    leaf_file: Option<String>,
+    leaf_line: Option<u32>,
+    leaf_module: Option<String>,
+    leaf_is_system: Option<bool>,
+    stack_depth: u32,
+}
+
+/// "Last N µs" the rollup uses to tag samples as "recent". 15 seconds
+/// at the default 10s profile window is roughly the last 1-2 windows —
+/// long enough to be statistically meaningful, short enough to feel live.
+const RECENT_WINDOW_US: i64 = 15_000_000;
+
+/// Rolling window for spike detection. 60s on the default 10s window
+/// = 6 readings — small but lets a brief jump surface above baseline.
+const SPIKE_WINDOW_US: i64 = 60_000_000;
+
+/// Hard cap on the runtime-samples vector we ship to the UI. The
+/// internal Aggregator keeps every sample (for accurate p95/peak math);
+/// `snapshot()` LTTB-downsamples to this many points so the wire stays
+/// cheap (~3 KB) even after the process has been running for hours.
+const MAX_SERIES_POINTS: usize = 120;
+
+/// "How many σ above the rolling mean counts as a spike?" 2σ is a
+/// conventional 95th-percentile cutoff; mempry usage spikes well above
+/// that under GC / large request churn.
+const SPIKE_SIGMA: f64 = 2.0;
 
 // ---------------------------------------------------------------------------
 // Aggregator — incremental state machine.
@@ -330,6 +546,14 @@ pub struct Aggregator {
     min_t: Option<i64>,
     max_t: Option<i64>,
     total_events: u32,
+    /// Runtime metrics over time (memory_bytes / cpu). Appended on every
+    /// event with a usable timestamp — `snapshot()` downsamples for the
+    /// wire. Keeps every reading so peak/p95 math is accurate even at
+    /// long runs.
+    runtime_samples: Vec<RuntimeSample>,
+    /// "What was the most recent event doing?" — feeds the RightNow
+    /// overview card. Latched on every event with a timestamp.
+    last_stack: Option<LastStackInfo>,
 }
 
 impl Aggregator {
@@ -355,7 +579,8 @@ impl Aggregator {
     fn ingest_event(&mut self, ev: RawEvent) {
         self.total_events += 1;
 
-        if let Some(t) = ev.time.as_ref().and_then(RawTime::to_micros) {
+        let event_time_us = ev.time.as_ref().and_then(RawTime::to_micros);
+        if let Some(t) = event_time_us {
             if self.min_t.map_or(true, |m| t < m) {
                 self.min_t = Some(t);
             }
@@ -374,6 +599,19 @@ impl Aggregator {
             }
         }
 
+        // Runtime metrics — recorded once per event independent of
+        // whether the event carries a usable stack. We default missing
+        // memory_bytes / cpu to 0 rather than dropping the sample so
+        // the sparkline still updates for legacy events.log files.
+        if let Some(t) = event_time_us {
+            self.runtime_samples.push(RuntimeSample {
+                time_us: t,
+                memory_bytes: ev.memory_bytes.unwrap_or(0),
+                memory_peak_bytes: ev.memory_peak_bytes.unwrap_or(0),
+                cpu: ev.cpu.unwrap_or(0.0),
+            });
+        }
+
         // function_call events don't carry period_ns; handle them BEFORE
         // the sampler-only period_ns gate.
         if ev.event_type == "function_call" {
@@ -387,17 +625,24 @@ impl Aggregator {
             };
             let qualified_name_for_frame = Some(qualname.clone());
             let frame = RawFrame {
-                name: qualname,
-                file: ev.file,
+                name: qualname.clone(),
+                file: ev.file.clone(),
                 line: ev.line,
                 qualified_name: qualified_name_for_frame,
                 module: None,
                 is_system: None,
             };
+            if let Some(t) = event_time_us {
+                self.update_last_stack(t, ev.service.as_deref(), ev.pod.as_deref(),
+                                       std::slice::from_ref(&frame));
+            }
             self.samples.push(StackSample {
                 weight_us: dur_ns / 1000,
                 tick_count: 1,
                 cpu: ev.cpu,
+                time_us: event_time_us,
+                memory_bytes: ev.memory_bytes,
+                memory_peak_bytes: ev.memory_peak_bytes,
                 frames: vec![frame],
             });
             return;
@@ -418,17 +663,30 @@ impl Aggregator {
                     if frames.is_empty() {
                         return;
                     }
+                    if let Some(t) = event_time_us {
+                        self.update_last_stack(t, ev.service.as_deref(),
+                                               ev.pod.as_deref(), &frames);
+                    }
                     self.samples.push(StackSample {
                         weight_us: (count.saturating_mul(period_ns)) / 1000,
                         tick_count: count,
                         cpu: ev.cpu,
+                        time_us: event_time_us,
+                        memory_bytes: ev.memory_bytes,
+                        memory_peak_bytes: ev.memory_peak_bytes,
                         frames,
                     });
                 }
             }
             "wall_profile" | "cpu_profile" => {
                 let cpu = ev.cpu;
+                let memory_bytes = ev.memory_bytes;
+                let memory_peak_bytes = ev.memory_peak_bytes;
                 if let Some(sub_samples) = ev.samples {
+                    // For bundle events, treat the FIRST non-empty sample
+                    // as "what was running at window close" — closest
+                    // approximation we have for the right-now snapshot.
+                    let mut latched = false;
                     for s in sub_samples {
                         if s.count <= 0 {
                             continue;
@@ -437,10 +695,24 @@ impl Aggregator {
                             Some(f) if !f.is_empty() => f,
                             _ => continue,
                         };
+                        if !latched {
+                            if let Some(t) = event_time_us {
+                                self.update_last_stack(
+                                    t,
+                                    ev.service.as_deref(),
+                                    ev.pod.as_deref(),
+                                    &frames,
+                                );
+                            }
+                            latched = true;
+                        }
                         self.samples.push(StackSample {
                             weight_us: (s.count.saturating_mul(period_ns)) / 1000,
                             tick_count: s.count,
                             cpu,
+                            time_us: event_time_us,
+                            memory_bytes,
+                            memory_peak_bytes,
                             frames,
                         });
                     }
@@ -448,6 +720,44 @@ impl Aggregator {
             }
             _ => {} // unknown event type — silently drop, same as legacy
         }
+    }
+
+    /// Latch the most-recent event's leaf frame + labels. Called from
+    /// every variant that produces a stack so the live overview's
+    /// "Where am I running RIGHT NOW" card always reflects the freshest
+    /// event, not whichever event happened to be sampled last.
+    fn update_last_stack(
+        &mut self,
+        time_us: i64,
+        service: Option<&str>,
+        pod: Option<&str>,
+        frames: &[RawFrame],
+    ) {
+        if frames.is_empty() {
+            return;
+        }
+        // Only overwrite if this event is newer than what we have.
+        // Events from a single agent arrive monotonically, but the
+        // realtime channel can interleave broadcasts from multiple
+        // pods — we want "the most recent in wall time", not "the most
+        // recent we happened to receive".
+        if let Some(prev) = &self.last_stack {
+            if time_us < prev.time_us {
+                return;
+            }
+        }
+        let leaf = &frames[0];
+        self.last_stack = Some(LastStackInfo {
+            time_us,
+            service: service.map(str::to_string),
+            pod: pod.map(str::to_string),
+            leaf_name: Some(leaf.name.clone()),
+            leaf_file: leaf.file.clone(),
+            leaf_line: leaf.line,
+            leaf_module: leaf.module.clone(),
+            leaf_is_system: leaf.is_system,
+            stack_depth: frames.len() as u32,
+        });
     }
 
     /// Same as `ingest_event` but accepts a raw JSON value — the shape
@@ -484,6 +794,8 @@ impl Aggregator {
             self.min_t,
             self.max_t,
             self.total_events,
+            &self.runtime_samples,
+            self.last_stack.as_ref(),
             source_file,
         )
     }
@@ -517,8 +829,18 @@ fn build_report(
     min_t: Option<i64>,
     max_t: Option<i64>,
     total_events: u32,
+    runtime_samples: &[RuntimeSample],
+    last_stack: Option<&LastStackInfo>,
     source_file: &str,
 ) -> AggregateReport {
+
+    // "Recent" cutoff = max_t - RECENT_WINDOW_US. Samples without a
+    // timestamp don't count as "recent" — they only roll into the
+    // all-time totals. If no max_t (zero events), the cutoff is set so
+    // no sample is recent.
+    let recent_cutoff = max_t
+        .map(|m| m - RECENT_WINDOW_US)
+        .unwrap_or(i64::MAX);
 
     // ------------------------------------------------------------ per-function rollup
     //
@@ -527,9 +849,19 @@ fn build_report(
     //   - every name on the stack gets `cumulative_us` — but ONLY once
     //     per stack (we dedupe with `seen`) so recursive frames don't
     //     double-count.
+    // Samples with a `time_us >= recent_cutoff` ALSO contribute to the
+    // `recent_*` fields — the live overview's "Where am I running NOW"
+    // panel reads those instead of the all-time totals.
     let mut stats: HashMap<String, FunctionStat> = HashMap::new();
     let mut cpu_acc: HashMap<String, (f64, u32)> = HashMap::new();
+    // Per-function memory accumulator: (sum_bytes, sample_count, peak_bytes).
+    // Counted once per stack (deduped via `seen`) so a recursive function
+    // doesn't get N× the same RSS reading attributed to it.
+    let mut mem_acc: HashMap<String, (i64, u32, i64)> = HashMap::new();
     for sample in samples.iter() {
+        let is_recent = sample
+            .time_us
+            .map_or(false, |t| t >= recent_cutoff);
         let mut seen: HashSet<String> = HashSet::new();
         for (i, frame) in sample.frames.iter().enumerate() {
             let is_first_in_stack = seen.insert(frame.name.clone());
@@ -545,6 +877,11 @@ fn build_report(
                     cpu_avg: None,
                     file: frame.file.clone(),
                     line: frame.line,
+                    recent_self_us: 0,
+                    recent_cumulative_us: 0,
+                    recent_ncalls: 0,
+                    avg_memory_bytes: None,
+                    peak_memory_bytes: None,
                 });
             if entry.file.is_none() && frame.file.is_some() {
                 entry.file = frame.file.clone();
@@ -554,6 +891,31 @@ fn build_report(
             }
             if is_first_in_stack {
                 entry.cumulative_us += sample.weight_us;
+                if is_recent {
+                    entry.recent_cumulative_us += sample.weight_us;
+                }
+                // Memory accumulation — at most once per stack to avoid
+                // double-counting recursive frames. Fold memory_peak_bytes
+                // (kernel high-water) into the per-function peak too, so
+                // a transient spike between samples isn't lost when only
+                // memory_bytes (instantaneous) is averaged.
+                if let Some(mem) = sample.memory_bytes {
+                    if mem > 0 {
+                        let acc = mem_acc
+                            .entry(frame.name.clone())
+                            .or_insert((0_i64, 0_u32, 0_i64));
+                        acc.0 = acc.0.saturating_add(mem);
+                        acc.1 = acc.1.saturating_add(1);
+                        if mem > acc.2 {
+                            acc.2 = mem;
+                        }
+                        if let Some(peak) = sample.memory_peak_bytes {
+                            if peak > acc.2 {
+                                acc.2 = peak;
+                            }
+                        }
+                    }
+                }
             }
             // Leaf accumulation — i == 0 because frames is leaf-first.
             if i == 0 {
@@ -561,6 +923,12 @@ fn build_report(
                 entry.ncalls = entry.ncalls.saturating_add(
                     u32::try_from(sample.tick_count).unwrap_or(u32::MAX),
                 );
+                if is_recent {
+                    entry.recent_self_us += sample.weight_us;
+                    entry.recent_ncalls = entry.recent_ncalls.saturating_add(
+                        u32::try_from(sample.tick_count).unwrap_or(u32::MAX),
+                    );
+                }
                 if let Some(cpu) = sample.cpu {
                     let acc = cpu_acc.entry(frame.name.clone()).or_insert((0.0, 0));
                     acc.0 += cpu;
@@ -578,6 +946,12 @@ fn build_report(
                 fs.cpu_avg = Some(*sum / *n as f64);
             }
         }
+        if let Some((sum, n, peak)) = mem_acc.get(qn) {
+            if *n > 0 {
+                fs.avg_memory_bytes = Some(*sum / *n as i64);
+                fs.peak_memory_bytes = Some(*peak);
+            }
+        }
     }
     let mut functions: Vec<FunctionStat> = stats.into_values().collect();
     functions.sort_by(|a, b| {
@@ -589,6 +963,27 @@ fn build_report(
 
     // ------------------------------------------------------------ aggregated tree
     let tree = build_tree_from_samples(samples);
+
+    // ------------------------------------------------------------ runtime series
+    let runtime = build_runtime_series(runtime_samples, max_t);
+
+    // ------------------------------------------------------------ right-now snapshot
+    let right_now = last_stack.map(|info| RightNowSnapshot {
+        time_us: info.time_us,
+        service: info.service.clone(),
+        pod: info.pod.clone(),
+        leaf_name: info.leaf_name.clone(),
+        leaf_file: info.leaf_file.clone(),
+        leaf_line: info.leaf_line,
+        leaf_module: info.leaf_module.clone(),
+        leaf_is_system: info.leaf_is_system,
+        stack_depth: info.stack_depth,
+        // Distance from "the freshest event in the run" to this stack.
+        // 0 in the common case where the right-now stack IS the freshest
+        // event; positive when the most recent event was a metadata or
+        // function_call without frames.
+        age_us: max_t.map(|m| (m - info.time_us).max(0)).unwrap_or(0),
+    });
 
     AggregateReport {
         source_file: source_file.to_string(),
@@ -605,14 +1000,164 @@ fn build_report(
         tree,
         calls: Vec::new(),
         calls_truncated: false,
+        runtime,
+        right_now,
+        recent_window_us: RECENT_WINDOW_US,
     }
 }
 
-/// List `*.log` and `*.jsonl` files in `dir`, sorted by mtime desc.
+/// Crunch the runtime-samples vector into the wire-friendly summary:
+/// current reading, peaks, spike count, and a downsampled series for
+/// the sparkline. Pure function — same inputs → same output.
+fn build_runtime_series(
+    runtime_samples: &[RuntimeSample],
+    max_t: Option<i64>,
+) -> RuntimeSeries {
+    if runtime_samples.is_empty() {
+        return RuntimeSeries::default();
+    }
+
+    // Peak / current across the whole run.
+    let mut peak_mem: i64 = 0;
+    let mut peak_cpu: f64 = 0.0;
+    let mut latest: Option<&RuntimeSample> = None;
+    for s in runtime_samples {
+        if s.memory_bytes > peak_mem {
+            peak_mem = s.memory_bytes;
+        }
+        if s.memory_peak_bytes > peak_mem {
+            // memory_peak_bytes is the kernel's high-water mark since
+            // process start — fold it into our peak so a brief RSS
+            // spike between sampling windows still surfaces.
+            peak_mem = s.memory_peak_bytes;
+        }
+        if s.cpu > peak_cpu {
+            peak_cpu = s.cpu;
+        }
+        match latest {
+            None => latest = Some(s),
+            Some(prev) if s.time_us >= prev.time_us => latest = Some(s),
+            _ => {}
+        }
+    }
+
+    // Spike-window analytics: look at samples in the last
+    // SPIKE_WINDOW_US, compute mean+stddev of memory_bytes, count
+    // readings above (mean + SPIKE_SIGMA*σ). Also extract min/max so
+    // the UI can show the "band" the process is oscillating in.
+    let spike_cutoff = max_t.map(|m| m - SPIKE_WINDOW_US).unwrap_or(i64::MAX);
+    let recent: Vec<&RuntimeSample> = runtime_samples
+        .iter()
+        .filter(|s| s.time_us >= spike_cutoff && s.memory_bytes > 0)
+        .collect();
+    let (peak_mem_recent, min_mem_recent, spike_count_recent) = if recent.is_empty() {
+        (0, 0, 0)
+    } else {
+        let n = recent.len() as f64;
+        let mean: f64 = recent.iter().map(|s| s.memory_bytes as f64).sum::<f64>() / n;
+        let var: f64 = recent
+            .iter()
+            .map(|s| {
+                let d = s.memory_bytes as f64 - mean;
+                d * d
+            })
+            .sum::<f64>()
+            / n;
+        let stddev = var.sqrt();
+        let threshold = mean + SPIKE_SIGMA * stddev;
+        let mut peak = i64::MIN;
+        let mut min_v = i64::MAX;
+        let mut spikes: u32 = 0;
+        for s in &recent {
+            if s.memory_bytes > peak {
+                peak = s.memory_bytes;
+            }
+            if s.memory_bytes < min_v {
+                min_v = s.memory_bytes;
+            }
+            // Only flag a spike if stddev is nontrivial — otherwise
+            // every "above mean" reading becomes one and the count
+            // explodes for a flat-but-noisy process.
+            if stddev > 1.0 && (s.memory_bytes as f64) > threshold {
+                spikes = spikes.saturating_add(1);
+            }
+        }
+        (peak, min_v, spikes)
+    };
+
+    // Downsample to MAX_SERIES_POINTS so a long run doesn't blow the
+    // wire shape. Bucket-average is good enough for a sparkline —
+    // LTTB would be smoother but adds 50 lines for marginal benefit
+    // at this point density. The "latest" sample is force-kept as
+    // the final point so the sparkline's right edge always reflects
+    // the freshest reading.
+    let series = downsample_runtime(runtime_samples);
+
+    RuntimeSeries {
+        current: latest.cloned(),
+        peak_memory_bytes: peak_mem,
+        peak_memory_bytes_recent: peak_mem_recent.max(0),
+        min_memory_bytes_recent: if min_mem_recent == i64::MAX { 0 } else { min_mem_recent },
+        peak_cpu,
+        spike_count_recent,
+        samples: series,
+        samples_total: u32::try_from(runtime_samples.len()).unwrap_or(u32::MAX),
+    }
+}
+
+/// Bucket-average downsample to ≤ MAX_SERIES_POINTS. The input is
+/// assumed roughly time-ordered (the publisher appends in order, and
+/// the file reader walks lines top-down); we don't re-sort here
+/// because doing so for every snapshot would dominate runtime on long
+/// scans. Out-of-order points within a bucket smear into the same
+/// average — acceptable for a sparkline.
+fn downsample_runtime(src: &[RuntimeSample]) -> Vec<RuntimeSample> {
+    if src.len() <= MAX_SERIES_POINTS {
+        return src.to_vec();
+    }
+    let n = src.len();
+    let buckets = MAX_SERIES_POINTS;
+    let mut out: Vec<RuntimeSample> = Vec::with_capacity(buckets);
+    for b in 0..buckets {
+        // Half-open bucket boundaries [start, end). The last bucket
+        // absorbs any rounding remainder so the final point matches
+        // the freshest reading in the input.
+        let start = (b * n) / buckets;
+        let end = if b + 1 == buckets {
+            n
+        } else {
+            ((b + 1) * n) / buckets
+        };
+        if start >= end {
+            continue;
+        }
+        let slice = &src[start..end];
+        let count = slice.len() as f64;
+        let avg_mem: i64 = (slice.iter().map(|s| s.memory_bytes).sum::<i64>() as f64
+            / count) as i64;
+        let avg_peak: i64 = (slice.iter().map(|s| s.memory_peak_bytes).sum::<i64>() as f64
+            / count) as i64;
+        let avg_cpu: f64 = slice.iter().map(|s| s.cpu).sum::<f64>() / count;
+        // Use the LAST sample's timestamp — gives the right-edge
+        // alignment a user expects from a sparkline.
+        let t = slice.last().map(|s| s.time_us).unwrap_or(0);
+        out.push(RuntimeSample {
+            time_us: t,
+            memory_bytes: avg_mem,
+            memory_peak_bytes: avg_peak,
+            cpu: avg_cpu,
+        });
+    }
+    out
+}
+
+/// List `*.log` and `*.jsonl` files in `dir`, tagged with `source`,
+/// sorted by mtime desc.
 ///
-/// Returns empty Vec if the directory does not exist — the UI treats that
-/// as "no scans yet" rather than an error.
-pub fn list_logs(dir: &Path) -> Result<Vec<EventLogMeta>> {
+/// `source` labels the bucket the rail / UI uses to group entries (e.g.
+/// `"legacy"` for the flat dir, or a folder fingerprint for per-folder
+/// scans). Returns empty Vec if the directory does not exist.
+pub fn list_logs_in(dir: &Path, source: &str) -> Result<Vec<EventLogMeta>> {
     if !dir.exists() {
         return Ok(vec![]);
     }
@@ -652,11 +1197,89 @@ pub fn list_logs(dir: &Path) -> Result<Vec<EventLogMeta>> {
             display_name,
             size_bytes: md.len(),
             modified_iso,
+            source: source.to_string(),
         });
     }
     // newest first
     out.sort_by(|a, b| b.modified_iso.cmp(&a.modified_iso));
     Ok(out)
+}
+
+/// Backwards-compatible wrapper that tags everything as `"legacy"`.
+/// Existing callers (older tests, explicit-dir paths) still compile.
+pub fn list_logs(dir: &Path) -> Result<Vec<EventLogMeta>> {
+    list_logs_in(dir, "legacy")
+}
+
+/// Aggregate every event-log directory drift writes to:
+///
+///   - `~/.drift/event_logs/`                       — legacy global dir
+///   - `~/.drift/scans/<fingerprint>/event_logs/`   — per-folder dirs
+///
+/// Each file is tagged with its source bucket (`"legacy"` or the
+/// fingerprint), then merged into one list sorted by mtime desc. The
+/// rail uses this so a scan written by the per-folder realtime sink
+/// still appears after the user clicks ↻ on the rail.
+pub fn list_all_logs() -> Result<Vec<EventLogMeta>> {
+    let mut out: Vec<EventLogMeta> = Vec::new();
+
+    if let Some(legacy) = default_logs_dir() {
+        if let Ok(mut v) = list_logs_in(&legacy, "legacy") {
+            out.append(&mut v);
+        }
+    }
+
+    // Per-folder dirs: enumerate ~/.drift/scans/* and look for
+    // event_logs subdirs. A missing scans root is not an error —
+    // first-time installs won't have one yet.
+    if let Some(scans_root) = scans_root_dir() {
+        if let Ok(entries) = fs::read_dir(&scans_root) {
+            for ent in entries.flatten() {
+                let p = ent.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                let fp = match p.file_name().and_then(|s| s.to_str()) {
+                    Some(s) if !s.is_empty() => s.to_string(),
+                    _ => continue,
+                };
+                let event_logs = p.join("event_logs");
+                if let Ok(mut v) = list_logs_in(&event_logs, &fp) {
+                    out.append(&mut v);
+                }
+            }
+        }
+    }
+
+    out.sort_by(|a, b| b.modified_iso.cmp(&a.modified_iso));
+    Ok(out)
+}
+
+/// Roots a deletion check can use to refuse paths outside drift's
+/// managed directories. Returns the legacy logs dir plus every
+/// per-folder event-log dir we currently know about. The caller
+/// canonicalises and prefix-matches each candidate against this set
+/// before unlinking — anything outside is rejected.
+pub fn allowed_log_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(legacy) = default_logs_dir() {
+        roots.push(legacy);
+    }
+    if let Some(scans_root) = scans_root_dir() {
+        if let Ok(entries) = fs::read_dir(&scans_root) {
+            for ent in entries.flatten() {
+                let p = ent.path().join("event_logs");
+                if p.is_dir() {
+                    roots.push(p);
+                }
+            }
+        }
+    }
+    roots
+}
+
+fn scans_root_dir() -> Option<PathBuf> {
+    dirs_home().map(|home| home.join(".drift").join("scans"))
 }
 
 /// Default directory the UI lists from. Created lazily by the calling
@@ -743,6 +1366,14 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
         qualname: Option<String>,
         module: Option<String>,
         is_system: Option<bool>,
+        // Memory / CPU accumulators — (sum, n, peak) for memory,
+        // (sum, n) for cpu. Per-NODE not per-name, so a hot-path call
+        // to `read()` paints differently from a cold-path one.
+        mem_sum: i64,
+        mem_count: u32,
+        mem_peak: i64,
+        cpu_sum: f64,
+        cpu_count: u32,
         children: BTreeMap<String, Builder>,
     }
     impl Builder {
@@ -756,6 +1387,11 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
                 qualname: None,
                 module: None,
                 is_system: None,
+                mem_sum: 0,
+                mem_count: 0,
+                mem_peak: 0,
+                cpu_sum: 0.0,
+                cpu_count: 0,
                 children: BTreeMap::new(),
             }
         }
@@ -773,6 +1409,21 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
                 &name,
                 self.qualname.as_deref(),
             );
+            let avg_mem = if self.mem_count > 0 {
+                Some(self.mem_sum / self.mem_count as i64)
+            } else {
+                None
+            };
+            let peak_mem = if self.mem_count > 0 {
+                Some(self.mem_peak)
+            } else {
+                None
+            };
+            let avg_cpu = if self.cpu_count > 0 {
+                Some(self.cpu_sum / self.cpu_count as f64)
+            } else {
+                None
+            };
             TreeNode {
                 name,
                 value: self.value,
@@ -786,6 +1437,9 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
                 qualname: self.qualname,
                 module: self.module,
                 is_system: self.is_system,
+                avg_memory_bytes: avg_mem,
+                peak_memory_bytes: peak_mem,
+                avg_cpu,
             }
         }
     }
@@ -833,6 +1487,29 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
                     node.is_system = Some(s);
                 }
             }
+            // Memory + CPU accumulation — counted once per node per
+            // sample. This walks each frame of the path so the
+            // bookkeeping happens here (we have one frame per loop
+            // iter); per-node-per-sample = once because each node along
+            // the path appears exactly once in this inner loop.
+            if let Some(mem) = sample.memory_bytes {
+                if mem > 0 {
+                    node.mem_sum = node.mem_sum.saturating_add(mem);
+                    node.mem_count = node.mem_count.saturating_add(1);
+                    if mem > node.mem_peak {
+                        node.mem_peak = mem;
+                    }
+                    if let Some(peak) = sample.memory_peak_bytes {
+                        if peak > node.mem_peak {
+                            node.mem_peak = peak;
+                        }
+                    }
+                }
+            }
+            if let Some(cpu) = sample.cpu {
+                node.cpu_sum += cpu;
+                node.cpu_count = node.cpu_count.saturating_add(1);
+            }
             // The leaf in root-first order is the LAST element (index len-1).
             if i == len - 1 {
                 node.self_value += sample.weight_us;
@@ -849,6 +1526,38 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
     let root_value: i64 = top_children.iter().map(|c| c.value).sum();
     let root_ncalls: u32 = top_children.iter().map(|c| c.ncalls).sum();
     top_children.sort_by(|a, b| b.value.cmp(&a.value));
+    // Synthetic root rolls up children's memory/cpu so the "Full trace"
+    // header in the icicle chart shows the trace-wide averages without
+    // a separate code path. Weighted by each child's inclusive time so
+    // a frame that ran for 5s contributes 5× more than one that ran 1s.
+    let root_avg_mem: Option<i64> = {
+        let mut tot = 0_i64;
+        let mut acc: f64 = 0.0;
+        for c in &top_children {
+            if let Some(v) = c.avg_memory_bytes {
+                let w = c.value.max(1);
+                tot = tot.saturating_add(w);
+                acc += (v as f64) * w as f64;
+            }
+        }
+        if tot == 0 { None } else { Some((acc / tot as f64) as i64) }
+    };
+    let root_peak_mem: Option<i64> = top_children
+        .iter()
+        .filter_map(|c| c.peak_memory_bytes)
+        .max();
+    let root_avg_cpu: Option<f64> = {
+        let mut tot = 0_i64;
+        let mut acc: f64 = 0.0;
+        for c in &top_children {
+            if let Some(v) = c.avg_cpu {
+                let w = c.value.max(1);
+                tot = tot.saturating_add(w);
+                acc += v * w as f64;
+            }
+        }
+        if tot == 0 { None } else { Some(acc / tot as f64) }
+    };
     TreeNode {
         name: "<root>".into(),
         value: root_value,
@@ -864,8 +1573,12 @@ fn build_tree_from_samples(samples: &[StackSample]) -> TreeNode {
         qualname: None,
         module: None,
         is_system: None,
+        avg_memory_bytes: root_avg_mem,
+        peak_memory_bytes: root_peak_mem,
+        avg_cpu: root_avg_cpu,
     }
 }
+
 
 // ---------------------------------------------------------------------------
 // tests
@@ -1248,6 +1961,284 @@ mod tests {
         // service / pod must be picked up so the desktop UI's summary
         // labels light up.
         assert!(report.services.iter().any(|s| s == "test-python-web-server-py314"));
+    }
+
+    // ------------------------------------------------------- runtime metrics
+
+    /// Build a wall_trace event WITH memory_bytes / memory_peak_bytes
+    /// and an explicit numeric `time` (ns). Mirrors what
+    /// drift-profiler-python now emits on the realtime channel.
+    fn wall_trace_with_runtime(
+        time_us: i64,
+        count: i64,
+        memory_bytes: i64,
+        memory_peak_bytes: i64,
+        cpu: f64,
+        frames: &[(&str, &str, u32)],
+    ) -> serde_json::Value {
+        let frames: Vec<serde_json::Value> = frames
+            .iter()
+            .map(|(n, f, l)| {
+                serde_json::json!({"name": n, "file": f, "line": l})
+            })
+            .collect();
+        serde_json::json!({
+            "type": "wall_trace",
+            "time": time_us * 1000, // µs → ns for the publisher path
+            "service": "svc",
+            "pod": "pod-1",
+            "period_ns": 10_000_000_i64,
+            "duration_ns": 10_000_000_000_i64,
+            "count": count,
+            "cpu": cpu,
+            "memory_bytes": memory_bytes,
+            "memory_peak_bytes": memory_peak_bytes,
+            "frames": frames,
+        })
+    }
+
+    #[test]
+    fn runtime_series_captures_memory_cpu_and_current() {
+        // Three events spaced 1s apart, growing memory + cpu.
+        let mut agg = Aggregator::new();
+        agg.ingest_value(&wall_trace_with_runtime(
+            1_000_000_000, 1, 100_000_000, 100_000_000, 0.5,
+            &[("a", "/x.py", 1)],
+        ));
+        agg.ingest_value(&wall_trace_with_runtime(
+            2_000_000_000, 1, 120_000_000, 120_000_000, 0.7,
+            &[("a", "/x.py", 1)],
+        ));
+        agg.ingest_value(&wall_trace_with_runtime(
+            3_000_000_000, 1, 150_000_000, 150_000_000, 0.9,
+            &[("a", "/x.py", 1)],
+        ));
+        let r = agg.snapshot("smoke");
+
+        let rt = &r.runtime;
+        assert_eq!(rt.peak_memory_bytes, 150_000_000);
+        assert!((rt.peak_cpu - 0.9).abs() < 1e-6);
+        let curr = rt.current.as_ref().expect("current set");
+        assert_eq!(curr.memory_bytes, 150_000_000);
+        assert!((curr.cpu - 0.9).abs() < 1e-6);
+        assert_eq!(rt.samples_total, 3);
+        assert_eq!(rt.samples.len(), 3); // below MAX_SERIES_POINTS, no downsample
+    }
+
+    #[test]
+    fn runtime_series_downsamples_to_max_points() {
+        // 300 events → must shrink to MAX_SERIES_POINTS (120).
+        let mut agg = Aggregator::new();
+        for i in 0..300_i64 {
+            agg.ingest_value(&wall_trace_with_runtime(
+                1_000_000 * i, 1, 100_000_000 + i * 1000, 200_000_000, 0.5,
+                &[("a", "/x.py", 1)],
+            ));
+        }
+        let r = agg.snapshot("smoke");
+        assert_eq!(r.runtime.samples_total, 300);
+        assert!(
+            r.runtime.samples.len() <= MAX_SERIES_POINTS,
+            "downsample failed: got {} > cap {}",
+            r.runtime.samples.len(),
+            MAX_SERIES_POINTS,
+        );
+        // First bucket's avg memory < last bucket's avg memory (monotonic growth).
+        let first = r.runtime.samples.first().unwrap().memory_bytes;
+        let last = r.runtime.samples.last().unwrap().memory_bytes;
+        assert!(last > first, "downsample lost monotonic growth: {first} vs {last}");
+    }
+
+    #[test]
+    fn right_now_reflects_most_recent_event() {
+        // Event 1 → leaf "old_fn", Event 2 (later) → leaf "new_fn".
+        // RightNow must show new_fn even if events arrive out of order.
+        let mut agg = Aggregator::new();
+        // Insert the LATER event FIRST to assert the time-based latch.
+        agg.ingest_value(&wall_trace_with_runtime(
+            5_000_000_000, 1, 100, 100, 0.5,
+            &[("new_fn", "/n.py", 7)],
+        ));
+        agg.ingest_value(&wall_trace_with_runtime(
+            1_000_000_000, 1, 50, 50, 0.5,
+            &[("old_fn", "/o.py", 3)],
+        ));
+        let r = agg.snapshot("smoke");
+        let rn = r.right_now.expect("right_now set");
+        assert_eq!(rn.leaf_name.as_deref(), Some("new_fn"));
+        assert_eq!(rn.leaf_file.as_deref(), Some("/n.py"));
+        assert_eq!(rn.leaf_line, Some(7));
+        assert_eq!(rn.stack_depth, 1);
+        assert_eq!(rn.service.as_deref(), Some("svc"));
+    }
+
+    #[test]
+    fn recent_window_tags_only_samples_in_last_15s() {
+        // One sample at t0 (stale), one at t0+14s (recent). recent_*
+        // fields must only attribute the second.
+        let mut agg = Aggregator::new();
+        agg.ingest_value(&wall_trace_with_runtime(
+            0, 10, 100, 100, 0.5, &[("old", "/o.py", 1)],
+        ));
+        agg.ingest_value(&wall_trace_with_runtime(
+            14_000_000, 5, 100, 100, 0.5, &[("hot", "/h.py", 1)],
+        ));
+        let r = agg.snapshot("smoke");
+        // recent_cutoff = max_t (14_000_000) - 15_000_000 = -1_000_000.
+        // Both samples lie inside the window — assert both are recent.
+        let hot = r.functions.iter().find(|f| f.qualname == "hot").unwrap();
+        assert!(hot.recent_self_us > 0);
+        assert!(hot.recent_cumulative_us > 0);
+        assert_eq!(hot.recent_ncalls, 5);
+
+        // Now push another event at t=30s so max_t advances and BOTH
+        // earlier events fall OUT of the [max_t - 15s, max_t] window.
+        // Only the new sample's count contributes to recent_ncalls.
+        agg.ingest_value(&wall_trace_with_runtime(
+            30_000_000, 3, 100, 100, 0.5, &[("hot", "/h.py", 1)],
+        ));
+        let r2 = agg.snapshot("smoke");
+        let old = r2.functions.iter().find(|f| f.qualname == "old").unwrap();
+        assert_eq!(old.recent_self_us, 0, "stale sample must drop out of recent window");
+        let hot2 = r2.functions.iter().find(|f| f.qualname == "hot").unwrap();
+        assert_eq!(
+            hot2.recent_ncalls, 3,
+            "recent window is [max_t - 15s, max_t]; only the freshest sample fits",
+        );
+    }
+
+    #[test]
+    fn recent_window_us_exposed_on_report() {
+        // The UI labels the panel with this; assert it's wired through.
+        let mut agg = Aggregator::new();
+        agg.ingest_value(&wall_trace_with_runtime(
+            0, 1, 100, 100, 0.5, &[("a", "/a.py", 1)],
+        ));
+        let r = agg.snapshot("smoke");
+        assert_eq!(r.recent_window_us, RECENT_WINDOW_US);
+    }
+
+    #[test]
+    fn spike_detection_counts_memory_jumps_above_2sigma() {
+        // 9 samples around 100 MB, one at 500 MB. Mean ≈ 140 MB,
+        // stddev big enough that the 500 MB reading clears 2σ.
+        let mut agg = Aggregator::new();
+        let baseline: i64 = 100_000_000;
+        for i in 0..9_i64 {
+            agg.ingest_value(&wall_trace_with_runtime(
+                1_000_000 * i, 1, baseline, baseline, 0.5,
+                &[("a", "/a.py", 1)],
+            ));
+        }
+        agg.ingest_value(&wall_trace_with_runtime(
+            10_000_000, 1, 500_000_000, 500_000_000, 0.5,
+            &[("a", "/a.py", 1)],
+        ));
+        let r = agg.snapshot("smoke");
+        assert!(
+            r.runtime.spike_count_recent >= 1,
+            "expected spike, got {}",
+            r.runtime.spike_count_recent,
+        );
+        assert_eq!(r.runtime.peak_memory_bytes, 500_000_000);
+        assert_eq!(r.runtime.peak_memory_bytes_recent, 500_000_000);
+    }
+
+    #[test]
+    fn flat_memory_does_not_register_spikes() {
+        // All readings identical — stddev = 0, must NOT count every
+        // reading as a spike. Regression guard for the "every sample
+        // above mean" failure mode when σ is tiny.
+        let mut agg = Aggregator::new();
+        for i in 0..30_i64 {
+            agg.ingest_value(&wall_trace_with_runtime(
+                1_000_000 * i, 1, 100_000_000, 100_000_000, 0.5,
+                &[("a", "/a.py", 1)],
+            ));
+        }
+        let r = agg.snapshot("smoke");
+        assert_eq!(r.runtime.spike_count_recent, 0);
+    }
+
+    #[test]
+    fn per_function_memory_averages_across_samples_on_stack() {
+        // Two events with the same stack [leaf <- caller]:
+        //   #1: RSS 100 MB
+        //   #2: RSS 200 MB
+        // Both functions should report avg = 150 MB, peak = 200 MB.
+        let mut agg = Aggregator::new();
+        agg.ingest_value(&wall_trace_with_runtime(
+            0, 1, 100_000_000, 100_000_000, 0.0,
+            &[("leaf", "/x.py", 1), ("caller", "/y.py", 2)],
+        ));
+        agg.ingest_value(&wall_trace_with_runtime(
+            1_000_000, 1, 200_000_000, 200_000_000, 0.0,
+            &[("leaf", "/x.py", 1), ("caller", "/y.py", 2)],
+        ));
+        let r = agg.snapshot("smoke");
+        for qn in &["leaf", "caller"] {
+            let f = r.functions.iter().find(|f| f.qualname == *qn).unwrap();
+            assert_eq!(
+                f.avg_memory_bytes,
+                Some(150_000_000),
+                "{qn} avg memory wrong",
+            );
+            assert_eq!(
+                f.peak_memory_bytes,
+                Some(200_000_000),
+                "{qn} peak memory wrong",
+            );
+        }
+    }
+
+    #[test]
+    fn per_node_memory_attaches_to_tree() {
+        let mut agg = Aggregator::new();
+        agg.ingest_value(&wall_trace_with_runtime(
+            0, 1, 100_000_000, 100_000_000, 0.5,
+            &[("leaf", "/x.py", 1), ("caller", "/y.py", 2)],
+        ));
+        let r = agg.snapshot("smoke");
+        // Root → caller → leaf
+        assert_eq!(r.tree.children.len(), 1);
+        let caller = &r.tree.children[0];
+        assert_eq!(caller.name, "caller");
+        assert_eq!(caller.avg_memory_bytes, Some(100_000_000));
+        assert_eq!(caller.peak_memory_bytes, Some(100_000_000));
+        assert!(caller.avg_cpu.is_some());
+        let leaf = &caller.children[0];
+        assert_eq!(leaf.name, "leaf");
+        assert_eq!(leaf.avg_memory_bytes, Some(100_000_000));
+    }
+
+    #[test]
+    fn recursive_frames_do_not_double_count_memory() {
+        // Recursive stack [recur <- recur]. Memory must be counted
+        // once per stack, not twice — same dedup as cumulative_us.
+        let mut agg = Aggregator::new();
+        agg.ingest_value(&wall_trace_with_runtime(
+            0, 1, 100_000_000, 100_000_000, 0.0,
+            &[("recur", "/r.py", 1), ("recur", "/r.py", 1)],
+        ));
+        let r = agg.snapshot("smoke");
+        let f = r.functions.iter().find(|f| f.qualname == "recur").unwrap();
+        // mem_count = 1 (deduped); avg = 100M / 1 = 100M.
+        assert_eq!(f.avg_memory_bytes, Some(100_000_000));
+    }
+
+    #[test]
+    fn legacy_events_without_memory_field_yield_zero_in_series() {
+        // Hand-crafted line WITHOUT memory_bytes / memory_peak_bytes —
+        // mirrors a legacy events.log file. RuntimeSample is still
+        // appended (so the sparkline has a timestamp), but the memory
+        // value falls back to 0 and the UI hides the card.
+        let line = r#"{"type":"wall_trace","time":"2026-05-20T12:00:00.000000Z","service":"svc","pod":"pod","period_ns":10000000,"duration_ns":1000000000,"count":1,"cpu":0.5,"frames":[{"name":"a","file":"/a.py","line":1}]}"#;
+        let mut agg = Aggregator::new();
+        agg.ingest_line(line);
+        let r = agg.snapshot("smoke");
+        let curr = r.runtime.current.expect("current still populated");
+        assert_eq!(curr.memory_bytes, 0);
+        assert_eq!(r.runtime.peak_memory_bytes, 0);
     }
 
     #[test]

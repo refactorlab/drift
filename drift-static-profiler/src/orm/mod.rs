@@ -85,9 +85,17 @@ pub fn collect_orm_findings(
 /// `source_root` is the project root; entries store paths relative to
 /// it (per `tree::TreeBuilder.root_dir`), so we resolve each `node.file`
 /// by joining onto the root before reading.
+///
+/// `walk_opts` controls the workspace scan that feeds ModelGraph and the
+/// off-tree finding pass. Pass the same `WalkOpts` the main source walker
+/// used so user settings (`exclude_tests`, `exclude_static_assets`,
+/// `.gitignore`, `.driftignore`) are honored uniformly — otherwise files
+/// under e.g. `tests/fixtures/` slip past the user's filter and surface
+/// as synthetic `<orm_file>` entries.
 pub fn attach_orm_findings(
     entries: &mut Vec<crate::tree::CallTreeNode>,
     source_root: Option<&std::path::Path>,
+    walk_opts: &crate::walker::WalkOpts,
 ) {
     // Collect the SET of file paths referenced by call-tree entries.
     // When the user picked ONE entry from the picker, this set spans
@@ -124,7 +132,7 @@ pub fn attach_orm_findings(
             // have no callable entries themselves — `models.py`).
             // We also include any entry-referenced files that
             // wouldn't otherwise be in the workspace walk's cap.
-            let mut cache = build_workspace_cache(root, /*max_files=*/ 8000);
+            let mut cache = build_workspace_cache(root, /*max_files=*/ 8000, walk_opts);
             // If the cap clipped some entry-referenced files, top
             // up by reading them on demand.
             let cached_set: std::collections::HashSet<std::path::PathBuf> =
@@ -361,59 +369,6 @@ fn file_might_contain_orm_signal(lang: FileLang, source: &str) -> bool {
     needles.iter().any(|n| source.contains(n))
 }
 
-#[allow(dead_code)] // kept for test compatibility — production uses build_workspace_cache
-fn discover_workspace_files(
-    source_root: Option<&std::path::Path>,
-) -> Vec<std::path::PathBuf> {
-    let Some(root) = source_root else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    walk_workspace(root, &mut out);
-    out
-}
-
-/// Hard cap on the ModelGraph file scan. Beyond this, the registry is
-/// incomplete but the analysis still runs (without cross-file model
-/// resolution for the un-scanned files). Picked so a 5k-file monolith
-/// still indexes in a few seconds.
-#[allow(dead_code)]
-const WORKSPACE_FILE_CAP: usize = 4000;
-
-#[allow(dead_code)]
-fn walk_workspace(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-    if out.len() >= WORKSPACE_FILE_CAP {
-        return;
-    }
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in rd.flatten() {
-        let p = entry.path();
-        let name = entry.file_name();
-        let name_s = name.to_string_lossy();
-        // Skip common heavy / vendored dirs.
-        if name_s.starts_with('.')
-            || name_s == "node_modules"
-            || name_s == "target"
-            || name_s == "venv"
-            || name_s == ".venv"
-            || name_s == "__pycache__"
-            || name_s == "dist"
-            || name_s == "build"
-        {
-            continue;
-        }
-        if p.is_dir() {
-            walk_workspace(&p, out);
-        } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-            if matches!(ext, "py" | "java") {
-                out.push(p);
-            }
-        }
-    }
-}
-
 /// Inverse of `resolve_path`: convert an absolute path back to the
 /// string drift's call-tree nodes use (relative to `source_root`).
 /// Required for `entry_files` lookup since drift stores
@@ -552,6 +507,7 @@ fn attach_finding(
 pub fn scan_workspace(
     source_root: &std::path::Path,
     max_files: usize,
+    walk_opts: &crate::walker::WalkOpts,
 ) -> Vec<(std::path::PathBuf, Finding)> {
     // Single, blazingly-fast pipeline. Each ORM-relevant file pays
     // exactly ONE filesystem read AND ONE tree-sitter parse — every
@@ -574,7 +530,7 @@ pub fn scan_workspace(
     //       │  Vec<Finding>
     //       ▼
     //   fused findings
-    let cache = build_workspace_cache(source_root, max_files);
+    let cache = build_workspace_cache(source_root, max_files, walk_opts);
     let parsed: Vec<ParsedFile> = cache.into_iter().filter_map(parse_one).collect();
     let model_graph = model_graph::ModelGraph::from_parsed(&parsed);
     let mut out = Vec::new();
@@ -630,65 +586,37 @@ fn parse_one(wf: WorkspaceFile) -> Option<ParsedFile> {
 /// Walk the workspace, read each candidate file ONCE, drop files
 /// whose source has no ORM signal. Returns the surviving sources
 /// for re-use by every downstream stage.
+///
+/// Delegates discovery to `walker::walk_files_with` so this walk
+/// honors `.gitignore`, `.driftignore`, `DEFAULT_IGNORE_DIRS`,
+/// `STATIC_ASSET_DIRS`, `is_test_path`, and the minified-bundle
+/// filter — the same machinery the main source walker uses. Without
+/// this, `tests/fixtures/...` files leak into the ORM pass even when
+/// the user has the "Exclude test/spec/mock files" toggle on, and
+/// surface as synthetic `<orm_file>` entries in the report.
 fn build_workspace_cache(
     source_root: &std::path::Path,
     max_files: usize,
+    walk_opts: &crate::walker::WalkOpts,
 ) -> Vec<WorkspaceFile> {
     let mut out: Vec<WorkspaceFile> = Vec::new();
-    walk_and_load(source_root, &mut out, max_files);
-    out
-}
-
-fn walk_and_load(
-    dir: &std::path::Path,
-    out: &mut Vec<WorkspaceFile>,
-    cap: usize,
-) {
-    if out.len() >= cap {
-        return;
-    }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    for entry in rd.flatten() {
-        if out.len() >= cap {
-            return;
+    for (path, _size) in crate::walker::walk_files_with(source_root, walk_opts) {
+        if out.len() >= max_files {
+            break;
         }
-        let p = entry.path();
-        let name = entry.file_name();
-        let name_s = name.to_string_lossy();
-        if name_s.starts_with('.')
-            || name_s == "node_modules"
-            || name_s == "target"
-            || name_s == "venv"
-            || name_s == ".venv"
-            || name_s == "__pycache__"
-            || name_s == "dist"
-            || name_s == "build"
-        {
-            continue;
-        }
-        if p.is_dir() {
-            walk_and_load(&p, out, cap);
-            continue;
-        }
-        let Some(lang) = detect_lang(&p) else { continue };
-        let Ok(source) = std::fs::read_to_string(&p) else { continue };
+        let Some(lang) = detect_lang(&path) else { continue };
+        let Ok(source) = std::fs::read_to_string(&path) else { continue };
         if !file_might_contain_orm_signal(lang, &source) {
             continue;
         }
         out.push(WorkspaceFile {
-            path: p,
+            path,
             lang,
             source,
         });
     }
+    out
 }
-
-// NOTE: `walk_workspace_capped` (path-only) was removed — its job is
-// now done by `walk_and_load`, which collects paths AND reads sources
-// AND applies the ORM-signal prefilter in one pass. Keeping two
-// near-identical traversals invited drift; this is the GNU/Unix
-// `find -print0 | xargs grep -l NEEDLE` shape collapsed into one Rust
-// function with bounded memory and early-exit on `max_files`.
 
 /// Analyze a `ParsedFile` using the CACHED tree — zero re-parse,
 /// zero re-read. Wraps in `catch_unwind` for the same soft-fail

@@ -14,6 +14,7 @@ import { RootsView } from './RootsView';
 import { Insights } from './Insights';
 import { ScanReport } from './ScanReport';
 import { CallGraphView } from './CallGraphView';
+import type { CallGraphAdapter } from './callGraph';
 import { TIPS } from './tooltips';
 import { Help } from './Help';
 import { Splitter, useResizablePanel } from './useResizableColumns';
@@ -25,6 +26,33 @@ import type { CallTreeNode, EntryDecl, FindingKind, Report } from './types';
 
 type FlameMode = 'kind' | 'category' | 'complexity' | 'smells';
 type BottomTab = 'report' | 'tree' | 'graph' | 'roots' | 'hot' | 'smells' | 'insights' | 'stats';
+
+/// Adapter that lets the generic CallGraphView render a static
+/// `CallTreeNode`. Pre-formats the display strings for the static
+/// profile's "Total: <symbols>" + "Own: <loc> loc · cx <complexity>"
+/// box rows. Stable identity (defined at module scope, not per
+/// render) so React doesn't re-layout the graph on every parent
+/// render — `CallGraphView`'s layout memo keys on `adapter`.
+const STATIC_PROFILE_GRAPH_ADAPTER: CallGraphAdapter<CallTreeNode> = {
+  getId: (n) => n.id,
+  getChildren: (n) => n.children,
+  getRootTotal: (root) => Math.max(1, root.subtree_size || 1),
+  build: (n, level, rootTotal) => ({
+    id: n.id,
+    name: n.name,
+    parentClass: n.parent_class,
+    file: n.file,
+    line: n.line,
+    level,
+    callCount: n.call_site_count,
+    totalValue: n.subtree_size,
+    percentTotal: (n.subtree_size / rootTotal) * 100,
+    totalDisplay: String(n.subtree_size),
+    secondaryLabel: 'Own',
+    secondaryDisplay: `${n.loc} loc · cx ${n.complexity}`,
+    source: n,
+  }),
+};
 
 /// Functional Map-insert — preserves React's identity invariant for
 /// `useState<Map>`. `setLoadedEntries(mapWith(prev, idx, node))` is
@@ -542,8 +570,9 @@ export function App() {
               />
             )}
             {bottomTab === 'graph' && activeRoot && (
-              <CallGraphView
+              <CallGraphView<CallTreeNode>
                 root={activeRoot}
+                adapter={STATIC_PROFILE_GRAPH_ADAPTER}
                 search={search}
                 selectedId={selected?.id ?? null}
                 onSelect={setSelected}

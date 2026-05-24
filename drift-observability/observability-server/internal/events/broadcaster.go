@@ -43,18 +43,18 @@ func (b *Broadcaster) Push(line []byte) {
 	copy(cp, line)
 
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.ring[b.next] = cp
 	b.next = (b.next + 1) % b.cap
 	if b.next == 0 {
 		b.full = true
 	}
-	subs := make([]Subscriber, 0, len(b.subscribers))
+	// Send under the lock. Sends are non-blocking (the default arm
+	// drops on a full buffer), so the lock-hold time is bounded by
+	// O(subscribers). Holding the lock here is what makes the Subscribe
+	// cancel's `close(ch)` safe — without it, a Push could race the
+	// close and panic with "send on closed channel".
 	for s := range b.subscribers {
-		subs = append(subs, s)
-	}
-	b.mu.Unlock()
-
-	for _, s := range subs {
 		select {
 		case s <- cp:
 		default:

@@ -404,6 +404,7 @@ pub fn run() {
             patch::commands::apply_patch,
             // events.log JSONL aggregator — snakeviz-style profiling view.
             event_log_commands::list_event_logs,
+            event_log_commands::delete_event_log,
             event_log_commands::aggregate_event_log,
             event_log_commands::start_live_event_scan,
             event_log_commands::stop_live_event_scan,

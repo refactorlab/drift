@@ -15,6 +15,22 @@
   --success: #00a86b;
   --gradient: linear-gradient(135deg, #ff6b3d 0%, #ff9558 50%, #ffb547 100%);
   --gradient-soft: linear-gradient(135deg, rgba(255, 107, 61, 0.08) 0%, rgba(255, 181, 71, 0.05) 100%);
+
+  /* ─── Call Graph theme vars (light) ──────────────────────────────────
+   * The shared CallGraphView component (sourced from
+   * drift-static-profiler/viewer) reads these to chrome itself. The
+   * fallbacks inside the component are DARK, matching the static
+   * profiler's look; here we override them so the live viewer fits the
+   * desktop UI's light theme. Heat-ramp node fills are not themed —
+   * they're semantic (red ≥40% / amber 5–40% / green <5%). */
+  --cg-bg: var(--bg-card);
+  --cg-toolbar-bg: var(--bg-soft);
+  --cg-toolbar-active-bg: var(--accent-soft);
+  --cg-border: var(--border);
+  --cg-text: var(--text);
+  --cg-text-muted: var(--text-dim);
+  --cg-edge: var(--border-strong);
+  --cg-accent: var(--accent);
 }
 
 html, body, #root { min-height: 100%; }
@@ -3766,24 +3782,57 @@ button { font-family: inherit; }
   flex-direction: column;
   gap: 4px;
 }
-.live-scan-rail-row > button {
+.live-scan-rail-row {
+  position: relative;
+}
+.live-scan-rail-row > button:first-child {
   width: 100%;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 7px;
-  padding: 8px 10px;
+  padding: 8px 30px 8px 10px;
   cursor: pointer;
   color: inherit;
   display: block;
 }
-.live-scan-rail-row > button:hover {
+.live-scan-rail-row > button:first-child:hover {
   background: var(--bg-soft);
   border-color: var(--border);
 }
-.live-scan-rail-row--active > button {
+.live-scan-rail-row--active > button:first-child {
   background: var(--accent-soft);
   border-color: var(--accent);
+}
+.live-scan-rail-row-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #8a8f96);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+.live-scan-rail-row:hover .live-scan-rail-row-delete,
+.live-scan-rail-row-delete:focus-visible {
+  opacity: 1;
+}
+.live-scan-rail-row-delete:hover:not(:disabled) {
+  background: var(--danger-soft, rgba(220, 60, 60, 0.12));
+  color: var(--danger, #c33);
+  border-color: var(--danger, #c33);
+}
+.live-scan-rail-row-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0;
 }
 .live-scan-rail-row-name {
   font-weight: 500;
@@ -3979,15 +4028,46 @@ button { font-family: inherit; }
   border-radius: 6px;
   background: rgba(255, 107, 61, 0.10);
 }
+/* File-path display: split into [dir | filename] so the filename
+ * stays visible when the path is long. The dir span ellipsizes on the
+ * LEFT (via direction: rtl) so you see ".../site-packages/foo.py"
+ * instead of "/usr/local/lib/python3.14/site-…" — keeping the
+ * actually-useful piece (the filename) on screen. The filename never
+ * shrinks. Full path on hover via title=. */
 .icicle-stats-loc {
   margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 50%;
   color: var(--text-faint);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11.5px;
+  white-space: nowrap;
+}
+.icicle-stats-loc-dir {
+  direction: rtl;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 50%;
+  min-width: 0;
+  flex-shrink: 1;
+  /* Tooltip on the dir tells the user the head-ellipsis means more
+   * path; the title= on the parent shows the full string. */
+  unicode-bidi: plaintext;
+}
+.icicle-stats-loc-file {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+@media (max-width: 700px) {
+  .icicle-stats-loc {
+    /* Wrap onto the next line on narrow viewports rather than fighting
+     * for horizontal space with the metric chunks. */
+    width: 100%;
+    margin-left: 0;
+    margin-top: 2px;
+  }
 }
 
 .live-scan-table-wrap {
@@ -4262,6 +4342,39 @@ button { font-family: inherit; }
   padding: 24px 16px;
 }
 
+/* Call Graph tab shell — wraps the mode toggle (Graph / Hierarchy) and
+ * the selected view. The toggle is a compact pill bar at the top; the
+ * view fills the rest. The graph view brings its own viewport sizing
+ * (ResizeObserver) so it doesn't need a min-height here. */
+.call-graph-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 420px;
+}
+.call-graph-mode-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
+  background: var(--bg-card);
+}
+.call-graph-mode-toggle > button {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #8a8f96);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.call-graph-mode-toggle > button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* Call Graph tab — three-column neighborhood view (callers · focus ·
  * callees). On narrow viewports the columns stack vertically so the
  * focus card sits between the two lists. */
@@ -4402,4 +4515,203 @@ button { font-family: inherit; }
 @media (max-width: 900px) {
   .live-scan-body { grid-template-columns: 1fr; }
   .live-scan-rail { max-height: 240px; }
+}
+
+/* ============================================================
+ * Live overview strip — sits between the summary header and the
+ * tab bar in ReportView. Four cards in a flex grid: memory, cpu,
+ * "where am I running", spikes. See LiveOverviewBar.tsx.
+ * ============================================================ */
+.live-overview-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+@media (max-width: 1100px) {
+  .live-overview-bar { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .live-overview-bar { grid-template-columns: 1fr; }
+}
+.live-overview-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0; /* allow text-overflow inside grid cells */
+}
+.live-overview-card.muted { opacity: 0.7; }
+.live-overview-card--memory { border-left-color: #5b9bff; }
+.live-overview-card--cpu    { border-left-color: #ffb648; }
+.live-overview-card--stack  { border-left-color: var(--accent); }
+.live-overview-card--warn   { border-left-color: #ff6b3d; background: rgba(255, 107, 61, 0.06); }
+.live-overview-card--calm   { border-left-color: #56c596; }
+.live-overview-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.live-overview-card-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.live-overview-card-primary {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-overview-card-secondary {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-overview-card-sparkline {
+  height: 28px;
+  width: 100%;
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+.live-overview-card--memory .live-overview-card-sparkline { color: #5b9bff; }
+.live-overview-card--cpu    .live-overview-card-sparkline { color: #ffb648; }
+.live-overview-trend {
+  font-size: 12px;
+  font-weight: 600;
+}
+.live-overview-trend--up   { color: #ff6b3d; }
+.live-overview-trend--down { color: #56c596; }
+.live-overview-trend--flat { color: var(--text-faint); }
+
+.micro-sparkline {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ============================================================
+ * Story strip — single-line headline above the overview bar.
+ * Three tones: calm / watch / warn. See LiveStoryStrip.tsx.
+ * ============================================================ */
+.live-story-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin-top: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.live-story-strip-glyph {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.live-story-strip-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-story-strip-text code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.live-story-strip--calm  { background: rgba(86, 197, 150, 0.06); border-color: rgba(86, 197, 150, 0.25); }
+.live-story-strip--watch { background: rgba(255, 182, 72, 0.07); border-color: rgba(255, 182, 72, 0.3); }
+.live-story-strip--warn  { background: rgba(255, 107, 61, 0.09); border-color: rgba(255, 107, 61, 0.35); }
+
+/* ============================================================
+ * "Where am I running" two-column panel — sits ABOVE the
+ * flamegraph in the Flame Graph tab. See WhereAmIRunningPanel.tsx.
+ * ============================================================ */
+.where-running-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 800px) {
+  .where-running-panel { grid-template-columns: 1fr; }
+}
+.where-running-col {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px 12px;
+  min-width: 0;
+}
+.where-running-col header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.where-running-col h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 0;
+  font-weight: 600;
+}
+.where-running-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.where-running-row {
+  display: grid;
+  grid-template-columns: 1fr auto 20px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+.where-running-row:last-child { border-bottom: 0; }
+.where-running-name {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 12.5px;
+}
+.where-running-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+.where-running-arrow {
+  text-align: center;
+  font-weight: 700;
+}
+.where-running-arrow--new  { color: var(--accent); }
+.where-running-arrow--up   { color: #ff6b3d; }
+.where-running-arrow--down { color: #56c596; }
+.where-running-arrow--same { color: var(--text-faint); font-weight: 400; }
+.where-running-empty {
+  padding: 12px 0 8px;
+  font-size: 13px;
 }
