@@ -13,6 +13,10 @@ use super::{defaults::VSN, errors::RealtimeError};
 /// and a bare `<host>` with no scheme. Strips anything after the
 /// authority (path / query / fragment) — Supabase URLs never carry one,
 /// but users occasionally paste with trailing slashes.
+///
+/// Scheme is preserved: an `http://` or `ws://` input → `ws://` output
+/// (plaintext, for talking to a self-hosted drift observability-server
+/// on loopback), anything else → `wss://`.
 pub fn build_wss_url(supabase_url: &str, api_key: &str) -> Result<String, RealtimeError> {
     let trimmed = supabase_url.trim();
     if trimmed.is_empty() {
@@ -21,6 +25,11 @@ pub fn build_wss_url(supabase_url: &str, api_key: &str) -> Result<String, Realti
     if api_key.is_empty() {
         return Err(RealtimeError::MissingApiKey);
     }
+    // Plaintext when the input asked for it; TLS otherwise. The four
+    // accepted shapes map two-into-one: `http://` and `ws://` → `ws`,
+    // `https://`, `wss://`, and bare-host → `wss`.
+    let plaintext =
+        trimmed.starts_with("http://") || trimmed.starts_with("ws://");
     let host = trimmed
         .strip_prefix("https://")
         .or_else(|| trimmed.strip_prefix("http://"))
@@ -31,8 +40,9 @@ pub fn build_wss_url(supabase_url: &str, api_key: &str) -> Result<String, Realti
     if host.is_empty() {
         return Err(RealtimeError::InvalidUrl(supabase_url.to_string()));
     }
+    let scheme = if plaintext { "ws" } else { "wss" };
     Ok(format!(
-        "wss://{host}/realtime/v1/websocket?apikey={api_key}&vsn={VSN}"
+        "{scheme}://{host}/realtime/v1/websocket?apikey={api_key}&vsn={VSN}"
     ))
 }
 
@@ -73,6 +83,21 @@ mod tests {
             RealtimeError::InvalidUrl(_) => {}
             e => panic!("expected InvalidUrl, got {e:?}"),
         }
+    }
+
+    #[test]
+    fn http_input_yields_plaintext_ws() {
+        let got = build_wss_url("http://localhost:8080", "jwt").unwrap();
+        assert_eq!(
+            got,
+            "ws://localhost:8080/realtime/v1/websocket?apikey=jwt&vsn=1.0.0"
+        );
+    }
+
+    #[test]
+    fn ws_input_yields_plaintext_ws() {
+        let got = build_wss_url("ws://localhost:8080", "jwt").unwrap();
+        assert!(got.starts_with("ws://localhost:8080/"));
     }
 
     #[test]

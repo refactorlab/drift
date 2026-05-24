@@ -20,10 +20,56 @@
 //      function name (the common case for `name:create_order`).
 //   3. The top-cumulative-time function. Always something to show.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { matchFrameFilter, type FrameFilter } from "../../lib/frame_filter";
 import type { EventLogTreeNode } from "../../lib/tauri";
+
+// Shared call-graph implementation, sourced from the static-profiler
+// viewer so there's exactly one copy of the layout/render algorithm
+// across both UIs. The light theme comes from CSS variables defined
+// in this app's `globals.css` (`--cg-bg`, `--cg-border`, etc.); the
+// static profiler keeps the dark fallbacks baked into the view.
+import { CallGraphView } from "../../../../../drift-static-profiler/viewer/src/CallGraphView";
+import type { CallGraphAdapter } from "../../../../../drift-static-profiler/viewer/src/callGraph";
+
+/// "Class.method" split for sampled events: the source carries
+/// `qualname` like "OrderService.create"; we split on the last dot.
+/// Free functions stay null. Used to render the parent class above
+/// the method name in the graph box.
+function sampledParentClass(n: EventLogTreeNode): string | null {
+  if (!n.qualname) return null;
+  const idx = n.qualname.lastIndexOf(".");
+  if (idx <= 0) return null;
+  return n.qualname.slice(0, idx);
+}
+
+/// Adapter that lets the shared `CallGraphView` render an
+/// `EventLogTreeNode` (sampled, microsecond-valued) tree. Module-level
+/// constant so React doesn't re-trigger the layout memo on every
+/// parent render — the view keys its memo on `adapter` identity.
+const SAMPLED_GRAPH_ADAPTER: CallGraphAdapter<EventLogTreeNode> = {
+  getId: (n) => n.nodeId,
+  getChildren: (n) => n.children,
+  // `value` is inclusive µs; clamp to 1 so percentTotal doesn't NaN
+  // on an empty root (first frame, no samples in yet).
+  getRootTotal: (root) => Math.max(1, root.value || 1),
+  build: (n, level, rootTotal) => ({
+    id: n.nodeId,
+    name: n.name,
+    parentClass: sampledParentClass(n),
+    file: n.file,
+    line: n.line,
+    level,
+    callCount: n.ncalls,
+    totalValue: n.value,
+    percentTotal: (n.value / rootTotal) * 100,
+    totalDisplay: formatUs(n.value),
+    secondaryLabel: "Self",
+    secondaryDisplay: formatUs(n.selfValue),
+    source: n,
+  }),
+};
 
 interface Props {
   root: EventLogTreeNode;
@@ -37,7 +83,76 @@ interface Props {
   onSelect: (node: EventLogTreeNode) => void;
 }
 
+/** Default view shown when the Call Graph tab opens. "graph" is the
+ *  JetBrains-style box-and-arrow diagram; "hierarchy" is the legacy
+ *  3-column Callers / Focus / Callees neighborhood. */
+type Mode = "graph" | "hierarchy";
+
 export default function CallGraphPanel({
+  root,
+  functions,
+  search,
+  selected,
+  onSelect,
+}: Props): JSX.Element {
+  const [mode, setMode] = useState<Mode>("graph");
+
+  // Project the parsed filter back to a plain string for the graph
+  // view's tokenised matcher. We include ALL positive term values —
+  // `name:`, `file:`, and untyped — because the shared matcher
+  // checks against the joined haystack (name + parentClass +
+  // Class.method + file), so a `file:orders.py` token correctly
+  // narrows to nodes in that file. Negative terms are skipped
+  // (the graph dim signal is positive-only by design).
+  const searchText = search.empty
+    ? ""
+    : search.positive
+        .filter((t) => !t.negate)
+        .map((t) => t.value)
+        .join(" ");
+
+  return (
+    <div className="call-graph-shell">
+      <div className="call-graph-mode-toggle">
+        <button
+          type="button"
+          className={mode === "graph" ? "active" : ""}
+          onClick={() => setMode("graph")}
+          title="JetBrains-style box-and-arrow diagram of the whole call DAG"
+        >
+          Graph
+        </button>
+        <button
+          type="button"
+          className={mode === "hierarchy" ? "active" : ""}
+          onClick={() => setMode("hierarchy")}
+          title="Focus on one function: list its direct callers and callees"
+        >
+          Hierarchy
+        </button>
+      </div>
+      {mode === "graph" ? (
+        <CallGraphView<EventLogTreeNode>
+          root={root}
+          adapter={SAMPLED_GRAPH_ADAPTER}
+          selectedId={selected?.nodeId ?? null}
+          onSelect={onSelect}
+          search={searchText}
+        />
+      ) : (
+        <HierarchyView
+          root={root}
+          functions={functions}
+          search={search}
+          selected={selected}
+          onSelect={onSelect}
+        />
+      )}
+    </div>
+  );
+}
+
+function HierarchyView({
   root,
   functions,
   search,
@@ -49,9 +164,6 @@ export default function CallGraphPanel({
     [selected, search, root, functions],
   );
 
-  // Collect every occurrence of the focus in the tree. A function can
-  // appear in many places (different call paths), and each contributes
-  // its own callers + callees to the aggregate.
   const occurrences = useMemo(
     () => (focusName ? collectOccurrences(root, focusName) : []),
     [root, focusName],
@@ -59,10 +171,6 @@ export default function CallGraphPanel({
 
   const callers = useMemo(() => aggregateCallers(occurrences), [occurrences]);
   const callees = useMemo(() => aggregateCallees(occurrences), [occurrences]);
-
-  // Sum metrics for the focus itself across all occurrences. Showing
-  // the totals at the focus card makes the caller/callee weights
-  // comparable to a known anchor.
   const focusTotals = useMemo(() => sumTotals(occurrences), [occurrences]);
 
   if (!focusName) {

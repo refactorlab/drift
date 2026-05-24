@@ -4,11 +4,22 @@
 // consumes the deduped graph + layout from `callGraph.ts` and renders
 // them as SVG, plus the pan/zoom/fit toolbar.
 //
-// What each box shows (static-profile analog of the JetBrains runtime view):
-//   - title row:  Class.method        ×{call_site_count}
-//   - total row:  Total: {subtree_size} ({percent_total}%)
-//   - own row:    Own:   {loc} loc · cx {complexity}
-// Color: 3-band heat ramp on percent_total (red → amber → green).
+// Generic over the source-node type so the same renderer is used by:
+//   - drift-static-profiler/viewer (TNode = CallTreeNode)
+//   - drift-lab/desktop-ui          (TNode = EventLogTreeNode)
+//
+// Theme is driven by CSS variables — the renderer carries DARK
+// defaults (matching the static profiler's existing look), but a host
+// app can override any of `--cg-bg`, `--cg-toolbar-bg`,
+// `--cg-toolbar-active-bg`, `--cg-border`, `--cg-text`,
+// `--cg-text-muted`, `--cg-edge`, `--cg-accent` to get light or any
+// other look. The heat-ramp node fills are intentionally NOT themed
+// because they're semantic (hot red → mid amber → cool green).
+//
+// What each box shows is driven by the adapter, not this file. The
+// adapter pre-formats `totalDisplay` ("47", "12.4 ms"),
+// `secondaryLabel` ("Own", "Self"), and `secondaryDisplay` ("47 loc
+// · cx 8", "3.1 ms"). The renderer is host-agnostic.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -18,14 +29,21 @@ import {
   layoutGraph,
   nodeColor,
 } from './callGraph';
-import type { LayoutResult, PositionedEdge, PositionedNode } from './callGraph';
-import type { CallTreeNode } from './types';
+import type {
+  CallGraphAdapter,
+  LayoutResult,
+  PositionedEdge,
+  PositionedNode,
+} from './callGraph';
 
-interface Props {
-  root: CallTreeNode;
-  /// Highlighted in the graph; identical to FlameView / CallTreeView.
+interface Props<TNode> {
+  root: TNode;
+  adapter: CallGraphAdapter<TNode>;
+  /// Highlighted in the graph. Caller computes this from its own
+  /// selection state (commonly: `selected?.id ?? null`).
   selectedId: string | null;
-  onSelect: (node: CallTreeNode) => void;
+  onSelect: (node: TNode) => void;
+  /// Free-text filter — non-matching nodes dim to 35% opacity.
   search: string;
 }
 
@@ -39,23 +57,34 @@ interface ViewTransform {
 
 const IDENTITY: ViewTransform = { zoom: 1, panX: 0, panY: 0 };
 
-export function CallGraphView({ root, selectedId, onSelect, search }: Props) {
+export function CallGraphView<TNode>({
+  root,
+  adapter,
+  selectedId,
+  onSelect,
+  search,
+}: Props<TNode>) {
   const [direction, setDirection] = useState<Direction>('TB');
   const [view, setView] = useState<ViewTransform>(IDENTITY);
 
-  // The layout is a pure function of the root + direction. Memoize so
-  // pan/zoom don't trigger re-layout (panning a 200-node graph would
-  // otherwise burn CPU on every mousemove).
-  const layout = useMemo<LayoutResult>(
-    () => layoutGraph(buildCallGraph(root), { ...DEFAULT_LAYOUT, direction }),
-    [root, direction],
+  // The layout is pure over (root, adapter, direction). Memoize so
+  // pan/zoom don't trigger re-layout — panning a 200-node graph
+  // would otherwise burn CPU on every mousemove.
+  const layout = useMemo<LayoutResult<TNode>>(
+    () =>
+      layoutGraph(buildCallGraph(root, adapter), {
+        ...DEFAULT_LAYOUT,
+        direction,
+      }),
+    [root, adapter, direction],
   );
 
   // Reset pan/zoom when the picked root changes — otherwise jumping
   // between entry points strands the viewport on stale coordinates.
+  const rootId = useMemo(() => adapter.getId(root), [root, adapter]);
   useEffect(() => {
     setView(IDENTITY);
-  }, [root.id, direction]);
+  }, [rootId, direction]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ w: 800, h: 480 });
@@ -90,16 +119,64 @@ export function CallGraphView({ root, selectedId, onSelect, search }: Props) {
     if (viewport.w === 0 || viewport.h === 0) return;
     onFit();
     autoFitDone.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewport, layout]);
-  // Re-arm auto-fit when the source root or direction changes.
   useEffect(() => {
     autoFitDone.current = false;
-  }, [root.id, direction]);
+  }, [rootId, direction]);
+
+  // Auto-pan/zoom to the matched nodes whenever the search QUERY
+  // changes. Without this, a search "finds" the function (dims
+  // everything else) but the user still has to hunt for the bright
+  // node — defeats the point of search. We fire ONLY on query change
+  // (not on layout/viewport updates) so the user can pan freely
+  // afterward without the view snapping back.
+  //
+  // Behaviour:
+  //   - empty query → no-op (don't snap back to the previous fit)
+  //   - 0 matches   → no-op (nothing to frame; UX is "user typo'd")
+  //   - 1 match     → center it, zoom to a reasonable level
+  //   - N matches   → fit the bbox of all matches with padding
+  const lastSnappedSearch = useRef<string | null>(null);
+  useEffect(() => {
+    const q = search.trim();
+    if (q === lastSnappedSearch.current) return;
+    lastSnappedSearch.current = q;
+    if (q === "") return;
+    if (viewport.w === 0 || viewport.h === 0) return;
+
+    const hit = layout.nodes.filter(matches);
+    if (hit.length === 0) return;
+
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const n of hit) {
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x + n.w > maxX) maxX = n.x + n.w;
+      if (n.y + n.h > maxY) maxY = n.y + n.h;
+    }
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+
+    const padding = 40;
+    const sx = (viewport.w - padding * 2) / bw;
+    const sy = (viewport.h - padding * 2) / bh;
+    // Clamp: for a single small match we don't want to slam to 4×
+    // (cuts off neighbours that give context); cap at 1.5×. For a big
+    // sprawling match, the lower bound keeps the view sane.
+    const zoom = Math.min(1.5, Math.max(0.3, Math.min(sx, sy)));
+    const panX = viewport.w / 2 - (minX + bw / 2) * zoom;
+    const panY = viewport.h / 2 - (minY + bh / 2) * zoom;
+    setView({ zoom, panX, panY });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, layout, viewport]);
 
   // ─── Pan / zoom interactions ───────────────────────────────────────
   const dragRef = useRef<{ startX: number; startY: number; pan0: ViewTransform } | null>(null);
   const onMouseDown = (e: React.MouseEvent) => {
-    // Skip drags initiated on a node — those are clicks, handled below.
     if ((e.target as Element).closest('[data-node-id]')) return;
     dragRef.current = { startX: e.clientX, startY: e.clientY, pan0: view };
   };
@@ -116,28 +193,49 @@ export function CallGraphView({ root, selectedId, onSelect, search }: Props) {
     dragRef.current = null;
   };
   const onWheel = (e: React.WheelEvent) => {
-    // Zoom centered on cursor — feels right whether you're scrolling a
-    // big graph or fine-tuning a single subtree.
     e.preventDefault();
     const delta = -e.deltaY * 0.0015;
     const next = clampZoom(view.zoom * Math.exp(delta));
     const rect = e.currentTarget.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
-    // World coords of the cursor at the current zoom must stay fixed:
-    //   (cx - panX) / zoom == (cx - panX') / next
     const panX = cx - (cx - view.panX) * (next / view.zoom);
     const panY = cy - (cy - view.panY) * (next / view.zoom);
     setView({ zoom: next, panX, panY });
   };
 
   // ─── Search dim ────────────────────────────────────────────────────
-  const q = search.trim().toLowerCase();
-  const matches = (n: PositionedNode) => {
-    if (!q) return true;
-    if (n.name.toLowerCase().includes(q)) return true;
-    if (n.parentClass && n.parentClass.toLowerCase().includes(q)) return true;
-    return false;
+  // The query is tokenised on whitespace; ALL tokens must match
+  // SOMEWHERE on the node (any of: bare name, parent class, full
+  // `Class.method`, file path). Tokenising fixes two real failure
+  // modes the old single-substring matcher had:
+  //
+  //   - `OrderService.create_order` (PyCharm-style qualifier) silently
+  //     missed because neither `name` nor `parentClass` alone
+  //     contained the whole literal. Now we also check the joined
+  //     `Class.method` haystack.
+  //   - Multi-term searches like `OrderService create` were treated as
+  //     one literal substring. Now each token matches independently.
+  const tokens = useMemo(
+    () =>
+      search
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 0),
+    [search],
+  );
+  const matches = (n: PositionedNode<TNode>) => {
+    if (tokens.length === 0) return true;
+    const haystack = [
+      n.name,
+      n.parentClass,
+      n.parentClass ? `${n.parentClass}.${n.name}` : null,
+      n.file,
+    ]
+      .filter((s): s is string => !!s)
+      .join(" ")
+      .toLowerCase();
+    return tokens.every((t) => haystack.includes(t));
   };
 
   return (
@@ -177,7 +275,7 @@ export function CallGraphView({ root, selectedId, onSelect, search }: Props) {
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#6e717a" />
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--cg-edge, #6e717a)" />
             </marker>
           </defs>
           <g transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
@@ -212,7 +310,7 @@ function EdgePath({ edge }: { edge: PositionedEdge }) {
     <path
       d={edge.path}
       fill="none"
-      stroke="#6e717a"
+      stroke="var(--cg-edge, #6e717a)"
       strokeWidth={1.2}
       markerEnd="url(#cg-arrow)"
     />
@@ -221,13 +319,13 @@ function EdgePath({ edge }: { edge: PositionedEdge }) {
 
 // ─── Node box ──────────────────────────────────────────────────────────
 
-function NodeBox({
+function NodeBox<TNode>({
   node,
   selected,
   dimmed,
   onClick,
 }: {
-  node: PositionedNode;
+  node: PositionedNode<TNode>;
   selected: boolean;
   dimmed: boolean;
   onClick: () => void;
@@ -235,12 +333,9 @@ function NodeBox({
   const color = nodeColor(node.percentTotal);
   const opacity = dimmed ? 0.35 : 1;
   const label = displayName(node);
-  const total = `${node.subtreeSize} (${node.percentTotal.toFixed(1)}%)`;
-  const own = `${node.loc} loc · cx ${node.complexity}`;
+  const total = `${node.totalDisplay} (${node.percentTotal.toFixed(1)}%)`;
+  const secondary = node.secondaryDisplay;
 
-  // SVG <text> doesn't ellipsize on its own — but the displayName helper
-  // already trims to fit NODE_W. The right-aligned "×N" badge is sized
-  // for up to 4 digits which is enough for any realistic project.
   return (
     <g
       data-node-id={node.id}
@@ -250,10 +345,10 @@ function NodeBox({
     >
       <title>
         {label}
-        {'\n'}file: {node.file}:{node.line}
-        {'\n'}reach: {node.subtreeSize} symbols ({node.percentTotal.toFixed(2)}% of root)
-        {'\n'}own: {node.loc} loc · complexity {node.complexity}
-        {'\n'}call sites: {node.callCount}
+        {node.file && `\nfile: ${node.file}:${node.line ?? '?'}`}
+        {`\ntotal: ${node.totalDisplay} (${node.percentTotal.toFixed(2)}% of root)`}
+        {`\n${node.secondaryLabel.toLowerCase()}: ${node.secondaryDisplay}`}
+        {`\n${node.callCount > 1 ? 'calls' : 'call'}: ${node.callCount}`}
       </title>
       <rect
         x={0}
@@ -262,10 +357,9 @@ function NodeBox({
         height={node.h}
         rx={4}
         fill={color.fill}
-        stroke={selected ? '#5b8def' : color.border}
+        stroke={selected ? 'var(--cg-accent, #5b8def)' : color.border}
         strokeWidth={selected ? 2 : 1}
       />
-      {/* Title row: name (left) + ×N (right) */}
       <text
         x={10}
         y={18}
@@ -287,7 +381,6 @@ function NodeBox({
       >
         ×{node.callCount}
       </text>
-      {/* Total row */}
       <text
         x={10}
         y={36}
@@ -298,7 +391,6 @@ function NodeBox({
         Total:&nbsp;
         <tspan fontWeight={700}>{total}</tspan>
       </text>
-      {/* Own row */}
       <text
         x={10}
         y={52}
@@ -306,8 +398,8 @@ function NodeBox({
         fontFamily="ui-monospace, monospace"
         fontSize={10.5}
       >
-        Own:&nbsp;
-        <tspan fontWeight={700}>{own}</tspan>
+        {node.secondaryLabel}:&nbsp;
+        <tspan fontWeight={700}>{secondary}</tspan>
       </text>
     </g>
   );
@@ -362,7 +454,7 @@ function Toolbar({
         {nodeCount} nodes · {edgeCount} edges · zoom {(zoom * 100).toFixed(0)}%
       </span>
       <span style={legendStyle}>
-        <LegendSwatch fill="#e26d6d" label="≥40% reach" />
+        <LegendSwatch fill="#e26d6d" label="≥40%" />
         <LegendSwatch fill="#e0a458" label="5–40%" />
         <LegendSwatch fill="#8fbf9f" label="<5%" />
       </span>
@@ -379,29 +471,30 @@ function LegendSwatch({ fill, label }: { fill: string; label: string }) {
           width: 10,
           height: 10,
           background: fill,
-          border: '1px solid #3f4147',
+          border: '1px solid var(--cg-border, #3f4147)',
           borderRadius: 2,
         }}
       />
-      <span style={{ color: '#9ca0a8', fontSize: 10 }}>{label}</span>
+      <span style={{ color: 'var(--cg-text-muted, #9ca0a8)', fontSize: 10 }}>{label}</span>
     </span>
   );
 }
 
-// ─── styles ────────────────────────────────────────────────────────────
+// ─── styles (theme-aware via CSS vars w/ dark fallbacks) ───────────────
 
 const shellStyle: React.CSSProperties = {
   display: 'grid',
   gridTemplateRows: 'auto 1fr',
   height: '100%',
-  background: '#1e1f22',
+  background: 'var(--cg-bg, #1e1f22)',
 };
 
 const canvasStyle: React.CSSProperties = {
   position: 'relative',
   overflow: 'hidden',
-  background: '#1e1f22',
+  background: 'var(--cg-bg, #1e1f22)',
   userSelect: 'none',
+  minHeight: 360,
 };
 
 const toolbarStyle: React.CSSProperties = {
@@ -409,15 +502,15 @@ const toolbarStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '6px 10px',
-  background: '#26282c',
-  borderBottom: '1px solid #3f4147',
+  background: 'var(--cg-toolbar-bg, #26282c)',
+  borderBottom: '1px solid var(--cg-border, #3f4147)',
   fontSize: 11,
 };
 
 const btnStyle: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3f4147',
-  color: '#d7d9dc',
+  border: '1px solid var(--cg-border, #3f4147)',
+  color: 'var(--cg-text, #d7d9dc)',
   fontSize: 11,
   padding: '3px 9px',
   borderRadius: 3,
@@ -428,20 +521,20 @@ const btnStyle: React.CSSProperties = {
 };
 
 const btnActiveStyle: React.CSSProperties = {
-  background: '#3b3f44',
-  borderColor: '#5b8def',
-  color: '#d7d9dc',
+  background: 'var(--cg-toolbar-active-bg, #3b3f44)',
+  borderColor: 'var(--cg-accent, #5b8def)',
+  color: 'var(--cg-text, #d7d9dc)',
 };
 
 const dividerStyle: React.CSSProperties = {
   width: 1,
   height: 18,
-  background: '#3f4147',
+  background: 'var(--cg-border, #3f4147)',
   margin: '0 4px',
 };
 
 const statusStyle: React.CSSProperties = {
-  color: '#7e8189',
+  color: 'var(--cg-text-muted, #7e8189)',
   fontSize: 10,
   marginLeft: 'auto',
 };
@@ -458,7 +551,7 @@ const emptyStyle: React.CSSProperties = {
   inset: 0,
   display: 'grid',
   placeItems: 'center',
-  color: '#7e8189',
+  color: 'var(--cg-text-muted, #7e8189)',
   fontStyle: 'italic',
   fontSize: 12,
 };

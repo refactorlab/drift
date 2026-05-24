@@ -145,6 +145,33 @@ function formatUs(us: number): string {
   return `${(us / 1_000_000).toFixed(3)} s`;
 }
 
+/** Human-friendly bytes: largest unit that keeps the value < 1024,
+ *  with adaptive precision (3 sig digits). Returns null for 0/negative
+ *  so callers can short-circuit the surrounding label entirely. */
+function formatBytes(b: number | undefined): string | null {
+  if (b === undefined || !Number.isFinite(b) || b <= 0) return null;
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = b;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  const precision = v >= 100 ? 0 : v >= 10 ? 1 : 2;
+  return `${v.toFixed(precision)} ${units[i]}`;
+}
+
+/** Split a filesystem path into `(dir, file)` for the standard
+ *  "directory-side ellipsis" layout. Returns `[null, path]` for paths
+ *  with no separator. Works for both POSIX `/` and Windows `\`. */
+function splitPath(p: string): [string | null, string] {
+  const idx = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  if (idx < 0) return [null, p];
+  // Keep the trailing separator on `dir` so the rejoined display reads
+  // naturally (`/usr/local/lib/.../file.py`, not `/usr/local/libfile.py`).
+  return [p.slice(0, idx + 1), p.slice(idx + 1)];
+}
+
 function clamp(value: number, lo: number, hi: number): number {
   if (value < lo) return lo;
   if (value > hi) return hi;
@@ -392,11 +419,39 @@ export default function IcicleChart(props: IcicleChartProps): JSX.Element {
             call{activeNode.ncalls === 1 ? "" : "s"}
           </span>
         </span>
-        {activeNode.file && (
-          <span className="icicle-stats-loc" title={activeNode.file}>
-            {activeNode.file}
-            {activeNode.line ? `:${activeNode.line}` : ""}
+        {/* Memory + CPU surface as additional inline metrics — only when
+         *  the source events carried them. "mem obs" reminds the user
+         *  this is a CORRELATION (process RSS observed while this frame
+         *  was on stack), not an allocation attribution. */}
+        {formatBytes(activeNode.avgMemoryBytes) && (
+          <span
+            className="icicle-stats-metric"
+            title="Mean process RSS observed while this frame was on the stack — correlation, not allocation."
+          >
+            <span className="icicle-stats-num">
+              {formatBytes(activeNode.avgMemoryBytes)}
+            </span>
+            <span className="icicle-stats-label">mem obs</span>
+            {formatBytes(activeNode.peakMemoryBytes) && (
+              <span className="icicle-stats-pct">
+                peak {formatBytes(activeNode.peakMemoryBytes)}
+              </span>
+            )}
           </span>
+        )}
+        {activeNode.avgCpu !== undefined && activeNode.avgCpu > 0 && (
+          <span
+            className="icicle-stats-metric"
+            title="Mean 1-min loadavg while this frame was on the stack."
+          >
+            <span className="icicle-stats-num">
+              {activeNode.avgCpu.toFixed(2)}
+            </span>
+            <span className="icicle-stats-label">cpu</span>
+          </span>
+        )}
+        {activeNode.file && (
+          <PathDisplay file={activeNode.file} line={activeNode.line} />
         )}
       </div>
 
@@ -423,11 +478,17 @@ export default function IcicleChart(props: IcicleChartProps): JSX.Element {
             // perfetto / speedscope pattern of "the bigger the bar, the
             // more you can read at a glance."
             const showInlineMetric = r.width > 200 && r.depth > 0;
+            const showInlineMemory = r.width > 360 && r.depth > 0;
             const timeSuffix = showInlineMetric ? ` · ${formatUs(r.node.value)}` : "";
+            const memSuffix =
+              showInlineMemory && r.node.avgMemoryBytes
+                ? ` · ${formatBytes(r.node.avgMemoryBytes)}`
+                : "";
+            const suffixes = timeSuffix + memSuffix;
             const nameBudget = Math.floor(
-              (r.width - 12 - timeSuffix.length * 7) / 7,
+              (r.width - 12 - suffixes.length * 7) / 7,
             );
-            const label = clip(r.node.name, nameBudget) + timeSuffix;
+            const label = clip(r.node.name, nameBudget) + suffixes;
             return (
               <g
                 key={`${r.depth}-${r.path.join("/")}`}
@@ -469,4 +530,47 @@ function clip(s: string, maxChars: number): string {
   if (maxChars <= 1) return "";
   if (s.length <= maxChars) return s;
   return s.slice(0, Math.max(1, maxChars - 1)) + "…";
+}
+
+/** File-path display that handles long paths gracefully.
+ *
+ *  The common case is `/usr/local/lib/python3.14/site-packages/.../foo.py`
+ *  — `text-overflow: ellipsis` cuts the wrong end (the filename, the
+ *  bit you actually need). The fix is to split into:
+ *
+ *    [   directory (shrinks, ellipsizes head-side)   ][filename.py]
+ *
+ *  CSS does the work: the dir span has `min-width: 0` and `overflow:
+ *  hidden` with `direction: rtl` (puts the ellipsis on the LEFT — RTL
+ *  inside an LTR layout = head-side cutoff). The filename span has
+ *  `flex: 0 0 auto` so it can never be squeezed. Result: the filename
+ *  stays visible until the entire row is too narrow to fit it.
+ *
+ *  Full path on hover (title) for the rare case the user needs the
+ *  whole string. */
+function PathDisplay({ file, line }: { file: string; line: number | null }) {
+  const [dir, name] = splitPath(file);
+  const suffix = line ? `:${line}` : "";
+  const fullPath = file + suffix;
+  return (
+    <span
+      className="icicle-stats-loc"
+      title={fullPath}
+      aria-label={`source location ${fullPath}`}
+    >
+      {dir && (
+        <span className="icicle-stats-loc-dir" dir="rtl">
+          {/* &lrm; clamps embedded mixed-direction text (e.g. paths with
+           *  slashes plus Windows drive letters) so the RTL container
+           *  doesn't reorder the slashes visually. */}
+          {"‎"}
+          {dir}
+        </span>
+      )}
+      <span className="icicle-stats-loc-file">
+        {name}
+        {suffix}
+      </span>
+    </span>
+  );
 }

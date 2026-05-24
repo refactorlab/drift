@@ -56,18 +56,85 @@ pub struct LiveErrorPayload {
     pub message: String,
 }
 
-/// List `.log`/`.jsonl` files in the default `~/.drift/event_logs/` dir,
-/// optionally augmented with an explicit `dir` override.
+/// List `.log`/`.jsonl` files the rail should show.
+///
+/// When `dir` is provided, list that one directory only (legacy behavior
+/// for explicit paths). When `dir` is `None`, aggregate every drift-
+/// managed log dir: the legacy global `~/.drift/event_logs/` AND every
+/// per-folder `~/.drift/scans/<fingerprint>/event_logs/`. Each entry is
+/// tagged with its source bucket via `EventLogMeta.source` so the UI
+/// can group / filter (and so deletion knows which dir the file lives
+/// under).
 #[tauri::command]
 pub async fn list_event_logs(dir: Option<String>) -> Result<Vec<EventLogMeta>, String> {
-    let dir = match dir {
-        Some(d) => PathBuf::from(d),
-        None => match event_log::default_logs_dir() {
-            Some(d) => d,
-            None => return Ok(vec![]),
-        },
+    match dir {
+        Some(d) => {
+            event_log::list_logs(&PathBuf::from(d)).map_err(|e| format!("{e:#}"))
+        }
+        None => event_log::list_all_logs().map_err(|e| format!("{e:#}")),
+    }
+}
+
+/// Delete one event-log file from disk.
+///
+/// Safety: rejects any path that, after canonicalisation, does not sit
+/// under a drift-managed directory (legacy `~/.drift/event_logs/` or a
+/// per-folder `~/.drift/scans/<fingerprint>/event_logs/`). This prevents
+/// a compromised renderer from coaxing the backend into unlinking
+/// arbitrary files — even with full IPC access, the worst it can do is
+/// delete a drift log it could have read anyway.
+///
+/// Idempotent: a missing file returns Ok — the rail just refreshes.
+#[tauri::command]
+pub async fn delete_event_log(path: String) -> Result<(), String> {
+    let candidate = PathBuf::from(&path);
+    // Canonicalise first — handles `..`, symlinks, and any other
+    // path-traversal shenanigans the renderer might try.
+    let canonical = match tokio::fs::canonicalize(&candidate).await {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Already gone — caller's job is done.
+            return Ok(());
+        }
+        Err(e) => return Err(format!("canonicalise {}: {e}", path)),
     };
-    event_log::list_logs(&dir).map_err(|e| format!("{e:#}"))
+    // The path must live under one of the known log roots. We
+    // canonicalise the roots too so the comparison is on resolved
+    // paths, not symlinked aliases.
+    let roots = event_log::allowed_log_roots();
+    let mut allowed = false;
+    for root in &roots {
+        if let Ok(rc) = tokio::fs::canonicalize(root).await {
+            if canonical.starts_with(&rc) {
+                allowed = true;
+                break;
+            }
+        }
+    }
+    if !allowed {
+        return Err(format!(
+            "refusing to delete {}: not under a drift-managed log directory",
+            canonical.display()
+        ));
+    }
+    // Bonus belt-and-suspenders: only delete files with the
+    // extensions the rail accepts. Stops the renderer from being
+    // tricked into nuking, say, a `.lock` file inside an event-logs
+    // dir just because the directory check passed.
+    let ext = canonical
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext != "log" && ext != "jsonl" {
+        return Err(format!(
+            "refusing to delete {}: extension {ext:?} is not a log/jsonl",
+            canonical.display()
+        ));
+    }
+    tokio::fs::remove_file(&canonical)
+        .await
+        .map_err(|e| format!("remove {}: {e}", canonical.display()))
 }
 
 /// One-shot aggregation. Reads the entire file, returns the snakeviz-style

@@ -4,7 +4,10 @@ import { useNavigate } from "react-router-dom";
 import IcicleChart from "../components/IcicleChart";
 import CallGraphPanel from "../components/scan-views/CallGraphPanel";
 import CallTreePanel from "../components/scan-views/CallTreePanel";
+import LiveOverviewBar from "../components/scan-views/LiveOverviewBar";
+import LiveStoryStrip from "../components/scan-views/LiveStoryStrip";
 import StatisticsPanel from "../components/scan-views/StatisticsPanel";
+import WhereAmIRunningPanel from "../components/scan-views/WhereAmIRunningPanel";
 import SearchBox from "../components/SearchBox";
 import Tabs, { type TabItem } from "../components/Tabs";
 import { useRunStore } from "../store/runStore";
@@ -12,6 +15,7 @@ import { matchFrameFilter, parseFrameFilter } from "../lib/frame_filter";
 import {
   aggregateEventLog,
   cancelRealtimeTest,
+  deleteEventLog,
   downloadEventLog,
   folderHasStaticScan,
   listEventLogs,
@@ -198,6 +202,23 @@ export default function LiveScanPage() {
   useEffect(() => {
     refreshLogs();
   }, [refreshLogs]);
+
+  // Auto-refresh the past-scans rail while a scan is actively running.
+  //
+  // Why: a long-running realtime stream writes its file lazily under
+  // `~/.drift/scans/<fingerprint>/event_logs/`. Without this poll the
+  // rail only updates on start / stop / manual click — so a running
+  // scan can be invisible for its entire duration. 2 s is fast enough
+  // that the just-created file shows up "immediately" from a human's
+  // POV, slow enough to avoid IPC churn while idle.
+  useEffect(() => {
+    const isActive = mode.kind === "live" || mode.kind === "live-realtime";
+    if (!isActive) return;
+    const id = window.setInterval(() => {
+      refreshLogs();
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [mode.kind, refreshLogs]);
 
   // Hydrate the scanned-folder list + seed `folderPath` from either a
   // `?folder=<fp>` query string or the most-recently-touched folder.
@@ -668,6 +689,38 @@ export default function LiveScanPage() {
                   {formatBytes(l.sizeBytes)}
                   {l.modifiedIso && <> · {formatRelative(l.modifiedIso)}</>}
                 </div>
+              </button>
+              <button
+                type="button"
+                className="live-scan-rail-row-delete"
+                aria-label={`Delete ${l.displayName}`}
+                title={
+                  active
+                    ? "Cannot delete the scan that's currently loaded"
+                    : `Delete ${l.displayName}`
+                }
+                disabled={active}
+                onClick={async (e) => {
+                  // The row itself is a clickable button — stop the
+                  // delete click from also firing "load this scan".
+                  e.stopPropagation();
+                  if (
+                    !window.confirm(
+                      `Delete "${l.displayName}"? This removes the file from disk and cannot be undone.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  try {
+                    await deleteEventLog(l.path);
+                  } catch (err) {
+                    window.alert(`Delete failed: ${err}`);
+                    return;
+                  }
+                  refreshLogs();
+                }}
+              >
+                ×
               </button>
             </li>
           );
@@ -1688,16 +1741,23 @@ function ReportView({ report, live, liveError, path, searchQuery }: ReportViewPr
         )}
       </div>
 
+      <LiveStoryStrip report={report} />
+
+      <LiveOverviewBar report={report} />
+
       <Tabs items={REPORT_TAB_ITEMS} value={tab} onChange={setTab} />
 
       {tab === "flame" && (
-        <div className="live-scan-chart">
-          <IcicleChart
-            root={report.tree}
-            search={parsedSearch}
-            onNodeClick={(node) => setSelected(node)}
-          />
-        </div>
+        <>
+          <WhereAmIRunningPanel report={report} />
+          <div className="live-scan-chart">
+            <IcicleChart
+              root={report.tree}
+              search={parsedSearch}
+              onNodeClick={(node) => setSelected(node)}
+            />
+          </div>
+        </>
       )}
 
       {tab === "graph" && (

@@ -1385,6 +1385,9 @@ export interface EventLogMeta {
   displayName: string;
   sizeBytes: number;
   modifiedIso: string | null;
+  /** Source bucket: `"legacy"` for `~/.drift/event_logs/`, a folder
+   *  fingerprint for `~/.drift/scans/<fingerprint>/event_logs/`. */
+  source: string;
 }
 
 /** Per-call record after start/end pairing + parent assignment. */
@@ -1415,6 +1418,22 @@ export interface EventLogFunctionStat {
   cpuAvg: number | null;
   file: string | null;
   line: number | null;
+
+  // ---- Recent-window slice (width = report.recentWindowUs) ----------
+  // Drives "Where am I running mostly RIGHT NOW" — top-N by
+  // recentCumulativeUs is the live answer; comparing to the all-time
+  // top-N shows what's gotten hotter/cooler in the last few seconds.
+  recentSelfUs: number;
+  recentCumulativeUs: number;
+  recentNcalls: number;
+
+  // ---- Per-method runtime correlation -------------------------------
+  // CAVEAT: a sampling profiler cannot attribute the allocator to a
+  // specific frame. These are correlations ("RSS observed while this
+  // function was on the stack"), not causations. The UI labels them
+  // "mem observed" to keep that distinction visible.
+  avgMemoryBytes?: number;
+  peakMemoryBytes?: number;
 }
 
 /** One node in the aggregated tree. `value` is inclusive μs on this path
@@ -1455,6 +1474,61 @@ export interface EventLogTreeNode {
    *  stdlib / runtime / profiler-self. Mirrors F1a's `is_system`
    *  on the source frame. */
   isSystem?: boolean;
+
+  /** Mean process RSS across samples whose stack contained this exact
+   *  path from root. Correlation, not causation — see FunctionStat. */
+  avgMemoryBytes?: number;
+  /** Max process RSS across the same population. */
+  peakMemoryBytes?: number;
+  /** Mean 1-min loadavg across the same population. */
+  avgCpu?: number;
+}
+
+/** One runtime metrics reading. Memory in bytes, cpu = 1-min loadavg.
+ *  Zero values mean the field was absent on the source event (legacy
+ *  events.log files predate `memory_bytes`); the UI hides cards when
+ *  the latest reading is zero. */
+export interface EventLogRuntimeSample {
+  timeUs: number;
+  memoryBytes: number;
+  memoryPeakBytes: number;
+  cpu: number;
+}
+
+/** Runtime metrics summary — current/peak readings + downsampled
+ *  series for the sparkline + spike count. See Rust `RuntimeSeries`. */
+export interface EventLogRuntimeSeries {
+  /** Most-recent reading. null until first event arrives. */
+  current: EventLogRuntimeSample | null;
+  peakMemoryBytes: number;
+  peakMemoryBytesRecent: number;
+  minMemoryBytesRecent: number;
+  peakCpu: number;
+  /** Count of samples in the last ~60s whose memory_bytes exceeded
+   *  `mean + 2σ` across the same window. */
+  spikeCountRecent: number;
+  /** Downsampled series capped at ~120 points, oldest → newest. */
+  samples: EventLogRuntimeSample[];
+  /** Total raw samples seen (pre-downsample). */
+  samplesTotal: number;
+}
+
+/** "What was the most recent event doing?" — drives the live overview's
+ *  Active Stack card. null until the first stack-bearing event arrives. */
+export interface EventLogRightNowSnapshot {
+  timeUs: number;
+  service?: string;
+  pod?: string;
+  leafName?: string;
+  leafFile?: string;
+  leafLine?: number;
+  leafModule?: string;
+  leafIsSystem?: boolean;
+  stackDepth: number;
+  /** Microseconds between the snapshot's stack and the freshest event
+   *  in the run. Lets the UI render "fresh" vs "stale" without
+   *  needing local wall-clock alignment. */
+  ageUs: number;
 }
 
 /** Full snakeviz-style report. */
@@ -1473,6 +1547,14 @@ export interface EventLogReport {
   tree: EventLogTreeNode;
   calls: EventLogCall[];
   callsTruncated: boolean;
+  /** Memory + CPU over time. Always present; `current` is null when
+   *  no events have been ingested. */
+  runtime: EventLogRuntimeSeries;
+  /** "Where am I running RIGHT NOW?" — present once a stack has arrived. */
+  rightNow?: EventLogRightNowSnapshot;
+  /** Width of the "recent" window applied to `functions[].recent*` —
+   *  exposed so the UI can label the panel ("Last 15 s"). */
+  recentWindowUs: number;
 }
 
 /** Live-tail event payloads (mirrors `event_log_commands::topic`). */
@@ -1500,10 +1582,21 @@ export async function selectEventLogFile(): Promise<string | null> {
   return Array.isArray(result) ? (result[0] ?? null) : result;
 }
 
-/** List `.log`/`.jsonl` files in `~/.drift/event_logs/` (or `dir` if set),
- *  newest-first. Returns `[]` when the default dir doesn't exist yet. */
+/** List `.log`/`.jsonl` files the rail should show.
+ *
+ *  When `dir` is omitted, aggregates the legacy `~/.drift/event_logs/`
+ *  AND every per-folder `~/.drift/scans/<fingerprint>/event_logs/`.
+ *  Each entry carries `source` so the UI can group / filter.
+ */
 export async function listEventLogs(dir?: string): Promise<EventLogMeta[]> {
   return invoke<EventLogMeta[]>("list_event_logs", { dir: dir ?? null });
+}
+
+/** Delete one event-log file. The backend path-allowlists against
+ *  drift-managed directories — paths outside (or non-`.log`/`.jsonl`
+ *  files) are rejected with an Err. A missing file resolves OK. */
+export async function deleteEventLog(path: string): Promise<void> {
+  return invoke<void>("delete_event_log", { path });
 }
 
 /** One-shot aggregation of an event log at `path`. Reads the file fully;

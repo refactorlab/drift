@@ -189,16 +189,26 @@ jobs:
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
-      # tauri-action only writes the host runner's triple into latest.json.
-      # On macOS that's `darwin-aarch64` (macos-14 is Apple Silicon), but the
-      # universal `.app.tar.gz` is also valid for Intel — so we mirror the
-      # darwin-aarch64 entry under darwin-x86_64. Without this, Intel Macs
-      # never see the update.
+      # Post-process latest.json on the draft release. Two fixes:
       #
-      # We download latest.json from the just-created draft, patch it, and
-      # re-upload. Idempotent: if darwin-x86_64 already exists it's left
-      # alone.
-      - name: Mirror macOS universal entry to darwin-x86_64
+      # 1. Mirror the macOS universal entry to darwin-x86_64. tauri-action only
+      #    writes the host runner's triple; on macos-14 that's darwin-aarch64.
+      #    The universal `.app.tar.gz` is valid for Intel too, so without this
+      #    Intel Macs never see the update.
+      #
+      # 2. Rewrite asset URLs so spaces in the filename become dots. tauri-action
+      #    builds the bundle locally as "Drift Lab.app.tar.gz" (with the space
+      #    from productName), but on upload GitHub Releases sanitises filenames —
+      #    spaces become dots, so the stored asset is "Drift.Lab.app.tar.gz".
+      #    The URL tauri-action writes into latest.json uses the pre-sanitisation
+      #    name, so the updater hits a 404 on download. We apply the same
+      #    transform here that GitHub applies on upload (last path segment only,
+      #    so we don't accidentally touch the host/path). Signatures are over
+      #    bundle bytes, not URLs, so this is safe.
+      #
+      # Idempotent: if darwin-x86_64 already exists it's left alone, and URLs
+      # without spaces pass through unchanged.
+      - name: Patch latest.json (mirror darwin entry + fix asset URLs)
         if: startsWith(matrix.runner, 'macos')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -213,7 +223,7 @@ jobs:
             "https://api.github.com/repos/${repo}/releases/${RELEASE_ID}/assets")
           asset_id=$(echo "$asset_json" | jq -r '.[] | select(.name=="latest.json") | .id')
           if [ -z "$asset_id" ] || [ "$asset_id" = "null" ]; then
-            echo "::warning::latest.json not found on release ${RELEASE_ID} — skipping mirror"
+            echo "::warning::latest.json not found on release ${RELEASE_ID} — skipping patch"
             exit 0
           fi
           # Download → patch → re-upload.
@@ -224,9 +234,16 @@ jobs:
             -o latest.json
           echo "--- before ---" && cat latest.json
           jq '
-            if .platforms["darwin-aarch64"] and (.platforms["darwin-x86_64"] | not)
-            then .platforms["darwin-x86_64"] = .platforms["darwin-aarch64"]
-            else . end
+            # 1. Mirror darwin-aarch64 → darwin-x86_64 if missing.
+            (if .platforms["darwin-aarch64"] and (.platforms["darwin-x86_64"] | not)
+             then .platforms["darwin-x86_64"] = .platforms["darwin-aarch64"]
+             else . end)
+            # 2. Rewrite spaces → dots in the filename portion of each url.
+            | .platforms |= with_entries(
+                .value.url |= (
+                  (split("/") | (.[-1] |= gsub(" "; "."))) | join("/")
+                )
+              )
           ' latest.json > latest.patched.json
           echo "--- after ---" && cat latest.patched.json
           # Delete the old asset then upload the patched one (GitHub doesn't
@@ -239,4 +256,4 @@ jobs:
             -H "Content-Type: application/json" \
             --data-binary @latest.patched.json \
             "https://uploads.github.com/repos/${repo}/releases/${RELEASE_ID}/assets?name=latest.json"
-          echo "::notice::latest.json mirrored for darwin-x86_64"
+          echo "::notice::latest.json patched (mirror + url fix)"

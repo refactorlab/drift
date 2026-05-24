@@ -110,6 +110,12 @@ struct GraphContext {
     language_stats: LanguageStats,
     profiled_language: Option<Language>,
     entry_declarations: Vec<EntryDecl>,
+    /// Walker posture used for the main source walk. Carried through to
+    /// `Report::build_with_progress` so the post-graph ORM and SQL-file
+    /// passes apply the SAME `exclude_tests` / `exclude_static_assets` /
+    /// gitignore / driftignore rules — otherwise findings can surface
+    /// against files the user explicitly filtered out.
+    walk_opts: WalkOpts,
 }
 
 fn build_graph_context(
@@ -204,6 +210,7 @@ fn build_graph_context(
         language_stats,
         profiled_language,
         entry_declarations,
+        walk_opts,
     }
 }
 
@@ -289,6 +296,7 @@ pub fn analyze_with_progress(
         Some(root),
         ctx.entry_declarations,
         sql_opts.as_ref(),
+        &ctx.walk_opts,
         progress,
     );
     // NOTE: we deliberately do NOT call `progress.finish()` here.
@@ -357,6 +365,7 @@ pub fn analyze_roots_with_progress(
         Some(root),
         ctx.entry_declarations,
         sql_opts.as_ref(),
+        &ctx.walk_opts,
         progress,
     );
     // NOTE: we deliberately do NOT call `progress.finish()` here.
@@ -464,6 +473,7 @@ where
         Some(root),
         ctx.entry_declarations,
         sql_opts.as_ref(),
+        &ctx.walk_opts,
         progress,
     );
     Ok(Some(AnalyzeOutcome {

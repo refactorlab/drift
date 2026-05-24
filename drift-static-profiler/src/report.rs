@@ -5,6 +5,7 @@ use crate::insights::{self, FindingTopRef, ImmediateFix, RefactorCandidate, Root
 use crate::linguist::{LanguageBreakdownEntry, LanguageStats};
 use crate::progress::{NullProgress, Progress};
 use crate::tree::CallTreeNode;
+use crate::walker::WalkOpts;
 use crate::{FileTags, Language};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -194,6 +195,12 @@ impl Report {
         source_root: Option<&Path>,
         entry_declarations: Vec<EntryDecl>,
     ) -> Self {
+        // Library callers on this convenience path get the default walker
+        // posture — same gitignore / driftignore / default-ignore-dirs
+        // behavior the main walker uses. Production code (CLI, desktop)
+        // routes through `build_with_progress` with the user's chosen
+        // `WalkOpts` so `exclude_tests` etc. are honored uniformly.
+        let walk_opts = WalkOpts::default();
         Self::build_with_progress(
             all_tags,
             graph,
@@ -202,6 +209,7 @@ impl Report {
             source_root,
             entry_declarations,
             None,
+            &walk_opts,
             &NullProgress,
         )
     }
@@ -233,6 +241,14 @@ impl Report {
         // requires `source_root` to be set — without a root there's
         // nowhere to walk for `*.sql` files.
         sql_file_opts: Option<&crate::sql_lint::SqlFileOpts>,
+        // Walker posture shared across every post-graph pass that has
+        // its own filesystem walk (ORM workspace scan, `.sql` file
+        // scan). Must match the `WalkOpts` the main walker used so the
+        // user's `exclude_tests` / `exclude_static_assets` /
+        // `.gitignore` / `.driftignore` settings are honored uniformly
+        // — without this, ORM/SQL passes can surface findings against
+        // `tests/fixtures/...` files the user explicitly filtered out.
+        walk_opts: &WalkOpts,
         progress: &dyn Progress,
     ) -> Self {
         // Phase E2: cross-tree finding passes that need graph-wide info.
@@ -302,7 +318,7 @@ impl Report {
         // whichever entry covers the file, not be duplicated across
         // every entry that names that file.
         progress.step_start("attaching orm antipattern findings", 1);
-        crate::orm::attach_orm_findings(&mut entries, source_root);
+        crate::orm::attach_orm_findings(&mut entries, source_root, walk_opts);
         progress.step_progress(1, 1);
 
         // `.sql`-file scan pass — plan §3.2 first-class supplementary
@@ -320,7 +336,12 @@ impl Report {
         let sql_file_stats: Option<crate::sql_lint::SqlFileScanStats> =
             if let (Some(opts), Some(root)) = (sql_file_opts, source_root) {
                 progress.phase("scanning .sql files…");
-                Some(crate::sql_lint::scan_sql_files_into(&mut entries, root, opts))
+                Some(crate::sql_lint::scan_sql_files_into(
+                    &mut entries,
+                    root,
+                    opts,
+                    walk_opts,
+                ))
             } else {
                 None
             };

@@ -1654,7 +1654,12 @@ pub fn attach_sql_file_findings(
     root: &Path,
     opts: &SqlFileOpts,
 ) {
-    let _ = scan_sql_files_into(entries, root, opts);
+    // Library callers on this convenience path get the default walker
+    // posture. Production code (Report::build_with_progress) routes
+    // through `scan_sql_files_into` directly with the user's chosen
+    // `WalkOpts` so settings like `exclude_tests` are honored.
+    let walk_opts = crate::walker::WalkOpts::default();
+    let _ = scan_sql_files_into(entries, root, opts, &walk_opts);
 }
 
 /// Build the Info-level marker finding attached to synthetic nodes
@@ -1722,8 +1727,13 @@ pub fn scan_sql_files_into(
     entries: &mut Vec<CallTreeNode>,
     root: &Path,
     opts: &SqlFileOpts,
+    walk_opts: &crate::walker::WalkOpts,
 ) -> SqlFileScanStats {
-    let files = crate::walker::discover_sql_files(root);
+    // Honor the user's walker posture (`exclude_tests`, etc.) instead of
+    // hard-coding `WalkOpts::default()` here. Otherwise `.sql` files under
+    // `tests/fixtures/...` slip past the "Exclude test/spec/mock files"
+    // toggle and surface as synthetic `<sql_file>` entries.
+    let files = crate::walker::discover_sql_files_with(root, walk_opts);
     let mut stats = SqlFileScanStats::default();
     for path in files {
         let Ok(content) = fs::read_to_string(&path) else { continue };
