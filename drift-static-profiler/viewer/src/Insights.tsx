@@ -84,6 +84,35 @@ export function Insights({ report, presetKinds, onJump }: Props) {
 
   if (!report) return null;
   if (allRows.length === 0) {
+    // Distinguish "scan really has no findings" from "we just haven't
+    // loaded any entry subtrees yet." The summary's findings_by_kind
+    // rollup is present from first paint (the Rust summary endpoint
+    // pre-aggregates it); a non-zero rollup with zero walked rows means
+    // the per-entry sidecars haven't landed yet. Showing "no insights"
+    // in that window misled users into thinking the scan was clean —
+    // see the symptom of "Insights (368)" tab badge sitting above a
+    // "no insights for this scan" body.
+    const byKind = report.summary.findings_by_kind;
+    const expected = byKind ? Object.values(byKind).reduce((a, b) => a + b, 0) : 0;
+    // When a preset narrows by kind (Smells reuses this component),
+    // count only the preset's kinds against the expected total — a
+    // user filtering to N+1 shouldn't see "still loading" for findings
+    // they explicitly hid.
+    const expectedInPreset = presetKinds && byKind
+      ? presetKinds.reduce((a, k) => a + (byKind[k] ?? 0), 0)
+      : expected;
+    if (expectedInPreset > 0) {
+      return (
+        <div style={emptyStyle}>
+          <div style={{ marginBottom: 6 }}>loading insights…</div>
+          <div style={{ color: '#7e8189', fontSize: 11 }}>
+            The summary reports {expectedInPreset} finding{expectedInPreset === 1 ? '' : 's'}{' '}
+            for this scan; per-entry call trees are still streaming in the background.
+            Rows appear as each entry's subtree finishes loading.
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={emptyStyle}>
         <div style={{ marginBottom: 6 }}>✓ no insights for this scan</div>

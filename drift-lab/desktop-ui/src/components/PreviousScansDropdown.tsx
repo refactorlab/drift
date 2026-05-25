@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { ScanMeta, ScanPickerRoot } from "../lib/tauri";
 import ConfirmDeleteButton from "./ConfirmDeleteButton";
+import OpenDashboardButton from "./OpenDashboardButton";
 
 /**
  * Surfaces prior scans of the SAME project folder so the user can resume
@@ -149,6 +150,13 @@ export default function PreviousScansDropdown({
                   >
                     Open report
                   </button>
+                  <OpenDashboardButton
+                    scanId={meta.scanId}
+                    target="in-app"
+                    variant="compact"
+                    label="Dashboard"
+                    title="Open the rich profiler dashboard for this scan — flame graph, call tree, hot paths, insights."
+                  />
                   <ConfirmDeleteButton
                     onConfirm={async () => {
                       await onDelete(meta.scanId);

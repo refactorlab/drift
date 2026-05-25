@@ -65,6 +65,31 @@ interface Frame {
    *  id is the canonical `{file}::{parent_class}::{name}` shape — the
    *  decoder reconstructs it in that case. */
   id?: number;
+  // ── Schema v1.2 ("A Few Good Hoists"): symbol-intrinsic fields hoisted
+  // off every CallTreeNode onto the Frame so a symbol that appears 35×
+  // in a tree stores them once. The reader has to honour the same
+  // hoist — `expandNode` below prefers the Frame's value over the
+  // node's, mirroring Rust `resolve_findings` / `prefer_frame_*`.
+  // Without this, scans written in v1.2 round-trip with empty
+  // `findings`, `callers`, zero `complexity`, etc. — the Insights /
+  // Smells / Statistics tabs all show "no data" even when the scan has
+  // hundreds of findings (visible via the summary aggregate count).
+  callers?: number[];
+  callers_count?: number;
+  callees_count?: number;
+  call_site_count?: number;
+  complexity?: number;
+  loc?: number;
+  nesting_depth?: number;
+  parameter_count?: number;
+  is_async?: boolean;
+  is_recursive?: boolean;
+  n_plus_one_risk?: boolean;
+  blocking_in_async?: boolean;
+  pagerank?: number;
+  category_self?: number;
+  external_calls?: CompactExternalCall[];
+  findings?: CompactFinding[];
 }
 
 interface CompactReport {
@@ -389,6 +414,24 @@ function tierFromByte(b: number): 'imported_module' | 'receiver_pattern' | 'meth
 function expandNode(n: CompactCallTreeNode, ctx: Ctx): CallTreeNode {
   const f = frame(ctx, n.frame);
   const parent = sOpt(ctx, f.parent_class);
+  // For every v1.2-hoisted intrinsic, prefer the Frame's value when it's
+  // non-default (= came from a 1.2 file); fall back to the node's own
+  // value (1.1). Mirrors Rust `prefer_frame_*` / `resolve_*` helpers
+  // exactly so a sidecar round-tripped through `to_compact_entry` lands
+  // on the JS side with the SAME data the Rust reader would see.
+  const frameCallers = f.callers && f.callers.length > 0 ? f.callers : n.callers;
+  const frameExternals = f.external_calls && f.external_calls.length > 0
+    ? f.external_calls
+    : n.external_calls;
+  const frameFindings = f.findings && f.findings.length > 0 ? f.findings : n.findings;
+  const preferNum = (frameV: number | undefined, nodeV: number | undefined): number =>
+    frameV && frameV !== 0 ? frameV : nodeV ?? 0;
+  const preferBool = (frameV: boolean | undefined, nodeV: boolean | undefined): boolean =>
+    !!frameV || !!nodeV;
+  const preferCategoryByte = (
+    frameV: number | undefined,
+    nodeV: number | undefined,
+  ): number | undefined => (frameV && frameV !== 0 ? frameV : nodeV);
   return {
     id: frameId(ctx, f),
     name: s(ctx, f.name),
@@ -399,26 +442,26 @@ function expandNode(n: CompactCallTreeNode, ctx: Ctx): CallTreeNode {
     parent_class: parent,
     children: (n.children ?? []).map((c) => expandNode(c, ctx)),
     truncated_reason: sOpt(ctx, n.truncated_reason) ?? null,
-    callers: (n.callers ?? []).map((cix) => expandCallerRef(cix, ctx)),
-    callers_count: n.callers_count ?? 0,
-    callees_count: n.callees_count ?? 0,
+    callers: (frameCallers ?? []).map((cix) => expandCallerRef(cix, ctx)),
+    callers_count: preferNum(f.callers_count, n.callers_count),
+    callees_count: preferNum(f.callees_count, n.callees_count),
     subtree_size: n.subtree_size,
-    category_self: categoryFromByte(n.category_self),
+    category_self: categoryFromByte(preferCategoryByte(f.category_self, n.category_self)),
     categories_reached: n.categories_reached ?? {},
-    external_calls: (n.external_calls ?? []).map((x) => expandExternalCall(x, ctx)),
-    complexity: n.complexity ?? 0,
-    loc: n.loc ?? 0,
-    nesting_depth: n.nesting_depth ?? 0,
-    parameter_count: n.parameter_count ?? 0,
-    is_async: !!n.is_async,
-    call_site_count: n.call_site_count ?? 0,
-    is_recursive: !!n.is_recursive,
-    pagerank: n.pagerank ?? 0,
+    external_calls: (frameExternals ?? []).map((x) => expandExternalCall(x, ctx)),
+    complexity: preferNum(f.complexity, n.complexity),
+    loc: preferNum(f.loc, n.loc),
+    nesting_depth: preferNum(f.nesting_depth, n.nesting_depth),
+    parameter_count: preferNum(f.parameter_count, n.parameter_count),
+    is_async: preferBool(f.is_async, n.is_async),
+    call_site_count: preferNum(f.call_site_count, n.call_site_count),
+    is_recursive: preferBool(f.is_recursive, n.is_recursive),
+    pagerank: preferNum(f.pagerank, n.pagerank),
     percent_total: n.percent_total ?? 0,
     percent_parent: n.percent_parent ?? 0,
-    n_plus_one_risk: !!n.n_plus_one_risk,
-    blocking_in_async: !!n.blocking_in_async,
-    findings: (n.findings ?? []).map((fd) => expandFinding(fd, ctx)),
+    n_plus_one_risk: preferBool(f.n_plus_one_risk, n.n_plus_one_risk),
+    blocking_in_async: preferBool(f.blocking_in_async, n.blocking_in_async),
+    findings: (frameFindings ?? []).map((fd) => expandFinding(fd, ctx)),
     entry_labels: (n.entry_labels ?? []).map((ix) => s(ctx, ix)),
   };
 }
