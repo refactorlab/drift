@@ -1,6 +1,7 @@
 use crate::progress::Progress;
 use crate::{
-    metrics, parser, FileTags, ImportRecord, Language, Reference, Symbol, SymbolKind,
+    metrics, parser, Binding, CallForm, FileTags, ImportRecord, Language, Reference, Symbol,
+    SymbolKind,
 };
 use anyhow::{Context, Result};
 use rayon::prelude::*;
@@ -31,19 +32,15 @@ type QueryCache = [Option<Query>; LANG_COUNT];
 
 const LANG_COUNT: usize = 8; // Python/Java/TS/JS/Go/Rust/Scala/Kotlin
 
+#[inline]
 fn lang_index(lang: Language) -> usize {
-    // Stable manual mapping. We could derive it from a num crate but
-    // a 7-line match is clearer and keeps the dep list smaller.
-    match lang {
-        Language::Python => 0,
-        Language::Java => 1,
-        Language::TypeScript => 2,
-        Language::JavaScript => 3,
-        Language::Go => 4,
-        Language::Rust => 5,
-        Language::Scala => 6,
-        Language::Kotlin => 7,
-    }
+    // `Language` is `#[repr(u8)]` with explicit discriminants 0..LANG_COUNT.
+    // No match needed; adding a language is just an enum variant + a
+    // `profile_for` arm (Clean-Architecture refactor — language knowledge
+    // doesn't live here anymore). Debug-asserts the invariant.
+    let i = lang as usize;
+    debug_assert!(i < LANG_COUNT, "Language enum out of cache range");
+    i
 }
 
 thread_local! {
@@ -217,6 +214,7 @@ fn extract_tags_inner(
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut references: Vec<Reference> = Vec::new();
     let mut imports: Vec<ImportRecord> = Vec::new();
+    let mut bindings: Vec<Binding> = Vec::new();
 
     let capture_names = query.capture_names();
     let mut matches = cursor.matches(query, tree.root_node(), source.as_bytes());
@@ -240,6 +238,29 @@ fn extract_tags_inner(
         let mut import_name: Option<&str> = None;
         let mut import_alias: Option<&str> = None;
         let mut import_line: usize = 0;
+        // Stage F: `var = ClassName(...)` style assignments. The tags
+        // query emits `@binding.name` and `@binding.type` captures
+        // when it sees the pattern; we fold them into a `Binding`
+        // that the resolver can later use to disambiguate
+        // `var.method()` to the right class.
+        let mut binding_name: Option<&str> = None;
+        let mut binding_type: Option<&str> = None;
+        let mut binding_byte: Option<(usize, usize)> = None;
+        // Tracks the form for this match. Defaults to Bare; promoted
+        // to Method when a `ref.receiver` capture fires (a method
+        // call has both `ref.name` and `ref.receiver`), to New when
+        // the language query emits an explicit `ref.call.new`
+        // capture (JS/TS/Java/Scala `new Foo()`), to Static when
+        // `ref.call.static` fires (Rust `T::m()`, etc.). Order
+        // matters in the assignment below: explicit form captures
+        // win over the receiver-driven Method default.
+        let mut ref_form: CallForm = CallForm::Bare;
+
+        // Tracks whether this match is an anonymous callable
+        // (lambda/arrow/closure). For those we synthesize a name like
+        // `<lambda@<line>>` since the AST has no `name:` field.
+        let mut def_is_anonymous = false;
+        let mut def_anon_node: Option<tree_sitter::Node> = None;
 
         for cap in m.captures {
             let cname = capture_names[cap.index as usize];
@@ -259,10 +280,38 @@ fn extract_tags_inner(
                     def_kind = Some(SymbolKind::Class);
                     def_node = Some(node);
                 }
+                // Anonymous callable — `lambda`, arrow function, closure.
+                // The node has no name field, so we synthesize one
+                // from the start line. Stage D capture; each language
+                // tags query opts in by emitting this capture for
+                // its lambda-shaped nodes.
+                "def.anonymous" => {
+                    def_kind = Some(SymbolKind::Function);
+                    def_node = Some(node);
+                    def_is_anonymous = true;
+                    def_anon_node = Some(node);
+                }
                 "ref.name" => ref_name = Some(text),
-                "ref.receiver" => ref_receiver = Some(text.to_string()),
+                "ref.receiver" => {
+                    ref_receiver = Some(text.to_string());
+                    // Promote to Method if no stronger form has fired
+                    // yet. (`new Foo()` patterns capture `ref.call.new`
+                    // first in their query layout — see TS/Java/Scala
+                    // tags — so this assignment doesn't downgrade them.)
+                    if matches!(ref_form, CallForm::Bare) {
+                        ref_form = CallForm::Method;
+                    }
+                }
                 "ref.call" => {
                     ref_byte = Some((node.start_byte(), node.start_position().row + 1));
+                }
+                "ref.call.new" => {
+                    ref_byte = Some((node.start_byte(), node.start_position().row + 1));
+                    ref_form = CallForm::New;
+                }
+                "ref.call.static" => {
+                    ref_byte = Some((node.start_byte(), node.start_position().row + 1));
+                    ref_form = CallForm::Static;
                 }
                 "ref.sql_literal" => ref_sql_literal = Some(text),
                 "import.module" => {
@@ -271,10 +320,29 @@ fn extract_tags_inner(
                 }
                 "import.name" => import_name = Some(text),
                 "import.alias" => import_alias = Some(text),
+                "binding.name" => {
+                    binding_name = Some(text);
+                    binding_byte = Some((node.start_byte(), node.end_byte()));
+                }
+                "binding.type" => binding_type = Some(text),
                 _ => {}
             }
         }
 
+        // Synthesize a name for anonymous callables if the language's
+        // tags query fired `@def.anonymous` without an accompanying
+        // `@def.name`. The synthetic shape `<lambda@<line>>` is
+        // unambiguous: no real identifier in any of the 8 supported
+        // languages can contain `<`, so callers (resolvers, viewers)
+        // can detect synthetic-anon symbols by prefix.
+        let synthesized_name: String;
+        if def_is_anonymous && def_name.is_none() {
+            let line = def_anon_node
+                .map(|n| n.start_position().row + 1)
+                .unwrap_or(0);
+            synthesized_name = format!("<lambda@{line}>");
+            def_name = Some(&synthesized_name);
+        }
         if let (Some(name), Some(kind), Some(node)) = (def_name, def_kind, def_node) {
             let bs = node.start_byte();
             let be = node.end_byte();
@@ -325,8 +393,18 @@ fn extract_tags_inner(
                     byte_offset: byte,
                     in_symbol: None,
                     sql_literal: sql,
+                    call_form: ref_form,
                 });
             }
+        }
+        if let (Some(name), Some(ty), Some((bs, be))) = (binding_name, binding_type, binding_byte) {
+            bindings.push(Binding {
+                name: name.to_string(),
+                type_name: ty.to_string(),
+                extends: Vec::new(),
+                byte_start: bs,
+                byte_end: be,
+            });
         }
         if let Some(module) = import_module {
             // Go's tree-sitter grammar models import paths as
@@ -372,13 +450,50 @@ fn extract_tags_inner(
 
     resolve_containment(&mut symbols, &mut references);
 
+    // Reconnect the call tree across anonymous-callable boundaries.
+    //
+    // Lambda extraction (`(arrow_function) @def.anonymous` etc.) turns
+    // every arrow / closure / function-expression into a `<lambda@N>`
+    // symbol. The lambda's byte range is smaller than the whole-file
+    // `<module>` range — so `resolve_containment` (above) attributes
+    // every reference INSIDE the arrow function to the lambda, not to
+    // `<module>`. Result: `<module>` reach collapses (`routes/*.ts`
+    // files in `pos` dropped from reach ≈ N to reach = 2 — just the
+    // bare `route(...)` call survives at module scope).
+    //
+    // Fix: for each `<lambda@N>` symbol, inject a synthetic call
+    // reference from its smallest enclosing NON-anonymous symbol →
+    // the lambda. The resolver then wires a normal edge during graph
+    // construction. Top-level arrows attach to `<module>`; nested
+    // closures attach to their named enclosing function (not the
+    // module — otherwise the module's tree double-counts reach by
+    // short-circuiting past the named function).
+    //
+    // Runs AFTER `resolve_containment` on purpose: the synthetic ref's
+    // explicit `in_symbol` must survive — otherwise the byte-range
+    // rebind in resolve_containment would point the new refs back at
+    // the lambda (whose range trivially contains the lambda's own
+    // start byte).
+    synthesize_lambda_parent_refs(path, &symbols, &mut references);
+
+    // UX polish: rename `<lambda@N>` symbols to their binding variable
+    // name when the pattern is `IDENT = <lambda>` / `const IDENT = ` /
+    // `val IDENT = ` / etc. so the viewer shows `handler` instead of
+    // `<lambda@37>`. Updates every reference pointing at the renamed
+    // lambda so call-graph edges stay correct.
+    //
+    // Inline arrows passed straight to a function (e.g.
+    // `route({...}, async (req) => ...)`) have no binding and keep
+    // their synthetic `<lambda@N>` name.
+    rename_anonymous_to_binding(source, &mut symbols, &mut references);
+
     Ok(FileTags {
         file: path.to_path_buf(),
         language: lang,
         symbols,
         references,
         imports,
-        bindings: Vec::new(),
+        bindings,
     })
 }
 
@@ -398,7 +513,26 @@ fn add_synthetic_module_symbol(
             .iter()
             .any(|s| s.byte_start <= r.byte_offset && r.byte_offset <= s.byte_end)
     });
-    if !has_orphan_ref {
+    // Also fire when a top-level `<lambda@N>` exists. Its body refs
+    // bind to the lambda itself (not orphans), so without this trigger
+    // we'd never synthesize `<module>` — and `synthesize_lambda_parent_refs`
+    // below would have no module symbol to attach top-level arrows to.
+    // A "top-level" lambda is one not strictly contained in any other
+    // non-anonymous symbol. Nested closures don't need `<module>` —
+    // they reach their named enclosing function instead.
+    let has_top_level_lambda = symbols.iter().any(|s| {
+        if !is_anonymous_symbol_name(&s.name) {
+            return false;
+        }
+        !symbols.iter().any(|other| {
+            !std::ptr::eq(other, s)
+                && !is_anonymous_symbol_name(&other.name)
+                && other.byte_start <= s.byte_start
+                && other.byte_end >= s.byte_end
+                && (other.byte_start != s.byte_start || other.byte_end != s.byte_end)
+        })
+    });
+    if !has_orphan_ref && !has_top_level_lambda {
         return;
     }
     // Line count: cheap, source.lines() handles the trailing-newline case.
@@ -432,6 +566,257 @@ fn add_synthetic_module_symbol(
         loop_ranges: Vec::new(),
         await_ranges: Vec::new(),
     });
+}
+
+/// For every `<lambda@N>` symbol in `symbols`, inject a synthetic call
+/// reference from the lambda's smallest enclosing non-anonymous
+/// symbol → the lambda. See the call site in `extract_tags_inner` for
+/// the motivation (lambda extraction collapses `<module>` reach
+/// without this compensating step).
+///
+/// Why **non-anonymous** enclosing only: a closure nested inside
+/// another closure should still reach the *named* outer scope, so the
+/// module entry's tree shows `<module> → outer → <lambda@N>` instead
+/// of short-circuiting `<module> → <lambda@N>` and missing the
+/// intermediate function.
+///
+/// The injected reference's `name` matches the lambda's synthetic
+/// name (`<lambda@N>`); `by_name` holds exactly one entry for that
+/// name, so the resolver wires the edge unambiguously.
+fn synthesize_lambda_parent_refs(
+    path: &Path,
+    symbols: &[Symbol],
+    references: &mut Vec<Reference>,
+) {
+    // Two-pass borrow shape: collect the lambdas first, then iterate
+    // separately so we can search `symbols` for each one's encloser.
+    let anonymous: Vec<&Symbol> = symbols
+        .iter()
+        .filter(|s| is_anonymous_symbol_name(&s.name))
+        .collect();
+    for lambda in anonymous {
+        let mut best: Option<&Symbol> = None;
+        for cand in symbols {
+            if std::ptr::eq(cand, lambda) {
+                continue;
+            }
+            if is_anonymous_symbol_name(&cand.name) {
+                continue;
+            }
+            if cand.byte_start <= lambda.byte_start
+                && cand.byte_end >= lambda.byte_end
+                && (cand.byte_start != lambda.byte_start
+                    || cand.byte_end != lambda.byte_end)
+            {
+                let cand_size = cand.byte_end - cand.byte_start;
+                let best_size = best
+                    .map(|b| b.byte_end - b.byte_start)
+                    .unwrap_or(usize::MAX);
+                if cand_size < best_size {
+                    best = Some(cand);
+                }
+            }
+        }
+        let Some(enc) = best else { continue };
+        references.push(Reference {
+            name: lambda.name.clone(),
+            receiver: None,
+            file: path.to_path_buf(),
+            line: lambda.line,
+            byte_offset: lambda.byte_start,
+            in_symbol: Some(enc.name.clone()),
+            sql_literal: None,
+            call_form: CallForm::Bare,
+        });
+    }
+}
+
+/// True for the synthetic anonymous-callable names produced by
+/// `@def.anonymous`. The `<lambda@` prefix is unambiguous — no real
+/// identifier in any of the supported languages can contain `<`.
+fn is_anonymous_symbol_name(name: &str) -> bool {
+    name.starts_with("<lambda@")
+}
+
+/// For each `<lambda@N>` symbol whose source text is preceded by a
+/// `IDENT =` (or `IDENT :=` for Go) pattern, rename the symbol to
+/// `IDENT` so the viewer shows the binding name (`handler`) instead
+/// of the synthetic `<lambda@37>`. Refs that named the old `<lambda@N>`
+/// (e.g. the synthetic `<module>→<lambda@N>` edges added by
+/// `synthesize_lambda_parent_refs`) are updated in lock-step so the
+/// call graph stays linked.
+///
+/// Universal across all 8 supported languages — works on a textual
+/// scan backward from the lambda's start byte:
+///
+///   * JS/TS: `const handler = (req) => …`     → `handler`
+///   * Python: `f = lambda x: …`               → `f`
+///   * Kotlin: `val f = { x: Int -> … }`       → `f`
+///   * Scala:  `val f = (x: Int) => …`         → `f`
+///   * Java:   `IntUnaryOperator f = (x) -> …` → `f`
+///   * Rust:   `let f = |x| …`                 → `f`
+///   * Go:     `f := func() { … }`             → `f`
+///
+/// Collision handling: if renaming would create a duplicate
+/// `(name, byte_start)` triple in this file's symbol set, fall back
+/// to the synthetic `<lambda@N>` to keep ids unique.
+fn rename_anonymous_to_binding(
+    source: &str,
+    symbols: &mut [Symbol],
+    references: &mut [Reference],
+) {
+    // Collect renames first, apply afterward so we don't double-mutate
+    // while iterating.
+    let mut renames: Vec<(String, String)> = Vec::new();
+    let existing_names: std::collections::HashSet<String> =
+        symbols.iter().map(|s| s.name.clone()).collect();
+    for s in symbols.iter() {
+        if !is_anonymous_symbol_name(&s.name) {
+            continue;
+        }
+        let Some(binding) = infer_binding_name(source, s.byte_start) else {
+            continue;
+        };
+        // Don't shadow a real symbol with the same name. The
+        // `<lambda@N>` synthetic stays a stable identifier in that
+        // case — the viewer can still show `binding` as a label.
+        if existing_names.contains(&binding) && binding != s.name {
+            continue;
+        }
+        renames.push((s.name.clone(), binding));
+    }
+
+    // Apply renames in two passes:
+    //   1. Rewrite symbol.name
+    //   2. Rewrite every reference whose name OR in_symbol matched
+    //      the old synthetic id
+    let rename_map: std::collections::HashMap<String, String> =
+        renames.into_iter().collect();
+    if rename_map.is_empty() {
+        return;
+    }
+    for s in symbols.iter_mut() {
+        if let Some(new_name) = rename_map.get(&s.name) {
+            s.name = new_name.clone();
+        }
+    }
+    for r in references.iter_mut() {
+        if let Some(new_name) = rename_map.get(&r.name) {
+            r.name = new_name.clone();
+        }
+        if let Some(parent) = r.in_symbol.as_deref() {
+            if let Some(new_name) = rename_map.get(parent) {
+                r.in_symbol = Some(new_name.clone());
+            }
+        }
+    }
+}
+
+/// Look backward from `lambda_byte_start` for a `IDENT =` (or `:=`
+/// for Go-style short-vardecl) pattern. Returns the identifier if
+/// found; `None` if the lambda appears inline (no assignment).
+///
+/// Tolerates an optional type annotation: `IDENT : TYPE =` (TS/Java/
+/// Scala/Kotlin). The scan walks character-by-character to stay
+/// language-agnostic instead of running per-language regexes.
+fn infer_binding_name(source: &str, lambda_byte_start: usize) -> Option<String> {
+    let prefix = source.get(..lambda_byte_start)?;
+    let bytes = prefix.as_bytes();
+    let mut i = bytes.len();
+
+    // Skip trailing whitespace.
+    while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    // Expect `=`; tolerate `:=` for Go.
+    if i == 0 || bytes[i - 1] != b'=' {
+        return None;
+    }
+    i -= 1;
+    if i > 0 && bytes[i - 1] == b':' {
+        // `:=` (Go short var decl). Step past the `:`.
+        i -= 1;
+    }
+    while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    // Optional type annotation: `IDENT : TYPE =`. If we see a `]` or
+    // `>` (end of generic) or `)` etc., we can't easily walk the
+    // type — give up and don't rename. Plain `IDENT =` is the
+    // canonical shape we support.
+    //
+    // For simplicity, accept ONLY: trailing-id, then optional `:
+    // TYPE`-shaped run of ident/dot/space/comma chars before the
+    // declarator-or-bracket boundary.
+    //
+    // Step 1: skip backward over a type-annotation-shaped tail
+    // (digits, idents, `.`, `,`, space) until we hit `:` OR a
+    // declarator/keyword/punct boundary. If we hit `:`, the run
+    // before it is the type annotation; the ident before THAT is
+    // the binding name.
+    let after_eq_start = i;
+    while i > 0 {
+        let c = bytes[i - 1];
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' || c == b',' || c == b' '
+            || c == b'<' || c == b'>' || c == b'[' || c == b']' || c == b'&' || c == b'\''
+        {
+            i -= 1;
+        } else {
+            break;
+        }
+    }
+    // If we hit a `:`, we walked over a type annotation. Skip the `:`
+    // and any whitespace and continue to find the identifier.
+    if i > 0 && bytes[i - 1] == b':' {
+        i -= 1;
+        while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+    } else {
+        // No type annotation; reset to right-before `=` and find the
+        // identifier directly.
+        i = after_eq_start;
+        while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+    }
+    // Extract trailing identifier.
+    let id_end = i;
+    while i > 0 {
+        let c = bytes[i - 1];
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+            i -= 1;
+        } else {
+            break;
+        }
+    }
+    if i == id_end {
+        return None;
+    }
+    let ident = std::str::from_utf8(&bytes[i..id_end]).ok()?;
+    // Defensive: reject all-digit "identifiers" (shouldn't be possible
+    // syntactically but easier to filter here than to reproduce per-
+    // language identifier rules).
+    if ident.chars().next().map_or(true, |c| c.is_ascii_digit()) {
+        return None;
+    }
+    // Common keywords that look like idents at this position would
+    // mean we walked past the declarator. Reject these so we don't
+    // rename a lambda to `const` or `function`.
+    const RESERVED: &[&str] = &[
+        "const", "let", "var", "val", "function", "fun", "def", "return",
+        "yield", "if", "else", "for", "while", "do", "switch", "case",
+        "default", "break", "continue", "throw", "try", "catch", "new",
+        "this", "self", "super", "true", "false", "null", "nil", "None",
+        "undefined", "void", "async", "await", "import", "export",
+        "from", "as", "public", "private", "protected", "static", "abstract",
+        "final", "override", "open", "internal", "package", "class",
+        "interface", "trait", "object", "struct", "enum", "type", "in",
+    ];
+    if RESERVED.contains(&ident) {
+        return None;
+    }
+    Some(ident.to_string())
 }
 
 fn rightmost_id(receiver: &str) -> &str {

@@ -3,6 +3,10 @@ pub mod agent;
 mod agent_tools;
 mod app_config;
 mod backend;
+/// CLI installer subsystem — bundles the `drift` CLI inside the desktop
+/// release and puts it on the user's PATH at first launch.
+#[allow(dead_code)] // Outer rings opt in as they land.
+pub mod cli_install;
 mod commands;
 mod db;
 mod docker;
@@ -15,11 +19,27 @@ mod event_source_commands;
 /// be joined later. See `folder/mod.rs` for the rationale.
 pub mod folder;
 mod folder_commands;
-#[allow(dead_code)] // Scaffolding for the sampled↔static profile join — wired into the viewer in a follow-up.
+#[allow(dead_code)] // `JoinSuggestion::is_joined` + alternatives helpers — kept for upcoming UI surface.
 mod fuzzy_join;
+/// Loads a saved static scan into the flat `StaticNode` shape that
+/// `fuzzy_join` consumes when correlating live sampled frames against
+/// previously-scanned code. See module docs.
+mod static_scan_index;
+/// Infers a container→host path mapping from the union of live and
+/// static file paths so Docker frames join at high confidence
+/// instead of falling back to Tier-7 basename matching.
+mod path_alias;
+/// Tauri command surface for the live ↔ static join. Wires the live
+/// aggregator's per-function rollup into `fuzzy_join` and projects
+/// the matcher output into a UI-friendly report.
+mod join_commands;
 pub mod events;
 mod history;
 mod http_server;
+/// Process-wide broadcast for tracing log lines. The tracing layer
+/// publishes once; the UI's Tauri-emit task and the SSE `/api/logs/stream`
+/// handler subscribe independently. Keeps fan-out logic in one place.
+pub mod log_bus;
 mod model_config;
 pub mod model_discovery;
 mod presets;
@@ -44,29 +64,12 @@ pub mod tools;
 mod tray;
 mod workflow;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 use tracing::info;
 
 use crate::events::LogLine;
-
-/// Bridge from the backend's `tracing` pipeline to the UI: every event that
-/// makes it past the `EnvFilter` is also packaged as a [`LogLine`] and pushed
-/// to whatever callback `register_log_emitter` last installed.
-///
-/// We use an `Arc<dyn Fn>` (not a direct `AppHandle`) so the
-/// `TauriEventLayer` stays generic — `AppHandle<R>` is `Runtime`-parameterised
-/// and would force the layer (and every test that touches tracing) to pick a
-/// runtime up front.
-type LogEmitter = Arc<dyn Fn(LogLine) + Send + Sync>;
-static LOG_EMITTER: OnceLock<LogEmitter> = OnceLock::new();
-
-fn register_log_emitter(emitter: impl Fn(LogLine) + Send + Sync + 'static) {
-    // `OnceLock::set` only succeeds the first time; subsequent setup runs
-    // (e.g. in tests) silently keep the original — that's fine here.
-    let _ = LOG_EMITTER.set(Arc::new(emitter));
-}
 
 /// Initialise a `tracing` subscriber that writes formatted lines to stderr
 /// *and* mirrors them to the UI via [`register_log_emitter`].
@@ -78,6 +81,11 @@ fn register_log_emitter(emitter: impl Fn(LogLine) + Send + Sync + 'static) {
 /// the global `log::set_logger` and the second one panics.
 fn init_tracing() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    // The bus must be live before TauriEventLayer fires its first event;
+    // publish() is a silent no-op until init() runs. Ordering matters:
+    // installing the layer below first would lose any event emitted
+    // between subscriber-init and bus-init.
+    log_bus::init();
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,drift=debug,drift_lab_lib=debug"));
     let stderr_layer = fmt::layer()
@@ -105,7 +113,6 @@ where
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let Some(emitter) = LOG_EMITTER.get() else { return };
         let meta = event.metadata();
         let mut visitor = MessageVisitor::default();
         event.record(&mut visitor);
@@ -115,7 +122,7 @@ where
             target: meta.target().to_string(),
             message: visitor.into_string(),
         };
-        emitter(line);
+        log_bus::publish(line);
     }
 }
 
@@ -230,15 +237,61 @@ pub fn run() {
             // docker-child cleanup. Double-press escape hatch is built in.
             shutdown::install_signal_handlers(app.handle());
 
+            // First-launch CLI installer: symlink the bundled `drift`
+            // binary onto the user's PATH so `drift --help` works in any
+            // new terminal. Skipped in debug builds (don't pollute
+            // developer paths with `make dev` symlinks) and treated as
+            // non-fatal — install failures must not block app startup.
+            if !cfg!(debug_assertions) {
+                let handle_for_cli = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    match cli_install::infra::platform_installer() {
+                        Ok(installer) => {
+                            let source = match handle_for_cli
+                                .path()
+                                .resolve("drift", tauri::path::BaseDirectory::Resource)
+                            {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    tracing::warn!("cli install: bundle resource lookup failed: {e}");
+                                    return;
+                                }
+                            };
+                            match cli_install::app::ensure_installed::execute(&*installer, &source) {
+                                Ok(outcome) => tracing::info!(?outcome, "drift CLI install"),
+                                Err(e) => tracing::warn!("drift CLI install failed: {e}"),
+                            }
+                        }
+                        Err(e) => tracing::warn!("cli installer init failed: {e}"),
+                    }
+                });
+            }
+
             // Hook the tracing pipeline into Tauri's event bus so the UI's
-            // BackendLogPane can mirror what's printed to stderr. Installing
-            // the emitter here (not in `init_tracing`) means tests and CLI
-            // launches that never build an AppHandle keep getting the
-            // stderr-only behaviour.
+            // BackendLogPane can mirror what's printed to stderr. We
+            // subscribe to `log_bus` here (not in `init_tracing`) so tests
+            // and CLI launches that never build an AppHandle keep getting
+            // the stderr-only behaviour.
             let handle_for_log = app.handle().clone();
-            register_log_emitter(move |line| {
-                let _ = handle_for_log.emit(events::topic::LOG, line);
-            });
+            if let Some(mut rx) = log_bus::subscribe() {
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        match log_bus::classify(rx.recv().await) {
+                            log_bus::SubscribeOutcome::Line(line) => {
+                                let _ = handle_for_log.emit(events::topic::LOG, line);
+                            }
+                            // Drop notice; the UI doesn't have a "skipped"
+                            // marker today and the SSE consumers handle it
+                            // separately. Surface to stderr at most so a
+                            // pathological flood is visible to operators.
+                            log_bus::SubscribeOutcome::Lagged(n) => {
+                                tracing::warn!(dropped = n, "UI log subscriber lagged");
+                            }
+                            log_bus::SubscribeOutcome::Closed => break,
+                        }
+                    }
+                });
+            }
 
             // Bridge the `ask_user` tool to the BlockedModal: the tool parks
             // a oneshot and emits a question; this callback forwards the
@@ -419,6 +472,8 @@ pub fn run() {
             folder_commands::list_scanned_folders,
             folder_commands::register_folder,
             folder_commands::folder_has_static_scan,
+            folder_commands::list_static_scans_for_folder,
+            join_commands::compute_join_for_active_scan,
             // Realtime config + connection test (one unified, cancellable
             // command for both Settings and Active Scan).
             commands::update_realtime_config,

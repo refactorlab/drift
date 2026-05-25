@@ -7,10 +7,25 @@ license = "MIT"
 repository = "https://github.com/refactorlab/drift"
 edition = "2021"
 rust-version = "1.89"
+# We ship two binaries (the desktop app + the `drift` companion CLI).
+# `make dev` / `cargo run` / `cargo tauri dev` all use `cargo run` under
+# the hood, which fails with "could not determine which binary" when
+# multiple bins exist. Pinning the default keeps the dev flow on the
+# desktop app; the CLI is still buildable via `cargo build --bin drift`.
+default-run = "drift-lab"
 
 [lib]
 name = "drift_lab_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Companion CLI binary. Same crate so the wire schema (LogLine, the
+# /api routes) can't drift between the desktop app and the CLI. The
+# binary itself doesn't import `drift_lab_lib` — it talks to the running
+# app over HTTP on 127.0.0.1:5151 — so dead-code elimination keeps the
+# release artifact small even though the lib compiles alongside.
+[[bin]]
+name = "drift"
+path = "src/bin/drift_cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -81,6 +96,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 thiserror = "1"
+# CLI argument parsing for the `drift` binary (src/bin/drift_cli.rs).
+# `derive` keeps the binary's main() to a half-screen — three
+# subcommands and we're done.
+clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 # Subscriber + log-to-tracing bridge — surfaces every `tracing::info!` we emit
 # in the agent / tools / workflow paths to stderr (visible when running the

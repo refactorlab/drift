@@ -20,6 +20,17 @@
 
 use tree_sitter::Language;
 
+use super::LanguageProfile;
+
+/// Scala profile — registered via `crate::languages::profile_for`.
+pub struct Profile;
+
+impl LanguageProfile for Profile {
+    fn language(&self) -> crate::Language { crate::Language::Scala }
+    fn tree_sitter(&self) -> Language { language() }
+    fn tags_query(&self) -> &'static str { TAGS_QUERY }
+}
+
 pub fn language() -> Language {
     tree_sitter_scala::LANGUAGE.into()
 }
@@ -37,6 +48,11 @@ pub const TAGS_QUERY: &str = r#"
 
 (trait_definition
   name: (identifier) @def.name) @def.class
+
+; Scala lambdas — `x => x + 1`. The tree-sitter-scala grammar
+; represents these as `lambda_expression`. Anonymous; tags.rs
+; synthesizes the name.
+(lambda_expression) @def.anonymous
 
 (call_expression
   function: (identifier) @ref.name) @ref.call

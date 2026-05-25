@@ -31,6 +31,17 @@
 
 use tree_sitter::Language;
 
+use super::LanguageProfile;
+
+/// Rust profile — registered via `crate::languages::profile_for`.
+pub struct Profile;
+
+impl LanguageProfile for Profile {
+    fn language(&self) -> crate::Language { crate::Language::Rust }
+    fn tree_sitter(&self) -> Language { language() }
+    fn tags_query(&self) -> &'static str { TAGS_QUERY }
+}
+
 pub fn language() -> Language {
     tree_sitter_rust::LANGUAGE.into()
 }
@@ -52,13 +63,23 @@ pub const TAGS_QUERY: &str = r#"
 (enum_item
   name: (type_identifier) @def.name) @def.class
 
+; Rust closures — `|x| x + 1` or `move |x| { ... }`. Anonymous;
+; tags.rs synthesizes the name. Captured so closure bodies'
+; references resolve through a real symbol instead of leaking to the
+; enclosing function and inflating its complexity.
+(closure_expression) @def.anonymous
+
 (call_expression
   function: (identifier) @ref.name) @ref.call
 
+; Rust `T::associated()` / `mod::sub::foo()` — path-qualified calls.
+; Marked as Static so resolvers can distinguish from instance
+; dispatch (auto-deref method calls below) when the same name exists
+; in both shapes.
 (call_expression
   function: (scoped_identifier
     path: (_) @ref.receiver
-    name: (identifier) @ref.name)) @ref.call
+    name: (identifier) @ref.name)) @ref.call.static
 
 (call_expression
   function: (field_expression
@@ -69,6 +90,7 @@ pub const TAGS_QUERY: &str = r#"
 ; the function in a `generic_function` node, so the plain identifier and
 ; field_expression patterns above don't fire. Both shapes are common enough
 ; in real Rust code that missing them produces visible call-graph holes.
+; Turbofish bare call — `foo::<T>()`. Still bare (no receiver).
 (call_expression
   function: (generic_function
     function: (identifier) @ref.name)) @ref.call

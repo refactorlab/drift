@@ -23,5 +23,6 @@ pub mod registry;
 
 pub use fingerprint::FolderFingerprint;
 pub use registry::{
-    event_logs_dir_for, find, has_static_scan, list_scanned_folders, register, ScannedFolder,
+    event_logs_dir_for, find, has_static_scan, list_scanned_folders, list_static_scans_for,
+    register, ScannedFolder, StaticScanRef,
 };

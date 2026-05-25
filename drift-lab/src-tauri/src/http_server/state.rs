@@ -39,6 +39,12 @@ pub trait TauriBridge: Send + Sync {
 
     /// Remove a previously installed listener.
     fn unlisten(&self, id: u32);
+
+    /// Request a graceful exit of the desktop app. Implementations call
+    /// `AppHandle::exit(0)`, which fires `RunEvent::ExitRequested` —
+    /// the SAME path Cmd+Q / SIGINT take. Single quit pipeline by
+    /// design (see `shutdown::run`).
+    fn request_exit(&self);
 }
 
 pub struct TauriBridgeImpl<R: Runtime> {
@@ -88,6 +94,13 @@ impl<R: Runtime> TauriBridge for TauriBridgeImpl<R> {
     fn unlisten(&self, id: u32) {
         use tauri::Listener;
         self.app.unlisten(id);
+    }
+
+    fn request_exit(&self) {
+        // `exit(0)` is non-blocking — it queues `ExitRequested` into the
+        // tauri run loop. We return immediately so the HTTP handler can
+        // send 202 to the caller before the shutdown sequence begins.
+        self.app.exit(0);
     }
 }
 

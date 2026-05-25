@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::folder::{self, FolderFingerprint, ScannedFolder};
+use crate::folder::{self, FolderFingerprint, ScannedFolder, StaticScanRef};
 
 /// List every folder that has either a static scan or registered
 /// placeholder under `~/.drift/scans/`. Used by the desktop UI to
@@ -37,4 +37,18 @@ pub async fn folder_has_static_scan(fingerprint: String) -> Result<bool, String>
     let fp = FolderFingerprint::parse(&fingerprint)
         .ok_or_else(|| format!("invalid fingerprint shape: {fingerprint}"))?;
     Ok(folder::has_static_scan(&fp))
+}
+
+/// List every saved static scan whose `sourceRoot` matches the given
+/// folder fingerprint, newest-first. Drives the Active Scan page's
+/// "Pick which static scan to join against" dropdown — one folder may
+/// have several scans (the user re-runs after edits), and the join
+/// behaviour depends on which one is selected.
+#[tauri::command]
+pub async fn list_static_scans_for_folder(
+    fingerprint: String,
+) -> Result<Vec<StaticScanRef>, String> {
+    let fp = FolderFingerprint::parse(&fingerprint)
+        .ok_or_else(|| format!("invalid fingerprint shape: {fingerprint}"))?;
+    folder::list_static_scans_for(&fp)
 }

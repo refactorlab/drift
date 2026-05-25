@@ -15,12 +15,14 @@ import { matchFrameFilter, parseFrameFilter } from "../lib/frame_filter";
 import {
   aggregateEventLog,
   cancelRealtimeTest,
+  computeJoinForActiveScan,
   deleteEventLog,
   downloadEventLog,
   folderHasStaticScan,
   listEventLogs,
   listRealtimeProfiles,
   listScannedFolders,
+  listStaticScansForFolder,
   registerFolder,
   ScannedFolder,
   selectProjectPath,
@@ -40,6 +42,8 @@ import {
   type EventLogMeta,
   type EventLogReport,
   type EventLogTreeNode,
+  type JoinReport,
+  type StaticScanRef,
 } from "../lib/tauri";
 
 /** Default observability-server URL the "Download" button hits. The
@@ -187,6 +191,28 @@ export default function LiveScanPage() {
   // Whether a connection attempt is in flight. Prevents double-clicks.
   const [starting, setStarting] = useState<boolean>(false);
 
+  // Static-scan picker state for the live↔static join.
+  //
+  // `staticScans` is the list of saved scans for the currently-resolved
+  // folder, newest-first. `selectedStaticScanId` defaults to the newest
+  // — most folders have a single scan, so the picker is one-click for
+  // the common case while still letting the user pick an older snapshot
+  // when they need to compare against a known-good baseline.
+  //
+  // `joinReport` is recomputed whenever the live report changes (and a
+  // scan is selected). The UI surfaces coverage as a badge next to the
+  // summary cards; the `unjoined` list is what the user expands to
+  // debug missing matches.
+  const [staticScans, setStaticScans] = useState<StaticScanRef[]>([]);
+  const [selectedStaticScanId, setSelectedStaticScanId] = useState<string | null>(null);
+  const [joinReport, setJoinReport] = useState<JoinReport | null>(null);
+  // Token-ref races for both the list + compute paths: a folder change
+  // mid-flight, or a stale aggregate landing after the user picked a
+  // different scan, must not poison `joinReport`. Same protection
+  // pattern the rest of this page uses for folder resolution.
+  const joinTokenRef = useRef(0);
+  const staticScansTokenRef = useRef(0);
+
   const refreshLogs = useCallback(async () => {
     setLogsLoading(true);
     try {
@@ -276,6 +302,71 @@ export default function LiveScanPage() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [folderPath]);
+
+  // Load the list of static scans whenever the resolved folder changes.
+  // Auto-selects the newest one — the picker only shows multiple
+  // options when the user has re-scanned the same folder over time;
+  // for first-time scans there's a single obvious pick.
+  useEffect(() => {
+    const fp = resolvedFolder?.fingerprint;
+    if (!fp) {
+      setStaticScans([]);
+      setSelectedStaticScanId(null);
+      setJoinReport(null);
+      return;
+    }
+    staticScansTokenRef.current += 1;
+    const myToken = staticScansTokenRef.current;
+    (async () => {
+      try {
+        const scans = await listStaticScansForFolder(fp);
+        if (staticScansTokenRef.current !== myToken) return;
+        setStaticScans(scans);
+        // Keep the current selection if it's still in the list,
+        // otherwise default to the newest (first) scan.
+        setSelectedStaticScanId((cur) => {
+          if (cur && scans.some((s) => s.scanId === cur)) return cur;
+          return scans[0]?.scanId ?? null;
+        });
+      } catch {
+        if (staticScansTokenRef.current !== myToken) return;
+        setStaticScans([]);
+        setSelectedStaticScanId(null);
+      }
+    })();
+  }, [resolvedFolder?.fingerprint]);
+
+  // Recompute the live↔static join every time we have a fresh report
+  // AND a chosen static scan. Cheap (O(n_sampled + n_static)) so we
+  // don't need to debounce; the live aggregator fires at ~1 Hz which
+  // is well within budget. A token ref protects against a stale
+  // compute landing after the user switched scans.
+  useEffect(() => {
+    const liveReport: EventLogReport | null =
+      mode.kind === "live" || mode.kind === "live-realtime" || mode.kind === "static"
+        ? (mode as { report?: EventLogReport | null }).report ?? null
+        : null;
+    if (!selectedStaticScanId || !liveReport || liveReport.functions.length === 0) {
+      setJoinReport(null);
+      return;
+    }
+    joinTokenRef.current += 1;
+    const myToken = joinTokenRef.current;
+    const sampled = liveReport.functions.map((f) => ({
+      qualname: f.qualname,
+      file: f.file ?? null,
+    }));
+    (async () => {
+      try {
+        const r = await computeJoinForActiveScan(selectedStaticScanId, sampled);
+        if (joinTokenRef.current !== myToken) return;
+        setJoinReport(r);
+      } catch {
+        if (joinTokenRef.current !== myToken) return;
+        setJoinReport(null);
+      }
+    })();
+  }, [mode, selectedStaticScanId]);
 
   // Hydrate the profile list + select the active profile + presence-
   // check that profile's namespaced SecretStore slot. Done once on
@@ -821,6 +912,10 @@ export default function LiveScanPage() {
               useRunStore.getState().setProjectPath(folderPath);
               navigate("/");
             }}
+            staticScans={staticScans}
+            selectedStaticScanId={selectedStaticScanId}
+            onSelectStaticScan={setSelectedStaticScanId}
+            joinReport={joinReport}
             profiles={profiles}
             selectedProfileId={selectedProfileId}
             onSelectProfile={async (id) => {
@@ -1101,6 +1196,10 @@ function LiveListenPanel({
   folderHistory,
   onBrowseFolder,
   onRunStaticScan,
+  staticScans,
+  selectedStaticScanId,
+  onSelectStaticScan,
+  joinReport,
   profiles,
   selectedProfileId,
   onSelectProfile,
@@ -1123,6 +1222,10 @@ function LiveListenPanel({
   folderHistory: ScannedFolder[];
   onBrowseFolder: () => void;
   onRunStaticScan: () => void;
+  staticScans: StaticScanRef[];
+  selectedStaticScanId: string | null;
+  onSelectStaticScan: (id: string | null) => void;
+  joinReport: JoinReport | null;
   profiles: RealtimeProfile[];
   selectedProfileId: string | null;
   onSelectProfile: (id: string | null) => void;
@@ -1360,6 +1463,43 @@ function LiveListenPanel({
         )}
       </label>
 
+      {/* Static-scan picker — chooses which previously-saved scan to
+          join the live samples against. Joining lets the icicle / table
+          views attach static metadata (pagerank, complexity, full
+          qualname incl. class) to each live row. Auto-selects the
+          newest scan for the resolved folder; the picker is only
+          interesting when the same folder has been scanned more than
+          once (compare-vs-baseline workflow).
+
+          IMPORTANT: stays editable during streaming (unlike the other
+          inputs) — switching the join target mid-stream is harmless
+          since the join is recomputed locally, not part of the WSS
+          subscription. */}
+      {staticScans.length > 0 && (
+        <label style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 12, marginBottom: 4 }}>
+            Static scan{" "}
+            <span className="muted" style={{ fontSize: 11 }}>
+              (for live ↔ code join)
+            </span>
+          </span>
+          <select
+            value={selectedStaticScanId ?? ""}
+            onChange={(e) => onSelectStaticScan(e.target.value || null)}
+          >
+            {staticScans.map((s, i) => (
+              <option key={s.scanId} value={s.scanId}>
+                {i === 0 ? "latest · " : ""}
+                {formatScanLabel(s)}
+              </option>
+            ))}
+          </select>
+          {joinReport && (
+            <JoinCoverageBadge report={joinReport} />
+          )}
+        </label>
+      )}
+
       {/* Profile picker — drives which Supabase project this scan
           subscribes to. Empty option shown only when no profiles exist
           yet; the Settings button below opens the management surface. */}
@@ -1560,6 +1700,111 @@ function LiveListenPanel({
         <div className="muted" style={{ fontSize: 12 }}>
           {currentStatus}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Join-coverage badge (Phase 2 of the live↔static join) ----------
+//
+// Surfaces three pieces of information under the static-scan picker:
+//
+//   1. Coverage ratio    — "✓ 12/14 live functions joined"
+//   2. Detected alias    — "via /app/ → test-python-web-server/"
+//                          (only when Phase-2 auto-detection found one;
+//                           the user can see WHY coverage is high or
+//                           spot a wrong alias on the rare false hit)
+//   3. Unmatched details — expandable list of (qualname, sampled file)
+//                          for rows the matcher couldn't pair. Lets
+//                          the user debug ALSO-RAN frames without
+//                          having to dump the raw report.
+//
+// The list is collapsed by default — most users only care about the
+// coverage number; the expander is for when "joined" looks low.
+function JoinCoverageBadge({ report }: { report: JoinReport }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const unmatched = useMemo(
+    () => report.entries.filter((e) => !e.bestMatch),
+    [report.entries],
+  );
+  const aliasLabel = report.detectedAlias
+    ? `via ${report.detectedAlias.containerPrefix} → ${basename(
+        report.detectedAlias.hostPrefix.replace(/\/$/, ""),
+      )}/`
+    : null;
+  return (
+    <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+      <span
+        className="muted"
+        style={{ fontSize: 11 }}
+        title={
+          report.unjoined > 0
+            ? `${report.unjoined} live functions had no static counterpart — usually system / third-party frames.`
+            : "Every live function found a static match."
+        }
+      >
+        ✓ {report.joined}/{report.totalSampled} live functions joined to
+        static code
+        {report.unjoined > 0 && (
+          <>
+            {" · "}
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                color: "inherit",
+                textDecoration: "underline",
+                cursor: "pointer",
+                fontSize: 11,
+              }}
+              title="Show / hide the unmatched live frames"
+            >
+              {report.unjoined} unmatched {expanded ? "▾" : "▸"}
+            </button>
+          </>
+        )}
+        {aliasLabel && (
+          <span
+            style={{ marginLeft: 8, color: "#34d399" }}
+            title={`Live paths under ${report.detectedAlias?.containerPrefix} are rewritten to ${report.detectedAlias?.hostPrefix} before matching. Detected automatically from the overlap between live and static paths.`}
+          >
+            {aliasLabel}
+          </span>
+        )}
+      </span>
+      {expanded && unmatched.length > 0 && (
+        <ul
+          style={{
+            listStyle: "none",
+            padding: "6px 8px",
+            margin: 0,
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 6,
+            maxHeight: 180,
+            overflowY: "auto",
+            fontSize: 11,
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          }}
+        >
+          {unmatched.map((e) => (
+            <li
+              key={`${e.sampledQualname}::${e.sampledFile ?? ""}`}
+              style={{ padding: "2px 0", display: "flex", gap: 8 }}
+            >
+              <span>{e.sampledQualname}</span>
+              {e.sampledFile && (
+                <span className="muted" title={e.sampledFile}>
+                  {basename(e.sampledFile)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -1909,4 +2154,15 @@ function formatUs(us: number): string {
 function basename(p: string): string {
   const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/** Render a saved static scan as one dropdown row. Picks size info
+ *  the user can use to compare two scans of the same folder: when
+ *  the file count changes the user probably wants the newer scan;
+ *  when only the symbol count changes a smaller scan may still be
+ *  relevant for a focused subset. */
+function formatScanLabel(s: StaticScanRef): string {
+  const when = formatRelative(s.savedAt);
+  const lang = s.profiledLanguage ?? "?";
+  return `${when} · ${s.files} files · ${s.symbols} symbols · ${lang}`;
 }

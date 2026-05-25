@@ -1,8 +1,11 @@
 pub mod api;
 pub mod categories;
 pub mod compact;
+pub mod containment;
 pub mod diff;
 pub mod docker;
+pub mod dot_export;
+pub mod sarif_export;
 pub mod graph;
 pub mod manifest;
 pub mod insights;
@@ -14,6 +17,7 @@ pub mod pagerank;
 pub mod parser;
 pub mod progress;
 pub mod report;
+pub mod resolver;
 pub mod roots;
 pub mod scans_index;
 pub mod sql_ast;
@@ -33,16 +37,22 @@ pub use roots::{discover_roots, DiscoverOpts, DiscoveredRoot};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+// `#[repr(u8)]` + explicit discriminants so `lang as usize` is a stable
+// cache index. Used by `tags.rs`'s thread-local query cache (one slot
+// per language) and by anything else that wants O(1) keyed-by-language
+// storage without a HashMap. The discriminants MUST stay stable since
+// they're cache indices — append new variants, never reorder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum Language {
-    Python,
-    Java,
-    TypeScript,
-    JavaScript,
-    Go,
-    Rust,
-    Scala,
-    Kotlin,
+    Python = 0,
+    Java = 1,
+    TypeScript = 2,
+    JavaScript = 3,
+    Go = 4,
+    Rust = 5,
+    Scala = 6,
+    Kotlin = 7,
 }
 
 impl Language {
@@ -61,6 +71,40 @@ impl Language {
             // files as well — there's no separate Kotlin-script grammar.
             "kt" | "kts" => Some(Self::Kotlin),
             _ => None,
+        }
+    }
+
+    /// Stable iteration order. Used by shared code (bench harnesses,
+    /// fixture-coverage tests, schema generators) that wants to do
+    /// "for each supported language, …" without hardcoding the list.
+    /// Order matches the enum declaration so `Language::all()[lang as usize]
+    /// == lang` is an invariant.
+    pub fn all() -> &'static [Language] {
+        &[
+            Language::Python,
+            Language::Java,
+            Language::TypeScript,
+            Language::JavaScript,
+            Language::Go,
+            Language::Rust,
+            Language::Scala,
+            Language::Kotlin,
+        ]
+    }
+
+    /// Lower-case slug used for fixture-directory names, CLI arg
+    /// parsing, and JSON serialization debug. Stable identifier
+    /// matching the enum variant in `snake_case`.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Language::Python => "python",
+            Language::Java => "java",
+            Language::TypeScript => "typescript",
+            Language::JavaScript => "javascript",
+            Language::Go => "go",
+            Language::Rust => "rust",
+            Language::Scala => "scala",
+            Language::Kotlin => "kotlin",
         }
     }
 }
@@ -93,6 +137,38 @@ pub struct Symbol {
     pub await_ranges: Vec<(usize, usize)>,
 }
 
+/// Syntactic form of a call site. Captured by the tags query at scan
+/// time (one capture per form: `@ref.call.bare`, `.method`, `.new`,
+/// `.static`). The resolver uses this to interpret a name correctly —
+/// e.g. Python `OrderService()` is `Bare` with a name that happens to
+/// match a class, which the Python resolver redirects to `__init__`;
+/// TS `new OrderService()` is `New` and redirects to `constructor`.
+///
+/// Defaults to `Bare` so old fixtures (and any reference produced by a
+/// tags query that hasn't been form-aware yet) round-trip unchanged.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CallForm {
+    /// Bare identifier call — `foo()`, or `Foo()` for languages where
+    /// constructors don't require `new` (Python, Kotlin, Scala apply).
+    #[default]
+    Bare,
+    /// Member/method dispatch — `recv.method()` in any language.
+    Method,
+    /// Constructor invocation with explicit `new` keyword — JS/TS,
+    /// Java, Scala.
+    New,
+    /// Path-qualified static dispatch — Rust `T::m()`, Java
+    /// `T.staticM()`, Scala `T.m()`. Distinguished from `Method` so
+    /// resolvers can target an associated/static function rather than
+    /// an instance method when a name collision exists.
+    Static,
+}
+
+fn is_default_call_form(f: &CallForm) -> bool {
+    matches!(f, CallForm::Bare)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
     pub name: String,
@@ -108,6 +184,12 @@ pub struct Reference {
     /// Optional + skipped-when-None so old fixtures round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sql_literal: Option<String>,
+    /// Syntactic call form — `Bare` / `Method` / `New` / `Static`.
+    /// Drives per-language resolver decisions (constructor redirects,
+    /// static-vs-instance dispatch). Defaults to `Bare` and is skipped
+    /// when default so existing fixtures round-trip byte-stable.
+    #[serde(default, skip_serializing_if = "is_default_call_form")]
+    pub call_form: CallForm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

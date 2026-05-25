@@ -6,6 +6,36 @@ use std::path::PathBuf;
 const STUB_SENTINEL: &str = "<!-- drift-lab build.rs stub -->";
 
 fn main() {
+    // The bundled `drift` CLI resource (declared in tauri.conf.json
+    // under bundle.resources) is built by `beforeBuildCommand` during
+    // `cargo tauri build`. For plain `cargo check` / `cargo build` the
+    // file doesn't exist yet, which trips tauri-build's resource
+    // validation. Drop a minimal placeholder so compilation succeeds;
+    // beforeBuildCommand overwrites it with the real binary at bundle
+    // time. The placeholder is an executable shell script that
+    // complains loudly if it ever ships in a release — distinct from
+    // the real binary's `clap`-generated `--help` output.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let drift_resource = manifest.join("target/release/drift");
+    if !drift_resource.exists() {
+        if let Some(parent) = drift_resource.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(
+            &drift_resource,
+            "#!/bin/sh\necho 'drift: placeholder binary — run `cargo tauri build` for the real CLI' >&2\nexit 1\n",
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&drift_resource) {
+                let mut perm = meta.permissions();
+                perm.set_mode(0o755);
+                let _ = std::fs::set_permissions(&drift_resource, perm);
+            }
+        }
+    }
+
     tauri_build::build();
 
     // The localhost HTTP server (`crate::http_server`) embeds the static-

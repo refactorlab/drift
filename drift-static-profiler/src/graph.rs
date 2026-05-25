@@ -1,5 +1,7 @@
 use crate::categories::{classify, Category, ClassifyTier};
+use crate::languages::profile_for;
 use crate::progress::{NullProgress, Progress};
+use crate::resolver::SymbolIndex;
 use crate::{FileTags, Symbol};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -113,10 +115,19 @@ impl CallGraph {
         // at file granularity (matches the natural outer-loop boundary)
         // rather than per-reference (would flood the callback).
         progress.step_start("wiring call edges", total);
+        // Build the read-only SymbolIndex once. Resolvers consume this
+        // for `by_class_method` lookups (constructor redirects) plus
+        // the same `by_name` map the legacy code used inline. Built
+        // before the loop so per-file iterations don't pay the cost.
+        let symbol_index = SymbolIndex::build(&symbols, &by_name);
         for (i, ft) in all.iter().enumerate() {
             if i & 0x3F == 0 {
                 progress.set_current(&ft.file.display().to_string());
             }
+            // Per-file resolver lookup. Cheap (one pointer-load + match)
+            // and hoisted out of the inner reference loop so it's done
+            // once per file, not once per reference.
+            let resolver = profile_for(ft.language).resolver();
             for r in &ft.references {
                 let Some(in_name) = &r.in_symbol else { continue };
                 let Some(src) = ft.symbols.iter().find(|s| {
@@ -128,10 +139,13 @@ impl CallGraph {
                 };
                 let src_id = SymbolId::for_symbol(src);
 
-                let resolved: Vec<SymbolId> = by_name
-                    .get(&r.name)
-                    .map(|v| v.iter().filter(|t| *t != &src_id).cloned().collect())
-                    .unwrap_or_default();
+                let resolved: Vec<SymbolId> = resolver.resolve(
+                    &r.name,
+                    r.receiver.as_deref(),
+                    r.call_form,
+                    &src_id,
+                    &symbol_index,
+                );
 
                 if !resolved.is_empty() {
                     let bucket = edges.entry(src_id.clone()).or_default();
@@ -185,17 +199,40 @@ impl CallGraph {
 
         // 1. call_site_count: total references resolving TO each symbol (not unique callers).
         //    Different from callers.len() (unique source symbols) — counts every callsite.
+        //
+        //    Must use the SAME per-language resolver as Pass 2 above so the
+        //    invariant `call_site_count >= callers_count` holds — otherwise
+        //    constructor redirects (Python `OrderService()` → `__init__`)
+        //    show up in `callers` but not in `call_site_count`, and the
+        //    integration test enforcing the invariant trips.
         progress.step_start("counting call sites", total);
         let mut call_site_count: HashMap<SymbolId, usize> =
             symbols.keys().map(|k| (k.clone(), 0usize)).collect();
         for (i, ft) in all.iter().enumerate() {
+            let resolver = profile_for(ft.language).resolver();
             for r in &ft.references {
-                let Some(_) = r.in_symbol.as_ref() else { continue };
-                if let Some(targets) = by_name.get(&r.name) {
-                    for t in targets {
-                        if let Some(c) = call_site_count.get_mut(t) {
-                            *c += 1;
-                        }
+                let Some(in_name) = r.in_symbol.as_ref() else { continue };
+                // Re-locate the caller so resolver-self-exclusion stays correct.
+                // Same lookup the edge-wiring pass does; cheap (linear in
+                // file's symbols, dominated by reference count, not symbol count).
+                let Some(src) = ft.symbols.iter().find(|s| {
+                    &s.name == in_name
+                        && s.byte_start <= r.byte_offset
+                        && s.byte_end >= r.byte_offset
+                }) else {
+                    continue;
+                };
+                let src_id = SymbolId::for_symbol(src);
+                let targets = resolver.resolve(
+                    &r.name,
+                    r.receiver.as_deref(),
+                    r.call_form,
+                    &src_id,
+                    &symbol_index,
+                );
+                for t in targets {
+                    if let Some(c) = call_site_count.get_mut(&t) {
+                        *c += 1;
                     }
                 }
             }
