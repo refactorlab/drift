@@ -272,7 +272,21 @@ jobs:
 
       - name: Install frontend deps
         working-directory: drift-lab/desktop-ui
-        run: npm ci
+        run: |
+          set -e
+          npm ci
+          # Sanity check: the downstream `cargo tauri build` → tsc -b
+          # depends on these being resolvable from THIS node_modules.
+          # If they're missing here we'd hit a cryptic tsc cascade
+          # ("TS2307: Cannot find module 'react'", etc) inside
+          # beforeBuildCommand. Fail loud now with a clear message
+          # instead.
+          for pkg in react react-dom; do
+            test -d "node_modules/$pkg" || {
+              echo "::error::desktop-ui/node_modules/$pkg missing after npm ci — install broken or lockfile incomplete"
+              exit 1
+            }
+          done
 
       # ── Cache layer 3: static-profiler viewer dist ────────────────────
       # The Rust crate embeds viewer/dist/ via rust-embed at compile time.
@@ -291,12 +305,43 @@ jobs:
           path: drift-static-profiler/viewer/dist
           key: viewer-dist-${{ runner.os }}-${{ hashFiles('drift-static-profiler/viewer/package-lock.json', 'drift-static-profiler/viewer/src/**', 'drift-static-profiler/viewer/index.html', 'drift-static-profiler/viewer/vite.config.*', 'drift-static-profiler/viewer/tsconfig*.json') }}
 
+      # `npm ci` is UNCONDITIONAL — desktop-ui/tsconfig.json `include`s
+      # 18 files from drift-static-profiler/viewer/src/*.tsx (the in-app
+      # dashboard imports them directly), so when desktop-ui's tsc -b
+      # compiles those files it walks up from viewer/src/ looking for
+      # `node_modules/react`. If viewer/node_modules isn't installed,
+      # tsc fails with "TS2307: Cannot find module 'react'" (plus
+      # cascading TS7006 implicit-any errors). The dist cache only
+      # stores viewer/dist, not node_modules — so on cache hit the
+      # build step below is skipped but deps must still be installed.
+      #
+      # ⚠ DO NOT MOVE THIS STEP INSIDE THE `if: cache-hit != 'true'`
+      # CONDITIONAL. That is what previously broke this pipeline. The
+      # post-install guard below will fail the build loudly if a future
+      # change re-introduces that bug, instead of cascading into a
+      # 200-line tsc error dump.
+      - name: Install viewer deps (always — desktop-ui imports viewer/src/)
+        working-directory: drift-static-profiler/viewer
+        run: |
+          set -e
+          npm ci
+          # Defensive guard: assert the bare imports desktop-ui's cross-
+          # project tsc compile relies on actually landed. If anyone re-
+          # introduces a cache conditional that skips npm ci on hits,
+          # this guard turns the resulting silent breakage into an
+          # explicit, actionable error before beforeBuildCommand even
+          # runs.
+          for pkg in react react-dom react-router-dom; do
+            test -d "node_modules/$pkg" || {
+              echo "::error::viewer/node_modules/$pkg missing after npm ci — install broken, lockfile incomplete, or this step was wrongly gated on a cache hit"
+              exit 1
+            }
+          done
+
       - name: Build static-profiler viewer (cache miss only)
         if: steps.viewer-cache.outputs.cache-hit != 'true'
         working-directory: drift-static-profiler/viewer
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       - name: Verify viewer dist (and not the build.rs stub)
         working-directory: drift-static-profiler/viewer

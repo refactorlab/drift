@@ -117,7 +117,15 @@ jobs:
 
       - name: Install frontend deps
         working-directory: drift-lab/desktop-ui
-        run: npm ci
+        run: |
+          set -e
+          npm ci
+          for pkg in react react-dom; do
+            test -d "node_modules/$pkg" || {
+              echo "::error::desktop-ui/node_modules/$pkg missing after npm ci — install broken or lockfile incomplete"
+              exit 1
+            }
+          done
 
       # ── Cache layer 3: static-profiler viewer dist ────────────────────
       # CORRECTNESS FIX: previous versions of this workflow had no viewer
@@ -135,12 +143,33 @@ jobs:
           path: drift-static-profiler/viewer/dist
           key: viewer-dist-${{ runner.os }}-${{ hashFiles('drift-static-profiler/viewer/package-lock.json', 'drift-static-profiler/viewer/src/**', 'drift-static-profiler/viewer/index.html', 'drift-static-profiler/viewer/vite.config.*', 'drift-static-profiler/viewer/tsconfig*.json') }}
 
+      # `npm ci` is UNCONDITIONAL — desktop-ui/tsconfig.json `include`s
+      # viewer/src/*.tsx files (the in-app dashboard imports them), so
+      # desktop-ui's tsc -b needs viewer/node_modules every build. The
+      # dist cache only stores viewer/dist, not node_modules.
+      #
+      # ⚠ DO NOT MOVE THIS STEP INSIDE THE `if: cache-hit != 'true'`
+      # CONDITIONAL. That is what previously broke the build pipeline.
+      - name: Install viewer deps (always — desktop-ui imports viewer/src/)
+        working-directory: drift-static-profiler/viewer
+        run: |
+          set -e
+          npm ci
+          # Defensive guard: assert the bare imports desktop-ui's cross-
+          # project tsc compile relies on actually landed. Turns any
+          # future regression that skips npm ci on cache hits into an
+          # explicit, actionable error.
+          for pkg in react react-dom react-router-dom; do
+            test -d "node_modules/$pkg" || {
+              echo "::error::viewer/node_modules/$pkg missing after npm ci — install broken, lockfile incomplete, or this step was wrongly gated on a cache hit"
+              exit 1
+            }
+          done
+
       - name: Build static-profiler viewer (cache miss only)
         if: steps.viewer-cache.outputs.cache-hit != 'true'
         working-directory: drift-static-profiler/viewer
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       - name: Verify viewer dist (and not the build.rs stub)
         working-directory: drift-static-profiler/viewer
