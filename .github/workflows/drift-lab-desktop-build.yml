@@ -307,6 +307,19 @@ jobs:
             exit 1
           fi
 
+      # Tell `drift-lab/scripts/build-cli.sh` (invoked from
+      # tauri.conf.json's beforeBuildCommand) to produce a universal
+      # `drift` CLI binary on macOS. Without this the script builds for
+      # the host arch only (aarch64 on macos-14), the resulting
+      # `target/release/drift` is single-arch, and the universal-target
+      # bundler can't find a binary at target/universal-apple-darwin/release/drift
+      # — bundling fails with "Failed to copy binary ... does not exist".
+      # Linux runners ignore this variable; Windows isn't in the matrix.
+      # Mirrors the same step in drift-lab-desktop-release.yml.
+      - name: Enable universal CLI build on macOS
+        if: startsWith(matrix.runner, 'macos')
+        run: echo "DRIFT_BUILD_UNIVERSAL=1" >> "$GITHUB_ENV"
+
       - name: Build desktop app (release)
         working-directory: drift-lab
         env:

@@ -32,13 +32,24 @@ if [[ "${DRIFT_BUILD_UNIVERSAL:-0}" == "1" ]]; then
   rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null 2>&1 || true
   cargo build --release --target aarch64-apple-darwin --bin drift
   cargo build --release --target x86_64-apple-darwin --bin drift
-  mkdir -p target/release
+  # Tauri's bundler rewrites `bundle.resources` paths of the form
+  # `target/release/...` to `target/<triple>/release/...` when
+  # `cargo tauri build --target <triple>` is in play (cargo-convention:
+  # cross-target artefacts live under target/<triple>/). The CI mac
+  # leg uses --target universal-apple-darwin, so the binary must land
+  # at target/universal-apple-darwin/release/drift or the bundler
+  # fails the .app build with "Failed to copy binary ... does not
+  # exist". Mirror it to target/release/drift so build.rs's
+  # placeholder check (which is --target-unaware) and any non-target
+  # consumer still finds a valid file at the canonical path.
+  mkdir -p target/universal-apple-darwin/release target/release
   lipo -create \
     target/aarch64-apple-darwin/release/drift \
     target/x86_64-apple-darwin/release/drift \
-    -output target/release/drift
-  file target/release/drift
-  echo "✓ universal drift CLI ready at $(pwd)/target/release/drift"
+    -output target/universal-apple-darwin/release/drift
+  cp -f target/universal-apple-darwin/release/drift target/release/drift
+  file target/universal-apple-darwin/release/drift
+  echo "✓ universal drift CLI ready at $(pwd)/target/universal-apple-darwin/release/drift (mirrored to target/release/drift)"
 else
   echo "▶ building drift CLI for host architecture"
   cargo build --release --bin drift
