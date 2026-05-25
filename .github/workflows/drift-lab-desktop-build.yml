@@ -173,14 +173,25 @@ jobs:
         include:
           # macOS universal binary on macos-14 — covers Apple Silicon + Intel
           # in one leg, avoiding the macos-13 runner queue.
+          #
+          # `--bundles dmg` restricts Tauri to producing ONLY the .dmg.
+          # Default ("targets":"all" in tauri.conf.json) would also emit
+          # the .app/.app.tar.gz/.sig pair — those carry the same payload
+          # as the dmg, so we'd be uploading the binary twice. Updater
+          # bundles aren't needed in this validation workflow; the release
+          # workflow (drift-lab-desktop-release.yml) keeps the full set
+          # so the in-app updater stays wired.
           - runner: macos-14
             label: macos-universal
-            tauri_args: --target universal-apple-darwin
+            tauri_args: --target universal-apple-darwin --bundles dmg
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             bundle_dir: universal-apple-darwin/release/bundle
+          # `--bundles deb` for linux for the same reason — drops .AppImage,
+          # .rpm, and their .tar.gz updater pairs. .deb covers the common
+          # ubuntu/debian install path that 95% of users hit.
           - runner: ubuntu-22.04     # Tauri 2 needs libwebkit2gtk-4.1
             label: linux-x86_64
-            tauri_args: ''
+            tauri_args: --bundles deb
             rust_targets: x86_64-unknown-linux-gnu
             bundle_dir: release/bundle
           # Windows — temporarily disabled. Re-enable by uncommenting once

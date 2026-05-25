@@ -159,3 +159,26 @@ tempfile = "3"
 # rule in `.github/dependabot.yml`. The alert itself can be dismissed
 # on the GitHub Security tab with reason "Vulnerable code is not
 # reachable" once an org-owner reviews it.
+
+# Release profile — aggressive size optimization. Without this, Cargo's
+# defaults (no LTO, 16 codegen units, no symbol strip) produced ~550 MB
+# per-leg CI uploads. With strip + fat LTO + single codegen unit the
+# universal-mac binary shrinks ~5-7x. Cost: release compile time
+# ~doubles (was ~2m per arch, now ~4-5m).
+#
+#   strip          — drop debug info AND symbol tables; the single
+#                    biggest size win for Rust release binaries
+#   lto = "fat"    — whole-program optimization across crate boundaries;
+#                    needed to dead-code-eliminate unused sqlx/tokio paths
+#   codegen-units  — 1 means cargo doesn't split the crate across parallel
+#                    codegen units, so LTO can see everything
+#
+# NOTE: `panic = "abort"` would shave a few more % but is incompatible
+# with this codebase — `src/scan/runner.rs` and `drift-static-profiler/
+# src/orm/mod.rs` use `std::panic::catch_unwind` to soft-fail per-file
+# scan/ORM panics. Switching to abort would turn those recoverable
+# errors into hard process crashes. Keep unwind.
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
