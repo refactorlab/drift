@@ -95,7 +95,7 @@ drift-static-profiler = { path = "../../drift-static-profiler" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 # CLI argument parsing for the `drift` binary (src/bin/drift_cli.rs).
 # `derive` keeps the binary's main() to a half-screen — three
 # subcommands and we're done.
