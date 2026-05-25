@@ -151,6 +151,7 @@ export function DetailsPane({ node, onJumpTo, onJumpExternal }: Props) {
                 <li
                   key={`${e.name}-${e.line}-${i}`}
                   style={clickable ? liButtonStyle : liStyle}
+                  title={tooltip || undefined}
                   onClick={() => clickable && onJumpExternal!(node.file, e.line)}
                 >
                   <Badge label={e.category} color={CATEGORY_COLORS[e.category]} small tip={TIPS[`category_${e.category}`]} />

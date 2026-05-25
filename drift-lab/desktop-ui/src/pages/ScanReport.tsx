@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import ActiveModelBadge from "../components/ActiveModelBadge";
 import ConfirmDeleteButton from "../components/ConfirmDeleteButton";
 import MagicOrb from "../components/MagicOrb";
+import OpenDashboardButton from "../components/OpenDashboardButton";
 import Orbs from "../components/Orbs";
 import EntryPicker from "../components/scan-summary/EntryPicker";
 import ScanSummary from "../components/scan-summary/ScanSummary";
@@ -524,6 +525,33 @@ export default function ScanReportPage() {
           </div>
           <div className="scan-page-actions">
             <ActiveModelBadge compact />
+            {phase.kind === "report" && report && scanId && (
+              <>
+                {/*
+                  Primary "Open profiler dashboard" affordance — deep-links
+                  into the bundled viewer's full Scan Report page (flame
+                  graph + call tree + call graph + hot paths + insights)
+                  for THIS scan. The desktop-app ScanReport above is the
+                  curated findings + "Study this" surface; the dashboard
+                  is the exploratory side. Two complementary views, one
+                  click between them.
+                */}
+                <OpenDashboardButton
+                  scanId={scanId}
+                  target="in-app"
+                  variant="primary"
+                  label="Open profiler dashboard"
+                  title="Open the rich profiler dashboard for this scan — flame graph, call tree, call graph, hot paths, smells, and structured insights. Stays inside the app."
+                />
+                <OpenDashboardButton
+                  scanId={scanId}
+                  target="browser"
+                  variant="ghost"
+                  label="Open in browser"
+                  title="Open the same dashboard in your default browser — useful for devtools, bookmarking, or viewing alongside the app."
+                />
+              </>
+            )}
             {phase.kind === "report" && report && (
               <>
                 {hasCachedRoots && (

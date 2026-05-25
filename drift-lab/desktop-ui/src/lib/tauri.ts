@@ -1217,8 +1217,14 @@ function rehydrateEnvelope(env: StoredScan): StoredScan {
   return { ...env, report: decompressReport(env.report) };
 }
 
-/** Wire shape of a Frame inside the compact 1.1 form. Matches the
- *  readable field names emitted by `drift_static_profiler::compact::Frame`. */
+/** Wire shape of a Frame for both 1.1 and 1.2. Identity fields are always
+ *  present; the v1.2 hoist moves every symbol-intrinsic field
+ *  (`complexity`, `callers`, `findings`, …) off the per-position
+ *  CallTreeNode and onto the Frame. The reader has to honour the hoist
+ *  or it silently drops everything that lives on the Frame in 1.2 —
+ *  symptoms include "Insights (368)" badge above an empty Insights
+ *  table, complexity columns all zero, and no callers in the details
+ *  pane. Mirrors `drift_static_profiler::compact::Frame`. */
 interface WireFrame {
   name: number;
   file: number;
@@ -1227,6 +1233,25 @@ interface WireFrame {
   kind: number;
   /** non-canonical id; omitted when the id is `{file}::{parent_class}::{name}`. */
   id?: number;
+  // ── v1.2 intrinsics. Each field is optional + may be absent on 1.1
+  // sidecars; the expander falls back to the node's own value when
+  // missing or default-valued.
+  callers?: number[];
+  callers_count?: number;
+  callees_count?: number;
+  call_site_count?: number;
+  complexity?: number;
+  loc?: number;
+  nesting_depth?: number;
+  parameter_count?: number;
+  is_async?: boolean;
+  is_recursive?: boolean;
+  n_plus_one_risk?: boolean;
+  blocking_in_async?: boolean;
+  pagerank?: number;
+  category_self?: number;
+  external_calls?: unknown[];
+  findings?: unknown[];
 }
 
 /** Detect compact `CompactEntryDoc` (top-level `string_table` + `frames` +
@@ -1254,7 +1279,24 @@ function decompressEntryDoc(raw: unknown): unknown {
 
 /** Recursive expansion mirroring `viewer/src/decompress.ts` — kept inline
  *  here so the desktop UI bundle doesn't pull in the viewer's decompress
- *  module (different `Report` typing). */
+ *  module (different `Report` typing).
+ *
+ *  Hoist-aware: for every v1.2 symbol-intrinsic field (`findings`,
+ *  `callers`, `complexity`, …), prefer the Frame's value when it's
+ *  non-default; fall back to the node's own value (1.1 form). Matches
+ *  Rust `prefer_frame_*` / `resolve_*` helpers exactly. Findings live
+ *  on the Frame in 1.2; before this hoist-aware logic the dashboard's
+ *  Insights tab showed "no insights" even when the summary aggregate
+ *  reported hundreds of findings — the per-entry sidecars were
+ *  arriving correctly but their findings were getting dropped here.
+ *
+ *  The frame-side `callers` / `external_calls` / `findings` arrays are
+ *  passed through verbatim — the consuming React components key off
+ *  this expansion's output and don't care whether the strings inside
+ *  are still string-table indices; that's fine because the FINDINGS
+ *  rendered by Insights/Smells/Details are pre-expanded server-side
+ *  for top-N rollups (see `summary.findings_top`), and per-node
+ *  finding bodies are expanded by `normalizeSubtree` downstream. */
 function expandNodeWith(
   raw: unknown,
   strings: string[],
@@ -1264,6 +1306,22 @@ function expandNodeWith(
   const n = raw as Record<string, unknown> & {
     frame?: number;
     children?: unknown[];
+    callers?: unknown;
+    callers_count?: number;
+    callees_count?: number;
+    call_site_count?: number;
+    complexity?: number;
+    loc?: number;
+    nesting_depth?: number;
+    parameter_count?: number;
+    is_async?: boolean;
+    is_recursive?: boolean;
+    n_plus_one_risk?: boolean;
+    blocking_in_async?: boolean;
+    pagerank?: number;
+    category_self?: number;
+    external_calls?: unknown[];
+    findings?: unknown[];
   };
   const frameIx = typeof n.frame === "number" ? n.frame : 0;
   const fr = frames[frameIx] ?? { name: 0, file: 0, line: 0, parent_class: 0, kind: 0, id: 0 };
@@ -1282,6 +1340,18 @@ function expandNodeWith(
     fr.id && fr.id !== 0
       ? sx(fr.id)
       : `${sx(fr.file)}::${sx(fr.parent_class)}::${sx(fr.name)}`;
+  const preferNum = (frameV: number | undefined, nodeV: number | undefined): number =>
+    frameV && frameV !== 0 ? frameV : nodeV ?? 0;
+  const preferBool = (frameV: boolean | undefined, nodeV: boolean | undefined): boolean =>
+    !!frameV || !!nodeV;
+  // For arrays, "frame wins when non-empty" — non-empty is the 1.2
+  // signature that the writer chose to hoist this field. Node fallback
+  // covers 1.1 sidecars whose Frame had no intrinsics.
+  const rawCallerIxs = fr.callers && fr.callers.length > 0 ? fr.callers : (n.callers as unknown);
+  const rawExternals = fr.external_calls && fr.external_calls.length > 0
+    ? fr.external_calls
+    : n.external_calls;
+  const rawFindings = fr.findings && fr.findings.length > 0 ? fr.findings : n.findings;
   return {
     ...n,
     id,
@@ -1293,7 +1363,177 @@ function expandNodeWith(
     children: ((n.children as unknown[]) ?? []).map((c) =>
       expandNodeWith(c, strings, frames),
     ),
+    // v1.2 hoisted intrinsics — re-projected back onto the node so
+    // downstream consumers (Insights, Smells, Statistics, DetailsPane)
+    // see the same shape v1.1 produced inline.
+    callers: expandCallerRefList(rawCallerIxs, strings, frames),
+    callers_count: preferNum(fr.callers_count, n.callers_count),
+    callees_count: preferNum(fr.callees_count, n.callees_count),
+    call_site_count: preferNum(fr.call_site_count, n.call_site_count),
+    complexity: preferNum(fr.complexity, n.complexity),
+    loc: preferNum(fr.loc, n.loc),
+    nesting_depth: preferNum(fr.nesting_depth, n.nesting_depth),
+    parameter_count: preferNum(fr.parameter_count, n.parameter_count),
+    is_async: preferBool(fr.is_async, n.is_async),
+    is_recursive: preferBool(fr.is_recursive, n.is_recursive),
+    n_plus_one_risk: preferBool(fr.n_plus_one_risk, n.n_plus_one_risk),
+    blocking_in_async: preferBool(fr.blocking_in_async, n.blocking_in_async),
+    pagerank: preferNum(fr.pagerank, n.pagerank),
+    category_self: categoryFromByte(
+      fr.category_self && fr.category_self !== 0 ? fr.category_self : n.category_self,
+    ),
+    external_calls: expandExternalCallList(rawExternals, strings),
+    findings: expandFindingList(rawFindings, strings),
   };
+}
+
+// ─── per-node helpers for hoisted intrinsics ─────────────────────────
+//
+// Each helper mirrors the matching `expand_*` in
+// `viewer/src/decompress.ts`. We keep them inline (instead of importing
+// the viewer's module) for the same reason `expandNodeWith` lives here:
+// the desktop UI's `Report` typing differs slightly from the viewer's
+// and cross-importing would couple the two type universes.
+
+/** v1.2 stores callers as Frame indices (`u32[]`). Re-hydrate each one
+ *  into a CallerRef with identity strings, matching v1.1 inline shape. */
+function expandCallerRefList(
+  raw: unknown,
+  strings: string[],
+  frames: WireFrame[],
+): unknown[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      // 1.1 form: already a CallerRef object — pass through, only swap
+      // numeric string-table indices for their resolved strings.
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        const ref = entry as Record<string, unknown>;
+        // If it's already in expanded form (name is a string), keep it.
+        if (typeof ref.name === "string") return ref;
+      }
+      // 1.2 form: u32 frame index.
+      if (typeof entry !== "number") return null;
+      const cf = frames[entry];
+      if (!cf) return null;
+      const sx = (ix: number | undefined): string =>
+        ix === undefined || ix === null ? "" : strings[ix] ?? "";
+      const sxOpt = (ix: number | undefined): string | null => {
+        const v = sx(ix);
+        return v.length > 0 ? v : null;
+      };
+      const cid =
+        cf.id && cf.id !== 0
+          ? sx(cf.id)
+          : `${sx(cf.file)}::${sx(cf.parent_class)}::${sx(cf.name)}`;
+      return {
+        id: cid,
+        name: sx(cf.name),
+        file: sx(cf.file),
+        line: cf.line,
+        parent_class: sxOpt(cf.parent_class),
+      };
+    })
+    .filter((x): x is Record<string, unknown> => x !== null);
+}
+
+/** Expand a list of `CompactExternalCall` (numeric string indices) into
+ *  the inline form Insights/DetailsPane consume. */
+function expandExternalCallList(raw: unknown, strings: string[]): unknown[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => {
+    if (x && typeof x === "object" && typeof (x as Record<string, unknown>).name === "string") {
+      // Already expanded (1.0 inline shape).
+      return x;
+    }
+    const c = (x ?? {}) as Record<string, unknown>;
+    const sx = (ix: unknown): string =>
+      typeof ix === "number" ? strings[ix] ?? "" : "";
+    const sxOpt = (ix: unknown): string | null => {
+      const v = sx(ix);
+      return v.length > 0 ? v : null;
+    };
+    return {
+      name: sx(c.name),
+      receiver: sxOpt(c.receiver),
+      category: categoryFromByte(c.category),
+      tier: tierFromByte(c.tier),
+      evidence: sx(c.evidence),
+      line: typeof c.line === "number" ? c.line : 0,
+      in_loop: !!c.in_loop,
+      in_await: !!c.in_await,
+      sql_literal: sxOpt(c.sql_literal),
+    };
+  });
+}
+
+/** Expand a list of `CompactFinding` (numeric string indices) into the
+ *  inline form Insights consumes. `kind`/`severity`/`effort` are already
+ *  string-typed in the compact form (small enums; not worth pooling). */
+function expandFindingList(raw: unknown, strings: string[]): unknown[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((f) => {
+    if (f && typeof f === "object" && typeof (f as Record<string, unknown>).message === "string") {
+      // Already expanded.
+      return f;
+    }
+    const c = (f ?? {}) as Record<string, unknown>;
+    const sx = (ix: unknown): string =>
+      typeof ix === "number" ? strings[ix] ?? "" : "";
+    const sxOpt = (ix: unknown): string | null => {
+      const v = sx(ix);
+      return v.length > 0 ? v : null;
+    };
+    return {
+      kind: c.kind,
+      severity: c.severity,
+      effort: c.effort,
+      confidence: typeof c.confidence === "number" ? c.confidence : 0,
+      line: typeof c.line === "number" ? c.line : 0,
+      message: sx(c.message),
+      evidence: Array.isArray(c.evidence)
+        ? (c.evidence as unknown[]).map((e) => {
+            if (e && typeof e === "object" && typeof (e as Record<string, unknown>).call === "string") {
+              return e;
+            }
+            const ec = (e ?? {}) as Record<string, unknown>;
+            return {
+              call: sx(ec.call),
+              line: typeof ec.line === "number" ? ec.line : 0,
+              category: categoryFromByte(ec.category),
+            };
+          })
+        : [],
+      remediation: sxOpt(c.remediation) ?? undefined,
+    };
+  });
+}
+
+/** Match `viewer/src/decompress.ts::categoryFromByte`. Maps the 1-byte
+ *  category enum used on the wire back to the string variants the React
+ *  types declare. Order MUST match `Category::to_byte` in
+ *  `drift-static-profiler/src/category.rs` (verified against
+ *  `viewer/src/decompress.ts:388-397`). */
+function categoryFromByte(b: unknown): string | null {
+  const CATEGORIES = [
+    null,        // 0
+    "db",        // 1
+    "network",   // 2
+    "io",        // 3
+    "cache",     // 4
+    "queue",     // 5
+    "log",       // 6
+    "compute",   // 7
+  ] as const;
+  if (typeof b !== "number" || b <= 0 || b >= CATEGORIES.length) return null;
+  return CATEGORIES[b];
+}
+
+/** Match `viewer/src/decompress.ts::tierFromByte`. */
+function tierFromByte(b: unknown): string {
+  const TIERS = ["imported_module", "receiver_pattern", "method_signature"] as const;
+  if (typeof b !== "number" || b < 0 || b >= TIERS.length) return "imported_module";
+  return TIERS[b];
 }
 
 /** Delete a saved scan from `~/.drift/scans/`. Idempotent — calling for a

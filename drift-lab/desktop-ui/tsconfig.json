@@ -27,7 +27,23 @@
   "include": [
     "src",
     "../../drift-static-profiler/viewer/src/callGraph.ts",
-    "../../drift-static-profiler/viewer/src/CallGraphView.tsx"
+    "../../drift-static-profiler/viewer/src/CallGraphView.tsx",
+    "../../drift-static-profiler/viewer/src/CallTreeView.tsx",
+    "../../drift-static-profiler/viewer/src/DetailsPane.tsx",
+    "../../drift-static-profiler/viewer/src/FlameView.tsx",
+    "../../drift-static-profiler/viewer/src/Help.tsx",
+    "../../drift-static-profiler/viewer/src/HotPaths.tsx",
+    "../../drift-static-profiler/viewer/src/Insights.tsx",
+    "../../drift-static-profiler/viewer/src/RootsView.tsx",
+    "../../drift-static-profiler/viewer/src/ScanReport.tsx",
+    "../../drift-static-profiler/viewer/src/Smells.tsx",
+    "../../drift-static-profiler/viewer/src/Statistics.tsx",
+    "../../drift-static-profiler/viewer/src/SummaryBar.tsx",
+    "../../drift-static-profiler/viewer/src/decompress.ts",
+    "../../drift-static-profiler/viewer/src/tooltips.ts",
+    "../../drift-static-profiler/viewer/src/transform.ts",
+    "../../drift-static-profiler/viewer/src/types.ts",
+    "../../drift-static-profiler/viewer/src/useResizableColumns.tsx"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

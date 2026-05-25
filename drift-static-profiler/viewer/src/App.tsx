@@ -287,7 +287,15 @@ export function App() {
     if (!report || !activeRootId) return;
     const idx = report.entries.findIndex(r => r.id === activeRootId);
     if (idx < 0) return;
-    if (loadedEntries.has(idx)) return;
+    // Read via the ref so `loadedEntries` stays out of this effect's deps.
+    // If it were a dep, every background-prefetch landing for an
+    // UNRELATED idx would tear this effect down, flip `cancelled` to
+    // true, and drop the active entry's result on the floor (with
+    // `activeRootLoading` stuck at true). The standalone viewer hid the
+    // symptom because its prefetch self-heals fast; the desktop dashboard
+    // exhibited it as "Loading call tree for <module>… forever" on
+    // large-reach entries.
+    if (loadedEntriesRef.current.has(idx)) return;
     if (inFlightRef.current.has(idx)) return;
     let cancelled = false;
     inFlightRef.current.add(idx);
@@ -300,10 +308,12 @@ export function App() {
       .catch(e => { if (!cancelled) setError(String(e)); })
       .finally(() => {
         inFlightRef.current.delete(idx);
-        if (!cancelled) setActiveRootLoading(false);
+        // Always clear the spinner; if an entry switch cancelled us, the
+        // next effect run re-arms it. Leaving it true here strands the UI.
+        setActiveRootLoading(false);
       });
     return () => { cancelled = true; };
-  }, [activeRootId, fixtureKey, fixture.json, report, loadedEntries]);
+  }, [activeRootId, fixtureKey, fixture.json, report]);
 
   // Background prefetch — every entry, with bounded concurrency.
   // Fires once per summary load. Each resolved entry trickles into

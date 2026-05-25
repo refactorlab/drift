@@ -4,6 +4,7 @@ import { Route, Routes, useNavigate } from "react-router-dom";
 import Onboarding from "./components/Onboarding";
 import { AppConfig, getAppConfig, onOpenSettings } from "./lib/tauri";
 import { useStaticScanSubscription } from "./lib/useStaticScanSubscription";
+import DashboardPage from "./pages/Dashboard";
 import HomePage from "./pages/Home";
 import LiveScanPage from "./pages/LiveScan";
 import ReportPage from "./pages/Report";
@@ -44,6 +45,7 @@ function RoutedApp() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/scan/:scanId" element={<ScanReportPage />} />
+      <Route path="/dashboard/:scanId" element={<DashboardPage />} />
       <Route path="/report/:runId" element={<ReportPage />} />
       <Route path="/live-scan" element={<LiveScanPage />} />
       <Route path="/settings" element={<SettingsPage />} />
