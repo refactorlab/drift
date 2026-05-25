@@ -98,6 +98,13 @@ pub struct AnalyzeOutcome {
     /// the Report) so it doesn't leak into the JSON schema unless explicitly
     /// surfaced by the caller.
     pub discovered_roots: Vec<DiscoveredRoot>,
+    /// Structural containment relation — `class → [methods]` /
+    /// `struct → [receiver methods]`. Built alongside the call graph
+    /// from per-language `ContainmentExtractor`s. Kept separate from
+    /// the call graph so PageRank / call-site-count statistics aren't
+    /// polluted by structural edges. Defaults to empty when the scan
+    /// produced no symbols.
+    pub containment: crate::containment::ContainmentGraph,
 }
 
 /// Shared first phase: walk → linguist breakdown → filter → extract → graph.
@@ -107,6 +114,9 @@ pub struct AnalyzeOutcome {
 struct GraphContext {
     all_tags: Vec<FileTags>,
     graph: CallGraph,
+    /// Structural containment built once per scan from per-language
+    /// extractors. See `crate::containment` for the design rationale.
+    containment: crate::containment::ContainmentGraph,
     language_stats: LanguageStats,
     profiled_language: Option<Language>,
     entry_declarations: Vec<EntryDecl>,
@@ -190,6 +200,15 @@ fn build_graph_context(
     // seconds; without per-pass progress the user sees the single
     // "building call graph…" phase apparently hang.
     let graph = CallGraph::build_with_progress(&all_tags, progress);
+    // Containment is cheap (per-file O(N log N) sweep + one linear
+    // post-merge) so we always build it. Per-language extractor is
+    // chosen via `profile_for(lang).containment_extractor()` so
+    // Go/Rust receiver-based logic plugs in without touching this
+    // call site. See `src/containment.rs` for the design.
+    progress.phase("building containment graph…");
+    let containment = crate::containment::build_containment_graph(&all_tags, |lang| {
+        crate::languages::profile_for(lang).containment_extractor()
+    });
 
     // Walk container-deployment files (Dockerfile + docker-compose)
     // AND per-language manifests (package.json, pyproject.toml,
@@ -207,6 +226,7 @@ fn build_graph_context(
     GraphContext {
         all_tags,
         graph,
+        containment,
         language_stats,
         profiled_language,
         entry_declarations,
@@ -312,6 +332,7 @@ pub fn analyze_with_progress(
         language_stats: ctx.language_stats,
         profiled_language: ctx.profiled_language,
         discovered_roots: Vec::new(),
+        containment: ctx.containment,
     })
 }
 
@@ -381,6 +402,7 @@ pub fn analyze_roots_with_progress(
         language_stats: ctx.language_stats,
         profiled_language: ctx.profiled_language,
         discovered_roots: discovered,
+        containment: ctx.containment,
     })
 }
 
@@ -484,6 +506,7 @@ where
         // Carry the discovered roots through so the caller can echo
         // metadata about what was on the menu.
         discovered_roots: discovered,
+        containment: ctx.containment,
     }))
 }
 

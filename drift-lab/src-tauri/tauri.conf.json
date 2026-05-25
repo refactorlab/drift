@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm --prefix ../desktop-ui run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm --prefix ../desktop-ui run build",
+    "beforeBuildCommand": "npm --prefix ../desktop-ui run build && bash ../scripts/build-cli.sh",
     "frontendDist": "../desktop-ui/dist"
   },
   "app": {
@@ -32,6 +32,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "resources": {
+      "target/release/drift": "drift"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -47,6 +47,9 @@ use super::state::HttpServerState;
 pub fn api_router(state: Arc<HttpServerState>) -> Router {
     Router::new()
         .route("/api/health", get(api_health))
+        // Control plane — the `drift` CLI talks to these.
+        .route("/api/shutdown", post(api_shutdown))
+        .route("/api/logs/stream", get(api_logs_stream))
         .route("/api/scans", get(api_list_scans).post(api_start_scan))
         // Cross-machine scan sharing — see `api_import_scan` doc-comment.
         // `import` is intentionally registered BEFORE `:id` so axum's
@@ -163,6 +166,77 @@ pub async fn api_health() -> Json<Health> {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+// ---------- Control plane (drift CLI) ---------------------------------------
+
+/// Trigger a graceful shutdown. The handler returns 202 immediately;
+/// the actual quit walks the same `RunEvent::ExitRequested` →
+/// `shutdown::run` sequence as Cmd+Q, so all the existing cooperative
+/// cancellation, doomsday timer, and WAL-flush guarantees apply.
+#[utoipa::path(
+    post,
+    path = "/api/shutdown",
+    tag = "system",
+    responses(
+        (status = 202, description = "Shutdown queued"),
+    )
+)]
+pub async fn api_shutdown(State(state): State<Arc<HttpServerState>>) -> Response {
+    state.bridge.request_exit();
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({"status": "shutting_down"})),
+    )
+        .into_response()
+}
+
+/// Stream live tracing events as Server-Sent Events. Subscribers see
+/// every log line emitted from this point forward (no historical
+/// backfill). One SSE event per `LogLine`, JSON-encoded under `data:`.
+///
+/// `event: log`    — normal line.
+/// `event: lagged` — subscriber fell behind; payload is `{"dropped":N}`.
+///
+/// Closes naturally when the client disconnects (the broadcast Receiver
+/// is dropped and the underlying TCP socket is torn down).
+#[utoipa::path(
+    get,
+    path = "/api/logs/stream",
+    tag = "system",
+    responses(
+        (status = 200, description = "SSE stream of LogLine events"),
+    )
+)]
+pub async fn api_logs_stream() -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
+    let stream = async_stream::stream! {
+        // `subscribe()` only fails if the bus was never initialised,
+        // which would be a startup-order bug. Close immediately in
+        // that case rather than silently looping.
+        let Some(mut rx) = crate::log_bus::subscribe() else {
+            yield Ok(Event::default()
+                .event("error")
+                .data("{\"reason\":\"log bus not initialised\"}"));
+            return;
+        };
+        loop {
+            match crate::log_bus::classify(rx.recv().await) {
+                crate::log_bus::SubscribeOutcome::Line(line) => {
+                    // `LogLine` is camelCase via serde; the JS / curl
+                    // audience consumes it as-is.
+                    let payload = serde_json::to_string(&line).unwrap_or_else(|_| "{}".into());
+                    yield Ok(Event::default().event("log").data(payload));
+                }
+                crate::log_bus::SubscribeOutcome::Lagged(n) => {
+                    yield Ok(Event::default()
+                        .event("lagged")
+                        .data(format!("{{\"dropped\":{n}}}")));
+                }
+                crate::log_bus::SubscribeOutcome::Closed => break,
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 /// List every scan persisted under `~/.drift/scans/`. Sorted newest first.

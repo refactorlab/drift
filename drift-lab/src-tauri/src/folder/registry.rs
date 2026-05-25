@@ -209,6 +209,109 @@ pub fn has_static_scan(fingerprint: &FolderFingerprint) -> bool {
         .unwrap_or(false)
 }
 
+/// One static-scan record visible to the Active Scan picker. Mirrors the
+/// subset of `scan::storage::ScanMeta` the UI needs to render the
+/// dropdown row — scan id, when it ran, source root + a couple of size
+/// counts so the user can pick between two scans of the same folder.
+///
+/// Camel-cased on the wire because every other folder/realtime DTO is
+/// (see [`ScannedFolder`]). The TS side consumes it as
+/// `StaticScanRef`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StaticScanRef {
+    pub scan_id: String,
+    pub saved_at: String,
+    pub source_root: String,
+    pub profiled_language: Option<String>,
+    pub files: u32,
+    pub symbols: u32,
+}
+
+/// List every static scan whose `sourceRoot` fingerprints to the
+/// requested folder. Sorted newest-first by `saved_at`.
+///
+/// Source-of-truth is the same `~/.drift/scans/*.meta.json` set
+/// [`list_scanned_folders`] groups. We filter row-by-row rather than
+/// reusing the higher-level call so the function stays cheap: at most
+/// one fingerprint computation + one comparison per meta file.
+///
+/// Returns `Ok(vec![])` when:
+///   - the scans dir doesn't exist yet (fresh install), OR
+///   - no saved scan has the matching fingerprint.
+///
+/// Per-file deserialisation errors are silently skipped — mirrors the
+/// existing tolerance in `list_scanned_folders`.
+pub fn list_static_scans_for(fingerprint: &FolderFingerprint) -> Result<Vec<StaticScanRef>, String> {
+    let Some(root) = default_scans_root() else {
+        return Err("HOME not set; cannot resolve ~/.drift/scans".into());
+    };
+    list_static_scans_for_in(&root, fingerprint)
+}
+
+/// Inner path-parameterized form. Read every `*.meta.json` in
+/// `scans_root` and return the rows whose `sourceRoot` fingerprints
+/// to `fingerprint`. Split out from the public function so unit
+/// tests can point at a tempdir.
+pub(crate) fn list_static_scans_for_in(
+    scans_root: &Path,
+    fingerprint: &FolderFingerprint,
+) -> Result<Vec<StaticScanRef>, String> {
+    if !scans_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MetaRow {
+        scan_id: String,
+        saved_at: String,
+        source_root: Option<String>,
+        profiled_language: Option<String>,
+        #[serde(default)]
+        files: u32,
+        #[serde(default)]
+        symbols: u32,
+    }
+
+    let entries = fs::read_dir(scans_root)
+        .map_err(|e| format!("read {}: {e}", scans_root.display()))?;
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".meta.json") {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let Ok(meta) = serde_json::from_slice::<MetaRow>(&bytes) else {
+            continue;
+        };
+        let Some(source_root) = meta.source_root else {
+            continue;
+        };
+        if FolderFingerprint::from_canonical_string(&source_root) != *fingerprint {
+            continue;
+        }
+        out.push(StaticScanRef {
+            scan_id: meta.scan_id,
+            saved_at: meta.saved_at,
+            source_root,
+            profiled_language: meta.profiled_language,
+            files: meta.files,
+            symbols: meta.symbols,
+        });
+    }
+
+    // Newest first. Lexicographic comparison works because `saved_at`
+    // is RFC-3339 with a constant prefix (year-leading) — same trick
+    // `list_scanned_folders` uses.
+    out.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
+    Ok(out)
+}
+
 /// Look up a folder by its fingerprint. Convenience for code paths
 /// that need the path back from an id (e.g. the realtime stream's
 /// "your session was saved to ..." message).
@@ -273,5 +376,117 @@ mod tests {
         // exist on disk.
         let _ = has_static_scan(&fp);
         let _ = find(&fp);
+    }
+
+    // -------- list_static_scans_for_in tests ------------------------------
+    //
+    // Every test uses a fresh tempdir as the simulated `~/.drift/scans/`
+    // root. We write meta files directly so the input shape is pinned
+    // to the on-disk format the production code reads — no risk of a
+    // test passing against a stub that the real loader can't actually
+    // consume.
+
+    fn write_meta(dir: &Path, scan_id: &str, source_root: &str, saved_at: &str) {
+        let payload = serde_json::json!({
+            "scanId": scan_id,
+            "savedAt": saved_at,
+            "sourceRoot": source_root,
+            "profiledLanguage": "Python",
+            "files": 2,
+            "symbols": 13,
+            "findingsTotal": 0,
+        });
+        fs::write(
+            dir.join(format!("{scan_id}.meta.json")),
+            serde_json::to_vec_pretty(&payload).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_static_scans_returns_empty_when_dir_missing() {
+        let nowhere = std::path::PathBuf::from("/tmp/__definitely_missing_drift_scans_dir__");
+        let fp = FolderFingerprint::from_canonical_string("/app");
+        let out = list_static_scans_for_in(&nowhere, &fp).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn list_static_scans_filters_by_fingerprint() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_meta(tmp.path(), "scan-a", "/Users/me/project-a", "2026-05-24T10:00:00Z");
+        write_meta(tmp.path(), "scan-b", "/Users/me/project-b", "2026-05-24T11:00:00Z");
+        write_meta(tmp.path(), "scan-c", "/Users/me/project-a", "2026-05-24T12:00:00Z");
+
+        let fp_a = FolderFingerprint::from_canonical_string("/Users/me/project-a");
+        let out = list_static_scans_for_in(tmp.path(), &fp_a).unwrap();
+        let ids: Vec<&str> = out.iter().map(|s| s.scan_id.as_str()).collect();
+        assert_eq!(ids, vec!["scan-c", "scan-a"], "only project-a, newest first");
+    }
+
+    #[test]
+    fn list_static_scans_skips_metas_without_source_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Valid row.
+        write_meta(tmp.path(), "ok", "/Users/me/proj", "2026-05-24T10:00:00Z");
+        // Meta with no sourceRoot — should be ignored, not crash.
+        fs::write(
+            tmp.path().join("orphan.meta.json"),
+            br#"{"scanId":"orphan","savedAt":"2026-05-24T11:00:00Z"}"#,
+        )
+        .unwrap();
+
+        let fp = FolderFingerprint::from_canonical_string("/Users/me/proj");
+        let out = list_static_scans_for_in(tmp.path(), &fp).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].scan_id, "ok");
+    }
+
+    #[test]
+    fn list_static_scans_skips_malformed_meta_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_meta(tmp.path(), "good", "/Users/me/proj", "2026-05-24T10:00:00Z");
+        // Half-written / corrupt file — must not poison the listing.
+        fs::write(tmp.path().join("bad.meta.json"), b"{ this is not json").unwrap();
+
+        let fp = FolderFingerprint::from_canonical_string("/Users/me/proj");
+        let out = list_static_scans_for_in(tmp.path(), &fp).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].scan_id, "good");
+    }
+
+    #[test]
+    fn list_static_scans_ignores_files_with_wrong_suffix() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_meta(tmp.path(), "real", "/Users/me/proj", "2026-05-24T10:00:00Z");
+        // Sibling envelope + summary files in the same dir — must not
+        // be picked up as metas.
+        fs::write(tmp.path().join("real.json"), br#"{"unused":true}"#).unwrap();
+        fs::write(tmp.path().join("real.summary.json"), br#"{"unused":true}"#).unwrap();
+
+        let fp = FolderFingerprint::from_canonical_string("/Users/me/proj");
+        let out = list_static_scans_for_in(tmp.path(), &fp).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].scan_id, "real");
+    }
+
+    #[test]
+    fn list_static_scans_carries_display_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_meta(
+            tmp.path(),
+            "b487f737",
+            "/Users/me/test-python-web-server",
+            "2026-05-24T19:22:36Z",
+        );
+        let fp = FolderFingerprint::from_canonical_string("/Users/me/test-python-web-server");
+        let out = list_static_scans_for_in(tmp.path(), &fp).unwrap();
+        assert_eq!(out.len(), 1);
+        let r = &out[0];
+        assert_eq!(r.scan_id, "b487f737");
+        assert_eq!(r.source_root, "/Users/me/test-python-web-server");
+        assert_eq!(r.profiled_language.as_deref(), Some("Python"));
+        assert_eq!(r.files, 2);
+        assert_eq!(r.symbols, 13);
     }
 }

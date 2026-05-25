@@ -805,6 +805,92 @@ export async function folderHasStaticScan(fingerprint: string): Promise<boolean>
   return invoke<boolean>("folder_has_static_scan", { fingerprint });
 }
 
+// ---------- Live ↔ static join ----------
+
+/** One static scan available to join an active scan against. Returned
+ *  by `listStaticScansForFolder` newest-first. The display fields
+ *  (`files`, `symbols`, `profiledLanguage`) let the UI render a
+ *  meaningful picker row when a folder has more than one scan. */
+export interface StaticScanRef {
+  scanId: string;
+  savedAt: string;
+  sourceRoot: string;
+  profiledLanguage: string | null;
+  files: number;
+  symbols: number;
+}
+
+/** Every saved static scan whose `sourceRoot` matches the given folder
+ *  fingerprint, newest-first. Drives the Active Scan page's "Pick which
+ *  static scan to join against" dropdown. */
+export async function listStaticScansForFolder(
+  fingerprint: string,
+): Promise<StaticScanRef[]> {
+  return invoke<StaticScanRef[]>("list_static_scans_for_folder", {
+    fingerprint,
+  });
+}
+
+/** One sampled function the UI hands to the join. Mirrors the
+ *  `EventLogFunctionStat` subset the matcher actually needs (qualname +
+ *  file). Keeping the payload flat means the live aggregate doesn't
+ *  have to round-trip through IPC just to compute coverage. */
+export interface LiveFrameInput {
+  qualname: string;
+  file: string | null;
+}
+
+/** One matched static node for a sampled row. Confidence comes from the
+ *  matcher's tier table (0.50 .. 1.00); `reason` is the human-readable
+ *  tier label the UI surfaces in the row's tooltip. */
+export interface JoinReportMatch {
+  staticNodeId: string;
+  staticQualifiedName: string | null;
+  staticFile: string;
+  confidence: number;
+  reason: string;
+}
+
+/** One row of the join report, parallel to the input order. */
+export interface JoinReportEntry {
+  sampledQualname: string;
+  sampledFile: string | null;
+  /** `null` when no static candidate cleared the matcher's threshold.
+   *  The UI surfaces these as "unjoined" so the user can debug. */
+  bestMatch: JoinReportMatch | null;
+}
+
+/** Auto-detected container→host path mapping. Present when the
+ *  matcher rewrote live paths before scoring; `null` means it fell
+ *  back to basename-only matching. The UI displays this as
+ *  "✓ /app/ → my-project/" so the user can verify the inference. */
+export interface DetectedPathAlias {
+  containerPrefix: string;
+  hostPrefix: string;
+}
+
+export interface JoinReport {
+  totalSampled: number;
+  joined: number;
+  unjoined: number;
+  detectedAlias: DetectedPathAlias | null;
+  entries: JoinReportEntry[];
+}
+
+/** Compute the live↔static join for the supplied sampled functions
+ *  against the chosen static scan. Returns a `JoinReport` whose
+ *  `entries` are parallel to `sampled` — the UI can zip them back to
+ *  rows by index. */
+export async function computeJoinForActiveScan(
+  staticScanId: string,
+  sampled: LiveFrameInput[],
+): Promise<JoinReport> {
+  return invoke<JoinReport>("compute_join_for_active_scan", {
+    staticScanId,
+    sampled,
+  });
+}
+
 // ---------- Auto-update ----------
 
 export interface UpdateInfo {

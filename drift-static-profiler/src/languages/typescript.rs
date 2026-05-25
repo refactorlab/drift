@@ -14,6 +14,52 @@
 
 use tree_sitter::Language;
 
+use super::LanguageProfile;
+use crate::graph::SymbolId;
+use crate::resolver::{redirect_class_call_to_constructor, NameResolver, SymbolIndex};
+use crate::CallForm;
+
+/// TypeScript profile — registered via `crate::languages::profile_for`.
+pub struct Profile;
+
+/// TS/JS resolver: `new Foo()` (CallForm::New) redirects to
+/// `Foo.constructor` when one is defined explicitly. Falls back to
+/// the class symbol otherwise so a class without an explicit
+/// constructor still gets a graph edge (the implicit default
+/// constructor is not a real symbol we can target).
+pub struct TsJsResolver;
+
+pub static TS_JS_RESOLVER: TsJsResolver = TsJsResolver;
+
+impl NameResolver for TsJsResolver {
+    fn resolve(
+        &self,
+        name: &str,
+        _receiver: Option<&str>,
+        form: CallForm,
+        caller: &SymbolId,
+        idx: &SymbolIndex,
+    ) -> Vec<SymbolId> {
+        if matches!(form, CallForm::New) {
+            if let Some(redirected) =
+                redirect_class_call_to_constructor(name, "constructor", caller, idx)
+            {
+                return redirected;
+            }
+            // No explicit constructor — fall through to class-symbol
+            // lookup so the edge isn't lost entirely.
+        }
+        idx.candidates_by_name(name, caller).collect()
+    }
+}
+
+impl LanguageProfile for Profile {
+    fn language(&self) -> crate::Language { crate::Language::TypeScript }
+    fn tree_sitter(&self) -> Language { language() }
+    fn tags_query(&self) -> &'static str { TAGS_QUERY }
+    fn resolver(&self) -> &'static dyn NameResolver { &TS_JS_RESOLVER }
+}
+
 pub fn language() -> Language {
     tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
 }
@@ -27,6 +73,12 @@ pub const TAGS_QUERY: &str = r#"
   name: (property_identifier) @def.name
   body: (_) @def.body) @def.method
 
+; Arrow functions and function expressions — anonymous callables.
+; Both nodes lack a `name:` field so tags.rs synthesizes
+; `<lambda@<line>>` for them.
+(arrow_function) @def.anonymous
+(function_expression) @def.anonymous
+
 (class_declaration
   name: (type_identifier) @def.name
   body: (_) @def.body) @def.class
@@ -39,8 +91,18 @@ pub const TAGS_QUERY: &str = r#"
     object: (_) @ref.receiver
     property: (property_identifier) @ref.name)) @ref.call
 
+; `new Foo(...)` — marked as `ref.call.new` so the resolver redirects
+; to the class's `constructor` method when one is defined explicitly.
 (new_expression
-  constructor: (identifier) @ref.name) @ref.call
+  constructor: (identifier) @ref.name) @ref.call.new
+
+; Stage F binding capture — `const name = new Foo()` / `name = new Foo()`.
+; Lets the resolver disambiguate `name.method()` once the class is
+; known. Only the `new`-init shape is captured here (no factory
+; function inference); follow-up work can extend.
+(variable_declarator
+  name: (identifier) @binding.name
+  value: (new_expression constructor: (identifier) @binding.type))
 
 (import_statement
   source: (string (string_fragment) @import.module))

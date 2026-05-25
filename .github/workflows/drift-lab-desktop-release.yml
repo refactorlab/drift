@@ -151,6 +151,18 @@ jobs:
             exit 1
           fi
 
+      # Tell `drift-lab/scripts/build-cli.sh` (invoked from
+      # tauri.conf.json's beforeBuildCommand) to produce a universal
+      # `drift` CLI binary on macOS. Without this the script builds
+      # for the host arch only (aarch64 on macos-14), the bundled
+      # `Contents/Resources/drift` is single-arch, and Intel Macs
+      # installing the universal `.app` end up with a CLI that errors
+      # out at `bad CPU type in executable`. Linux runners ignore this
+      # variable; Windows isn't in the matrix.
+      - name: Enable universal CLI build on macOS
+        if: startsWith(matrix.runner, 'macos')
+        run: echo "DRIFT_BUILD_UNIVERSAL=1" >> "$GITHUB_ENV"
+
       # The actual build + sign + upload. tauri-action:
       #   • reads tauri.conf.json → bundle.createUpdaterArtifacts=true to know
       #     to emit .app.tar.gz / .AppImage.tar.gz updater bundles
@@ -188,6 +200,56 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # Assert the bundled `drift` CLI is actually inside the artifact
+      # and (on mac) is a universal Mach-O. Failing here is louder than
+      # discovering the omission after a user installs the DMG.
+      - name: Verify drift CLI bundled (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        run: |
+          set -euo pipefail
+          APP="drift-lab/src-tauri/target/universal-apple-darwin/release/bundle/macos/Drift Lab.app"
+          DRIFT="$APP/Contents/Resources/drift"
+          if [ ! -f "$DRIFT" ]; then
+            echo "::error::drift CLI missing from bundle: expected at $DRIFT"
+            find "drift-lab/src-tauri/target/universal-apple-darwin/release/bundle" -name drift -print || true
+            exit 1
+          fi
+          echo "::notice::drift CLI bundled at $DRIFT"
+          file "$DRIFT"
+          # Both arches present? Without this, Intel Macs installing
+          # the universal .app would hit "bad CPU type in executable".
+          if ! lipo -info "$DRIFT" 2>/dev/null | grep -q "x86_64"; then
+            echo "::error::bundled drift CLI is NOT a universal binary — Intel Macs will fail"
+            lipo -info "$DRIFT" || true
+            exit 1
+          fi
+          if ! lipo -info "$DRIFT" 2>/dev/null | grep -q "arm64"; then
+            echo "::error::bundled drift CLI missing arm64 slice"
+            lipo -info "$DRIFT" || true
+            exit 1
+          fi
+          # Quick smoke: --help must exit 0 (rules out the build.rs
+          # placeholder, which exits 1).
+          "$DRIFT" --help > /dev/null
+          echo "::notice::drift CLI verified universal + --help works"
+      - name: Verify drift CLI bundled (Linux .deb)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          DEB=$(find drift-lab/src-tauri/target/release/bundle/deb -name '*.deb' -print -quit)
+          if [ -z "$DEB" ]; then
+            echo "::error::no .deb artifact found"
+            find drift-lab/src-tauri/target/release/bundle -maxdepth 3 -type f | head -50
+            exit 1
+          fi
+          echo "::notice::checking $DEB"
+          if ! dpkg-deb -c "$DEB" | grep -E '/usr/lib/drift-lab/resources/drift$'; then
+            echo "::error::drift CLI missing from .deb — bundle.resources wiring broken"
+            dpkg-deb -c "$DEB" | grep -i drift || true
+            exit 1
+          fi
+          echo "::notice::drift CLI present in .deb"
 
       # Post-process latest.json on the draft release. Two fixes:
       #
