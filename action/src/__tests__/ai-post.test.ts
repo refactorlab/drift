@@ -35,9 +35,10 @@ function makeSpyOctokit() {
 
 function loadSuggestions(max = 10) {
   const raw = readFileSync(fixturePath, 'utf8');
-  const r = parseAIOutput(raw, { maxSuggestions: max });
+  const r = parseAIOutput(raw);
   if (!r.ok) throw new Error(`fixture parse failed: ${r.reason}`);
-  return r.suggestions;
+  // parse no longer caps — the caller (ai-index) does; mirror that here.
+  return r.suggestions.slice(0, max);
 }
 
 test('renderAISuggestionBody: ends with a ```suggestion block', () => {

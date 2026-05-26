@@ -23818,7 +23818,7 @@ function validateSuggestion(s, idx) {
     return `suggestions[${idx}].start_line must be \u2264 line`;
   return null;
 }
-function parseAIOutput(raw, opts = { maxSuggestions: 3 }) {
+function parseAIOutput(raw) {
   const inner = stripFence(raw);
   const preview = inner.slice(0, 400);
   if (inner.length === 0) {
@@ -23850,13 +23850,11 @@ function parseAIOutput(raw, opts = { maxSuggestions: 3 }) {
   }
   const total = env.suggestions.length;
   const passing = env.suggestions.filter(passesAIQualityBar);
-  const capped = passing.slice(0, Math.max(0, opts.maxSuggestions));
   return {
     ok: true,
-    suggestions: capped,
+    suggestions: passing,
     total,
-    passing: passing.length,
-    capped: capped.length
+    passing: passing.length
   };
 }
 
@@ -23891,7 +23889,394 @@ function shortenUrl(url) {
   }
 }
 
+// node_modules/diff/libesm/patch/parse.js
+function parsePatch(uniDiff) {
+  const diffstr = uniDiff.split(/\n/), list = [];
+  let i = 0;
+  function isGitDiffHeader(line) {
+    return /^diff --git /.test(line);
+  }
+  function isDiffHeader(line) {
+    return isGitDiffHeader(line) || /^Index:\s/.test(line) || /^diff(?: -r \w+)+\s/.test(line);
+  }
+  function isFileHeader(line) {
+    return /^(---|\+\+\+)\s/.test(line);
+  }
+  function isHunkHeader(line) {
+    return /^@@\s/.test(line);
+  }
+  function parseIndex() {
+    var _a;
+    const index = {};
+    index.hunks = [];
+    list.push(index);
+    let seenDiffHeader = false;
+    while (i < diffstr.length) {
+      const line = diffstr[i];
+      if (isFileHeader(line) || isHunkHeader(line)) {
+        break;
+      }
+      if (isGitDiffHeader(line)) {
+        if (seenDiffHeader) {
+          return;
+        }
+        seenDiffHeader = true;
+        index.isGit = true;
+        const paths = parseGitDiffHeader(line);
+        if (paths) {
+          index.oldFileName = paths.oldFileName;
+          index.newFileName = paths.newFileName;
+        }
+        i++;
+        while (i < diffstr.length) {
+          const extLine = diffstr[i];
+          if (isFileHeader(extLine) || isHunkHeader(extLine) || isDiffHeader(extLine)) {
+            break;
+          }
+          const renameFromMatch = /^rename from (.*)/.exec(extLine);
+          if (renameFromMatch) {
+            index.oldFileName = "a/" + unquoteIfQuoted(renameFromMatch[1]);
+            index.isRename = true;
+          }
+          const renameToMatch = /^rename to (.*)/.exec(extLine);
+          if (renameToMatch) {
+            index.newFileName = "b/" + unquoteIfQuoted(renameToMatch[1]);
+            index.isRename = true;
+          }
+          const copyFromMatch = /^copy from (.*)/.exec(extLine);
+          if (copyFromMatch) {
+            index.oldFileName = "a/" + unquoteIfQuoted(copyFromMatch[1]);
+            index.isCopy = true;
+          }
+          const copyToMatch = /^copy to (.*)/.exec(extLine);
+          if (copyToMatch) {
+            index.newFileName = "b/" + unquoteIfQuoted(copyToMatch[1]);
+            index.isCopy = true;
+          }
+          const newFileModeMatch = /^new file mode (\d+)/.exec(extLine);
+          if (newFileModeMatch) {
+            index.isCreate = true;
+            index.newMode = newFileModeMatch[1];
+          }
+          const deletedFileModeMatch = /^deleted file mode (\d+)/.exec(extLine);
+          if (deletedFileModeMatch) {
+            index.isDelete = true;
+            index.oldMode = deletedFileModeMatch[1];
+          }
+          const oldModeMatch = /^old mode (\d+)/.exec(extLine);
+          if (oldModeMatch) {
+            index.oldMode = oldModeMatch[1];
+          }
+          const newModeMatch = /^new mode (\d+)/.exec(extLine);
+          if (newModeMatch) {
+            index.newMode = newModeMatch[1];
+          }
+          if (/^Binary files /.test(extLine)) {
+            index.isBinary = true;
+          }
+          i++;
+        }
+        continue;
+      } else if (isDiffHeader(line)) {
+        if (seenDiffHeader) {
+          return;
+        }
+        seenDiffHeader = true;
+        const headerMatch = /^(?:Index:|diff(?: -r \w+)+)\s+/.exec(line);
+        if (headerMatch) {
+          index.index = line.substring(headerMatch[0].length).trim();
+        }
+      }
+      i++;
+    }
+    parseFileHeader(index);
+    parseFileHeader(index);
+    if (index.oldFileName === void 0 !== (index.newFileName === void 0)) {
+      throw new Error("Missing " + (index.oldFileName !== void 0 ? '"+++ ..."' : '"--- ..."') + " file header for " + ((_a = index.oldFileName) !== null && _a !== void 0 ? _a : index.newFileName));
+    }
+    while (i < diffstr.length) {
+      const line = diffstr[i];
+      if (isDiffHeader(line) || isFileHeader(line) || /^===================================================================/.test(line)) {
+        break;
+      } else if (isHunkHeader(line)) {
+        index.hunks.push(parseHunk());
+      } else {
+        i++;
+      }
+    }
+  }
+  function parseGitDiffHeader(line) {
+    const rest = line.substring("diff --git ".length);
+    if (rest.startsWith('"')) {
+      const oldPath = parseQuotedFileName(rest);
+      if (oldPath === null) {
+        return null;
+      }
+      const afterOld = rest.substring(oldPath.rawLength + 1);
+      let newFileName;
+      if (afterOld.startsWith('"')) {
+        const newPath = parseQuotedFileName(afterOld);
+        if (newPath === null) {
+          return null;
+        }
+        newFileName = newPath.fileName;
+      } else {
+        newFileName = afterOld;
+      }
+      return {
+        oldFileName: oldPath.fileName,
+        newFileName
+      };
+    }
+    const quoteIdx = rest.indexOf('"');
+    if (quoteIdx > 0) {
+      const oldFileName = rest.substring(0, quoteIdx - 1);
+      const newPath = parseQuotedFileName(rest.substring(quoteIdx));
+      if (newPath === null) {
+        return null;
+      }
+      return {
+        oldFileName,
+        newFileName: newPath.fileName
+      };
+    }
+    if (rest.startsWith("a/")) {
+      const splits = [];
+      let idx = 0;
+      while (true) {
+        idx = rest.indexOf(" b/", idx + 1);
+        if (idx === -1) {
+          break;
+        }
+        splits.push(idx);
+      }
+      if (splits.length > 0) {
+        const mid = splits[Math.floor(splits.length / 2)];
+        return {
+          oldFileName: rest.substring(0, mid),
+          newFileName: rest.substring(mid + 1)
+        };
+      }
+    }
+    return null;
+  }
+  function unquoteIfQuoted(s) {
+    if (s.startsWith('"')) {
+      const parsed = parseQuotedFileName(s);
+      if (parsed) {
+        return parsed.fileName;
+      }
+    }
+    return s;
+  }
+  function parseQuotedFileName(s) {
+    if (!s.startsWith('"')) {
+      return null;
+    }
+    let result = "";
+    let j = 1;
+    while (j < s.length) {
+      if (s[j] === '"') {
+        return { fileName: result, rawLength: j + 1 };
+      }
+      if (s[j] === "\\" && j + 1 < s.length) {
+        j++;
+        switch (s[j]) {
+          case "a":
+            result += "\x07";
+            break;
+          case "b":
+            result += "\b";
+            break;
+          case "f":
+            result += "\f";
+            break;
+          case "n":
+            result += "\n";
+            break;
+          case "r":
+            result += "\r";
+            break;
+          case "t":
+            result += "	";
+            break;
+          case "v":
+            result += "\v";
+            break;
+          case "\\":
+            result += "\\";
+            break;
+          case '"':
+            result += '"';
+            break;
+          case "0":
+          case "1":
+          case "2":
+          case "3":
+          case "4":
+          case "5":
+          case "6":
+          case "7": {
+            if (j + 2 >= s.length || s[j + 1] < "0" || s[j + 1] > "7" || s[j + 2] < "0" || s[j + 2] > "7") {
+              return null;
+            }
+            const bytes = [parseInt(s.substring(j, j + 3), 8)];
+            j += 3;
+            while (s[j] === "\\" && s[j + 1] >= "0" && s[j + 1] <= "7") {
+              if (j + 3 >= s.length || s[j + 2] < "0" || s[j + 2] > "7" || s[j + 3] < "0" || s[j + 3] > "7") {
+                return null;
+              }
+              bytes.push(parseInt(s.substring(j + 1, j + 4), 8));
+              j += 4;
+            }
+            result += new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+            continue;
+          }
+          // Note that in C, there are also three kinds of hex escape sequences:
+          // - \xhh
+          // - \uhhhh
+          // - \Uhhhhhhhh
+          // We do not bother to parse them here because, so far as we know,
+          // they are never emitted by any tools that generate unified diff
+          // format diffs, and so for now jsdiff does not consider them legal.
+          default:
+            return null;
+        }
+      } else {
+        result += s[j];
+      }
+      j++;
+    }
+    return null;
+  }
+  function parseFileHeader(index) {
+    const fileHeaderMatch = /^(---|\+\+\+)\s+/.exec(diffstr[i]);
+    if (fileHeaderMatch) {
+      const prefix = fileHeaderMatch[1], data = diffstr[i].substring(3).trim().split("	", 2), header = (data[1] || "").trim();
+      let fileName = data[0];
+      if (fileName.startsWith('"')) {
+        fileName = unquoteIfQuoted(fileName);
+      } else {
+        fileName = fileName.replace(/\\\\/g, "\\");
+      }
+      if (prefix === "---") {
+        index.oldFileName = fileName;
+        index.oldHeader = header;
+      } else {
+        index.newFileName = fileName;
+        index.newHeader = header;
+      }
+      i++;
+    }
+  }
+  function parseHunk() {
+    var _a;
+    const chunkHeaderIndex = i, chunkHeaderLine = diffstr[i++], chunkHeader = chunkHeaderLine.split(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    const hunk = {
+      oldStart: +chunkHeader[1],
+      oldLines: typeof chunkHeader[2] === "undefined" ? 1 : +chunkHeader[2],
+      newStart: +chunkHeader[3],
+      newLines: typeof chunkHeader[4] === "undefined" ? 1 : +chunkHeader[4],
+      lines: []
+    };
+    if (hunk.oldLines === 0) {
+      hunk.oldStart += 1;
+    }
+    if (hunk.newLines === 0) {
+      hunk.newStart += 1;
+    }
+    let addCount = 0, removeCount = 0;
+    for (; i < diffstr.length && (removeCount < hunk.oldLines || addCount < hunk.newLines || ((_a = diffstr[i]) === null || _a === void 0 ? void 0 : _a.startsWith("\\"))); i++) {
+      const operation = diffstr[i].length == 0 && i != diffstr.length - 1 ? " " : diffstr[i][0];
+      if (operation === "+" || operation === "-" || operation === " " || operation === "\\") {
+        hunk.lines.push(diffstr[i]);
+        if (operation === "+") {
+          addCount++;
+        } else if (operation === "-") {
+          removeCount++;
+        } else if (operation === " ") {
+          addCount++;
+          removeCount++;
+        }
+      } else {
+        throw new Error(`Hunk at line ${chunkHeaderIndex + 1} contained invalid line ${diffstr[i]}`);
+      }
+    }
+    if (!addCount && hunk.newLines === 1) {
+      hunk.newLines = 0;
+    }
+    if (!removeCount && hunk.oldLines === 1) {
+      hunk.oldLines = 0;
+    }
+    if (addCount !== hunk.newLines) {
+      throw new Error("Added line count did not match for hunk at line " + (chunkHeaderIndex + 1));
+    }
+    if (removeCount !== hunk.oldLines) {
+      throw new Error("Removed line count did not match for hunk at line " + (chunkHeaderIndex + 1));
+    }
+    if (i < diffstr.length && diffstr[i] && /^[+ -]/.test(diffstr[i]) && !isFileHeader(diffstr[i])) {
+      throw new Error("Hunk at line " + (chunkHeaderIndex + 1) + " has more lines than expected (expected " + hunk.oldLines + " old lines and " + hunk.newLines + " new lines)");
+    }
+    return hunk;
+  }
+  while (i < diffstr.length) {
+    parseIndex();
+  }
+  return list;
+}
+
+// src/ai/diff-lines.ts
+function parseCommentableLines(patch) {
+  const lines = /* @__PURE__ */ new Set();
+  let files;
+  try {
+    files = parsePatch(patch);
+  } catch {
+    return lines;
+  }
+  for (const file of files) {
+    for (const hunk of file.hunks) {
+      let newLine = hunk.newStart;
+      for (const row of hunk.lines) {
+        const c = row[0];
+        if (c === "+" || c === " ") {
+          lines.add(newLine);
+          newLine += 1;
+        }
+      }
+    }
+  }
+  return lines;
+}
+function filterByDiff(suggestions, commentableByFile) {
+  const kept = [];
+  const dropped = [];
+  for (const s of suggestions) {
+    const set = commentableByFile.get(s.file);
+    const start = typeof s.start_line === "number" ? s.start_line : s.line;
+    let ok = set !== void 0 && start <= s.line;
+    for (let l = start; ok && l <= s.line; l += 1) {
+      if (!set.has(l)) ok = false;
+    }
+    (ok ? kept : dropped).push(s);
+  }
+  return { kept, dropped };
+}
+
 // src/ai/post.ts
+async function fetchCommentableLines(octokit, owner, repo, prNumber) {
+  const { data } = await octokit.rest.pulls.listFiles({
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100
+  });
+  const map = /* @__PURE__ */ new Map();
+  for (const f of data) {
+    if (f.patch) map.set(f.filename, parseCommentableLines(f.patch));
+  }
+  return map;
+}
 function buildReviewComments(suggestions, model) {
   return suggestions.map((s) => {
     const body = renderAISuggestionBody(s, model);
@@ -23955,18 +24340,17 @@ async function aiMain() {
   const maxSuggestions = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
   const model = process.env.DRIFT_AI_MODEL || "openai/gpt-4o";
   const dryRun = process.env.DRIFT_DRY_RUN === "true";
-  const parsed = parseAIOutput(raw, { maxSuggestions });
+  const parsed = parseAIOutput(raw);
   if (!parsed.ok) {
     warning(`AI output rejected: ${parsed.reason}`);
     info(`first 400 chars:
 ${parsed.rawPreview}`);
     return;
   }
-  info(
-    `\u{1F916} ${model}: ${parsed.total} candidate(s) \u2192 ${parsed.passing} pass quality bar \u2192 ${parsed.capped} posted (cap=${maxSuggestions})`
-  );
   if (parsed.suggestions.length === 0) {
-    info("No AI suggestion cleared the quality bar \u2014 silence > noise.");
+    info(
+      `\u{1F916} ${model}: ${parsed.total} candidate(s) \u2192 0 cleared the quality bar \u2014 silence > noise.`
+    );
     return;
   }
   const pr = context2.payload.pull_request;
@@ -23981,6 +24365,27 @@ ${parsed.rawPreview}`);
   }
   const octokit = getOctokit(token || "dry-run-stub-token");
   const { owner, repo } = context2.repo;
+  let candidates = parsed.suggestions;
+  try {
+    const commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+    const { kept, dropped } = filterByDiff(candidates, commentable);
+    if (dropped.length) {
+      info(
+        `\u{1F916} dropped ${dropped.length} suggestion(s) not on a diff line: ` + dropped.map((s) => `${s.file}:${s.line}`).join(", ")
+      );
+    }
+    candidates = kept;
+  } catch (e) {
+    warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
+  }
+  const toPost = candidates.slice(0, maxSuggestions);
+  info(
+    `\u{1F916} ${model}: ${parsed.total} candidate(s) \u2192 ${parsed.passing} pass quality bar \u2192 ${candidates.length} on-diff \u2192 ${toPost.length} posted (cap=${maxSuggestions})`
+  );
+  if (toPost.length === 0) {
+    info("No AI suggestion landed on a diff line \u2014 nothing to post.");
+    return;
+  }
   try {
     await postAIReview({
       octokit,
@@ -23988,7 +24393,7 @@ ${parsed.rawPreview}`);
       repo,
       prNumber: pr.number,
       headSha: pr.head.sha,
-      suggestions: parsed.suggestions,
+      suggestions: toPost,
       model,
       dryRun
     });

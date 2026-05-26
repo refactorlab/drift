@@ -4,10 +4,14 @@
 //   2. Business logic     — pr_review.business_logic (Image 2)
 //   3. Affected roots     — pr_scope (factual — always present)
 //   4. Value card         — pr_review.value_card + counts (Image 3)
-//   5. Visual summary     — pr_review.visual_summary (collapsible)
-//   6. Extended findings  — pr_review_ext
+//   5. Suggestions        — pr_review.code_suggestions (warnings, advisory)
+//   6. Visual summary     — pr_review.visual_summary (collapsible)
+//   7. Extended findings  — pr_review_ext
 //
-// Suggestions live as INLINE review comments (see github/review.ts), not here.
+// Suggestions ALSO post as inline review comments (see github/review.ts)
+// for the "Apply suggestion" button — but they're mirrored here so the PR
+// author still sees them when GitHub rejects the inline review (a single
+// out-of-diff anchor makes the whole atomic createReview call fail).
 
 import type { Generator, ScanPrOutput } from '../report.ts';
 import { renderBanner } from './sections/banner.ts';
@@ -15,6 +19,7 @@ import { renderArchitecture } from './sections/architecture.ts';
 import { renderBusinessLogic } from './sections/business_logic.ts';
 import { renderAffectedRoots } from './sections/affected_roots.ts';
 import { renderValueCard } from './sections/value_card.ts';
+import { renderSuggestions } from './sections/suggestions.ts';
 import { renderVisualSummary } from './sections/visual_summary.ts';
 import { renderExt } from './sections/ext.ts';
 
@@ -34,6 +39,7 @@ export function renderOverview(report: ScanPrOutput): string {
     renderBusinessLogic(report.pr_review?.business_logic),
     renderAffectedRoots(report.pr_scope.affected_roots, report.pr_scope.unreachable_changes),
     renderValueCard(report.pr_review?.counts, report.pr_review?.value_card),
+    renderSuggestions(report.pr_review?.code_suggestions),
     renderVisualSummary(report.pr_review?.visual_summary),
     renderExt(report.pr_review_ext),
     renderFooter(report.generator),

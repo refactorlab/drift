@@ -24035,6 +24035,104 @@ function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// src/render/suggestion.ts
+var CATEGORY_BADGE = {
+  A: "\u{1F150} Optimization",
+  B: "\u{1F151} Product correctness",
+  C: "\u{1F152} Framework misuse"
+};
+function renderSuggestionBody(s) {
+  const confidencePct = Math.round(s.confidence * 100);
+  const lines = [
+    `**${CATEGORY_BADGE[s.category]}${s.category_label ? ` \u2014 ${s.category_label}` : ""}** \xB7 confidence ${confidencePct}%`,
+    "",
+    s.why_it_matters
+  ];
+  if (s.references && s.references.length) {
+    const ref = s.references[0];
+    lines.push("", `Reference: [${ref.title ?? shortenUrl(ref.url)}](${ref.url})`);
+  }
+  const after = extractAfterCode(s);
+  if (after) {
+    lines.push("", "```suggestion", after, "```");
+  }
+  if (s.notes) {
+    lines.push("", `> ${s.notes}`);
+  }
+  return lines.join("\n");
+}
+function extractAfterCode(s) {
+  if (s.diff?.after_lines && s.diff.after_lines.length) {
+    return s.diff.after_lines.map((l) => l.code).join("\n");
+  }
+  if (s.diff?.unified) {
+    return s.diff.unified.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+  }
+  return null;
+}
+function shortenUrl(url) {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname}`.replace(/\/$/, "");
+  } catch {
+    return url;
+  }
+}
+
+// src/render/sections/suggestions.ts
+var CATEGORY = {
+  A: { badge: "\u{1F150}", label: "Optimization" },
+  B: { badge: "\u{1F151}", label: "Product correctness" },
+  C: { badge: "\u{1F152}", label: "Framework misuse" }
+};
+var CATEGORY_ORDER = { B: 0, C: 1, A: 2 };
+var MAX_SHOWN = 20;
+function renderSuggestions(suggestions) {
+  const passing = (suggestions ?? []).filter(passesQualityBar);
+  if (passing.length === 0) return null;
+  const sorted = [...passing].sort(
+    (a, b) => CATEGORY_ORDER[a.category] - CATEGORY_ORDER[b.category] || b.confidence - a.confidence
+  );
+  const correctness = sorted.filter((s) => s.category === "B").length;
+  const lines = ["## \u26A0\uFE0F Suggestions & warnings", ""];
+  if (correctness > 0) {
+    lines.push(
+      "> [!WARNING]",
+      `> Drift flagged **${correctness}** product-correctness issue${correctness === 1 ? "" : "s"} in this PR. They are surfaced as warnings below \u2014 they do **not** fail the check.`,
+      ""
+    );
+  }
+  lines.push(
+    `**${sorted.length}** suggestion${sorted.length === 1 ? "" : "s"} cleared the quality bar (confidence \u2265 75%, has a reference).`,
+    ""
+  );
+  for (const s of sorted.slice(0, MAX_SHOWN)) lines.push(renderOne(s));
+  if (sorted.length > MAX_SHOWN) {
+    lines.push("", `_\u2026+${sorted.length - MAX_SHOWN} more suggestion(s) not shown._`);
+  }
+  return lines.join("\n");
+}
+function renderOne(s) {
+  const cat = CATEGORY[s.category];
+  const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
+  const pct = Math.round(s.confidence * 100);
+  const out = [
+    `<details><summary>${cat.badge} <strong>${cat.label}</strong> \xB7 <code>${loc}</code> \xB7 ${pct}% confidence</summary>`,
+    "",
+    s.why_it_matters
+  ];
+  const ref = s.references?.[0];
+  if (ref?.url) {
+    out.push("", `Reference: [${ref.title ?? ref.url}](${ref.url})`);
+  }
+  const after = extractAfterCode(s);
+  if (after) {
+    out.push("", "Suggested change:", "", "```", after, "```");
+  }
+  out.push("", "</details>");
+  return out.join("\n");
+}
+
 // src/render/sections/visual_summary.ts
 var QUADRANT_LABEL = {
   act_before_merge: "Act before merge",
@@ -24158,6 +24256,7 @@ function renderOverview(report) {
     renderBusinessLogic(report.pr_review?.business_logic),
     renderAffectedRoots(report.pr_scope.affected_roots, report.pr_scope.unreachable_changes),
     renderValueCard(report.pr_review?.counts, report.pr_review?.value_card),
+    renderSuggestions(report.pr_review?.code_suggestions),
     renderVisualSummary(report.pr_review?.visual_summary),
     renderExt(report.pr_review_ext),
     renderFooter(report.generator)
@@ -24210,50 +24309,6 @@ async function findStickyComment(octokit, owner, repo, prNumber) {
   return found?.id ?? null;
 }
 
-// src/render/suggestion.ts
-var CATEGORY_BADGE = {
-  A: "\u{1F150} Optimization",
-  B: "\u{1F151} Product correctness",
-  C: "\u{1F152} Framework misuse"
-};
-function renderSuggestionBody(s) {
-  const confidencePct = Math.round(s.confidence * 100);
-  const lines = [
-    `**${CATEGORY_BADGE[s.category]}${s.category_label ? ` \u2014 ${s.category_label}` : ""}** \xB7 confidence ${confidencePct}%`,
-    "",
-    s.why_it_matters
-  ];
-  if (s.references && s.references.length) {
-    const ref = s.references[0];
-    lines.push("", `Reference: [${ref.title ?? shortenUrl(ref.url)}](${ref.url})`);
-  }
-  const after = extractAfterCode(s);
-  if (after) {
-    lines.push("", "```suggestion", after, "```");
-  }
-  if (s.notes) {
-    lines.push("", `> ${s.notes}`);
-  }
-  return lines.join("\n");
-}
-function extractAfterCode(s) {
-  if (s.diff?.after_lines && s.diff.after_lines.length) {
-    return s.diff.after_lines.map((l) => l.code).join("\n");
-  }
-  if (s.diff?.unified) {
-    return s.diff.unified.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
-  }
-  return null;
-}
-function shortenUrl(url) {
-  try {
-    const u = new URL(url);
-    return `${u.hostname}${u.pathname}`.replace(/\/$/, "");
-  } catch {
-    return url;
-  }
-}
-
 // src/github/review.ts
 async function postReview(args) {
   const { octokit, owner, repo, prNumber, headSha, suggestions } = args;
@@ -24272,16 +24327,32 @@ async function postReview(args) {
     info("Suggestions present but none have a line anchor; skipping review.");
     return;
   }
-  await octokit.rest.pulls.createReview({
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: "COMMENT",
-    body: `\u{1F7E3} **Drift** has ${comments.length} suggestion${comments.length === 1 ? "" : "s"} to apply.`,
-    comments
-  });
-  info(`Posted PR review with ${comments.length} inline suggestion(s).`);
+  try {
+    await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      commit_id: headSha,
+      event: "COMMENT",
+      body: `\u{1F7E3} **Drift** has ${comments.length} suggestion${comments.length === 1 ? "" : "s"} to apply.`,
+      comments
+    });
+    info(`Posted PR review with ${comments.length} inline suggestion(s).`);
+  } catch (err) {
+    if (isUnresolvedPathError(err)) {
+      info(
+        `Inline review skipped: ${comments.length} suggestion(s) anchor to lines outside the PR diff (GitHub 422 "Path could not be resolved"). They are shown in the Drift PR comment instead.`
+      );
+      return;
+    }
+    throw err;
+  }
+}
+function isUnresolvedPathError(err) {
+  const e = err;
+  const status = e?.status;
+  const message = typeof e?.message === "string" ? e.message : "";
+  return status === 422 || /could not be resolved|Unprocessable/i.test(message);
 }
 
 // src/github/check.ts
@@ -24325,7 +24396,7 @@ async function main() {
   if (!reportPath) {
     throw new Error("DRIFT_REPORT_PATH is not set \u2014 the scan step must produce a JSON report.");
   }
-  const failOn = process.env.DRIFT_FAIL_ON ?? "regression";
+  const failThreshold = parseThreshold(process.env.DRIFT_FAIL_THRESHOLD);
   const wantComment = (process.env.DRIFT_COMMENT ?? "true") === "true";
   const githubToken = process.env.GITHUB_TOKEN ?? "";
   info(`Loading Drift report from ${reportPath}`);
@@ -24372,19 +24443,29 @@ async function main() {
     );
   }
   await Promise.all(tasks);
-  if (shouldFail(report, failOn, passing.length)) {
-    const correctness = passing.filter((s) => s.category === "B").length;
+  const correctness = passing.filter((s) => s.category === "B").length;
+  if (correctness > 0) {
+    warning(
+      `Drift flagged ${correctness} product-correctness issue(s) \u2014 see the Drift PR comment for details.`
+    );
+  }
+  if (failThreshold !== null && correctness > failThreshold) {
     setFailed(
-      `Drift found ${correctness} product-correctness issue(s) above threshold.`
+      `Drift found ${correctness} product-correctness issue(s), exceeding the configured fail-threshold of ${failThreshold}.`
     );
   }
 }
-function shouldFail(report, failOn, passingCount) {
-  if (failOn === "never") return false;
-  const passing = (report.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
-  const correctness = passing.filter((s) => s.category === "B").length;
-  if (failOn === "any") return passingCount > 0;
-  return correctness > 0;
+function parseThreshold(raw) {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 0) {
+    warning(
+      `Ignoring invalid fail-threshold ${JSON.stringify(raw)} \u2014 expected a non-negative integer. Drift will not fail the PR.`
+    );
+    return null;
+  }
+  return n;
 }
 function describeError(err) {
   return err instanceof Error ? err.message : String(err);
@@ -24392,7 +24473,9 @@ function describeError(err) {
 
 // src/index.ts
 main().catch((err) => {
-  setFailed(err instanceof Error ? err.message : String(err));
+  warning(
+    `Drift could not complete its review: ${err instanceof Error ? err.message : String(err)}. This does not fail the PR.`
+  );
 });
 /*! Bundled license information:
 

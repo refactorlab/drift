@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
-import { loadReport, passesQualityBar, type ScanPrOutput } from './report.ts';
+import { loadReport, passesQualityBar } from './report.ts';
 import { renderOverview } from './render/overview.ts';
 import { upsertStickyComment } from './github/comment.ts';
 import { postReview } from './github/review.ts';
@@ -18,7 +18,12 @@ export async function main(): Promise<void> {
     throw new Error('DRIFT_REPORT_PATH is not set — the scan step must produce a JSON report.');
   }
 
-  const failOn = (process.env.DRIFT_FAIL_ON ?? 'regression') as 'never' | 'regression' | 'any';
+  // Drift is ADVISORY by default: findings surface as warnings (in the PR
+  // comment + as ::warning:: annotations) and never fail the consumer's
+  // check. A consumer opts into failing by setting `fail-threshold` to a
+  // number N — then the check fails when product-correctness issues exceed
+  // N. Empty/unset/non-numeric → null → never fail (and never raises).
+  const failThreshold = parseThreshold(process.env.DRIFT_FAIL_THRESHOLD);
   const wantComment = (process.env.DRIFT_COMMENT ?? 'true') === 'true';
   const githubToken = process.env.GITHUB_TOKEN ?? '';
 
@@ -76,24 +81,44 @@ export async function main(): Promise<void> {
 
   await Promise.all(tasks);
 
-  if (shouldFail(report, failOn, passing.length)) {
-    const correctness = passing.filter((s) => s.category === 'B').length;
+  // Surface product-correctness findings as WARNINGS — they're rendered in
+  // the sticky PR comment AND emitted as ::warning:: annotations here. They
+  // never fail the check unless the consumer set a numeric `fail-threshold`
+  // and the count EXCEEDS it (threshold 0 = fail on any).
+  const correctness = passing.filter((s) => s.category === 'B').length;
+  if (correctness > 0) {
+    core.warning(
+      `Drift flagged ${correctness} product-correctness issue(s) — ` +
+        'see the Drift PR comment for details.',
+    );
+  }
+
+  if (failThreshold !== null && correctness > failThreshold) {
     core.setFailed(
-      `Drift found ${correctness} product-correctness issue(s) above threshold.`,
+      `Drift found ${correctness} product-correctness issue(s), exceeding the configured ` +
+        `fail-threshold of ${failThreshold}.`,
     );
   }
 }
 
-function shouldFail(
-  report: ScanPrOutput,
-  failOn: 'never' | 'regression' | 'any',
-  passingCount: number,
-): boolean {
-  if (failOn === 'never') return false;
-  const passing = (report.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
-  const correctness = passing.filter((s) => s.category === 'B').length;
-  if (failOn === 'any') return passingCount > 0;
-  return correctness > 0; // 'regression' = any product-correctness issue
+/**
+ * Parse the optional `fail-threshold` env into a non-negative integer, or
+ * null meaning "never fail". Empty/unset/blank → null. A non-numeric or
+ * negative value → null + a warning (we NEVER throw on a bad threshold;
+ * Drift stays advisory rather than breaking the PR on its own misconfig).
+ */
+function parseThreshold(raw: string | undefined): number | null {
+  const trimmed = (raw ?? '').trim();
+  if (trimmed === '') return null;
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 0) {
+    core.warning(
+      `Ignoring invalid fail-threshold ${JSON.stringify(raw)} — expected a non-negative integer. ` +
+        'Drift will not fail the PR.',
+    );
+    return null;
+  }
+  return n;
 }
 
 function describeError(err: unknown): string {

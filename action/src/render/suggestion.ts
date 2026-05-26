@@ -41,7 +41,7 @@ export function renderSuggestionBody(s: CodeSuggestion): string {
  * Returns the bare code (no `+ ` prefixes) suitable for a
  * ```suggestion``` block.
  */
-function extractAfterCode(s: CodeSuggestion): string | null {
+export function extractAfterCode(s: CodeSuggestion): string | null {
   if (s.diff?.after_lines && s.diff.after_lines.length) {
     return s.diff.after_lines.map((l) => l.code).join('\n');
   }

@@ -98,6 +98,20 @@ inputs:
       beats large + ignored.
     required: false
     default: '3'
+  fail-threshold:
+    description: |
+      Optional. The number of product-correctness (category B) issues —
+      those that clear the quality bar — ABOVE WHICH the check fails (red ✗).
+        <empty> — never fail the PR (default). Drift is advisory: issues
+                  post as ⚠️ warnings in the sticky comment and as
+                  ::warning:: annotations, and the PR stays green.
+        0       — fail if there is ANY product-correctness issue.
+        3       — fail only if there are MORE THAN 3 such issues.
+      Left empty by default so Drift NEVER fails a consumer's PR. A
+      non-numeric value is ignored (treated as empty) and never raises —
+      the action is fail-soft on its own errors too.
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -425,7 +439,7 @@ runs:
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         DRIFT_COMMENT:     'true'
-        DRIFT_FAIL_ON:     'regression'
+        DRIFT_FAIL_THRESHOLD: ${{ inputs.fail-threshold }}
         GITHUB_TOKEN:      ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/index.js"
 
@@ -559,7 +573,7 @@ runs:
         # NOTE: the pinned @v1 tag exposes `max-tokens` (not the newer
         # `max-completion-tokens`). 200 is the default — far too small
         # for a JSON array of suggestions, so we raise it.
-        max-tokens: '4000'
+        max-tokens: '40000'
         system-prompt: |
           You are an expert senior reviewer producing INLINE GitHub PR
           code suggestions. The user prompt below contains:
@@ -572,8 +586,13 @@ runs:
                YOUR JOB is to refine these into concrete, applyable
                inline suggestions, AND/OR to add new suggestions on
                other lines in the same files.
-            3. The PR diff hunks. Every `line` you emit MUST be a
-               RIGHT-side line that actually appears in these hunks.
+            3. The PR diff hunks. EACH diff line is prefixed with its
+               new-file line number; lines marked `+` are new code
+               (prefer these). Use that exact prefixed number as the
+               suggestion's `line` (and `start_line` for a range).
+               Every `line` you emit MUST be a numbered line that
+               appears in these hunks — suggestions on any other line
+               are discarded.
 
           Output ONE JSON object (no prose, no fence, no commentary):
 

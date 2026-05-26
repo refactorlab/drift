@@ -18,10 +18,9 @@ import {
 
 export type ParseSuccess = {
   ok: true;
-  suggestions: AISuggestion[];
-  total: number;       // before quality bar + cap
-  passing: number;     // after quality bar
-  capped: number;      // returned after MAX cap
+  suggestions: AISuggestion[];   // all quality-bar-passing (diff filter + cap applied by the caller)
+  total: number;                 // before quality bar
+  passing: number;               // after quality bar
 };
 
 export type ParseFailure = {
@@ -103,12 +102,11 @@ function validateSuggestion(s: unknown, idx: number): string | null {
 }
 
 /**
- * Parse, validate, filter by quality bar, and cap.
+ * Parse, validate, and filter by quality bar. Does NOT cap or anchor to
+ * the diff — those are the caller's concern (filter-then-cap, so the
+ * cap counts only postable suggestions).
  */
-export function parseAIOutput(
-  raw: string,
-  opts: { maxSuggestions: number } = { maxSuggestions: 3 },
-): ParseResult {
+export function parseAIOutput(raw: string): ParseResult {
   const inner = stripFence(raw);
   const preview = inner.slice(0, 400);
 
@@ -147,13 +145,11 @@ export function parseAIOutput(
 
   const total = env.suggestions.length;
   const passing = env.suggestions.filter(passesAIQualityBar);
-  const capped = passing.slice(0, Math.max(0, opts.maxSuggestions));
 
   return {
     ok: true,
-    suggestions: capped,
+    suggestions: passing,
     total,
     passing: passing.length,
-    capped: capped.length,
   };
 }

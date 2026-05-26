@@ -51,6 +51,33 @@ for (const fix of fixtures) {
   });
 }
 
+test('render(kotlin-ktor): category-B suggestion shows as a ⚠️ warning in the comment', () => {
+  const body = renderOverview(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')));
+  assert.match(body, /## ⚠️ Suggestions & warnings/, 'suggestions section present');
+  assert.match(body, /\[!WARNING\]/, 'category-B renders a WARNING callout');
+  assert.match(body, /product-correctness issue/, 'callout names the issue type');
+  assert.match(body, /Product correctness/, 'the B suggestion is labelled');
+  assert.match(body, /OWASP/, 'the reference link is rendered');
+});
+
+test('render(python-fastapi): A-only suggestions render without the WARNING callout', () => {
+  const body = renderOverview(loadReport(join(fixtureDir, 'scan-pr-output.json')));
+  assert.match(body, /## ⚠️ Suggestions & warnings/, 'suggestions section present');
+  assert.doesNotMatch(body, /\[!WARNING\]/, 'no WARNING callout when no category-B issues');
+  assert.match(body, /Optimization/, 'category-A suggestions are labelled');
+});
+
+test('render(no suggestions): suggestions section is omitted entirely', () => {
+  const body = renderOverview({
+    schema_version: '1.2',
+    mode: 'static',
+    generator: { tool: 'drift-static-profiler', version: '0.0.0-test' },
+    pr_scope: { changed_files: ['a.py'], affected_roots: ['main'], unreachable_changes: [] },
+    pr_review: { code_suggestions: [] },
+  });
+  assert.doesNotMatch(body, /Suggestions & warnings/, 'no section without passing suggestions');
+});
+
 test('render(no pr_review): falls back to factual-only output', () => {
   const body = renderOverview({
     schema_version: '1.2',

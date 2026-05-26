@@ -21,7 +21,8 @@ import { readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import { parseAIOutput } from './ai/parse.ts';
-import { postAIReview } from './ai/post.ts';
+import { postAIReview, fetchCommentableLines } from './ai/post.ts';
+import { filterByDiff } from './ai/diff-lines.ts';
 
 async function aiMain(): Promise<void> {
   const aiPath = process.env.AI_SUGGESTIONS_PATH;
@@ -46,19 +47,16 @@ async function aiMain(): Promise<void> {
   const model = process.env.DRIFT_AI_MODEL || 'openai/gpt-4o';
   const dryRun = process.env.DRIFT_DRY_RUN === 'true';
 
-  const parsed = parseAIOutput(raw, { maxSuggestions });
+  const parsed = parseAIOutput(raw);
   if (!parsed.ok) {
     core.warning(`AI output rejected: ${parsed.reason}`);
     core.info(`first 400 chars:\n${parsed.rawPreview}`);
     return;
   }
-
-  core.info(
-    `🤖 ${model}: ${parsed.total} candidate(s) → ${parsed.passing} pass quality bar → ${parsed.capped} posted (cap=${maxSuggestions})`,
-  );
-
   if (parsed.suggestions.length === 0) {
-    core.info('No AI suggestion cleared the quality bar — silence > noise.');
+    core.info(
+      `🤖 ${model}: ${parsed.total} candidate(s) → 0 cleared the quality bar — silence > noise.`,
+    );
     return;
   }
 
@@ -79,6 +77,34 @@ async function aiMain(): Promise<void> {
   const octokit = getOctokit(token || 'dry-run-stub-token');
   const { owner, repo } = context.repo;
 
+  // Anchor to the diff: drop suggestions whose lines GitHub would reject
+  // (422). Best-effort — if the diff fetch fails (e.g. dry-run stub
+  // token), proceed unfiltered and let the fail-soft POST handle it.
+  let candidates = parsed.suggestions;
+  try {
+    const commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+    const { kept, dropped } = filterByDiff(candidates, commentable);
+    if (dropped.length) {
+      core.info(
+        `🤖 dropped ${dropped.length} suggestion(s) not on a diff line: ` +
+          dropped.map((s) => `${s.file}:${s.line}`).join(', '),
+      );
+    }
+    candidates = kept;
+  } catch (e) {
+    core.warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
+  }
+
+  const toPost = candidates.slice(0, maxSuggestions);
+  core.info(
+    `🤖 ${model}: ${parsed.total} candidate(s) → ${parsed.passing} pass quality bar → ` +
+      `${candidates.length} on-diff → ${toPost.length} posted (cap=${maxSuggestions})`,
+  );
+  if (toPost.length === 0) {
+    core.info('No AI suggestion landed on a diff line — nothing to post.');
+    return;
+  }
+
   try {
     await postAIReview({
       octokit,
@@ -86,7 +112,7 @@ async function aiMain(): Promise<void> {
       repo,
       prNumber: pr.number,
       headSha: pr.head.sha,
-      suggestions: parsed.suggestions,
+      suggestions: toPost,
       model,
       dryRun,
     });

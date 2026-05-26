@@ -45,15 +45,39 @@ export async function postReview(args: PostReviewArgs): Promise<void> {
     return;
   }
 
-  await octokit.rest.pulls.createReview({
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: 'COMMENT',
-    body: `🟣 **Drift** has ${comments.length} suggestion${comments.length === 1 ? '' : 's'} to apply.`,
-    comments,
-  });
+  try {
+    await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      commit_id: headSha,
+      event: 'COMMENT',
+      body: `🟣 **Drift** has ${comments.length} suggestion${comments.length === 1 ? '' : 's'} to apply.`,
+      comments,
+    });
+    core.info(`Posted PR review with ${comments.length} inline suggestion(s).`);
+  } catch (err) {
+    // createReview is ATOMIC: a single comment whose path/line is outside
+    // the PR diff makes GitHub reject the WHOLE review with 422 "Path could
+    // not be resolved". That's not a failure worth a scary warning — the
+    // sticky comment already mirrors every suggestion (render/sections/
+    // suggestions.ts), so the author still sees them. Downgrade to info and
+    // move on; rethrow anything that isn't that known, benign 422.
+    if (isUnresolvedPathError(err)) {
+      core.info(
+        `Inline review skipped: ${comments.length} suggestion(s) anchor to lines outside the ` +
+          'PR diff (GitHub 422 "Path could not be resolved"). They are shown in the Drift PR comment instead.',
+      );
+      return;
+    }
+    throw err;
+  }
+}
 
-  core.info(`Posted PR review with ${comments.length} inline suggestion(s).`);
+/** A GitHub 422 caused by an inline comment anchored outside the PR diff. */
+function isUnresolvedPathError(err: unknown): boolean {
+  const e = err as { status?: number; message?: string } | null;
+  const status = e?.status;
+  const message = typeof e?.message === 'string' ? e.message : '';
+  return status === 422 || /could not be resolved|Unprocessable/i.test(message);
 }

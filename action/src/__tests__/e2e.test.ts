@@ -61,7 +61,7 @@ function setupRun(opts: { withReport?: boolean; eventPayload?: object }): {
     outPath,
     env: {
       DRIFT_REPORT_PATH: reportPath,
-      DRIFT_FAIL_ON: 'regression',
+      // fail-threshold unset → never fail (advisory default).
       DRIFT_COMMENT: 'true',
       // Empty token → action skips GitHub API entirely. Phase 6 (smoke) is what
       // exercises the real GitHub integration.
@@ -102,22 +102,59 @@ test('action skips silently when event has no pull_request', async () => {
   assert.match(result.stdout, /Drift only runs on pull_request/);
 });
 
-test('action fails when DRIFT_REPORT_PATH is missing', async () => {
+// Fail-soft contract: Drift is advisory, so its OWN errors (missing report,
+// bad schema, …) become ::warning:: annotations and the PR stays green
+// (exit 0). Only a deliberate fail-threshold breach exits non-zero.
+test('action warns (does NOT fail) when DRIFT_REPORT_PATH is missing', async () => {
   const { env } = setupRun({ withReport: false });
   delete env.DRIFT_REPORT_PATH;
   const result = await runAction(env);
-  assert.notEqual(result.code, 0);
-  // @actions/core writes ::error::… to stdout, not stderr.
+  assert.equal(result.code, 0, `expected fail-soft exit 0\nstdout: ${result.stdout}`);
+  // @actions/core writes ::warning::… to stdout.
+  assert.match(result.stdout, /::warning::/);
   assert.match(result.stdout, /DRIFT_REPORT_PATH is not set/);
 });
 
-test('action fails on schema version mismatch', async () => {
+test('action warns (does NOT fail) on schema version mismatch', async () => {
   const { env, dir } = setupRun({ withReport: false });
   const badReport = join(dir, 'report.json');
   writeFileSync(badReport, JSON.stringify({ schema_version: 99 }));
   env.DRIFT_REPORT_PATH = badReport;
 
   const result = await runAction(env);
-  assert.notEqual(result.code, 0);
+  assert.equal(result.code, 0, `expected fail-soft exit 0\nstdout: ${result.stdout}`);
+  assert.match(result.stdout, /::warning::/);
   assert.match(result.stdout, /Unsupported schema_version/);
+});
+
+// The headline behaviour: a numeric fail-threshold is the ONLY path to a
+// non-zero exit. The kotlin-ktor fixture carries 1 product-correctness
+// (category B) issue that clears the quality bar. We point the GitHub API
+// at a dead port so the network tasks fail-soft (warnings) and we isolate
+// the threshold decision running on the real bundle.
+test('action fails ONLY when product-correctness count exceeds fail-threshold', async () => {
+  const kotlinFixture = join(import.meta.dirname, '../../.dev/scan-pr-output-kotlin-ktor.json');
+
+  async function run(threshold: string | undefined): Promise<RunResult> {
+    const { env } = setupRun({ withReport: false });
+    copyFileSync(kotlinFixture, env.DRIFT_REPORT_PATH);
+    env.GITHUB_TOKEN = 'dummy'; // past the no-token early return
+    env.GITHUB_API_URL = 'http://127.0.0.1:9'; // dead → tasks fail-soft
+    if (threshold !== undefined) env.DRIFT_FAIL_THRESHOLD = threshold;
+    return runAction(env);
+  }
+
+  const unset = await run(undefined);
+  assert.equal(unset.code, 0, `unset → never fail\nstdout: ${unset.stdout}`);
+
+  const zero = await run('0');
+  assert.notEqual(zero.code, 0, 'threshold 0 → fail on any (1 > 0)');
+  assert.match(zero.stdout, /exceeding the configured fail-threshold of 0/);
+
+  const one = await run('1');
+  assert.equal(one.code, 0, 'threshold 1 → 1 is not > 1, stays green');
+
+  const bad = await run('abc');
+  assert.equal(bad.code, 0, 'non-numeric → ignored, never fails');
+  assert.match(bad.stdout, /Ignoring invalid fail-threshold/);
 });

@@ -15,6 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
+import { parsePatch } from 'diff';
 import type { CodeSuggestion, ScanPrOutput } from '../report.ts';
 import { loadReport } from '../report.ts';
 
@@ -104,12 +105,20 @@ export function buildAIContext(args: BuildContextArgs): BuildContextResult {
     });
   }
 
-  // ── PR diff (filtered to focal files when available) ───────────────
+  // ── PR diff (filtered to focal files, new-side lines numbered) ─────
+  // The leading number on each line is the NEW-FILE line number — the
+  // value to put in a suggestion's `line`/`start_line`. This is the
+  // PR-Agent technique: LLMs count lines unreliably, so we hand them
+  // the numbers. Lines marked `+` are new code (prefer these); `-`
+  // lines are deletions (no number, never commentable).
   const focalFiles = new Set(focalSuggestions.map((s) => s.file));
   const diff = getPrDiff(workspaceRoot, baseSha, headSha, maxFiles, focalFiles);
   if (diff.text) {
-    sections.push(`=== PR diff (${diff.fileCount} file${diff.fileCount === 1 ? '' : 's'}) ===`);
-    sections.push(diff.text);
+    sections.push(
+      `=== PR diff (${diff.fileCount} file${diff.fileCount === 1 ? '' : 's'}; ` +
+        `each line is prefixed with its new-file line number) ===`,
+    );
+    sections.push(annotateDiff(diff.text));
   } else {
     sections.push('=== PR diff ===');
     sections.push('(no diff available — `git diff` failed)');
@@ -134,6 +143,46 @@ export function buildAIContext(args: BuildContextArgs): BuildContextResult {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Re-emit a unified diff with the NEW-FILE line number prefixed on each
+ * non-deletion line (PR-Agent's "numbered new hunk" technique). Parsing
+ * is delegated to jsdiff; on any parse error we fail safe to the raw
+ * diff so the model still sees *something*.
+ */
+function annotateDiff(diffText: string): string {
+  let files: ReturnType<typeof parsePatch>;
+  try {
+    files = parsePatch(diffText);
+  } catch {
+    return diffText;
+  }
+  const out: string[] = [];
+  for (const file of files) {
+    const name = (file.newFileName || file.oldFileName || 'file').replace(/^[ab]\//, '');
+    out.push(`### ${name}`);
+    for (const hunk of file.hunks) {
+      out.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
+      let n = hunk.newStart;
+      const pad = String(hunk.newStart + hunk.newLines).length;
+      for (const row of hunk.lines) {
+        const c = row[0];
+        const code = row.slice(1);
+        if (c === '+') {
+          out.push(`${String(n).padStart(pad)} +${code}`);
+          n += 1;
+        } else if (c === ' ') {
+          out.push(`${String(n).padStart(pad)}  ${code}`);
+          n += 1;
+        } else if (c === '-') {
+          out.push(`${' '.repeat(pad)} -${code}`); // deletion: no new-side number
+        }
+        // '\' (no-newline marker) is dropped
+      }
+    }
+  }
+  return out.join('\n');
+}
 
 function pickFocalSuggestions(
   report: ScanPrOutput | null,

@@ -527,8 +527,8 @@ mod tests {
         let r = compute(&entries, &[]);
         // Verify each name shows up in exactly one node-declaration
         // line (no two share an id).
-        let n_aa = r.after_mermaid.matches("[Aa]").count();
-        let n_bb = r.after_mermaid.matches("[BB]").count();
+        let n_aa = r.after_mermaid.matches("[\"Aa\"]").count();
+        let n_bb = r.after_mermaid.matches("[\"BB\"]").count();
         assert_eq!(n_aa, 1, "Aa should appear in 1 declaration, got {n_aa}");
         assert_eq!(n_bb, 1, "BB should appear in 1 declaration, got {n_bb}");
     }
@@ -547,7 +547,7 @@ mod tests {
         ];
         let r = compute(&entries, &[]);
         // Both `shared` nodes should be declared — distinct files.
-        let declarations = r.after_mermaid.matches("[shared]").count();
+        let declarations = r.after_mermaid.matches("[\"shared\"]").count();
         assert_eq!(declarations, 2, "expected 2 declarations (different files), got {declarations}");
     }
 
@@ -564,7 +564,7 @@ mod tests {
             with_children(mk_node("a", "a.rs"), vec![child, child2]),
         ];
         let r = compute(&entries, &[]);
-        let declarations = r.after_mermaid.matches("[shared]").count();
+        let declarations = r.after_mermaid.matches("[\"shared\"]").count();
         assert_eq!(declarations, 1, "same (name, file) must dedupe");
     }
 

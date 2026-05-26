@@ -150,6 +150,48 @@ test('postReview: review payload matches documented schema', async () => {
   }
 });
 
+// ── postReview: graceful 422 ("Path could not be resolved") ─────────────
+// createReview is ATOMIC — one out-of-diff anchor makes GitHub reject the
+// whole review with 422. That's benign (the sticky comment mirrors every
+// suggestion), so postReview must NOT throw — otherwise the action surfaces
+// a scary warning. Other errors must still propagate.
+test('postReview: swallows the atomic 422 but rethrows other errors', async () => {
+  const report = loadReport(fixturePath);
+  const suggestions = report.pr_review?.code_suggestions ?? [];
+
+  const make = (err: unknown) => ({
+    rest: {
+      pulls: {
+        createReview: async () => {
+          throw err;
+        },
+      },
+    },
+  });
+  const args = (octokit: unknown) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    octokit: octokit as any,
+    owner: 'acme',
+    repo: 'shop',
+    prNumber: 42,
+    headSha: 'deadbeefcafe1234567890abcdef0123456789ab',
+    suggestions,
+  });
+
+  // 422 → resolves (swallowed).
+  await assert.doesNotReject(
+    postReview(args(make(Object.assign(new Error('Unprocessable Entity: Path could not be resolved'), { status: 422 })))),
+    'a 422 unresolved-path error must be swallowed',
+  );
+
+  // Anything else → still rejects so genuine failures surface.
+  await assert.rejects(
+    postReview(args(make(Object.assign(new Error('Service Unavailable'), { status: 503 })))),
+    /Service Unavailable/,
+    'non-422 errors must propagate',
+  );
+});
+
 // ── checks.create shape ─────────────────────────────────────────────────
 test('createCheckRun: payload matches documented schema', async () => {
   const { octokit, calls } = makeSpyOctokit();

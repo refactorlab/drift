@@ -185,10 +185,20 @@ pub struct ClassDef {
 /// Replace mermaid-syntax-breakers in a label. `[`, `]`, `(`, `)`,
 /// `{`, `}` would otherwise be interpreted as node-shape delimiters
 /// or subgraph syntax. Newlines and quotes likewise break parsing.
+///
+/// `<` and `>` are mapped to look-alike single guillemets (`‹` / `›`):
+/// even though `render_node` now quotes every label, Mermaid's
+/// htmlLabels renderer treats `<…>` inside a quoted label as an HTML
+/// tag and silently drops it, and an UNquoted `<`/`@` is tokenized as
+/// an operator (the `@` becomes a `LINK_ID`, aborting the parse). This
+/// is what makes synthetic names like `<module>` and
+/// `useTheme.<lambda@21>` safe to display verbatim.
 fn safe_label(s: &str) -> String {
     s.chars()
         .map(|c| match c {
             '[' | ']' | '(' | ')' | '{' | '}' | '"' | '\\' | '\n' | '\r' => ' ',
+            '<' => '‹',
+            '>' => '›',
             c if c.is_control() => ' ',
             c => c,
         })
@@ -283,7 +293,11 @@ impl Flowchart {
 
 fn render_node(n: &FlowNode) -> String {
     let (open, close) = n.shape.brackets();
-    format!("{}{}{}{}", n.id, open, safe_label(&n.label), close)
+    // Quote the label so spaces, dots, `@`, `#` and other punctuation in
+    // synthetic symbol names (`useTheme.<lambda@21>`) are parsed as
+    // literal text rather than Mermaid operators. `safe_label` has
+    // already neutralized embedded quotes and `<`/`>`.
+    format!("{}{}\"{}\"{}", n.id, open, safe_label(&n.label), close)
 }
 
 // ─── QuadrantChart (Image 4 risks) ─────────────────────────────────
@@ -329,6 +343,12 @@ fn safe_quoted(s: &str) -> String {
                 '\''
             } else if c == '\\' {
                 '/'
+            } else if c == '<' {
+                // Same htmlLabels hazard as safe_label — keep `<module>`
+                // and friends from being parsed as HTML tags.
+                '‹'
+            } else if c == '>' {
+                '›'
             } else {
                 c
             }
@@ -501,8 +521,8 @@ mod tests {
         let s = fc.render();
         assert!(s.starts_with("flowchart LR"));
         assert!(s.contains("subgraph BEFORE"));
-        assert!(s.contains("a[Old]"));
-        assert!(s.contains("c[New]"));
+        assert!(s.contains("a[\"Old\"]"));
+        assert!(s.contains("c[\"New\"]"));
         assert!(s.contains("a --> b"));
         assert!(s.contains("b -.->|evolves|c"));
         assert!(s.contains("classDef added fill:#238636,stroke:#3fb950"));
@@ -582,5 +602,105 @@ mod tests {
         // either anyway.
         assert_eq!(safe_label("a\nb\tc"), "a b c");
         assert!(!safe_label("evil\"quote").contains('"'));
+        // `<`/`>` → guillemets so synthetic names render literally and
+        // never reach Mermaid's HTML-tag parser. The originals must be gone.
+        let g = safe_label("useTheme.<lambda@21>");
+        assert_eq!(g, "useTheme.‹lambda@21›");
+        assert!(!g.contains('<') && !g.contains('>'));
+        assert!(!safe_quoted("(<module>, x)").contains('<'));
+    }
+
+    #[test]
+    fn render_node_quotes_label_and_neutralizes_angle_brackets() {
+        let n = FlowNode {
+            id: "n0".into(),
+            label: "<module>".into(),
+            shape: NodeShape::Rect,
+            class: None,
+        };
+        // Quoted + guillemets — no raw `<`/`>` that could abort the parse
+        // or be eaten as an HTML tag.
+        assert_eq!(render_node(&n), "n0[\"‹module›\"]");
+    }
+
+    // ── Offline guardrail against the whole adversarial corpus ──────────
+    //
+    // This runs with plain `cargo test` (no node/mermaid needed). It asserts
+    // the *structural invariants* that make a node label safe for mermaid;
+    // the heavier `tests/mermaid_validate.rs` integration test confirms the
+    // same corpus against the REAL mermaid parser when node is available.
+    // Single source of truth for the corpus is the JSON fixture, shared with
+    // the integration test.
+    const ADVERSARIAL_LABELS: &str =
+        include_str!("../../tests/fixtures/mermaid_adversarial_labels.json");
+
+    /// A rendered node-declaration line is mermaid-safe iff its label is
+    /// double-quoted, carries no raw `<`/`>` (HTML-tag hazard), and contains
+    /// exactly the two wrapping quotes plus no control chars.
+    fn node_line_is_safe(line: &str) -> bool {
+        line.contains("[\"")
+            && line.contains("\"]")
+            && !line.contains('<')
+            && !line.contains('>')
+            && line.matches('"').count() == 2
+            && !line.chars().any(|c| c.is_control())
+    }
+
+    #[test]
+    fn adversarial_labels_render_to_safe_nodes() {
+        let labels: Vec<String> = serde_json::from_str(ADVERSARIAL_LABELS).unwrap();
+        // A pathologically long label must be handled too.
+        let mut all = labels.clone();
+        all.push("x".repeat(600));
+
+        for label in &all {
+            let n = FlowNode {
+                id: "n0".into(),
+                label: label.clone(),
+                shape: NodeShape::Rect,
+                class: None,
+            };
+            let line = render_node(&n);
+            assert!(
+                node_line_is_safe(&line),
+                "unsafe node line for label {label:?}: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn invariant_predicate_rejects_the_original_bug() {
+        // The exact shape that produced the user's `got 'LINK_ID'` error —
+        // proves `node_line_is_safe` has teeth (would fail the test above).
+        assert!(!node_line_is_safe("a_n2[useTheme.<lambda@21>]"));
+        // …and accepts the fixed shape.
+        assert!(node_line_is_safe("a_n2[\"useTheme.‹lambda@21›\"]"));
+    }
+
+    #[test]
+    fn full_flowchart_of_adversarial_labels_has_no_raw_angle_open() {
+        // `<` never appears in valid flowchart syntax (arrows use `>` only),
+        // so a single raw `<` anywhere in a full render is a definite break.
+        let labels: Vec<String> = serde_json::from_str(ADVERSARIAL_LABELS).unwrap();
+        let nodes: Vec<FlowNode> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| FlowNode {
+                id: format!("n{i}"),
+                label: l.clone(),
+                shape: NodeShape::Rect,
+                class: None,
+            })
+            .collect();
+        let fc = Flowchart {
+            direction: FlowDirection::TB,
+            title: Some("adversarial <corpus>".into()),
+            subgraphs: vec![],
+            nodes,
+            edges: vec![],
+            class_defs: vec![],
+        };
+        let rendered = fc.render();
+        assert!(!rendered.contains('<'), "raw '<' in render:\n{rendered}");
     }
 }

@@ -8,6 +8,7 @@
     "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/index.js && esbuild src/ai-context.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/ai-context.js && esbuild src/ai-index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/ai-suggest.js",
     "test": "node --test --experimental-strip-types --no-warnings 'src/__tests__/*.test.ts'",
     "smoke": "./scripts/smoke.sh",
+    "validate-mermaid": "node scripts/validate-mermaid.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -15,11 +16,14 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "esbuild": "^0.25.0",
+    "jsdom": "^29.1.1",
+    "mermaid": "^11.15.0",
     "typescript": "^5.4.0",
     "yaml": "^2.9.0"
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
-    "@actions/github": "^9.1.1"
+    "@actions/github": "^9.1.1",
+    "diff": "^9.0.0"
   }
 }

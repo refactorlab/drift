@@ -3,8 +3,7 @@
 // Covers:
 //   - fence stripping (```json + preamble)
 //   - bare-array shape tolerance
-//   - quality bar filtering
-//   - MAX cap (user wants 3)
+//   - quality bar filtering (cap + diff-anchoring live in the caller now)
 //   - schema rejection paths
 
 import { test } from 'node:test';
@@ -27,45 +26,33 @@ test('stripFence: passes through plain JSON unchanged', () => {
   assert.equal(stripFence(raw), raw);
 });
 
-test('parseAIOutput: clean envelope from example.json', () => {
+test('parseAIOutput: clean envelope from example.json (no cap — returns all passing)', () => {
   const raw = readFileSync(join(fixtureDir, 'ai-suggestions.example.json'), 'utf8');
-  const r = parseAIOutput(raw, { maxSuggestions: 10 });
+  const r = parseAIOutput(raw);
   assert.equal(r.ok, true);
   if (r.ok) {
     assert.equal(r.total, 4);
     assert.equal(r.passing, 4, 'all four fixture entries clear the bar');
-    assert.equal(r.capped, 4);
-  }
-});
-
-test('parseAIOutput: MAX cap = 3 applied after quality bar', () => {
-  const raw = readFileSync(join(fixtureDir, 'ai-suggestions.example.json'), 'utf8');
-  const r = parseAIOutput(raw, { maxSuggestions: 3 });
-  assert.equal(r.ok, true);
-  if (r.ok) {
-    assert.equal(r.total, 4);
-    assert.equal(r.passing, 4);
-    assert.equal(r.capped, 3, 'cap MUST clip to 3');
-    assert.equal(r.suggestions.length, 3);
+    assert.equal(r.suggestions.length, 4, 'parse no longer caps — caller does');
   }
 });
 
 test('parseAIOutput: fenced markdown still parses', () => {
   const raw = readFileSync(join(fixtureDir, 'ai-suggestions.fenced.txt'), 'utf8');
-  const r = parseAIOutput(raw, { maxSuggestions: 3 });
+  const r = parseAIOutput(raw);
   assert.equal(r.ok, true);
   if (r.ok) {
-    assert.equal(r.capped, 1);
+    assert.equal(r.suggestions.length, 1);
     assert.equal(r.suggestions[0].file, 'src/users/service.py');
   }
 });
 
 test('parseAIOutput: bare array is normalized into envelope', () => {
   const raw = readFileSync(join(fixtureDir, 'ai-suggestions.bare-array.txt'), 'utf8');
-  const r = parseAIOutput(raw, { maxSuggestions: 3 });
+  const r = parseAIOutput(raw);
   assert.equal(r.ok, true);
   if (r.ok) {
-    assert.equal(r.capped, 1);
+    assert.equal(r.suggestions.length, 1);
     assert.equal(r.suggestions[0].file, 'src/x.ts');
   }
 });
@@ -93,7 +80,7 @@ test('parseAIOutput: quality bar drops low-confidence + no-ref entries', () => {
       },
     ],
   };
-  const r = parseAIOutput(JSON.stringify(env), { maxSuggestions: 3 });
+  const r = parseAIOutput(JSON.stringify(env));
   // schema rejects on the second entry's empty url
   assert.equal(r.ok, false);
   if (!r.ok) {
@@ -115,7 +102,7 @@ test('parseAIOutput: quality bar (good schema, low confidence) returns empty lis
       },
     ],
   };
-  const r = parseAIOutput(JSON.stringify(env), { maxSuggestions: 3 });
+  const r = parseAIOutput(JSON.stringify(env));
   assert.equal(r.ok, true);
   if (r.ok) {
     assert.equal(r.total, 1);
@@ -125,12 +112,12 @@ test('parseAIOutput: quality bar (good schema, low confidence) returns empty lis
 });
 
 test('parseAIOutput: empty input rejected', () => {
-  const r = parseAIOutput('', { maxSuggestions: 3 });
+  const r = parseAIOutput('');
   assert.equal(r.ok, false);
 });
 
 test('parseAIOutput: malformed JSON rejected with reason', () => {
-  const r = parseAIOutput('{not json', { maxSuggestions: 3 });
+  const r = parseAIOutput('{not json');
   assert.equal(r.ok, false);
   if (!r.ok) {
     assert.match(r.reason, /JSON parse failed/);
@@ -151,7 +138,7 @@ test('parseAIOutput: invalid line (non-integer) rejected by schema', () => {
       },
     ],
   };
-  const r = parseAIOutput(JSON.stringify(env), { maxSuggestions: 3 });
+  const r = parseAIOutput(JSON.stringify(env));
   assert.equal(r.ok, false);
 });
 
@@ -170,7 +157,7 @@ test('parseAIOutput: start_line > line rejected', () => {
       },
     ],
   };
-  const r = parseAIOutput(JSON.stringify(env), { maxSuggestions: 3 });
+  const r = parseAIOutput(JSON.stringify(env));
   assert.equal(r.ok, false);
   if (!r.ok) {
     assert.match(r.reason, /start_line/);

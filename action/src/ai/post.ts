@@ -12,9 +12,39 @@ import * as core from '@actions/core';
 import type { getOctokit } from '@actions/github';
 import type { AISuggestion } from './schema.ts';
 import { renderAISuggestionBody } from './render.ts';
+import { parseCommentableLines } from './diff-lines.ts';
 import type { ReviewComment } from '../contract/github.ts';
 
 type Octokit = ReturnType<typeof getOctokit>;
+
+/**
+ * Read the PR's diff and return a map of file → commentable RIGHT-side
+ * line numbers. This is the authoritative source GitHub itself uses to
+ * accept/reject inline comments, so filtering against it prevents the
+ * 422 "line must be part of the diff" that would drop the whole review.
+ *
+ * Single page of 100 files (same pattern as the sticky-comment lookup);
+ * files beyond that — or binary/large files with no `.patch` — simply
+ * contribute no commentable lines, so their suggestions get dropped.
+ */
+export async function fetchCommentableLines(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<Map<string, Set<number>>> {
+  const { data } = await octokit.rest.pulls.listFiles({
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  const map = new Map<string, Set<number>>();
+  for (const f of data) {
+    if (f.patch) map.set(f.filename, parseCommentableLines(f.patch));
+  }
+  return map;
+}
 
 export type PostAIReviewArgs = {
   octokit: Octokit;
