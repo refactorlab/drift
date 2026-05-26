@@ -38,12 +38,13 @@ on:
   push:
     branches: [main]
     paths:
+      # The desktop app releases ONLY when drift-lab/ itself changes — it is
+      # decoupled from the profiler CLI. A profiler-only change publishes its
+      # own `drift-static-profiler-v*` release (drift-static-profiler-release.yml)
+      # and does NOT cut a desktop release. When the desktop app does build (for
+      # its own changes) it still rebuilds + bundles the then-current profiler,
+      # so a drift-lab release always ships a fresh CLI.
       - 'drift-lab/**'
-      # drift-lab links against drift-static-profiler as a path dependency
-      # (see drift-lab/src-tauri/Cargo.toml). A change in the profiler
-      # crate must trigger the desktop build so we catch breakage on the
-      # main-branch build, not the next time someone touches drift-lab/.
-      - 'drift-static-profiler/**'
       - '.github/workflows/drift-lab-desktop-build.yml'
   workflow_dispatch:
 

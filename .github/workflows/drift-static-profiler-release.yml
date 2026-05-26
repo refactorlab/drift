@@ -1,99 +1,103 @@
 name: drift-static-profiler / release
 
-# Builds and publishes cross-platform binaries for `drift-static-profiler`.
-# Triggered by a tag of the form `drift-static-profiler-vX.Y.Z`.
+# Releases the `drift-static-profiler` CLI INDEPENDENTLY of the desktop app.
 #
-# The Drift GitHub Action (action.yml at repo root) installs these binaries
-# via action/scripts/install-profiler.sh — the asset naming below MUST match
-# what that script expects:
+# Model: RELEASE ON VERSION BUMP.
+#   Bump `drift-static-profiler/Cargo.toml` `version` in your PR → merge to
+#   main → this workflow derives the tag `drift-static-profiler-v<version>`,
+#   and if that version isn't already released, it creates the tag + release
+#   and publishes the cross-platform binaries. No version change ⇒ no-op.
+#   (Manual override available via workflow_dispatch with an explicit tag.)
 #
-#     drift-static-profiler-<arch>-<os>.{tar.gz | zip}
-#     + a sibling .sha256 file per asset
-#
-# Pipeline:
-#   build    — 5-platform matrix (linux x86_64+aarch64, macOS x86_64+aarch64,
-#              windows x86_64). Uses taiki-e/upload-rust-binary-action which
-#              handles archive packaging, sha256 generation, and the GitHub
-#              Release upload in one step.
+# The Drift GitHub Action (action.yml) auto-detects the newest release whose
+# tag matches `drift-static-profiler-v*` (or `drift-lab-v*`) and has the
+# binary asset — so a fresh CLI release is picked up automatically. Asset
+# naming MUST match action/scripts/install-profiler.sh:
+#     drift-static-profiler-<arch>-<os>.{tar.gz | zip}  (+ sibling .sha256)
 
 on:
   push:
-    tags:
-      - 'drift-static-profiler-v*'
+    branches: [main]
+    paths:
+      - 'drift-static-profiler/Cargo.toml'   # the version bump is the release signal
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. drift-static-profiler-v0.6.0). Created on the current commit if it does not exist.'
-        required: true
+        description: 'Override tag (default: drift-static-profiler-v<Cargo.toml version>). Created on the current commit if missing.'
+        required: false
 
-# Serialize releases so two pushes can't race on the same tag.
+# Serialize so two version bumps can't race on the same tag.
 concurrency:
-  group: drift-static-profiler-release-${{ github.ref }}
+  group: drift-static-profiler-release
   cancel-in-progress: false
 
 permissions:
-  contents: write  # upload-rust-binary-action attaches assets to the release
+  contents: write  # create the tag + release; upload-rust-binary-action attaches assets
 
 jobs:
-  # taiki-e/upload-rust-binary-action REQUIRES a GitHub Release to exist
-  # beforehand — it uploads assets to releases but does not create them.
-  # This job creates the tag (workflow_dispatch path) and the empty release
-  # once; the matrix `build` job then uploads each platform's archive to it.
-  # Without this, all 5 matrix legs race and every leg fails at the upload
-  # step because no release matches the ref.
+  # Resolve the tag from the Cargo.toml version (or the dispatch override),
+  # then create the tag + empty release ONCE — but only if that version
+  # hasn't been released yet. `skip=true` makes the whole build matrix a
+  # no-op for pushes that didn't bump the version. taiki-e/upload-rust-
+  # binary-action needs the Release to exist before it can upload to it.
   create-release:
-    name: create release
+    name: resolve + create release
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      skip: ${{ steps.resolve.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
 
-      # workflow_dispatch path: create the tag on the current commit so the
-      # downstream release creation + matrix upload steps can resolve it.
-      - name: Create tag (workflow_dispatch only)
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists — proceeding."
-          else
-            git tag "$TAG"
-            git push origin "$TAG"
-          fi
-
-      # Idempotent: skips creation if a release for this tag already exists.
-      # prerelease=false so the Marketplace + auto-detect treat it as latest.
-      - name: Create GitHub Release (idempotent)
+      - name: Resolve tag + create release if the version is new
+        id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          OVERRIDE: ${{ github.event.inputs.tag }}
         run: |
-          set -e
+          set -euo pipefail
+
+          if [ -n "${OVERRIDE:-}" ]; then
+            TAG="$OVERRIDE"
+          else
+            ver=$(grep -m1 '^version' drift-static-profiler/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+            TAG="drift-static-profiler-v${ver}"
+          fi
+          export TAG
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "🏷  resolved tag: $TAG"
+
+          # Already released? → skip the whole pipeline (version unchanged).
           if curl -sf -H "Authorization: Bearer $GH_TOKEN" \
               "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" >/dev/null 2>&1; then
-            echo "Release for $TAG already exists — using it."
-          else
-            PAYLOAD=$(python3 -c "
-          import json, os
-          print(json.dumps({
-              'tag_name':   os.environ['TAG'],
-              'name':       os.environ['TAG'],
-              'draft':      False,
-              'prerelease': False,
-          }))")
-            curl -sf -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/releases" \
-              -d "$PAYLOAD" >/dev/null
-            echo "Created release for $TAG"
+            echo "✓ release $TAG already exists — nothing to do (bump the version to ship a new one)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          # Create the tag on the current commit (idempotent) ...
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "🏷  pushed tag $TAG"
+          fi
+
+          # ... and the (non-prerelease) Release so auto-detect treats it as latest.
+          PAYLOAD=$(python3 -c "import json,os;print(json.dumps({'tag_name':os.environ['TAG'],'name':os.environ['TAG'],'draft':False,'prerelease':False}))")
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "$PAYLOAD" >/dev/null
+          echo "📦 created release $TAG"
 
   build:
     name: build / ${{ matrix.target }}
     needs: create-release
+    if: needs.create-release.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +137,7 @@ jobs:
           key: ${{ matrix.target }}
 
       # Builds, archives, generates `<archive>.sha256`, and uploads everything
-      # to the GitHub Release matching the current tag. Asset naming follows
+      # to the GitHub Release created above. Asset naming follows
       # `drift-static-profiler-<target>.{tar.gz | zip}` — the format
       # install-profiler.sh downloads.
       - uses: taiki-e/upload-rust-binary-action@v1
@@ -145,5 +149,5 @@ jobs:
           zip: windows
           checksum: sha256
           manifest-path: drift-static-profiler/Cargo.toml
-          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          ref: refs/tags/${{ needs.create-release.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
