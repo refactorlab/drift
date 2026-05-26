@@ -133,6 +133,15 @@ fn build_graph_context(
     opts: &AnalyzeOptions,
     progress: &dyn Progress,
 ) -> GraphContext {
+    let phase_started_at = std::time::Instant::now();
+    tracing::info!(
+        root = %root.display(),
+        max_depth = opts.max_depth,
+        exclude_tests = opts.exclude_tests,
+        exclude_static_assets = opts.exclude_static_assets,
+        scan_sql_files = opts.scan_sql_files,
+        "graph context build start"
+    );
     // ── 1. ONE filesystem walk, classified up-front ──────────────────────
     //
     // The legacy implementation walked the repo twice: once for the
@@ -157,6 +166,11 @@ fn build_graph_context(
     let walked = walk_files_classified_with(root, &walk_opts, progress);
     let language_stats = compute_language_stats_from_entries(&walked);
     let profiled_language = language_stats.dominant_supported;
+    tracing::info!(
+        walked = walked.len(),
+        profiled = profiled_language.map(|l| l.slug()).unwrap_or("none"),
+        "language picked"
+    );
 
     // ── 2. Filter to source files in the profiled language ──────────────
     //
@@ -223,6 +237,13 @@ fn build_graph_context(
     let mut manifest_entries = crate::manifest::collect(root);
     crate::docker::match_entries(&mut manifest_entries, &all_tags, &graph);
     entry_declarations.extend(manifest_entries);
+    tracing::info!(
+        symbols = graph.symbols.len(),
+        edges = graph.edges.values().map(|v| v.len()).sum::<usize>(),
+        entry_decls = entry_declarations.len(),
+        elapsed_ms = phase_started_at.elapsed().as_millis() as u64,
+        "graph context build end"
+    );
     GraphContext {
         all_tags,
         graph,
@@ -241,10 +262,17 @@ fn build_trees_from_ids(
     opts: &AnalyzeOptions,
     progress: &dyn Progress,
 ) -> Vec<CallTreeNode> {
+    let started_at = std::time::Instant::now();
     let mut builder = TreeBuilder::new(&ctx.graph, root);
     builder.max_depth = opts.max_depth;
     builder.skip_accessors = opts.skip_accessors;
     let total = ids.len();
+    tracing::info!(
+        entries = total,
+        max_depth = opts.max_depth,
+        skip_accessors = opts.skip_accessors,
+        "tree build start"
+    );
     progress.step_start("building call trees", total);
     let mut out = Vec::with_capacity(ids.len());
     for (i, id) in ids.iter().enumerate() {
@@ -268,6 +296,12 @@ fn build_trees_from_ids(
     }
     progress.step_progress(total, total);
     progress.step_end();
+    tracing::info!(
+        entries = out.len(),
+        skipped = total.saturating_sub(out.len()),
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "tree build end"
+    );
     out
 }
 
@@ -287,6 +321,12 @@ pub fn analyze_with_progress(
     opts: &AnalyzeOptions,
     progress: &dyn Progress,
 ) -> Result<AnalyzeOutcome> {
+    let started_at = std::time::Instant::now();
+    tracing::info!(
+        root = %root.display(),
+        entries = entries.len(),
+        "analyze start"
+    );
     let ctx = build_graph_context(root, opts, progress);
 
     progress.phase("resolving entry points…");
@@ -300,6 +340,12 @@ pub fn analyze_with_progress(
         }
         entry_ids.extend(ids);
     }
+    tracing::info!(
+        requested = entries.len(),
+        resolved = entry_ids.len(),
+        unresolved = unresolved.len(),
+        "entry points resolved"
+    );
     let mut roots = build_trees_from_ids(&ctx, root, &entry_ids, opts, progress);
     docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots);
     // `build_with_progress` emits a per-pass step bar for each
@@ -326,6 +372,12 @@ pub fn analyze_with_progress(
     // out any post-analyze phase from contributing to the visible
     // progress. Ownership of the bar lifecycle therefore lives with
     // the caller (main.rs's run_scan / run_analyze_root).
+    tracing::info!(
+        entries = report.entries.len(),
+        symbols = report.summary.symbols,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "analyze end"
+    );
     Ok(AnalyzeOutcome {
         report,
         unresolved_entries: unresolved,
@@ -361,6 +413,13 @@ pub fn analyze_roots_with_progress(
     opts: &AnalyzeOptions,
     progress: &dyn Progress,
 ) -> Result<AnalyzeOutcome> {
+    let started_at = std::time::Instant::now();
+    tracing::info!(
+        root = %root.display(),
+        min_reach = discover.min_reach,
+        max_roots = discover.max_roots,
+        "analyze-roots start"
+    );
     let ctx = build_graph_context(root, opts, progress);
     // discover_roots_with_progress emits its own "scanning roots"
     // step bar — no extra `phase()` label needed here.
@@ -396,6 +455,13 @@ pub fn analyze_roots_with_progress(
     // out any post-analyze phase from contributing to the visible
     // progress. Ownership of the bar lifecycle therefore lives with
     // the caller (main.rs's run_scan / run_analyze_root).
+    tracing::info!(
+        roots = discovered.len(),
+        entries = report.entries.len(),
+        symbols = report.summary.symbols,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "analyze-roots end"
+    );
     Ok(AnalyzeOutcome {
         report,
         unresolved_entries: Vec::new(),
@@ -475,6 +541,13 @@ pub fn analyze_pr_with_progress(
     opts: &AnalyzeOptions,
     progress: &dyn Progress,
 ) -> Result<AnalyzePrOutcome> {
+    let started_at = std::time::Instant::now();
+    tracing::info!(
+        root = %root.display(),
+        changed_files = changed_files.len(),
+        min_reach = discover.min_reach,
+        "analyze-pr start"
+    );
     let ctx = build_graph_context(root, opts, progress);
 
     // Discover EVERY root first; the pr_scope filter winnows it down
@@ -492,6 +565,12 @@ pub fn analyze_pr_with_progress(
     // Pure filter — no I/O, no per-language code (see pr_scope.rs).
     progress.phase("filtering roots by PR scope…");
     let affected = crate::pr_scope::affected_roots(&ctx.graph, &all_discovered, changed_files);
+    tracing::info!(
+        all_roots = all_discovered.len(),
+        affected = affected.roots.len(),
+        unreachable = affected.unreachable_changes.len(),
+        "pr scope filtered"
+    );
 
     // Build trees only for the affected roots. Reusing
     // `build_trees_from_ids` keeps the focused report's per-entry
@@ -531,6 +610,12 @@ pub fn analyze_pr_with_progress(
         discovered_roots: affected.roots,
         containment: ctx.containment,
     };
+    tracing::info!(
+        entries = outcome.report.entries.len(),
+        symbols = outcome.report.summary.symbols,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "analyze-pr end"
+    );
     Ok(AnalyzePrOutcome { outcome, pr_scope })
 }
 

@@ -203,6 +203,14 @@ pub fn start_scan<R: Runtime>(
     let pick_rx = picker_registry.install(scan_id.clone());
     let cancel_flag = cancel_registry.install(scan_id.clone());
 
+    tracing::info!(
+        scan_id = %scan_id,
+        path = %project_path.display(),
+        exclude_tests = filters.exclude_tests,
+        exclude_static_assets = filters.exclude_static_assets,
+        "scan kicked off (picker flow)"
+    );
+
     tauri::async_runtime::spawn_blocking(move || {
         run_blocking(
             app_for_task,
@@ -241,6 +249,14 @@ pub fn start_scan_for_entry<R: Runtime>(
     let app_for_task = app.clone();
     let scan_id_for_task = scan_id.clone();
     let cancel_flag = cancel_registry.install(scan_id.clone());
+
+    tracing::info!(
+        scan_id = %scan_id,
+        path = %project_path.display(),
+        entry = %entry_name,
+        seed_roots = picker_roots_seed.len(),
+        "scan kicked off (focused entry)"
+    );
 
     tauri::async_runtime::spawn_blocking(move || {
         run_focused_blocking(
@@ -308,6 +324,12 @@ fn run_blocking<R: Runtime>(
     let captured_roots_for_callback = Arc::clone(&captured_roots);
     let pick_callback = move |roots: &[drift_static_profiler::PickerRoot]| -> Option<usize> {
         picker_invoked_for_callback.store(true, Ordering::SeqCst);
+        tracing::info!(
+            scan_id = %scan_id_for_picker,
+            roots = roots.len(),
+            top_reach = roots.first().map(|r| r.reach).unwrap_or(0),
+            "picker rows ready — awaiting user pick"
+        );
         let decorated: Vec<ScanPickerRoot> = roots.iter().enumerate().map(decorate).collect();
         if let Ok(mut g) = captured_roots_for_callback.lock() {
             *g = decorated.clone();
@@ -320,8 +342,21 @@ fn run_blocking<R: Runtime>(
         // Wait for the user. If the sender is dropped (cancelled), recv
         // returns Err — treat as abort.
         match pick_rx.recv() {
-            Ok(choice) => choice,
-            Err(_) => None,
+            Ok(choice) => {
+                tracing::info!(
+                    scan_id = %scan_id_for_picker,
+                    choice = ?choice,
+                    "picker decision received"
+                );
+                choice
+            }
+            Err(_) => {
+                tracing::warn!(
+                    scan_id = %scan_id_for_picker,
+                    "picker channel closed without decision — treating as abort"
+                );
+                None
+            }
         }
     };
 
@@ -348,6 +383,7 @@ fn run_blocking<R: Runtime>(
     if cancel_flag.load(Ordering::SeqCst)
         || matches!(&result, Err(p) if p.downcast_ref::<CancelledByUser>().is_some())
     {
+        tracing::info!(scan_id = %scan_id, "scan stopped by user");
         let _ = app.emit(
             topic::ERROR,
             ScanError {
@@ -379,6 +415,11 @@ fn run_blocking<R: Runtime>(
                 // the old catch-all.
                 no_roots_diagnostic(&project_path, &filters)
             };
+            tracing::warn!(
+                scan_id = %scan_id,
+                picker_invoked = picker_invoked.load(Ordering::SeqCst),
+                "scan ended without outcome"
+            );
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
@@ -388,6 +429,7 @@ fn run_blocking<R: Runtime>(
             );
         }
         Ok(Err(e)) => {
+            tracing::error!(scan_id = %scan_id, error = %e, "scan failed");
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
@@ -401,6 +443,7 @@ fn run_blocking<R: Runtime>(
             // for the UI to show, and let the process keep serving the
             // rest of the app.
             let msg = panic_message(p.as_ref());
+            tracing::error!(scan_id = %scan_id, panic = %msg, "scan panicked");
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
@@ -460,6 +503,11 @@ fn run_focused_blocking<R: Runtime>(
             // success with an empty report (the suggester would then have
             // no findings and the user wouldn't know why).
             if outcome.report.entries.is_empty() {
+                tracing::warn!(
+                    scan_id = %scan_id,
+                    entry = %entry_name,
+                    "focused entry did not resolve in graph"
+                );
                 let _ = app.emit(
                     topic::ERROR,
                     ScanError {
@@ -475,6 +523,7 @@ fn run_focused_blocking<R: Runtime>(
             finalize(app, scan_id, outcome, picker_roots_seed);
         }
         Ok(Err(e)) => {
+            tracing::error!(scan_id = %scan_id, error = %e, "focused scan failed");
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
@@ -485,6 +534,7 @@ fn run_focused_blocking<R: Runtime>(
         }
         Err(p) => {
             let msg = panic_message(&p);
+            tracing::error!(scan_id = %scan_id, panic = %msg, "focused scan panicked");
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {
@@ -520,7 +570,9 @@ pub fn stop_scan(
     // Unblock the picker first — `cancel` alone wouldn't wake a thread
     // sitting on `pick_rx.recv()`. Idempotent if no picker is parked.
     picker_registry.cancel_if_parked(scan_id);
-    cancel_registry.cancel(scan_id)
+    let was_live = cancel_registry.cancel(scan_id);
+    tracing::info!(scan_id = %scan_id, was_live, "stop_scan requested");
+    was_live
 }
 
 /// Build a real "why did discovery return zero?" message that the UI can
@@ -572,6 +624,14 @@ fn finalize<R: Runtime>(
 
     match storage::save_report(&scan_id, &outcome.report, &picker_roots) {
         Ok(path) => {
+            tracing::info!(
+                scan_id = %scan_id,
+                picked_root = picked_root.as_deref().unwrap_or("<none>"),
+                entries = outcome.report.entries.len(),
+                symbols = outcome.report.summary.symbols,
+                saved_path = %path.display(),
+                "scan complete"
+            );
             let _ = app.emit(
                 topic::COMPLETE,
                 ScanComplete {
@@ -582,6 +642,7 @@ fn finalize<R: Runtime>(
             );
         }
         Err(e) => {
+            tracing::error!(scan_id = %scan_id, error = %e, "save report failed");
             let _ = app.emit(
                 topic::ERROR,
                 ScanError {

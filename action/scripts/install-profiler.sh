@@ -1,32 +1,46 @@
 #!/usr/bin/env bash
-# Downloads a pinned drift-static-profiler release for the current runner
-# OS/arch, verifies its sha256, and adds it to $GITHUB_PATH.
+# Installs drift-static-profiler onto $GITHUB_PATH. Zero-friction for the
+# consumer — defaults auto-detect the latest GitHub Release containing the
+# binary and use the ambient $GITHUB_TOKEN (rate-limit friendly).
 #
-# Required env:
-#   DRIFT_PROFILER_VERSION   e.g. "v0.6.0"
-#   DRIFT_PROFILER_REPO      e.g. "drift-dev/drift"  (defaults to that)
-#   RUNNER_OS                provided by GitHub Actions (Linux | macOS | Windows)
-#   RUNNER_ARCH              provided by GitHub Actions (X64 | ARM64)
-#   GITHUB_PATH              provided by GitHub Actions
+# Required env (provided automatically by GitHub Actions):
+#   RUNNER_OS, RUNNER_ARCH, GITHUB_PATH
 #
-# Local-binary escape hatch (for `act`-based local testing or for
-# pinned-build CI scenarios where the binary is already on the host):
+# Optional env (action.yml exposes these as inputs):
+#   DRIFT_PROFILER_REPO         GitHub repo hosting the binary releases.
+#                               Default: refactorlab/drift
 #
-#   DRIFT_PROFILER_LOCAL_BIN   path to a prebuilt drift-static-profiler.
-#                              When set + executable, this script copies
-#                              it onto $GITHUB_PATH and skips the
-#                              download path entirely.
-#                              Mirrors setup-trivy / setup-go's
-#                              "use binary at this path" convention.
+#   DRIFT_PROFILER_RELEASE_TAG  Pin to a specific release tag (e.g.
+#                               drift-lab-v0.4.0). Default: empty →
+#                               auto-detect the latest release matching
+#                               drift-lab-v* OR drift-static-profiler-v*
+#                               that has our binary asset attached.
+#
+#   DRIFT_PROFILER_INSTALL_DIR  Where to put the binary. action.yml's
+#                               actions/cache step passes the same path
+#                               so cache restore + this script point at
+#                               the SAME dir. If the binary's already
+#                               there (cache hit), we exit early.
+#
+#   DRIFT_PROFILER_LOCAL_BIN    Path to a prebuilt binary. When set +
+#                               executable, copy it and skip the
+#                               GitHub Release flow entirely. Used by
+#                               `make hello-test` for offline act runs.
+#
+#   GITHUB_TOKEN                Used to authenticate the API call when
+#                               auto-detecting the latest release. Raises
+#                               the rate limit from 60/hr (anonymous) to
+#                               5000/hr (per-consumer). Anonymous is fine
+#                               for public release downloads themselves.
 set -euo pipefail
 
 # ─── Local-binary fast path ──────────────────────────────────────────────
-# Production CI runs leave DRIFT_PROFILER_LOCAL_BIN unset → falls through
-# to the GitHub Release download below. Setting it makes the install step
-# instant and offline-safe — ideal for `act` self-tests.
+# Production CI leaves DRIFT_PROFILER_LOCAL_BIN unset → falls through to
+# the GitHub Release flow. Setting it makes the install instant +
+# offline-safe — ideal for `act` self-tests.
 if [ -n "${DRIFT_PROFILER_LOCAL_BIN:-}" ] && [ -x "${DRIFT_PROFILER_LOCAL_BIN}" ]; then
   echo "📦 Using local binary at ${DRIFT_PROFILER_LOCAL_BIN}"
-  install_dir="${RUNNER_TEMP:-/tmp}/drift-profiler-local"
+  install_dir="${DRIFT_PROFILER_INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/drift-profiler-local}"
   mkdir -p "$install_dir"
   cp "$DRIFT_PROFILER_LOCAL_BIN" "$install_dir/drift-static-profiler"
   chmod +x "$install_dir/drift-static-profiler"
@@ -37,9 +51,9 @@ if [ -n "${DRIFT_PROFILER_LOCAL_BIN:-}" ] && [ -x "${DRIFT_PROFILER_LOCAL_BIN}" 
   exit 0
 fi
 
-VERSION="${DRIFT_PROFILER_VERSION:?DRIFT_PROFILER_VERSION not set}"
-REPO="${DRIFT_PROFILER_REPO:-drift-dev/drift}"
+REPO="${DRIFT_PROFILER_REPO:-refactorlab/drift}"
 
+# ─── Resolve OS/arch ─────────────────────────────────────────────────────
 case "${RUNNER_OS:-}" in
   Linux)   os_part="unknown-linux-gnu" ; archive_ext="tar.gz" ;;
   macOS)   os_part="apple-darwin"      ; archive_ext="tar.gz" ;;
@@ -55,26 +69,95 @@ esac
 
 target="${arch_part}-${os_part}"
 asset="drift-static-profiler-${target}.${archive_ext}"
-base_url="https://github.com/${REPO}/releases/download/drift-static-profiler-${VERSION}"
-archive_url="${base_url}/${asset}"
+
+# ─── Resolve the release tag ─────────────────────────────────────────────
+# Zero-config default: query GitHub for the latest release whose tag
+# matches our naming convention AND has the binary attached.
+auth_args=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  auth_args=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+
+if [ -n "${DRIFT_PROFILER_RELEASE_TAG:-}" ]; then
+  TAG="$DRIFT_PROFILER_RELEASE_TAG"
+  echo "📌 Using pinned release tag: $TAG"
+else
+  echo "🔍 Auto-detecting latest drift-static-profiler release in $REPO"
+  if ! command -v jq > /dev/null 2>&1; then
+    echo "⚠️  jq not on PATH — can't auto-detect. Set DRIFT_PROFILER_RELEASE_TAG explicitly."
+    exit 0
+  fi
+  # Fetch first page of releases (most recent 30, sorted by created date).
+  # We accept releases whose tag matches either naming convention AND
+  # publishes the binary asset we need for this OS/arch. Filtering by
+  # asset name guarantees the release actually has what we need (vs.
+  # picking the most recent release of any kind and 404'ing later).
+  releases_json="$(curl --fail --silent --location "${auth_args[@]}" \
+      "https://api.github.com/repos/${REPO}/releases?per_page=30" 2>/dev/null || echo '[]')"
+  TAG="$(echo "$releases_json" | jq -r --arg asset "$asset" '
+    [.[]
+      | select(.draft == false)
+      | select(.prerelease == false)
+      | select(.tag_name | test("^(drift-lab-v|drift-static-profiler-v)"))
+      | select(any(.assets[]?; .name == $asset))
+    ][0].tag_name // empty
+  ')"
+  if [ -z "$TAG" ]; then
+    echo "⚠️  No release in $REPO has $asset yet."
+    echo "    Skipping install — the scan step will detect the missing binary and skip too."
+    exit 0
+  fi
+  echo "📌 Latest release with the binary: $TAG"
+fi
+
+archive_url="https://github.com/${REPO}/releases/download/${TAG}/${asset}"
 sha_url="${archive_url}.sha256"
 
-install_dir="${RUNNER_TEMP:-/tmp}/drift-profiler-${VERSION}"
+# ─── Install dir resolution + cache short-circuit ────────────────────────
+# action.yml exports DRIFT_PROFILER_INSTALL_DIR so its actions/cache step
+# and this script point at the SAME dir. When that dir was restored from
+# cache, the binary's already in place — exit early.
+install_dir="${DRIFT_PROFILER_INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/drift-static-profiler/${TAG}/${arch_part}}"
+bin_name="drift-static-profiler"
+[[ "${RUNNER_OS:-}" == "Windows" ]] && bin_name="${bin_name}.exe"
+
+if [ -x "$install_dir/$bin_name" ]; then
+  echo "♻️  Cache hit: drift-static-profiler $TAG already at $install_dir"
+  : "${GITHUB_PATH:?GITHUB_PATH not set; this script must run inside a GitHub Action (or act).}"
+  echo "$install_dir" >> "$GITHUB_PATH"
+  "$install_dir/$bin_name" --version 2>/dev/null || true
+  exit 0
+fi
+
 mkdir -p "$install_dir"
 cd "$install_dir"
 
+# ─── Download archive ────────────────────────────────────────────────────
+# Graceful skip on 404 so the action stays green if a release went away
+# or has no binary for this OS/arch. Downstream scan step also wraps.
 echo "↓ Downloading ${asset}"
-curl --fail --silent --show-error --location --output "$asset" "$archive_url"
+if ! curl --fail --silent --show-error --location "${auth_args[@]}" \
+     --output "$asset" "$archive_url"; then
+  echo "⚠️  Could not download $archive_url"
+  echo "    Release tag $TAG exists but the asset for $target may be missing."
+  echo "    Skipping install — the scan step will detect + skip too."
+  exit 0
+fi
 
 echo "↓ Downloading ${asset}.sha256"
-curl --fail --silent --show-error --location --output "${asset}.sha256" "$sha_url"
+if ! curl --fail --silent --show-error --location "${auth_args[@]}" \
+     --output "${asset}.sha256" "$sha_url"; then
+  echo "⚠️  Could not download ${asset}.sha256 — proceeding without sha verification."
+fi
 
-# `taiki-e/upload-rust-binary-action` writes "<sha256>  <asset>" into the file,
-# which is the format `shasum -c` expects.
-if command -v sha256sum > /dev/null 2>&1; then
-  sha256sum --check "${asset}.sha256"
-else
-  shasum -a 256 --check "${asset}.sha256"
+# `taiki-e/upload-rust-binary-action` writes "<sha256>  <asset>" — same
+# format `shasum -c` expects.
+if [ -f "${asset}.sha256" ]; then
+  if command -v sha256sum > /dev/null 2>&1; then
+    sha256sum --check "${asset}.sha256"
+  else
+    shasum -a 256 --check "${asset}.sha256"
+  fi
 fi
 
 echo "📦 Extracting"
@@ -82,9 +165,6 @@ case "$archive_ext" in
   tar.gz) tar -xzf "$asset" ;;
   zip)    unzip -q "$asset" ;;
 esac
-
-bin_name="drift-static-profiler"
-[[ "$RUNNER_OS" == "Windows" ]] && bin_name="${bin_name}.exe"
 
 if [[ ! -x "$bin_name" && ! -f "$bin_name" ]]; then
   # Some releases nest the binary inside a folder named after the target.
@@ -101,5 +181,5 @@ chmod +x "$bin_name" 2>/dev/null || true
 : "${GITHUB_PATH:?GITHUB_PATH not set; this script must run inside a GitHub Action.}"
 echo "$install_dir" >> "$GITHUB_PATH"
 
-echo "✅ Installed $bin_name $VERSION at $install_dir"
+echo "✅ Installed $bin_name from $TAG at $install_dir"
 "./$bin_name" --version 2>/dev/null || true

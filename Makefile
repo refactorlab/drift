@@ -635,3 +635,24 @@ action-build: ## Build the Drift Action bundle (action/src/* → dist/index.js v
 action-test: ## Run the Drift Action test suite (contract + render + e2e — uses tmp scan output if present)
 	@printf "$(BLUE)▶$(RESET) npm test (Drift Action)\n"
 	@cd action && npm test 2>&1 | grep -E "^(✔|✖|ℹ tests|ℹ pass|ℹ fail) "
+
+### LLM smoke tests
+
+.PHONY: llm-ollama
+llm-ollama:                             ## curl-test local Ollama (http://localhost:11434) with gemma4:e4b
+	@echo "→ ollama /api/tags"; curl -sf http://localhost:11434/api/tags | jq '.models[].name' || { echo "ollama not reachable on :11434"; exit 1; }
+	@echo "→ ollama /api/generate (gemma4:e4b)"
+	@curl -sf http://localhost:11434/api/generate \
+	  -H 'Content-Type: application/json' \
+	  -d '{"model":"gemma4:e4b","prompt":"Reply with the single word: pong","stream":false}' \
+	  | jq '{model, response, done, total_duration}'
+
+.PHONY: llm-docker
+llm-docker:                             ## curl-test Docker Model Runner (http://localhost:12434) with ai/gemma4:E4B
+	@docker model configure --context-size 40960 ai/gemma4:E4B
+	@echo "→ docker model runner /engines/v1/models"; curl -sf http://localhost:12434/engines/v1/models | jq '.data[].id' || { echo "docker model runner not reachable on :12434 — enable it in Docker Desktop"; exit 1; }
+	@echo "→ docker model runner /engines/v1/chat/completions (ai/gemma4:E4B)"
+	@curl -sf http://localhost:12434/engines/v1/chat/completions \
+	  -H 'Content-Type: application/json' \
+	  -d '{"model":"ai/gemma4:E4B","messages":[{"role":"user","content":"Reply with the single word: pong"}]}' \
+	  | jq '{model, choices: .choices[0].message.content, usage}'

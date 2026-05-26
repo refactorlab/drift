@@ -71,6 +71,18 @@ sqlparser = "0.62"
 # with $1..$N) and `fingerprint()` (stable identity for dedup across
 # call sites). Falling back to `sqlparser` when the dialect is unknown.
 pg_query = "6"
+# Structured logging facade. The library only depends on the facade —
+# no concrete sink is wired in here (Clean Architecture: the binary
+# decides where logs go). When this crate is used as a library
+# (e.g. embedded in the Tauri desktop app) the host's subscriber
+# picks up every event we emit. When used as the CLI, `main.rs`
+# installs `tracing-subscriber` to print to stderr.
+tracing = "0.1"
+# Subscriber + env-filter for the standalone CLI. Bin-only: lib
+# consumers don't pay for it because the host already owns a
+# subscriber. Default features keep the dep light (no JSON / chrono
+# layer — we only use the compact stderr formatter).
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 # Validates emitted JSON reports against the published schema in the

@@ -149,6 +149,7 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     fn walk_start(&self) {
         self.check_cancel();
         self.bump_phase();
+        tracing::debug!(scan_id = %self.scan_id, "phase: walk_start");
         self.emit(ScanProgress::WalkStart { scan_id: self.scan_id.clone() });
     }
 
@@ -165,6 +166,12 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
 
     fn walk_end(&self, total_files: usize, bytes: u64) {
         self.check_cancel();
+        tracing::debug!(
+            scan_id = %self.scan_id,
+            files = total_files,
+            bytes,
+            "phase: walk_end"
+        );
         self.emit(ScanProgress::WalkEnd {
             scan_id: self.scan_id.clone(),
             total_files: total_files as u64,
@@ -175,6 +182,11 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
     fn parse_start(&self, total: usize) {
         self.check_cancel();
         self.bump_phase();
+        tracing::debug!(
+            scan_id = %self.scan_id,
+            files = total,
+            "phase: parse_start"
+        );
         self.emit(ScanProgress::ParseStart {
             scan_id: self.scan_id.clone(),
             total_source_files: total as u64,
@@ -201,6 +213,18 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
             *g = None;
         }
         self.bump_phase();
+        // Sink-level phase ticks are kept at debug — the library itself
+        // already emits structured info-level logs at the canonical
+        // boundaries (walk start/end, parse start/end, graph build
+        // start/end, etc.), so info would just duplicate them. Leaving
+        // this at debug means a `DRIFT_LOG=debug` run shows the full
+        // ~28-phase trace, while default production logs stay quiet.
+        tracing::debug!(
+            scan_id = %self.scan_id,
+            elapsed_ms = self.started_at.elapsed().as_millis() as u64,
+            phase = %name,
+            "phase"
+        );
         self.emit(ScanProgress::Phase {
             scan_id: self.scan_id.clone(),
             name: name.to_string(),
@@ -213,6 +237,13 @@ impl<R: Runtime> Progress for TauriProgressSink<R> {
             *g = Some(label.to_string());
         }
         self.bump_phase();
+        tracing::debug!(
+            scan_id = %self.scan_id,
+            elapsed_ms = self.started_at.elapsed().as_millis() as u64,
+            step = %label,
+            total,
+            "step start"
+        );
         self.emit(ScanProgress::StepStart {
             scan_id: self.scan_id.clone(),
             label: label.to_string(),
