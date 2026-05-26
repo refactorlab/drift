@@ -11,8 +11,14 @@ action/node_modules/
 .tauri-keys.bak.*
 # Local production export drop folder written by `make drift-lab-export`.
 # Contains built .app/.dmg/.AppImage/.deb + SHA256SUMS — release artifacts
-# belong on GitHub Releases, not in git.
-/dist/
+# belong on GitHub Releases, not in git. Exceptions: the three GitHub Action
+# bundles (dist/index.js, dist/ai-context.js, dist/ai-suggest.js) MUST be
+# tracked — composite actions resolve these from the consumer's checkout of
+# refactorlab/drift@<ref>.
+/dist/*
+!/dist/index.js
+!/dist/ai-context.js
+!/dist/ai-suggest.js
 drift-static-profiler/research/code-production-repositories
 drift-static-profiler/research/django-check
 

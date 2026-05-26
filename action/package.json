@@ -5,7 +5,7 @@
   "description": "Drift GitHub Action runner",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/index.js",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/index.js && esbuild src/ai-context.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/ai-context.js && esbuild src/ai-index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=../dist/ai-suggest.js",
     "test": "node --test --experimental-strip-types --no-warnings 'src/__tests__/*.test.ts'",
     "smoke": "./scripts/smoke.sh",
     "typecheck": "tsc --noEmit"

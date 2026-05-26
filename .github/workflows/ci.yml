@@ -17,19 +17,23 @@ jobs:
         with:
           node-version: '22'
 
+      # `npm ci` (not `npm install`) installs the exact lockfile versions, so
+      # esbuild — and therefore the bundle bytes — are reproducible. The
+      # in-sync guard below depends on CI producing the same output as the
+      # committed bundles.
       - name: Install
         working-directory: action
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         working-directory: action
         run: npm run typecheck
 
       # Build before test: the e2e tests spawn `node dist/index.js`, so the
-      # bundle has to exist on disk first. `dist/` is gitignored so each CI
-      # run produces a fresh bundle from src/ — the sync-check below catches
-      # drift only when dist/ is tracked (i.e. on release branches that
-      # commit the bundle for marketplace consumers).
+      # bundles have to exist on disk first. All three (index.js, ai-context.js,
+      # ai-suggest.js) are COMMITTED — composite-action consumers run them
+      # straight from the checkout of refactorlab/drift@<ref> — so this rebuild
+      # must reproduce them exactly; the verify step below fails otherwise.
       - name: Build
         working-directory: action
         run: npm run build
@@ -38,17 +42,32 @@ jobs:
         working-directory: action
         run: npm test
 
-      - name: Verify dist/index.js is in sync (only when tracked)
+      # Hard guard: every shipped bundle MUST be tracked AND match a fresh
+      # build. An untracked bundle means a dist/ ignore rule crept back in and
+      # consumers will hit MODULE_NOT_FOUND at runtime — fail loudly here
+      # instead of letting them discover it. Keep this list in sync with the
+      # `node dist/*.js` steps in action.yml and the build script in
+      # action/package.json.
+      - name: Verify committed dist/ bundles are tracked and in sync
         run: |
-          if git ls-files --error-unmatch dist/index.js >/dev/null 2>&1; then
-            if ! git diff --quiet -- dist/index.js; then
-              echo "::error::dist/index.js is out of sync with action/src — run 'cd action && npm run build' and commit the result"
-              git --no-pager diff --stat -- dist/index.js
-              exit 1
+          bundles="dist/index.js dist/ai-context.js dist/ai-suggest.js"
+          fail=0
+          for f in $bundles; do
+            if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::$f is not tracked — composite-action consumers will hit MODULE_NOT_FOUND. Remove any dist/ ignore rule and commit it."
+              fail=1
             fi
-          else
-            echo "dist/index.js is not tracked (gitignored) — skipping sync check"
+          done
+          [ "$fail" -eq 0 ] || exit 1
+
+          # shellcheck disable=SC2086
+          if ! git diff --quiet -- $bundles; then
+            echo "::error::dist/ bundles are out of sync with action/src — run 'cd action && npm run build' and commit the result"
+            # shellcheck disable=SC2086
+            git --no-pager diff --stat -- $bundles
+            exit 1
           fi
+          echo "✅ dist bundles are tracked and in sync: $bundles"
 
   web-app:
     name: web-app / test

@@ -1,0 +1,61 @@
+{
+  "suggestions": [
+    {
+      "file": "src/users/service.py",
+      "line": 42,
+      "category": "A",
+      "confidence": 0.91,
+      "why_it_matters": "Classic N+1: one query per user × 200 users on the dashboard endpoint. Switch to selectinload to batch in one round-trip.",
+      "references": [
+        {
+          "url": "https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html#selectin-eager-loading",
+          "title": "SQLAlchemy — selectinload eager-loading"
+        }
+      ],
+      "after_code": "users = (\n    session.query(User)\n    .options(selectinload(User.orders))\n    .all()\n)"
+    },
+    {
+      "file": "src/payments/retry.py",
+      "line": 87,
+      "category": "B",
+      "confidence": 0.82,
+      "why_it_matters": "`except Exception: pass` swallows the gateway error you specifically added retry logic for — defeats the purpose of the PR.",
+      "references": [
+        {
+          "url": "https://docs.python.org/3/tutorial/errors.html#handling-exceptions",
+          "title": "Python — handling exceptions"
+        }
+      ],
+      "after_code": "except GatewayTimeoutError as e:\n    logger.warning(\"retrying payment\", extra={\"err\": str(e)})\n    raise"
+    },
+    {
+      "file": "src/metrics/agg.py",
+      "line": 14,
+      "category": "C",
+      "confidence": 0.78,
+      "why_it_matters": "numpy.mean on a 5-item Python list costs ~12µs of import + dispatch overhead. Python builtin is ~0.4µs and removes the dep.",
+      "references": [
+        {
+          "url": "https://docs.python.org/3/library/statistics.html#statistics.mean",
+          "title": "Python statistics.mean"
+        }
+      ],
+      "after_code": "avg = sum(scores) / len(scores)"
+    },
+    {
+      "file": "src/api/handler.ts",
+      "start_line": 50,
+      "line": 53,
+      "category": "B",
+      "confidence": 0.88,
+      "why_it_matters": "Multi-line range showing how start_line + line combine. This block replaces lines 50..53 in the new file.",
+      "references": [
+        {
+          "url": "https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28",
+          "title": "GitHub REST — PR review comments (multi-line)"
+        }
+      ],
+      "after_code": "if (!req.body) {\n  return res.status(400).json({ error: 'missing body' });\n}\nconst input = parseInput(req.body);"
+    }
+  ]
+}

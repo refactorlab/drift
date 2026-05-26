@@ -1,0 +1,11 @@
+[
+  {
+    "file": "src/x.ts",
+    "line": 10,
+    "category": "A",
+    "confidence": 0.9,
+    "why_it_matters": "Bare-array tolerance test — wrapping should be inferred.",
+    "references": [{ "url": "https://example.com/docs", "title": "example" }],
+    "after_code": "const x = 1;"
+  }
+]

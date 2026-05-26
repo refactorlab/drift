@@ -1,0 +1,11 @@
+{
+  "pull_request": {
+    "number": 42,
+    "head": { "sha": "deadbeefcafe1234567890abcdef0123456789ab", "ref": "feature/x" },
+    "base": { "sha": "1234567890abcdef1234567890abcdef12345678", "ref": "main" }
+  },
+  "repository": {
+    "owner": { "login": "acme" },
+    "name": "shop"
+  }
+}

@@ -44,6 +44,43 @@ inputs:
       Public release downloads themselves work without a token.
     required: false
     default: ${{ github.token }}
+  ai-suggestions:
+    description: |
+      When true (default), runs a second, AI-powered review pass via
+      `actions/ai-inference@v1` and posts the resulting inline code
+      suggestions to the PR. This is independent of the deterministic
+      scanner review — if the AI step fails (no `models: read` perm,
+      model unavailable, etc.) the scanner review still ships.
+
+      Consumer workflow must grant:
+        permissions:
+          contents: read
+          pull-requests: write
+          models: read
+    required: false
+    default: 'true'
+  ai-model:
+    description: |
+      GitHub Models model ID for the AI suggestion pass. Defaults to
+      `openai/gpt-5`. Override to `openai/gpt-5-mini`, `openai/gpt-5-nano`,
+      or `openai/gpt-4o` if your org's catalog doesn't expose GPT-5.
+    required: false
+    default: 'openai/gpt-5'
+  ai-max-files:
+    description: |
+      Maximum number of changed files to include in the AI context
+      bundle. Caps prompt size so we stay inside the model's token
+      budget on large PRs.
+    required: false
+    default: '20'
+  ai-max-suggestions:
+    description: |
+      Hard cap on the number of AI-generated suggestions actually
+      posted to the PR. Applied AFTER the quality bar (confidence,
+      reference, category). Defaults to 3 — small + noticeable
+      beats large + ignored.
+    required: false
+    default: '3'
 
 runs:
   using: 'composite'
@@ -260,3 +297,132 @@ runs:
         DRIFT_FAIL_ON:     'regression'
         GITHUB_TOKEN:      ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/index.js"
+
+    # ─── 10. Build AI review context (focal points + diff) ───────────
+    # Runs the bundled context builder at dist/ai-context.js. It reads
+    # the scanner's report and uses `pr_review.code_suggestions[]` as
+    # FOCAL POINTS — for each one it surfaces file:line + function +
+    # category + scanner's why_it_matters + llm_prompt_hint + a code
+    # window read from the checkout. When code_suggestions is empty
+    # it falls back to the raw PR diff. See src/ai/build-context.ts
+    # and the unit tests in src/__tests__/ai-context.test.ts.
+    - name: Build AI review context
+      id: ai-context
+      # ONLY after a successful scan — the AI step's input is the
+      # scanner's `pr_review.code_suggestions[]`, so there is nothing
+      # to enrich until scan-pr has produced its report.
+      if: >-
+        inputs.ai-suggestions == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        github.event.pull_request != null
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH:    ${{ runner.temp }}/drift-report.json
+        AI_CONTEXT_PATH:      ${{ runner.temp }}/ai-context.txt
+        AI_MAX_FILES:         ${{ inputs.ai-max-files }}
+        AI_MAX_FOCAL_POINTS:  '5'
+        AI_BYTE_BUDGET:       '80000'
+        AI_BASE_SHA:          ${{ github.event.pull_request.base.sha }}
+        AI_HEAD_SHA:          ${{ github.event.pull_request.head.sha }}
+      run: |
+        # Make sure both SHAs are fetched (consumer's checkout may have
+        # done a shallow clone with only HEAD).
+        git fetch --no-tags --depth=1 origin "$AI_BASE_SHA" 2>/dev/null || true
+        git fetch --no-tags --depth=1 origin "$AI_HEAD_SHA" 2>/dev/null || true
+        node "${{ github.action_path }}/dist/ai-context.js"
+        echo "path=$AI_CONTEXT_PATH" >> "$GITHUB_OUTPUT"
+
+    # ─── 11. AI inference — GPT-5 produces inline suggestions ────────
+    # Uses actions/ai-inference (GitHub Models). Requires the consumer
+    # workflow to grant `permissions: models: read`. Writes the JSON
+    # array of suggestions to a response file (sidestepping the
+    # `response` output's char limit). continue-on-error keeps the
+    # rest of the action green if GPT-5 isn't in the org catalog.
+    - name: AI inference (code suggestions)
+      id: ai
+      # Same gate as the context step: scan must have run + produced a
+      # report. context.outcome guards against the build step having
+      # been skipped (so we never call the model with no input).
+      if: >-
+        inputs.ai-suggestions == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        steps.ai-context.outcome == 'success' &&
+        github.event.pull_request != null
+      continue-on-error: true
+      uses: actions/ai-inference@v1
+      with:
+        model: ${{ inputs.ai-model }}
+        token: ${{ inputs.github-token }}
+        max-completion-tokens: '4000'
+        system-prompt: |
+          You are an expert senior reviewer producing INLINE GitHub PR
+          code suggestions. The user prompt below contains:
+
+            1. Scanner pr_scope (deterministic call-graph signals).
+            2. "Focal points" — locations the static scanner has
+               already flagged. For each, you get file:line +
+               function + category + why_it_matters + remediation_hint
+               + llm_prompt_hint + a code window read from HEAD.
+               YOUR JOB is to refine these into concrete, applyable
+               inline suggestions, AND/OR to add new suggestions on
+               other lines in the same files.
+            3. The PR diff hunks. Every `line` you emit MUST be a
+               RIGHT-side line that actually appears in these hunks.
+
+          Output ONE JSON object (no prose, no fence, no commentary):
+
+            {
+              "suggestions": [
+                {
+                  "file":           string,
+                  "line":           int,
+                  "start_line":     int,   // optional — multi-line replacement
+                  "category":       "A" | "B" | "C",
+                  "confidence":     number, // 0..1
+                  "why_it_matters": string,
+                  "references":     [ { "url": string, "title": string } ],
+                  "after_code":     string  // literal replacement code for a GitHub suggestion block — no diff prefix, no fence
+                }
+              ]
+            }
+
+          Categories:
+            A = optimization (N+1, hot loops, allocations)
+            B = product correctness (silent failures, bad error handling)
+            C = framework misuse (wrong API, anti-patterns)
+
+          Quality bar (drop anything that doesn't pass ALL):
+            - confidence ≥ 0.75
+            - references[0].url is a REAL documentation/issue URL — do NOT invent.
+              When you refine a scanner-flagged focal point you MAY cite the
+              scanner's `references[]` verbatim.
+            - category ∈ {A, B, C}
+            - `line` is a line number actually present in the diff hunks
+            - `after_code` is what should LITERALLY replace that line
+
+          Hard limits: max 8 suggestions. If nothing clears the bar,
+          output `{"suggestions": []}`. Silence is better than noise.
+        prompt-file: ${{ steps.ai-context.outputs.path }}
+        response-file: ${{ runner.temp }}/ai-suggestions.json
+
+    # ─── 12. Post AI suggestions as a PR review (Octokit) ────────────
+    # Runs the compiled bundle at dist/ai-suggest.js. It reads the
+    # GPT-5 response file at AI_SUGGESTIONS_PATH, validates against
+    # the AI envelope schema (src/ai/schema.ts), applies the quality
+    # bar, caps at DRIFT_MAX_AI_SUGGESTIONS, and POSTs ONE
+    # pulls.createReview via Octokit. Call shape is covered by the
+    # tests in src/__tests__/ai-post.test.ts. Fail-soft: a non-fatal
+    # error here will not break the deterministic review from step 9.
+    - name: Post AI suggestions
+      if: >-
+        inputs.ai-suggestions == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        steps.ai.outcome == 'success' &&
+        github.event.pull_request != null
+      shell: bash
+      env:
+        AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
+        DRIFT_MAX_AI_SUGGESTIONS: ${{ inputs.ai-max-suggestions }}
+        DRIFT_AI_MODEL:           ${{ inputs.ai-model }}
+        GITHUB_TOKEN:             ${{ inputs.github-token }}
+      run: node "${{ github.action_path }}/dist/ai-suggest.js"

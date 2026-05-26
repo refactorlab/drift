@@ -1,9 +1,29 @@
+# Drop this file at .github/workflows/drift.yml in any repo.
+#
+# On every pull_request event Andy will:
+#   1. Auto-install the latest `drift-static-profiler` release (cached
+#      across runs via $RUNNER_TOOL_CACHE).
+#   2. Run `scan-pr` against the diff to produce a structured JSON
+#      report (pr_scope + pr_review + code_suggestions).
+#   3. Post a sticky overview comment on the PR (one per PR, overwritten
+#      on each push — identified by a hidden marker).
+#   4. Create a "Drift / PR review" check run summarising the verdict.
+#   5. Post inline review-comments with one-click `Apply suggestion`
+#      for any code-suggestion that clears the quality bar
+#      (≥ 0.75 confidence, category A/B/C, at least one reference link).
+#
+# Zero config required — see the optional `with:` block below for tuning.
+
 name: Drift
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Three permissions are required:
+#   - contents: read         actions/checkout
+#   - pull-requests: write   issues.createComment / pulls.createReview
+#   - checks: write          checks.create
 permissions:
   contents: read
   pull-requests: write
@@ -15,15 +35,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # The scanner diffs head against base; full history is needed
+          # so `git diff $BASE..$HEAD` resolves on first-commit PRs.
           fetch-depth: 0
 
-      - name: Run Drift performance scan
-        uses: drift-dev/drift-action@v1
-        with:
-          api-token: ${{ secrets.DRIFT_API_TOKEN }}
-          # The command Drift runs to gather profile data. It must write a JSON
-          # report to $DRIFT_REPORT_PATH. Replace with your project's profiler.
-          profile-command: 'npx drift-profile'
-          # Block the PR only on a confirmed regression. Use `any` to also
-          # block on inconclusive runs, or `never` to make Drift advisory.
-          fail-on: regression
+      # Minimal — auto-detects the latest profiler release and uses
+      # the workflow's GITHUB_TOKEN for API auth.
+      - uses: refactorlab/drift@main   # pin to a release tag for stability
+
+      # ──────────────────────────────────────────────────────────────
+      # Optional overrides (uncomment any you need):
+      #
+      # - uses: refactorlab/drift@main
+      #   with:
+      #     # Pin to a specific profiler release instead of auto-detecting.
+      #     profiler-release-tag: 'drift-static-profiler-v0.6.0'
+      #
+      #     # Verbose scanner tracing (DRIFT_LOG=info,drift_static_profiler=debug).
+      #     debug: 'true'
+      #
+      #     # Disable progress bars in CI logs (default: 'true').
+      #     progress: 'false'
+      #
+      #     # Use a fine-grained PAT instead of the default GITHUB_TOKEN
+      #     # (e.g. to post under a bot account). The token needs:
+      #     #   - Pull requests: Read+Write
+      #     #   - Checks:        Write
+      #     #   - Contents:      Read
+      #     github-token: ${{ secrets.DRIFT_PR_TOKEN }}

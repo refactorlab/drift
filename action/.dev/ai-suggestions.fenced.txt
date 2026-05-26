@@ -1,0 +1,21 @@
+Here are the suggestions I found:
+
+```json
+{
+  "suggestions": [
+    {
+      "file": "src/users/service.py",
+      "line": 42,
+      "category": "A",
+      "confidence": 0.91,
+      "why_it_matters": "Classic N+1 query — one round-trip per user.",
+      "references": [
+        { "url": "https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html#selectin-eager-loading", "title": "selectinload docs" }
+      ],
+      "after_code": "users = session.query(User).options(selectinload(User.orders)).all()"
+    }
+  ]
+}
+```
+
+Let me know if you'd like me to elaborate on any of these.

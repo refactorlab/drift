@@ -149,23 +149,37 @@ via Ed25519-signed releases.
 
 ### 4 · Per-PR verdict on GitHub
 
-The GitHub Action (`drift-dev/drift-action@v1`) profiles candidate
-builds, compares against the baseline, and posts a check + sticky
-comment with annotations on the exact lines that regressed.
+The GitHub Action (**Andy — PR Handoff by Drift**, published from
+`refactorlab/drift` at the repo root) runs the static profiler against
+every PR diff and reports back on three GitHub surfaces:
+
+- a **sticky overview comment** — one per PR, overwritten in place on
+  each push, idempotent via a hidden HTML marker. Contains the banner,
+  architecture flowchart, business-logic flowchart, value card with
+  xychart-beta bars, risks quadrant, key-files mindmap, and extended
+  findings (duplication, uncovered roots, reliability gaps, tech debt).
+- a **`Drift / PR review` check run** visible in the PR's Checks tab,
+  with a one-line title summarising the verdict.
+- **inline review-comments** for any code-suggestion that clears the
+  quality bar (≥ 0.75 confidence, category A/B/C, at least one
+  reference link) — each carrying a one-click `Apply suggestion` block.
 
 ![Issue detail with suggested autofix](docs/issue-detail-autofix.jpeg)
 
+#### Drop into any repo in 30 seconds
+
+Copy this to `.github/workflows/drift.yml` — that's the entire setup:
+
 ```yaml
-# .github/workflows/drift.yml
 name: Drift
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
-  pull-requests: write
-  checks: write
+  contents: read           # actions/checkout
+  pull-requests: write     # post + update sticky comment & inline review
+  checks: write            # create the Drift check run
 
 jobs:
   drift:
@@ -173,18 +187,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: drift-dev/drift-action@v1
-        with:
-          api-token: ${{ secrets.DRIFT_API_TOKEN }}
-          profile-command: 'npx drift-profile'
-          fail-on: regression
+      - uses: refactorlab/drift@main   # pin to a release tag for stability
 ```
+
+That's it — no API token, no profile command, no extra config. Andy
+auto-detects the latest `drift-static-profiler` release, caches it
+across runs via `$RUNNER_TOOL_CACHE`, and uses the workflow's built-in
+`GITHUB_TOKEN` for the comment / review / check-run posts.
+
+A ready-to-copy version with optional overrides lives at
+[examples/drift.yml](examples/drift.yml).
+
+#### Inputs (all optional)
+
+| Input | Default | What it does |
+|---|---|---|
+| `profiler-release-tag` | *auto-detect* | Pin to a specific profiler release (e.g. `drift-static-profiler-v0.6.0`) instead of resolving the latest. |
+| `profiler-repo` | `refactorlab/drift` | GitHub repo hosting the profiler binary releases. |
+| `profiler-local-bin` | *empty* | Path to a prebuilt binary — skips the GitHub-Release download. Used by `make hello-test` for local `act` runs. |
+| `debug` | `false` | `true` enables `DRIFT_LOG=info,drift_static_profiler=debug` so the scanner emits verbose tracing. |
+| `progress` | `true` | `false` disables per-phase progress bars. |
+| `github-token` | `${{ github.token }}` | Override with a fine-grained PAT to post under a bot account. |
+| `greeter` | `andy` | Friendly name shown in the hello-world banner. |
+
+#### Required scopes if you bring your own PAT
+
+Default `GITHUB_TOKEN` already has the right scopes. If you swap in a
+fine-grained PAT, give it: **Pull requests** Read+Write, **Checks**
+Write, **Contents** Read.
 
 Prefer zero-YAML? Install the **GitHub App** at
 [github.com/marketplace/drift](https://github.com/marketplace/drift) —
 same verdict, runs on Drift cloud, configurable via `.drift.yaml`.
 
-→ [action.yml](action.yml) · [MARKETPLACE.md](MARKETPLACE.md)
+→ [action.yml](action.yml) · [examples/drift.yml](examples/drift.yml) · [MARKETPLACE.md](MARKETPLACE.md)
 
 ---
 
