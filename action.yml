@@ -241,14 +241,95 @@ runs:
         path: ${{ steps.paths.outputs.install_dir }}
         key: ${{ steps.paths.outputs.cache_key }}
 
-    # ─── 7. Run scan-pr (skips cleanly if binary missing from PATH) ──
+    # ─── 6b. Compute the real PR diff (changed files + LOC + commits) ─
+    # Replaces the old hardcoded demo file list. The set of files a PR
+    # touched is derived from git — NOT pinned in this YAML — together
+    # with per-file LOC (numstat → value_money) and commit messages
+    # (→ counts / feat|fix|perf signals). We diff against the merge-base
+    # (three-dot semantics) so only what the PR actually introduced is
+    # scanned.
+    #
+    # `has_source` decides whether ANY changed file is in a language the
+    # scanner can analyze. The extension set MIRRORS Language::from_path
+    # in drift-static-profiler/src/lib.rs — keep the two in sync. When
+    # has_source=false (config/docs/non-code only) the scan and every
+    # downstream comment/AI step is skipped, so such PRs get an EMPTY
+    # result instead of a misleading negative-money "Drift ▼" verdict.
+    - name: Compute PR diff
+      id: diff
+      if: github.event.pull_request != null
+      shell: bash
+      env:
+        BASE_SHA:     ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA:     ${{ github.event.pull_request.head.sha }}
+        CHANGED_PATH: ${{ runner.temp }}/drift-changed.txt
+        STATS_PATH:   ${{ runner.temp }}/drift-diff-stats.tsv
+        COMMITS_PATH: ${{ runner.temp }}/drift-commits.txt
+      run: |
+        # Both endpoints may be missing if the consumer shallow-cloned.
+        # actions/checkout with fetch-depth: 0 (the README workflow's
+        # default) already has them; these fetches are a best-effort top-up.
+        git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
+        git fetch --no-tags --depth=1 origin "$HEAD_SHA" 2>/dev/null || true
+        # True fork point. Fall back to BASE_SHA if the merge-base isn't
+        # reachable (e.g. a too-shallow clone).
+        base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || echo "$BASE_SHA")"
+        echo "📐 diff base: ${base} → head: ${HEAD_SHA}"
+        # --diff-filter=ACMRT: added/copied/modified/renamed/type-changed
+        # (drops pure deletions — there's no HEAD content to analyze).
+        git diff --name-only --diff-filter=ACMRT "$base" "$HEAD_SHA" > "$CHANGED_PATH" || true
+        # numstat is `adds<TAB>dels<TAB>path`; read_diff_stats auto-detects
+        # that ordering and skips binary (`-`) rows, so pipe it raw.
+        git diff --numstat                       "$base" "$HEAD_SHA" > "$STATS_PATH"   || true
+        # NUL-separated commit bodies (read_commit_messages splits on \0).
+        git log  --format=%B%x00                 "${base}..${HEAD_SHA}" > "$COMMITS_PATH" || true
+
+        n=$(wc -l < "$CHANGED_PATH" | tr -d ' ')
+        echo "📄 ${n} changed file(s):"
+        sed 's/^/    /' "$CHANGED_PATH"
+
+        # has_source: did the PR touch a file in a supported language?
+        # MIRRORS Language::from_path (drift-static-profiler/src/lib.rs).
+        has_source=false
+        while IFS= read -r f; do
+          [ -z "$f" ] && continue
+          case "${f##*.}" in
+            py|java|ts|tsx|js|jsx|mjs|cjs|go|rs|scala|sc|kt|kts)
+              has_source=true; break ;;
+          esac
+        done < "$CHANGED_PATH"
+
+        {
+          echo "changed_path=$CHANGED_PATH"
+          echo "stats_path=$STATS_PATH"
+          echo "commits_path=$COMMITS_PATH"
+          echo "base_sha=$base"
+          echo "has_source=$has_source"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "$has_source" = "true" ]; then
+          echo "✅ Supported source files changed — Drift will scan."
+        else
+          echo "⏭️  No supported source files changed (config/docs/non-code only) — skipping scan + comment."
+        fi
+
+    # ─── 7. Run scan-pr (skips if binary missing OR no supported source) ─
     - name: Run scan-pr
       id: scan
+      if: >-
+        github.event.pull_request != null &&
+        steps.diff.outputs.has_source == 'true'
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         DRIFT_LOG: ${{ inputs.debug == 'true' && 'info,drift_static_profiler=debug' || '' }}
         DRIFT_PROGRESS: ${{ inputs.progress == 'true' && '' || 'off' }}
+        CHANGED_PATH: ${{ steps.diff.outputs.changed_path }}
+        STATS_PATH:   ${{ steps.diff.outputs.stats_path }}
+        COMMITS_PATH: ${{ steps.diff.outputs.commits_path }}
+        BASE_SHA:     ${{ steps.diff.outputs.base_sha }}
+        PR_TITLE:     ${{ github.event.pull_request.title }}
+        PR_BODY:      ${{ github.event.pull_request.body }}
       run: |
         if ! command -v drift-static-profiler > /dev/null 2>&1; then
           echo "⚠️  drift-static-profiler not on PATH — skipping scan."
@@ -256,27 +337,29 @@ runs:
           exit 0
         fi
         echo "scan_ran=true" >> "$GITHUB_OUTPUT"
-        files=$(printf '%s\n' \
-          action/src/main.ts \
-          action/src/report.ts \
-          action/src/render/overview.ts)
-        echo "🔬 scan-pr target files:"
-        echo "$files" | sed 's/^/    /'
+        echo "🔬 scan-pr over $(wc -l < "$CHANGED_PATH" | tr -d ' ') changed file(s):"
+        sed 's/^/    /' "$CHANGED_PATH"
         echo ""
         echo "🪵 debug mode:    ${{ inputs.debug }}     (DRIFT_LOG=${DRIFT_LOG:-<unset>})"
         echo "📊 progress:      ${{ inputs.progress }}  (DRIFT_PROGRESS=${DRIFT_PROGRESS:-<default-on>})"
         echo ""
-        echo "$files" | drift-static-profiler scan-pr . \
-          --changed-files-stdin \
+        drift-static-profiler scan-pr . \
+          --changed-files "$CHANGED_PATH" \
+          --diff-stats    "$STATS_PATH" \
+          --commits       "$COMMITS_PATH" \
+          --base-sha      "$BASE_SHA" \
+          --pr-title      "$PR_TITLE" \
+          --pr-body       "$PR_BODY" \
           --pretty \
           --output "$DRIFT_REPORT_PATH"
 
-    # ─── 8. Print scan summary ───────────────────────────────────────
+    # ─── 8. Print scan summary (+ full debug dump when debug=true) ───
     - name: Print scan summary
       if: steps.scan.outputs.scan_ran == 'true'
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+        DEBUG:             ${{ inputs.debug }}
       run: |
         if [ ! -s "$DRIFT_REPORT_PATH" ]; then
           echo "⚠️  no report at $DRIFT_REPORT_PATH"
@@ -284,17 +367,48 @@ runs:
         fi
         size=$(wc -c < "$DRIFT_REPORT_PATH" | tr -d ' ')
         echo "📊 Scan complete — ${size} bytes at $DRIFT_REPORT_PATH"
+        sugg=0
         if command -v jq >/dev/null 2>&1; then
-          echo "  schema:      $(jq -r '.schema_version' "$DRIFT_REPORT_PATH")"
-          echo "  mode:        $(jq -r '.mode' "$DRIFT_REPORT_PATH")"
-          echo "  tool:        $(jq -r '"\(.generator.tool) v\(.generator.version)"' "$DRIFT_REPORT_PATH")"
-          echo "  changed:     $(jq -r '.pr_scope.changed_files | length' "$DRIFT_REPORT_PATH") file(s)"
-          echo "  roots:       $(jq -r '.pr_scope.affected_roots | length' "$DRIFT_REPORT_PATH")"
-          echo "  unreachable: $(jq -r '.pr_scope.unreachable_changes | length' "$DRIFT_REPORT_PATH")"
-          echo "  pr_review?:  $(jq -r 'has("pr_review")' "$DRIFT_REPORT_PATH")"
-          echo "  suggestions: $(jq -r '(.pr_review.code_suggestions // []) | length' "$DRIFT_REPORT_PATH")"
+          # Defensive: `// []` handles a missing pr_review/code_suggestions;
+          # `2>/dev/null || echo 0` keeps the summary alive on malformed JSON.
+          sugg=$(jq -r '(.pr_review.code_suggestions // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0)
+          echo "  schema:      $(jq -r '.schema_version // "?"' "$DRIFT_REPORT_PATH" 2>/dev/null || echo '?')"
+          echo "  mode:        $(jq -r '.mode // "?"' "$DRIFT_REPORT_PATH" 2>/dev/null || echo '?')"
+          echo "  tool:        $(jq -r '"\(.generator.tool // "?") v\(.generator.version // "?")"' "$DRIFT_REPORT_PATH" 2>/dev/null || echo '?')"
+          echo "  changed:     $(jq -r '(.pr_scope.changed_files // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0) file(s)"
+          echo "  roots:       $(jq -r '(.pr_scope.affected_roots // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0)"
+          echo "  unreachable: $(jq -r '(.pr_scope.unreachable_changes // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0)"
+          echo "  pr_review?:  $(jq -r 'has("pr_review")' "$DRIFT_REPORT_PATH" 2>/dev/null || echo false)"
+          echo "  suggestions: ${sugg}"
         else
           echo "  (jq not on PATH; install with apt/brew to see the summary)"
+        fi
+
+        # ── Debug dump (only when the `debug` input is true) ───────────
+        # Surfaces the ENTIRE scan JSON, its byte size, and the
+        # code_suggestions array (only when non-empty) so you can see
+        # exactly what the scanner produced and why the AI step did or
+        # didn't have focal points to enrich. All blocks are defensive:
+        # they never fail the step on missing keys or malformed JSON.
+        if [ "${DEBUG:-false}" = "true" ]; then
+          echo "::group::🐛 debug — full scan report (${size} bytes)"
+          if command -v jq >/dev/null 2>&1 && jq -e . "$DRIFT_REPORT_PATH" >/dev/null 2>&1; then
+            jq '.' "$DRIFT_REPORT_PATH"
+          else
+            echo "(jq unavailable or report not valid JSON — raw dump follows)"
+            cat "$DRIFT_REPORT_PATH"
+          fi
+          echo "::endgroup::"
+
+          if command -v jq >/dev/null 2>&1; then
+            if [ "${sugg:-0}" -gt 0 ] 2>/dev/null; then
+              echo "::group::🐛 debug — ${sugg} code_suggestion(s)"
+              jq '.pr_review.code_suggestions' "$DRIFT_REPORT_PATH" 2>/dev/null || echo '(failed to extract code_suggestions)'
+              echo "::endgroup::"
+            else
+              echo "🐛 debug — code_suggestions is EMPTY → AI step will run in diff-fallback (no focal points)."
+            fi
+          fi
         fi
 
     # ─── 9. Post sticky PR comment + inline suggestions + check run ──
@@ -349,14 +463,14 @@ runs:
         node "${{ github.action_path }}/dist/ai-context.js"
         echo "path=$AI_CONTEXT_PATH" >> "$GITHUB_OUTPUT"
 
-    # ─── 11. Resolve the Models inference endpoint ───────────────────
-    # The built-in GITHUB_TOKEN carries the repo/org identity, not a
-    # personal one. The USER-scoped endpoint (…/inference) attributes to
-    # a person, so an org repo's token gets 403 there. ORG-owned repos
-    # must use …/orgs/<org>/inference. `ai-endpoint: auto` (default)
-    # derives the right one from the repo owner type; an explicit URL
-    # overrides. See docs.github.com/en/rest/models/inference.
-    - name: Resolve Models endpoint
+    # ─── 11. Resolve endpoint + PREFLIGHT GitHub Models access ───────
+    # Resolves the right inference endpoint (org repos need
+    # …/orgs/<org>/inference), then does a real POST to capture the
+    # status + BODY that actions/ai-inference swallows ("403 no body").
+    # The body is the only reliable way to distinguish the failure
+    # modes — so we surface it and decode it here, BEFORE the opaque
+    # inference step runs. See docs.github.com/en/rest/models/inference.
+    - name: Resolve Models endpoint + preflight
       id: ai-ep
       if: >-
         inputs.ai-suggestions == 'true' &&
@@ -368,6 +482,8 @@ runs:
         AI_ENDPOINT_INPUT: ${{ inputs.ai-endpoint }}
         OWNER:             ${{ github.repository_owner }}
         OWNER_TYPE:        ${{ github.event.repository.owner.type }}
+        AI_MODEL:          ${{ inputs.ai-model }}
+        GITHUB_TOKEN:      ${{ inputs.github-token }}
       run: |
         if [ -n "${AI_ENDPOINT_INPUT}" ] && [ "${AI_ENDPOINT_INPUT}" != "auto" ]; then
           resolved="${AI_ENDPOINT_INPUT}"
@@ -382,21 +498,57 @@ runs:
         echo "endpoint=${resolved}" >> "$GITHUB_OUTPUT"
         echo "🔌 Resolved Models endpoint: ${resolved}"
 
+        # ── Preflight: hit the REAL chat/completions path so we see the
+        #    body that the inference action hides. 1-token probe. ──────
+        body="$(mktemp)"
+        status="$(curl -s -o "$body" -w '%{http_code}' \
+          -X POST "${resolved}/chat/completions" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "Content-Type: application/json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          -d "{\"model\":\"${AI_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
+          2>/dev/null || echo "000")"
+        snippet="$(tr -d '\n' < "$body" | head -c 400)"
+        echo "🔎 preflight POST ${resolved}/chat/completions → HTTP ${status}"
+        [ -n "${snippet}" ] && echo "🔎 preflight body: ${snippet}"
+        echo "preflight_status=${status}" >> "$GITHUB_OUTPUT"
+
+        # ── Decode the result so the log says exactly what to fix ─────
+        case "${status}" in
+          200)
+            echo "✅ GitHub Models reachable — inference should succeed." ;;
+          401|403)
+            if echo "${snippet}" | grep -qiE 'model|not enabled|not allowed'; then
+              echo "❌ Token HAS models access but the model/org policy blocks it."
+              echo "   → Org owner: Settings → Copilot → Policies → Models → enable + allow ${AI_MODEL}."
+            else
+              echo "❌ ${status} with no model-level message → the GITHUB_TOKEN is MISSING the 'models: read' scope."
+              echo "   → Add 'models: read' to the CONSUMER workflow's permissions: block."
+              echo "     (It is NEVER granted by default — even when pull-requests/checks write are.)"
+            fi ;;
+          404)
+            echo "❌ 404 — endpoint or model id not found. Check ai-model / ai-endpoint." ;;
+          000)
+            echo "⚠️  preflight curl failed to connect (network) — inference may still try." ;;
+          *)
+            echo "⚠️  Unexpected preflight status ${status}." ;;
+        esac
+        rm -f "$body"
+
     # ─── 12. AI inference — model produces inline suggestions ────────
-    # Uses actions/ai-inference (GitHub Models). Requires the consumer
-    # workflow to grant `permissions: models: read` AND the org to have
-    # GitHub Models enabled. continue-on-error keeps the rest of the
-    # action green if the model/endpoint is unavailable — the
-    # troubleshooting step below decodes any failure.
+    # Uses actions/ai-inference (GitHub Models). Only runs when the
+    # preflight returned 200 — so we never invoke the opaque inference
+    # action when we already KNOW access is blocked (the preflight step
+    # above has already printed the precise reason). continue-on-error
+    # keeps the rest of the action green on any residual failure.
     - name: AI inference (code suggestions)
       id: ai
-      # Same gate as the context step: scan must have run + produced a
-      # report. context.outcome guards against the build step having
-      # been skipped (so we never call the model with no input).
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-context.outcome == 'success' &&
+        steps.ai-ep.outputs.preflight_status == '200' &&
         github.event.pull_request != null
       continue-on-error: true
       uses: actions/ai-inference@v1
@@ -466,12 +618,14 @@ runs:
     # one-liners (e.g. "403 status code (no body)"). This step maps the
     # common failures to their fix so the log is self-explaining.
     - name: AI inference troubleshooting
+      # Fires when the preflight blocked us (inference was skipped) OR
+      # when inference itself failed despite a green preflight.
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-context.outcome == 'success' &&
-        steps.ai.outcome == 'failure' &&
-        github.event.pull_request != null
+        github.event.pull_request != null &&
+        (steps.ai-ep.outputs.preflight_status != '200' || steps.ai.outcome == 'failure')
       shell: bash
       env:
         AI_MODEL:    ${{ inputs.ai-model }}
