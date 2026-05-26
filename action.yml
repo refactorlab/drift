@@ -71,14 +71,18 @@ inputs:
     default: 'openai/gpt-4o'
   ai-endpoint:
     description: |
-      GitHub Models inference endpoint. Defaults to the user-scoped
-      endpoint. For ORGANIZATION-owned repos you may need the
-      org-scoped endpoint for attribution + access:
-        https://models.github.ai/orgs/<your-org>/inference
-      (see docs.github.com/en/rest/models/inference). The org must have
-      GitHub Models enabled under Settings → Copilot → Models.
+      GitHub Models inference endpoint. Default `auto` resolves it from
+      the repo owner: ORG-owned repos get the org-scoped endpoint
+        https://models.github.ai/orgs/<org>/inference
+      and user-owned repos get https://models.github.ai/inference.
+      This matters because the built-in GITHUB_TOKEN has no personal
+      identity — in an org repo the user-scoped endpoint returns 403.
+      Set an explicit URL to override. The org must still have GitHub
+      Models enabled under Settings → Copilot → Models, and the
+      workflow must grant `permissions: models: read`.
+      (see docs.github.com/en/rest/models/inference)
     required: false
-    default: 'https://models.github.ai/inference'
+    default: 'auto'
   ai-max-files:
     description: |
       Maximum number of changed files to include in the AI context
@@ -345,12 +349,45 @@ runs:
         node "${{ github.action_path }}/dist/ai-context.js"
         echo "path=$AI_CONTEXT_PATH" >> "$GITHUB_OUTPUT"
 
-    # ─── 11. AI inference — GPT-5 produces inline suggestions ────────
+    # ─── 11. Resolve the Models inference endpoint ───────────────────
+    # The built-in GITHUB_TOKEN carries the repo/org identity, not a
+    # personal one. The USER-scoped endpoint (…/inference) attributes to
+    # a person, so an org repo's token gets 403 there. ORG-owned repos
+    # must use …/orgs/<org>/inference. `ai-endpoint: auto` (default)
+    # derives the right one from the repo owner type; an explicit URL
+    # overrides. See docs.github.com/en/rest/models/inference.
+    - name: Resolve Models endpoint
+      id: ai-ep
+      if: >-
+        inputs.ai-suggestions == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        steps.ai-context.outcome == 'success' &&
+        github.event.pull_request != null
+      shell: bash
+      env:
+        AI_ENDPOINT_INPUT: ${{ inputs.ai-endpoint }}
+        OWNER:             ${{ github.repository_owner }}
+        OWNER_TYPE:        ${{ github.event.repository.owner.type }}
+      run: |
+        if [ -n "${AI_ENDPOINT_INPUT}" ] && [ "${AI_ENDPOINT_INPUT}" != "auto" ]; then
+          resolved="${AI_ENDPOINT_INPUT}"
+          echo "🔌 Using pinned endpoint."
+        elif [ "${OWNER_TYPE}" = "Organization" ]; then
+          resolved="https://models.github.ai/orgs/${OWNER}/inference"
+          echo "🔌 Org-owned repo (${OWNER}) → org-scoped endpoint."
+        else
+          resolved="https://models.github.ai/inference"
+          echo "🔌 User-owned repo → user-scoped endpoint."
+        fi
+        echo "endpoint=${resolved}" >> "$GITHUB_OUTPUT"
+        echo "🔌 Resolved Models endpoint: ${resolved}"
+
+    # ─── 12. AI inference — model produces inline suggestions ────────
     # Uses actions/ai-inference (GitHub Models). Requires the consumer
-    # workflow to grant `permissions: models: read`. Writes the JSON
-    # array of suggestions to a response file (sidestepping the
-    # `response` output's char limit). continue-on-error keeps the
-    # rest of the action green if GPT-5 isn't in the org catalog.
+    # workflow to grant `permissions: models: read` AND the org to have
+    # GitHub Models enabled. continue-on-error keeps the rest of the
+    # action green if the model/endpoint is unavailable — the
+    # troubleshooting step below decodes any failure.
     - name: AI inference (code suggestions)
       id: ai
       # Same gate as the context step: scan must have run + produced a
@@ -365,7 +402,7 @@ runs:
       uses: actions/ai-inference@v1
       with:
         model: ${{ inputs.ai-model }}
-        endpoint: ${{ inputs.ai-endpoint }}
+        endpoint: ${{ steps.ai-ep.outputs.endpoint }}
         token: ${{ inputs.github-token }}
         # NOTE: the pinned @v1 tag exposes `max-tokens` (not the newer
         # `max-completion-tokens`). 200 is the default — far too small
@@ -423,6 +460,63 @@ runs:
         # @v1 has no `response-file` INPUT — it auto-saves the model
         # response to a temp file and exposes the path as the
         # `response-file` OUTPUT, which the post step reads below.
+
+    # ─── 11b. Decode an inference failure into actionable guidance ───
+    # The ai-inference action surfaces GitHub Models errors as opaque
+    # one-liners (e.g. "403 status code (no body)"). This step maps the
+    # common failures to their fix so the log is self-explaining.
+    - name: AI inference troubleshooting
+      if: >-
+        inputs.ai-suggestions == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        steps.ai-context.outcome == 'success' &&
+        steps.ai.outcome == 'failure' &&
+        github.event.pull_request != null
+      shell: bash
+      env:
+        AI_MODEL:    ${{ inputs.ai-model }}
+        AI_ENDPOINT: ${{ steps.ai-ep.outputs.endpoint }}
+        OWNER:       ${{ github.repository_owner }}
+        OWNER_TYPE:  ${{ github.event.repository.owner.type }}
+      run: |
+        echo "::warning title=Drift AI suggestions skipped::GitHub Models inference failed — see decoded checklist in the step log."
+        cat <<EOF
+        ────────────────────────────────────────────────────────────
+        🤖 GitHub Models inference FAILED. Decoded checklist:
+
+          model:    ${AI_MODEL}
+          endpoint: ${AI_ENDPOINT}
+          owner:    ${OWNER} (type: ${OWNER_TYPE:-unknown})
+
+        A "403 status code (no body)" almost always means ONE of:
+
+          1. Missing permission. The CONSUMER workflow that calls this
+             action must grant:
+               permissions:
+                 models: read          # ← required for GitHub Models
+                 pull-requests: write  # post the review
+                 checks: write         # scanner check run
+                 contents: read        # checkout
+             Note: declaring a permissions block sets every UNLISTED
+             scope to 'none', so all four must be present.
+
+          2. Org hasn't enabled GitHub Models. An org owner must turn it
+             on: Org → Settings → Copilot → Models, and allow the model
+             for the relevant teams/users.
+
+          3. Wrong endpoint for an org repo. The built-in GITHUB_TOKEN
+             has no personal identity, so org repos MUST use the
+             org-scoped endpoint (this step resolved: ${AI_ENDPOINT}).
+             If that still 403s, the org likely hasn't enabled Models.
+
+        A "400 Unavailable model: ${AI_MODEL}" means the model is not
+        served by the inference endpoint yet (gpt-5 commonly is not even
+        when it shows "enabled" in the web UI). Switch ai-model to
+        openai/gpt-4o, or confirm availability:
+          curl -H "Authorization: Bearer \$PAT_WITH_models_read" \\
+            ${AI_ENDPOINT}/models
+        ────────────────────────────────────────────────────────────
+        EOF
 
     # ─── 12. Post AI suggestions as a PR review (Octokit) ────────────
     # Runs the compiled bundle at dist/ai-suggest.js. It reads the
