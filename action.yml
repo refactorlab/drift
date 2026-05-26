@@ -357,13 +357,19 @@ runs:
         echo "🪵 debug mode:    ${{ inputs.debug }}     (DRIFT_LOG=${DRIFT_LOG:-<unset>})"
         echo "📊 progress:      ${{ inputs.progress }}  (DRIFT_PROGRESS=${DRIFT_PROGRESS:-<default-on>})"
         echo ""
+        # NOTE: --pr-title / --pr-body use the `--flag=value` form on purpose.
+        # PR titles/bodies are raw user text that routinely starts with `-`
+        # (markdown bullet `- item`, `---` rule). With the space form
+        # (`--pr-title "$X"`), clap reads that leading `-` as an unknown flag
+        # and aborts with `unexpected argument '- '` (exit 2) before scanning.
+        # The `=` form is hyphen-immune and works with any released binary.
         drift-static-profiler scan-pr . \
           --changed-files "$CHANGED_PATH" \
           --diff-stats    "$STATS_PATH" \
           --commits       "$COMMITS_PATH" \
           --base-sha      "$BASE_SHA" \
-          --pr-title      "$PR_TITLE" \
-          --pr-body       "$PR_BODY" \
+          --pr-title="$PR_TITLE" \
+          --pr-body="$PR_BODY" \
           --pretty \
           --output "$DRIFT_REPORT_PATH"
 

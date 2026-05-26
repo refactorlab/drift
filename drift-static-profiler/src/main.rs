@@ -453,11 +453,20 @@ enum Cmd {
         #[arg(long, value_name = "SHA")]
         base_sha: Option<String>,
         /// PR title — feeds `business_logic.summary`.
-        #[arg(long)]
+        ///
+        /// `allow_hyphen_values`: PR titles are free text and can begin
+        /// with `-` (e.g. `-fix typo`). Without it, clap reads the leading
+        /// `-` as an unknown flag and aborts with `unexpected argument`
+        /// (exit 2) before the scan runs. See `tests/scan_pr_hyphen_args.rs`.
+        #[arg(long, allow_hyphen_values = true)]
         pr_title: Option<String>,
         /// PR body — feeds `business_logic.summary`. First sentence
         /// is used.
-        #[arg(long)]
+        ///
+        /// `allow_hyphen_values`: PR bodies almost always open with a
+        /// markdown bullet list (`- item`) or front-matter rule (`---`),
+        /// both of which start with `-`. Same clap rationale as `pr_title`.
+        #[arg(long, allow_hyphen_values = true)]
         pr_body: Option<String>,
         /// Skip the review-enrichment step. Output then contains only
         /// the factual scan (no `pr_review` / `pr_review_ext`). Useful

@@ -111,8 +111,11 @@ runs:
           --pretty \
           --output "$DRIFT_REPORT_PATH" )
         [ -n "$DRIFT_BASE_SHA" ] && args+=( --base-sha "$DRIFT_BASE_SHA" )
-        [ -n "$PR_TITLE" ]       && args+=( --pr-title "$PR_TITLE" )
-        [ -n "$PR_BODY"  ]       && args+=( --pr-body  "$PR_BODY"  )
+        # `=` form: PR title/body are raw user text that often starts with `-`
+        # (markdown bullet, `---` rule). The space form makes clap treat that
+        # leading `-` as an unknown flag → `unexpected argument '- '`, exit 2.
+        [ -n "$PR_TITLE" ]       && args+=( --pr-title="$PR_TITLE" )
+        [ -n "$PR_BODY"  ]       && args+=( --pr-body="$PR_BODY" )
         drift-static-profiler "${args[@]}"
 
     - name: Post Drift review
