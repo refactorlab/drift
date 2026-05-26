@@ -200,26 +200,6 @@ fn risks_from_ext_signals(
     out
 }
 
-/// Scrub characters that confuse mermaid's quadrantChart label
-/// parser. Newlines + double-quotes are the main hazards; we also
-/// drop control chars (NUL, BEL, etc.) that no legitimate identifier
-/// should contain but a malicious commit message could inject.
-fn escape_mermaid_quoted_label(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_control() {
-                ' '
-            } else if c == '"' {
-                '\''
-            } else if c == '\\' {
-                '/'
-            } else {
-                c
-            }
-        })
-        .collect()
-}
-
 /// Build the typed `QuadrantChart`. The mermaid-rendering is done by
 /// the type's `.render()` method; we just supply the structure.
 fn build_risks_quadrant(items: &[RiskItem]) -> QuadrantChart {
@@ -241,14 +221,6 @@ fn build_risks_quadrant(items: &[RiskItem]) -> QuadrantChart {
                 y: it.severity,
             })
             .collect(),
-    }
-}
-
-fn sanitize_unit(x: f64) -> f64 {
-    if x.is_nan() || x.is_infinite() {
-        0.0
-    } else {
-        x.clamp(0.0, 1.0)
     }
 }
 
@@ -515,26 +487,4 @@ mod tests {
         assert!(r.key_files.mermaid.contains("mindmap"));
     }
 
-    /// Sanitizer guards: NaN / infinity / control characters must
-    /// not leak into the mermaid payload. JSON has no NaN, and
-    /// mermaid's `quadrantChart` parser rejects them.
-    #[test]
-    fn sanitizer_clamps_nan_and_inf() {
-        assert_eq!(sanitize_unit(f64::NAN), 0.0);
-        assert_eq!(sanitize_unit(f64::INFINITY), 0.0);
-        assert_eq!(sanitize_unit(f64::NEG_INFINITY), 0.0);
-        assert_eq!(sanitize_unit(2.0), 1.0); // clamp above
-        assert_eq!(sanitize_unit(-0.5), 0.0); // clamp below
-        assert_eq!(sanitize_unit(0.5), 0.5); // pass-through inside range
-    }
-
-    #[test]
-    fn label_escape_scrubs_control_chars() {
-        let dirty = "foo\nbar\"baz\\qux\x07";
-        let clean = escape_mermaid_quoted_label(dirty);
-        assert!(!clean.contains('\n'));
-        assert!(!clean.contains('"'));
-        assert!(!clean.contains('\\'));
-        assert!(!clean.contains('\x07'));
-    }
 }

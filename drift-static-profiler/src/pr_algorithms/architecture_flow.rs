@@ -27,36 +27,7 @@ use crate::pr_algorithms::mermaid::{
 use crate::pr_algorithms::types::*;
 use crate::tree::CallTreeNode;
 use crate::SymbolKind;
-use std::collections::{BTreeMap, HashMap};
-
-/// Allocate stable, collision-free mermaid node IDs.
-///
-/// The earlier version used `hash(name) % 100_000` which produced
-/// collisions on real graphs (two distinct symbols sharing a node →
-/// corrupted flowchart). We now use an interning table: same name →
-/// same id, different name → different id, always.
-struct IdAllocator {
-    map: HashMap<String, String>,
-    next: usize,
-}
-
-impl IdAllocator {
-    fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-            next: 0,
-        }
-    }
-    fn get_or_make(&mut self, name: &str) -> String {
-        if let Some(id) = self.map.get(name) {
-            return id.clone();
-        }
-        let id = format!("n{}", self.next);
-        self.next += 1;
-        self.map.insert(name.to_string(), id.clone());
-        id
-    }
-}
+use std::collections::BTreeMap;
 
 /// Detect the source-language scope label from a file extension.
 /// Used as `DataStructureEntry.scope` so renderers can show "Python class",
@@ -529,49 +500,6 @@ pub fn compute(entries: &[CallTreeNode], changed_files: &[String]) -> Architectu
             tag: String::new(),
         }),
     }
-}
-
-/// Sanitize a label for embedding in a mermaid `node[label]` slot.
-/// Mermaid interprets `[`, `]`, `"`, `(`, `)`, `{`, `}` and newlines
-/// as syntax. Replace them with spaces / HTML entities so weird
-/// identifiers (e.g. `foo[bar]`, `lambda(x)`) don't break the chart.
-fn escape_mermaid_label(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '[' | ']' | '(' | ')' | '{' | '}' | '"' | '\\' | '\n' | '\r' => ' ',
-            c => c,
-        })
-        .collect()
-}
-
-fn render_after(entries: &[CallTreeNode], changed_files: &[String]) -> String {
-    if entries.is_empty() {
-        return "flowchart LR\n    empty[No affected entries]".into();
-    }
-    let mut lines = vec!["flowchart LR".to_string()];
-    let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut ids = IdAllocator::new();
-    for root in entries.iter().take(8) {
-        let rid = ids.get_or_make(&root.name);
-        if declared.insert(rid.clone()) {
-            lines.push(format!("    {rid}[{}]", escape_mermaid_label(&root.name)));
-        }
-        for child in root.children.iter().take(6) {
-            let cid = ids.get_or_make(&child.name);
-            if declared.insert(cid.clone()) {
-                let touched = changed_files.iter().any(|p| child.file.ends_with(p));
-                let label = escape_mermaid_label(&child.name);
-                if touched {
-                    lines.push(format!("    {cid}[{label}]:::changed"));
-                } else {
-                    lines.push(format!("    {cid}[{label}]"));
-                }
-            }
-            lines.push(format!("    {rid} --> {cid}"));
-        }
-    }
-    lines.push("    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff".into());
-    lines.join("\n")
 }
 
 #[cfg(test)]
