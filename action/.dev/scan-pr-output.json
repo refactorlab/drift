@@ -1,0 +1,1064 @@
+{
+  "schema_version": "1.0",
+  "mode": "static",
+  "generator": {
+    "tool": "drift-static-profiler",
+    "version": "0.6.0",
+    "source_root": "drift-static-profiler/tests/fixtures/python-fastapi",
+    "captured_at": "2026-05-26T15:54:21Z"
+  },
+  "pr_scope": {
+    "changed_files": [
+      "app/services.py",
+      "app/repositories.py",
+      "app/db.py"
+    ],
+    "affected_roots": [
+      "create_order"
+    ],
+    "unreachable_changes": [
+      "app/db.py"
+    ]
+  },
+  "pr_review": {
+    "generated_at": "2026-05-26T15:54:21Z",
+    "overall_drift": {
+      "percent": 21.0,
+      "direction": "up",
+      "confidence": "low",
+      "interpretation": "Avg. customer + runtime ▲"
+    },
+    "counts": {
+      "features": {
+        "value": 1,
+        "label": "New features",
+        "detail": "introduce OrderService layer",
+        "source": "1 commits with `feat:` prefix (Conventional Commits v1.0.0)"
+      },
+      "bug_fixes": {
+        "value": 2,
+        "label": "Bug fixes",
+        "detail": "1 `fix:` commits · Fixes #42",
+        "source": "commit subjects with `fix:` + body keywords `fix|fixes|fixed #N`"
+      },
+      "issues_resolved": {
+        "value": 1,
+        "label": "Issues resolved",
+        "detail": "Resolves #58",
+        "source": "commit body keywords `close|closes|closed|resolve|resolves|resolved #N`"
+      },
+      "new_test_files": {
+        "value": 0,
+        "label": "New test files",
+        "detail": "no added files matched test patterns",
+        "source": "changed_files matched against 14 language-specific filename patterns (pytest/go/jest/junit/cargo/scala/kotlin)"
+      }
+    },
+    "architecture_flow": {
+      "after_mermaid": "flowchart LR\n    n0[create_order]\n    n1[OrderRepository.__init__]\n    n2[OrderService.__init__]\n    n3[OrderService.create_order]\n    n4[OrderService.build_order]\n    n5[OrderService.validate]\n    n6[OrderRepository.save]\n    n7[Order]\n    n0 --> n1\n    n0 --> n2\n    n0 --> n3\n    n3 --> n4\n    n3 --> n5\n    n3 --> n6\n    n4 --> n7\n    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px\n    class n1,n2,n3,n4,n5,n6 changed",
+      "combined_mermaid": "flowchart TB\n    %% Architecture flow — before / after / data structures\n    subgraph BEFORE[\"🔴 BEFORE\"]\n        direction LR\n        before_note[Before-state requires --base-sha]\n    end\n    subgraph AFTER[\"🟢 AFTER\"]\n        direction LR\n        a_n0[create_order]\n        a_n1[OrderRepository.__init__]\n        a_n2[OrderService.__init__]\n        a_n3[OrderService.create_order]\n        a_n4[OrderService.build_order]\n        a_n5[OrderService.validate]\n        a_n6[OrderRepository.save]\n        a_n7[Order]\n    end\n    subgraph DS[\"📦 DATA STRUCTURES\"]\n        direction LR\n        ds_0[OrderService python]\n        ds_1[OrderRepository python]\n    end\n    a_n0 --> a_n1\n    a_n0 --> a_n2\n    a_n0 --> a_n3\n    a_n3 --> a_n4\n    a_n3 --> a_n5\n    a_n3 --> a_n6\n    a_n4 --> a_n7\n    before_note -.->|evolves to|a_n0\n    a_n0 -.->|uses|ds_0\n    classDef muted fill:#6e7681,stroke:#6e7681,color:#fff\n    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px\n    classDef ds_new fill:#1c2128,stroke:#3fb950,color:#e6edf3,stroke-width:1px\n    classDef ds_mod fill:#1c2128,stroke:#d29922,color:#e6edf3,stroke-width:1px\n    class a_n1,a_n2,a_n3,a_n4,a_n5,a_n6 changed\n    class ds_0,ds_1 ds_mod\n    class before_note muted",
+      "after_structured": {
+        "direction": "LR",
+        "subgraphs": [],
+        "nodes": [
+          {
+            "id": "n0",
+            "label": "create_order",
+            "shape": "rect"
+          },
+          {
+            "id": "n1",
+            "label": "OrderRepository.__init__",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n2",
+            "label": "OrderService.__init__",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n3",
+            "label": "OrderService.create_order",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n4",
+            "label": "OrderService.build_order",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n5",
+            "label": "OrderService.validate",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n6",
+            "label": "OrderRepository.save",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n7",
+            "label": "Order",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "n0",
+            "to": "n1",
+            "style": "solid"
+          },
+          {
+            "from": "n0",
+            "to": "n2",
+            "style": "solid"
+          },
+          {
+            "from": "n0",
+            "to": "n3",
+            "style": "solid"
+          },
+          {
+            "from": "n3",
+            "to": "n4",
+            "style": "solid"
+          },
+          {
+            "from": "n3",
+            "to": "n5",
+            "style": "solid"
+          },
+          {
+            "from": "n3",
+            "to": "n6",
+            "style": "solid"
+          },
+          {
+            "from": "n4",
+            "to": "n7",
+            "style": "solid"
+          }
+        ],
+        "class_defs": [
+          {
+            "name": "changed",
+            "fill": "#9e6a03",
+            "stroke": "#d29922",
+            "color": "#fff",
+            "stroke_width": "2px"
+          }
+        ]
+      },
+      "combined_structured": {
+        "direction": "TB",
+        "title": "Architecture flow — before / after / data structures",
+        "subgraphs": [
+          {
+            "id": "BEFORE",
+            "label": "🔴 BEFORE",
+            "direction": "LR",
+            "node_ids": [
+              "before_note"
+            ]
+          },
+          {
+            "id": "AFTER",
+            "label": "🟢 AFTER",
+            "direction": "LR",
+            "node_ids": [
+              "a_n0",
+              "a_n1",
+              "a_n2",
+              "a_n3",
+              "a_n4",
+              "a_n5",
+              "a_n6",
+              "a_n7"
+            ]
+          },
+          {
+            "id": "DS",
+            "label": "📦 DATA STRUCTURES",
+            "direction": "LR",
+            "node_ids": [
+              "ds_0",
+              "ds_1"
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "id": "before_note",
+            "label": "Before-state requires --base-sha",
+            "shape": "rect",
+            "class": "muted"
+          },
+          {
+            "id": "a_n0",
+            "label": "create_order",
+            "shape": "rect"
+          },
+          {
+            "id": "a_n1",
+            "label": "OrderRepository.__init__",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n2",
+            "label": "OrderService.__init__",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n3",
+            "label": "OrderService.create_order",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n4",
+            "label": "OrderService.build_order",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n5",
+            "label": "OrderService.validate",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n6",
+            "label": "OrderRepository.save",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n7",
+            "label": "Order",
+            "shape": "rect"
+          },
+          {
+            "id": "ds_0",
+            "label": "OrderService python",
+            "shape": "rect",
+            "class": "ds_mod"
+          },
+          {
+            "id": "ds_1",
+            "label": "OrderRepository python",
+            "shape": "rect",
+            "class": "ds_mod"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a_n0",
+            "to": "a_n1",
+            "style": "solid"
+          },
+          {
+            "from": "a_n0",
+            "to": "a_n2",
+            "style": "solid"
+          },
+          {
+            "from": "a_n0",
+            "to": "a_n3",
+            "style": "solid"
+          },
+          {
+            "from": "a_n3",
+            "to": "a_n4",
+            "style": "solid"
+          },
+          {
+            "from": "a_n3",
+            "to": "a_n5",
+            "style": "solid"
+          },
+          {
+            "from": "a_n3",
+            "to": "a_n6",
+            "style": "solid"
+          },
+          {
+            "from": "a_n4",
+            "to": "a_n7",
+            "style": "solid"
+          },
+          {
+            "from": "before_note",
+            "to": "a_n0",
+            "label": "evolves to",
+            "style": "dashed"
+          },
+          {
+            "from": "a_n0",
+            "to": "ds_0",
+            "label": "uses",
+            "style": "dashed"
+          }
+        ],
+        "class_defs": [
+          {
+            "name": "muted",
+            "fill": "#6e7681",
+            "stroke": "#6e7681",
+            "color": "#fff"
+          },
+          {
+            "name": "changed",
+            "fill": "#9e6a03",
+            "stroke": "#d29922",
+            "color": "#fff",
+            "stroke_width": "2px"
+          },
+          {
+            "name": "ds_new",
+            "fill": "#1c2128",
+            "stroke": "#3fb950",
+            "color": "#e6edf3",
+            "stroke_width": "1px"
+          },
+          {
+            "name": "ds_mod",
+            "fill": "#1c2128",
+            "stroke": "#d29922",
+            "color": "#e6edf3",
+            "stroke_width": "1px"
+          }
+        ]
+      },
+      "data_structures": [
+        {
+          "name": "OrderService",
+          "kind": "modified",
+          "scope": "python",
+          "description": "4 method(s) in scope",
+          "direction": "internal"
+        },
+        {
+          "name": "OrderRepository",
+          "kind": "modified",
+          "scope": "python",
+          "description": "2 method(s) in scope",
+          "direction": "internal"
+        }
+      ],
+      "reference_link": {
+        "url": "https://mermaid.js.org/syntax/flowchart.html",
+        "title": "Mermaid flowchart reference"
+      }
+    },
+    "business_logic": {
+      "mermaid": "flowchart TB\n    User((👤 User))\n    entry[📦 Orders]\n    r0[create_order]\n    cat_db([💾 Database])\n    User --> entry\n    entry --> r0\n    r0 -.-> cat_db\n    classDef actor fill:#1f6feb,stroke:#2f81f7,color:#fff\n    classDef scope fill:#1c2128,stroke:#d29922,color:#e6edf3,stroke-width:3px,stroke-dasharray:6 4\n    classDef category fill:#6e7681,stroke:#8b949e,color:#e6edf3\n    class User actor\n    class cat_db category\n    class entry,r0 scope",
+      "structured": {
+        "direction": "TB",
+        "subgraphs": [],
+        "nodes": [
+          {
+            "id": "User",
+            "label": "👤 User",
+            "shape": "actor",
+            "class": "actor"
+          },
+          {
+            "id": "entry",
+            "label": "📦 Orders",
+            "shape": "rect",
+            "class": "scope"
+          },
+          {
+            "id": "r0",
+            "label": "create_order",
+            "shape": "rect",
+            "class": "scope"
+          },
+          {
+            "id": "cat_db",
+            "label": "💾 Database",
+            "shape": "stadium",
+            "class": "category"
+          }
+        ],
+        "edges": [
+          {
+            "from": "User",
+            "to": "entry",
+            "style": "solid"
+          },
+          {
+            "from": "entry",
+            "to": "r0",
+            "style": "solid"
+          },
+          {
+            "from": "r0",
+            "to": "cat_db",
+            "style": "dashed"
+          }
+        ],
+        "class_defs": [
+          {
+            "name": "actor",
+            "fill": "#1f6feb",
+            "stroke": "#2f81f7",
+            "color": "#fff"
+          },
+          {
+            "name": "scope",
+            "fill": "#1c2128",
+            "stroke": "#d29922",
+            "color": "#e6edf3",
+            "stroke_width": "3px",
+            "stroke_dasharray": "6 4"
+          },
+          {
+            "name": "category",
+            "fill": "#6e7681",
+            "stroke": "#8b949e",
+            "color": "#e6edf3"
+          }
+        ]
+      },
+      "summary": "feat(orders): introduce OrderService layer — Splits order creation into a dedicated service."
+    },
+    "value_card": {
+      "axes": [
+        {
+          "name": "money",
+          "label": "💰 Money",
+          "subtitle": "Net infra + dev-time delta",
+          "delta_percent": 2.9,
+          "direction": "up",
+          "confidence": "high",
+          "formula": "Δ% = (profit_usd − cost_usd) / baseline_monthly_dev_cost × 100. cost_usd = (LOC_added × 0.05 + files × 0.5) × $95/hr + infra_uplift; profit_usd = cleanup_savings + perf_savings.",
+          "inputs": {
+            "aws_cost_usd_monthly": 0.0,
+            "baseline_monthly_dev_cost_usd": 15200.0,
+            "cleanup_profit_usd": 0.0,
+            "dev_cost_usd": 399.0,
+            "dev_hour_rate_usd": 95.0,
+            "dev_hours_estimate": 4.2,
+            "files_touched": 3.0,
+            "loc_added": 54.0,
+            "loc_deleted": 15.0,
+            "perf_profit_usd_annual": 840.96,
+            "touches_infrastructure": false
+          },
+          "kv": [
+            {
+              "label": "Potential cost",
+              "value": "-$399",
+              "kind": "cost"
+            },
+            {
+              "label": "Potential profit",
+              "value": "+$841",
+              "kind": "profit"
+            }
+          ],
+          "source": "dev-rate: HiBob fully-burdened US 2026 ($95/hr). AWS reference: m5.large on-demand $0.096/hr us-east-1. LOC→hour heuristic: in-house 2026 baseline.",
+          "source_link": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/",
+          "additional_sources": [
+            {
+              "url": "https://aws.amazon.com/ec2/pricing/on-demand/",
+              "title": "AWS — EC2 On-Demand pricing",
+              "tag": "official"
+            },
+            {
+              "url": "https://calculator.aws/",
+              "title": "AWS Pricing Calculator",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.cncf.io/projects/opencost/",
+              "title": "CNCF — OpenCost (cost-allocation reference)",
+              "tag": "cncf"
+            },
+            {
+              "url": "https://opencost.io/docs/",
+              "title": "OpenCost docs",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.bls.gov/oes/current/oes151252.htm",
+              "title": "BLS — Software Developer Occupational Stats (US wages)",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/",
+              "title": "HiBob — fully-burdened labor rate",
+              "tag": "blog"
+            }
+          ]
+        },
+        {
+          "name": "customer",
+          "label": "👥 Customer / user value",
+          "subtitle": "Time saved + value added per session",
+          "delta_percent": 60.0,
+          "direction": "up",
+          "confidence": "high",
+          "formula": "Δ% = 0.6 × min(features/3, 1) × 100 + 0.4 × min((issues+fixes)/3, 1) × 100",
+          "inputs": {
+            "bug_fixes_count": 2.0,
+            "features_count": 1.0,
+            "issues_resolved_count": 1.0
+          },
+          "kv": [
+            {
+              "label": "Features delivered",
+              "value": "1",
+              "kind": "profit"
+            },
+            {
+              "label": "Issues resolved",
+              "value": "1",
+              "kind": "profit"
+            },
+            {
+              "label": "Bugs fixed",
+              "value": "2",
+              "kind": "profit"
+            }
+          ],
+          "source": "derived from PrCounts (Conventional Commits + GitHub linking keywords)",
+          "source_link": "https://www.conventionalcommits.org/en/v1.0.0/",
+          "additional_sources": [
+            {
+              "url": "https://www.conventionalcommits.org/en/v1.0.0/",
+              "title": "Conventional Commits v1.0.0",
+              "tag": "official"
+            },
+            {
+              "url": "https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue",
+              "title": "GitHub — Linking PRs to issues",
+              "tag": "official"
+            }
+          ]
+        },
+        {
+          "name": "runtime",
+          "label": "⚙️ Software runtime",
+          "subtitle": "Wire size, memory, serialization",
+          "delta_percent": 15.0,
+          "direction": "up",
+          "confidence": "low",
+          "formula": "Δ% derived from `perf:` commit count (Conventional Commits) and net LOC. Real benchmarks not available at static-analysis time.",
+          "inputs": {
+            "loc_added": 54.0,
+            "loc_deleted": 15.0,
+            "perf_commits": 1.0
+          },
+          "kv": [
+            {
+              "label": "perf: commits",
+              "value": "1",
+              "kind": "profit"
+            },
+            {
+              "label": "Net LOC",
+              "value": "+39",
+              "kind": "neutral"
+            }
+          ],
+          "source": "static-only proxy — no runtime benchmark integration yet",
+          "source_link": "https://www.conventionalcommits.org/en/v1.0.0/",
+          "additional_sources": [
+            {
+              "url": "https://github.com/cncf/tag-observability/blob/main/whitepaper.md",
+              "title": "CNCF Observability Whitepaper",
+              "tag": "cncf"
+            },
+            {
+              "url": "https://12factor.net/",
+              "title": "The Twelve-Factor App",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.conventionalcommits.org/en/v1.0.0/",
+              "title": "Conventional Commits (perf: prefix)",
+              "tag": "official"
+            },
+            {
+              "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
+              "title": "Google SRE Book — Monitoring distributed systems",
+              "tag": "blog"
+            }
+          ]
+        },
+        {
+          "name": "runtime_ux",
+          "label": "🎨 Software runtime UX",
+          "subtitle": "Dev / debugging experience time delta",
+          "delta_percent": 6.0,
+          "direction": "up",
+          "confidence": "low",
+          "formula": "Δ% = min(60, 5·new_test_files + 3·bug_fixes + 4·docs_commits)",
+          "inputs": {
+            "bug_fixes": 2.0,
+            "docs_commits": 0.0,
+            "new_test_files": 0.0
+          },
+          "kv": [
+            {
+              "label": "New tests",
+              "value": "0",
+              "kind": "muted"
+            },
+            {
+              "label": "Docs commits",
+              "value": "0",
+              "kind": "muted"
+            }
+          ],
+          "source": "Conventional Commits docs/test signals + GitHub linking keywords",
+          "source_link": "https://www.conventionalcommits.org/en/v1.0.0/",
+          "additional_sources": [
+            {
+              "url": "https://12factor.net/logs",
+              "title": "12-Factor App — Logs",
+              "tag": "official"
+            },
+            {
+              "url": "https://sre.google/sre-book/being-on-call/",
+              "title": "Google SRE Book — Being on-call (developer UX)",
+              "tag": "blog"
+            },
+            {
+              "url": "https://www.conventionalcommits.org/en/v1.0.0/",
+              "title": "Conventional Commits (docs: prefix)",
+              "tag": "official"
+            }
+          ]
+        }
+      ],
+      "bars": [
+        {
+          "axis": "money",
+          "delta_percent": 2.9,
+          "direction": "up"
+        },
+        {
+          "axis": "customer",
+          "delta_percent": 60.0,
+          "direction": "up"
+        },
+        {
+          "axis": "runtime",
+          "delta_percent": 15.0,
+          "direction": "up"
+        },
+        {
+          "axis": "runtime_ux",
+          "delta_percent": 6.0,
+          "direction": "up"
+        }
+      ],
+      "bars_mermaid": "%%{init: {'theme':'base', 'themeVariables': {'xyChart': {'plotColorPalette': '#22c55e,#ef4444'}}}}%%\nxychart-beta\n    title \"PR drift by axis\"\n    x-axis [\"Money\", \"Customer\", \"Runtime\", \"Runtime UX\"]\n    y-axis \"Drift %\" -50 --> 100\n    bar [2.9, 60.0, 15.0, 6.0]",
+      "bars_structured": {
+        "title": "PR drift by axis",
+        "theme_palette": "#22c55e,#ef4444",
+        "x_axis_labels": [
+          "Money",
+          "Customer",
+          "Runtime",
+          "Runtime UX"
+        ],
+        "y_axis_label": "Drift %",
+        "y_min": -50.0,
+        "y_max": 100.0,
+        "bars": [
+          2.9,
+          60.0,
+          15.0,
+          6.0
+        ]
+      },
+      "bottom_line": "Bottom line — all 4 axes trend positive. Strongest: 👥 Customer / user value at +60.0%. Projected $ savings clear the dev-hours invested within ~9 weeks of merge."
+    },
+    "code_suggestions": [
+      {
+        "category": "A",
+        "category_label": "Optimization — Dead code in changed file",
+        "kind": "dead_code_in_changed_file",
+        "rule_id": "S2:dead-code",
+        "file": "drift-static-profiler/tests/fixtures/python-fastapi/app/db.py",
+        "function": "<module>",
+        "line": 1,
+        "confidence": 1.0,
+        "severity": "low",
+        "why_it_matters": "`<module>` in `drift-static-profiler/tests/fixtures/python-fastapi/app/db.py` is reachable by zero callers but is in a file this PR touched. Either wire it up to an entry point or delete it.",
+        "remediation_hint": "Remove the symbol, or add a call from a route handler / public API.",
+        "references": [
+          {
+            "url": "https://refactoring.guru/smells/dead-code",
+            "title": "Refactoring.guru — Dead code smell",
+            "tag": "blog"
+          },
+          {
+            "url": "https://en.wikipedia.org/wiki/Dead_code",
+            "title": "Wikipedia — Dead code",
+            "tag": "wiki"
+          }
+        ],
+        "diff": {
+          "before_lines": [],
+          "after_lines": []
+        },
+        "language": "python",
+        "llm_prompt_hint": "Drift's static analyzer flagged a `dead_code_in_changed_file` issue in `<module>` (python, drift-static-profiler/tests/fixtures/python-fastapi/app/db.py). Produce a one-paragraph 'Why it matters' and a unified-diff suggestion. Cite the references list."
+      },
+      {
+        "category": "A",
+        "category_label": "Optimization — Dead code in changed file",
+        "kind": "dead_code_in_changed_file",
+        "rule_id": "S2:dead-code",
+        "file": "drift-static-profiler/tests/fixtures/python-fastapi/app/db.py",
+        "function": "get_session",
+        "line": 8,
+        "confidence": 1.0,
+        "severity": "low",
+        "why_it_matters": "`get_session` in `drift-static-profiler/tests/fixtures/python-fastapi/app/db.py` is reachable by zero callers but is in a file this PR touched. Either wire it up to an entry point or delete it.",
+        "remediation_hint": "Remove the symbol, or add a call from a route handler / public API.",
+        "references": [
+          {
+            "url": "https://refactoring.guru/smells/dead-code",
+            "title": "Refactoring.guru — Dead code smell",
+            "tag": "blog"
+          },
+          {
+            "url": "https://en.wikipedia.org/wiki/Dead_code",
+            "title": "Wikipedia — Dead code",
+            "tag": "wiki"
+          }
+        ],
+        "diff": {
+          "before_lines": [],
+          "after_lines": []
+        },
+        "language": "python",
+        "llm_prompt_hint": "Drift's static analyzer flagged a `dead_code_in_changed_file` issue in `get_session` (python, drift-static-profiler/tests/fixtures/python-fastapi/app/db.py). Produce a one-paragraph 'Why it matters' and a unified-diff suggestion. Cite the references list."
+      },
+      {
+        "category": "A",
+        "category_label": "Optimization — Dead code in changed file",
+        "kind": "dead_code_in_changed_file",
+        "rule_id": "S2:dead-code",
+        "file": "drift-static-profiler/tests/fixtures/python-fastapi/app/repositories.py",
+        "function": "OrderRepository::find_by_id",
+        "line": 14,
+        "confidence": 1.0,
+        "severity": "low",
+        "why_it_matters": "`OrderRepository::find_by_id` in `drift-static-profiler/tests/fixtures/python-fastapi/app/repositories.py` is reachable by zero callers but is in a file this PR touched. Either wire it up to an entry point or delete it.",
+        "remediation_hint": "Remove the symbol, or add a call from a route handler / public API.",
+        "references": [
+          {
+            "url": "https://refactoring.guru/smells/dead-code",
+            "title": "Refactoring.guru — Dead code smell",
+            "tag": "blog"
+          },
+          {
+            "url": "https://en.wikipedia.org/wiki/Dead_code",
+            "title": "Wikipedia — Dead code",
+            "tag": "wiki"
+          }
+        ],
+        "diff": {
+          "before_lines": [],
+          "after_lines": []
+        },
+        "language": "python",
+        "llm_prompt_hint": "Drift's static analyzer flagged a `dead_code_in_changed_file` issue in `OrderRepository::find_by_id` (python, drift-static-profiler/tests/fixtures/python-fastapi/app/repositories.py). Produce a one-paragraph 'Why it matters' and a unified-diff suggestion. Cite the references list."
+      }
+    ],
+    "visual_summary": {
+      "risks": {
+        "mermaid": "quadrantChart\n    title Risk Map\n    x-axis Low likelihood --> High likelihood\n    y-axis Low severity --> High severity\n    quadrant-1 Act before merge\n    quadrant-2 Monitor closely\n    quadrant-3 Acceptable\n    quadrant-4 Document & ship\n    \"PR size · 3 files\": [0.03, 0.32]\n    \"Uncovered roots · 1 (create_order)\": [0.40, 0.60]\n    \"Reliability gaps · 1 root(s) lack retry/timeout/fallback\": [0.50, 0.70]",
+        "structured": {
+          "title": "Risk Map",
+          "x_axis_low": "Low likelihood",
+          "x_axis_high": "High likelihood",
+          "y_axis_low": "Low severity",
+          "y_axis_high": "High severity",
+          "quadrant_1": "Act before merge",
+          "quadrant_2": "Monitor closely",
+          "quadrant_3": "Acceptable",
+          "quadrant_4": "Document & ship",
+          "items": [
+            {
+              "label": "PR size · 3 files",
+              "x": 0.03,
+              "y": 0.32
+            },
+            {
+              "label": "Uncovered roots · 1 (create_order)",
+              "x": 0.4,
+              "y": 0.6
+            },
+            {
+              "label": "Reliability gaps · 1 root(s) lack retry/timeout/fallback",
+              "x": 0.5,
+              "y": 0.7
+            }
+          ]
+        },
+        "items": [
+          {
+            "label": "PR size · 3 files",
+            "likelihood": 0.03,
+            "severity": 0.32,
+            "quadrant": "acceptable"
+          },
+          {
+            "label": "Uncovered roots · 1 (create_order)",
+            "likelihood": 0.4,
+            "severity": 0.6,
+            "quadrant": "monitor_closely"
+          },
+          {
+            "label": "Reliability gaps · 1 root(s) lack retry/timeout/fallback",
+            "likelihood": 0.5,
+            "severity": 0.7,
+            "quadrant": "act_before_merge"
+          }
+        ]
+      },
+      "key_files": {
+        "mermaid": "mindmap\n  root((Affected files))\n    db\n      services.py\n      repositories.py",
+        "structured": {
+          "root": {
+            "label": "Affected files",
+            "is_root": true,
+            "children": [
+              {
+                "label": "db",
+                "is_root": false,
+                "children": [
+                  {
+                    "label": "services.py",
+                    "is_root": false,
+                    "children": []
+                  },
+                  {
+                    "label": "repositories.py",
+                    "is_root": false,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "groups": [
+          {
+            "name": "db",
+            "files": [
+              {
+                "path": "app/services.py",
+                "why": "4 root(s) reach this file"
+              },
+              {
+                "path": "app/repositories.py",
+                "why": "2 root(s) reach this file"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "pr_review_ext": {
+    "tech_debt": {
+      "high_complexity": [],
+      "long_functions": [],
+      "schema_validation": {
+        "libraries": [],
+        "found": false,
+        "files_inspected": 4,
+        "supported_languages": [
+          "go",
+          "java",
+          "javascript",
+          "kotlin",
+          "python",
+          "rust",
+          "scala",
+          "typescript"
+        ],
+        "per_language_known_libraries": {
+          "python": [
+            {
+              "name": "pydantic",
+              "docs": "https://docs.pydantic.dev/"
+            },
+            {
+              "name": "jsonschema",
+              "docs": "https://python-jsonschema.readthedocs.io/"
+            },
+            {
+              "name": "fastjsonschema",
+              "docs": "https://github.com/horejsek/python-fastjsonschema"
+            },
+            {
+              "name": "marshmallow",
+              "docs": "https://marshmallow.readthedocs.io/"
+            },
+            {
+              "name": "cerberus",
+              "docs": "https://docs.python-cerberus.org/"
+            },
+            {
+              "name": "voluptuous",
+              "docs": "https://github.com/alecthomas/voluptuous"
+            }
+          ]
+        }
+      },
+      "summary_findings_top": [],
+      "thresholds": {
+        "complexity": 10,
+        "loc": 80
+      },
+      "sources": [
+        {
+          "label": "complexity",
+          "source": "SonarQube / radon — >10 = complex",
+          "source_link": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/"
+        },
+        {
+          "label": "loc",
+          "source": "Robert C. Martin, Clean Code — functions should be < ~80 LOC",
+          "source_link": "https://en.wikipedia.org/wiki/Code_smell"
+        },
+        {
+          "label": "schema_libs",
+          "source": "Library coverage for all 8 supported languages — see schema_validation.per_language_known_libraries for the full registry with citation URLs."
+        }
+      ]
+    },
+    "duplication": {
+      "threshold": 95,
+      "clusters": [],
+      "count": 0
+    },
+    "tests_in_graph": {
+      "test_files": 0,
+      "test_functions": 0,
+      "by_language": {},
+      "uncovered_roots": [
+        "create_order"
+      ],
+      "patterns": {
+        "filename": [
+          "^test_.*\\.py$",
+          ".*_test\\.py$",
+          ".*_test\\.go$",
+          ".*\\.test\\.[jt]sx?$",
+          ".*\\.spec\\.[jt]sx?$",
+          "^Test[A-Z].*\\.java$",
+          ".*Test\\.java$",
+          ".*Tests\\.java$",
+          ".*IT\\.java$",
+          "^tests?\\.rs$",
+          ".*Test\\.scala$",
+          ".*Spec\\.scala$",
+          ".*Test\\.kt$",
+          ".*Spec\\.kt$"
+        ],
+        "function": [
+          "^test[_A-Z]",
+          "^Test[A-Z]",
+          "^should[A-Z]",
+          "^it_[a-z]",
+          ".*_Spec$"
+        ]
+      }
+    },
+    "nfr_edge_cases": {
+      "families": {
+        "input_safety": 1,
+        "observability": 0,
+        "performance": 0,
+        "reliability": 0,
+        "scalability": 0,
+        "security": 0
+      },
+      "per_root": [
+        {
+          "root": "create_order",
+          "covered": [
+            "input_safety"
+          ],
+          "missing": [
+            "observability",
+            "performance",
+            "reliability",
+            "scalability",
+            "security"
+          ]
+        }
+      ],
+      "reliability_gaps": [
+        "create_order"
+      ],
+      "markers": {
+        "input_safety": [
+          "validate",
+          "schema",
+          "sanitize",
+          "escape",
+          "normalize"
+        ],
+        "observability": [
+          "metric",
+          "trace",
+          "telemetry",
+          "\\bspan\\b",
+          "\\blog\\b",
+          "audit"
+        ],
+        "performance": [
+          "cache",
+          "memoiz",
+          "batch",
+          "bulk",
+          "prefetch"
+        ],
+        "reliability": [
+          "retry",
+          "timeout",
+          "circuit",
+          "fallback",
+          "idempot",
+          "deadline"
+        ],
+        "scalability": [
+          "rate.?limit",
+          "throttle",
+          "backpressure",
+          "queue"
+        ],
+        "security": [
+          "auth",
+          "verify",
+          "hmac",
+          "signature",
+          "encrypt",
+          "sanitiz"
+        ]
+      },
+      "source": "identifier-keyword scan inspired by SonarQube + ScopeMaster NFR detection",
+      "source_link": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/"
+    }
+  }
+}

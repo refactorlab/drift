@@ -18,8 +18,10 @@ import { postReview } from '../github/review.ts';
 import { createCheckRun } from '../github/check.ts';
 import { renderOverview } from '../render/overview.ts';
 
-const repoRoot = join(import.meta.dirname, '../../..');
-const fixturePath = join(repoRoot, 'tmp/scan-pr-output.json');
+// Fixtures live next to .dev/report.json so they're tracked in git and
+// available on CI — `tmp/` is gitignored.
+const fixtureDir = join(import.meta.dirname, '../../.dev');
+const fixturePath = join(fixtureDir, 'scan-pr-output.json');
 
 type Call = { method: string; args: unknown };
 
@@ -185,7 +187,7 @@ test('createCheckRun: payload matches documented schema', async () => {
 // ── kotlin-ktor fixture sanity-check ────────────────────────────────────
 test('upsertStickyComment: kotlin-ktor fixture renders + posts cleanly', async () => {
   const { octokit, calls } = makeSpyOctokit();
-  const report = loadReport(join(repoRoot, 'tmp/scan-pr-output-kotlin-ktor.json'));
+  const report = loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json'));
   await upsertStickyComment({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     octokit: octokit as any,

@@ -8,10 +8,12 @@ import { join } from 'node:path';
 import { loadReport } from '../report.ts';
 import { renderOverview, STICKY_MARKER } from '../render/overview.ts';
 
-const repoRoot = join(import.meta.dirname, '../../..');
+// Fixtures live next to .dev/report.json so they're tracked in git and
+// available on CI — `tmp/` is gitignored.
+const fixtureDir = join(import.meta.dirname, '../../.dev');
 const fixtures = [
-  { name: 'python-fastapi', path: join(repoRoot, 'tmp/scan-pr-output.json') },
-  { name: 'kotlin-ktor', path: join(repoRoot, 'tmp/scan-pr-output-kotlin-ktor.json') },
+  { name: 'python-fastapi', path: join(fixtureDir, 'scan-pr-output.json') },
+  { name: 'kotlin-ktor', path: join(fixtureDir, 'scan-pr-output-kotlin-ktor.json') },
 ] as const;
 
 for (const fix of fixtures) {

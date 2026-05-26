@@ -1,0 +1,1080 @@
+{
+  "schema_version": "1.0",
+  "mode": "static",
+  "generator": {
+    "tool": "drift-static-profiler",
+    "version": "0.6.0",
+    "source_root": "drift-static-profiler/tests/fixtures/kotlin-ktor",
+    "captured_at": "2026-05-26T15:54:19Z"
+  },
+  "pr_scope": {
+    "changed_files": [
+      "src/main/kotlin/com/example/handlers/OrdersHandler.kt",
+      "src/main/kotlin/com/example/services/OrdersService.kt",
+      "src/main/kotlin/com/example/repos/OrdersRepository.kt"
+    ],
+    "affected_roots": [
+      "createOrder",
+      "findById"
+    ],
+    "unreachable_changes": []
+  },
+  "pr_review": {
+    "generated_at": "2026-05-26T15:54:19Z",
+    "overall_drift": {
+      "percent": 21.0,
+      "direction": "up",
+      "confidence": "low",
+      "interpretation": "Avg. customer + runtime ▲"
+    },
+    "counts": {
+      "features": {
+        "value": 1,
+        "label": "New features",
+        "detail": "introduce OrdersService",
+        "source": "1 commits with `feat:` prefix (Conventional Commits v1.0.0)"
+      },
+      "bug_fixes": {
+        "value": 2,
+        "label": "Bug fixes",
+        "detail": "1 `fix:` commits · Fixes #11",
+        "source": "commit subjects with `fix:` + body keywords `fix|fixes|fixed #N`"
+      },
+      "issues_resolved": {
+        "value": 1,
+        "label": "Issues resolved",
+        "detail": "Resolves #11",
+        "source": "commit body keywords `close|closes|closed|resolve|resolves|resolved #N`"
+      },
+      "new_test_files": {
+        "value": 0,
+        "label": "New test files",
+        "detail": "no added files matched test patterns",
+        "source": "changed_files matched against 14 language-specific filename patterns (pytest/go/jest/junit/cargo/scala/kotlin)"
+      }
+    },
+    "architecture_flow": {
+      "after_mermaid": "flowchart LR\n    n0[OrdersHandler.createOrder]\n    n1[OrdersService.createOrder]\n    n2[OrdersService.buildOrder]\n    n3[OrdersService.validate]\n    n4[OrdersRepository.save]\n    n5[Order]\n    n6[OrdersRepository.findById]\n    n0 --> n1\n    n1 --> n2\n    n1 --> n3\n    n1 --> n4\n    n2 --> n5\n    n6 --> n5\n    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px\n    class n0,n1,n2,n3,n4,n5,n6 changed",
+      "combined_mermaid": "flowchart TB\n    %% Architecture flow — before / after / data structures\n    subgraph BEFORE[\"🔴 BEFORE\"]\n        direction LR\n        before_note[Before-state requires --base-sha]\n    end\n    subgraph AFTER[\"🟢 AFTER\"]\n        direction LR\n        a_n0[OrdersHandler.createOrder]\n        a_n1[OrdersService.createOrder]\n        a_n2[OrdersService.buildOrder]\n        a_n3[OrdersService.validate]\n        a_n4[OrdersRepository.save]\n        a_n5[Order]\n        a_n6[OrdersRepository.findById]\n    end\n    subgraph DS[\"📦 DATA STRUCTURES\"]\n        direction LR\n        ds_0[OrdersService kotlin]\n        ds_1[OrdersRepository kotlin]\n        ds_2[OrdersHandler kotlin]\n        ds_3[Order kotlin]\n    end\n    a_n0 --> a_n1\n    a_n1 --> a_n2\n    a_n1 --> a_n3\n    a_n1 --> a_n4\n    a_n2 --> a_n5\n    a_n6 --> a_n5\n    before_note -.->|evolves to|a_n0\n    a_n0 -.->|uses|ds_0\n    classDef muted fill:#6e7681,stroke:#6e7681,color:#fff\n    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px\n    classDef ds_new fill:#1c2128,stroke:#3fb950,color:#e6edf3,stroke-width:1px\n    classDef ds_mod fill:#1c2128,stroke:#d29922,color:#e6edf3,stroke-width:1px\n    class a_n0,a_n1,a_n2,a_n3,a_n4,a_n5,a_n6 changed\n    class ds_0,ds_1,ds_2,ds_3 ds_mod\n    class before_note muted",
+      "after_structured": {
+        "direction": "LR",
+        "subgraphs": [],
+        "nodes": [
+          {
+            "id": "n0",
+            "label": "OrdersHandler.createOrder",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n1",
+            "label": "OrdersService.createOrder",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n2",
+            "label": "OrdersService.buildOrder",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n3",
+            "label": "OrdersService.validate",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n4",
+            "label": "OrdersRepository.save",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n5",
+            "label": "Order",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "n6",
+            "label": "OrdersRepository.findById",
+            "shape": "rect",
+            "class": "changed"
+          }
+        ],
+        "edges": [
+          {
+            "from": "n0",
+            "to": "n1",
+            "style": "solid"
+          },
+          {
+            "from": "n1",
+            "to": "n2",
+            "style": "solid"
+          },
+          {
+            "from": "n1",
+            "to": "n3",
+            "style": "solid"
+          },
+          {
+            "from": "n1",
+            "to": "n4",
+            "style": "solid"
+          },
+          {
+            "from": "n2",
+            "to": "n5",
+            "style": "solid"
+          },
+          {
+            "from": "n6",
+            "to": "n5",
+            "style": "solid"
+          }
+        ],
+        "class_defs": [
+          {
+            "name": "changed",
+            "fill": "#9e6a03",
+            "stroke": "#d29922",
+            "color": "#fff",
+            "stroke_width": "2px"
+          }
+        ]
+      },
+      "combined_structured": {
+        "direction": "TB",
+        "title": "Architecture flow — before / after / data structures",
+        "subgraphs": [
+          {
+            "id": "BEFORE",
+            "label": "🔴 BEFORE",
+            "direction": "LR",
+            "node_ids": [
+              "before_note"
+            ]
+          },
+          {
+            "id": "AFTER",
+            "label": "🟢 AFTER",
+            "direction": "LR",
+            "node_ids": [
+              "a_n0",
+              "a_n1",
+              "a_n2",
+              "a_n3",
+              "a_n4",
+              "a_n5",
+              "a_n6"
+            ]
+          },
+          {
+            "id": "DS",
+            "label": "📦 DATA STRUCTURES",
+            "direction": "LR",
+            "node_ids": [
+              "ds_0",
+              "ds_1",
+              "ds_2",
+              "ds_3"
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "id": "before_note",
+            "label": "Before-state requires --base-sha",
+            "shape": "rect",
+            "class": "muted"
+          },
+          {
+            "id": "a_n0",
+            "label": "OrdersHandler.createOrder",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n1",
+            "label": "OrdersService.createOrder",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n2",
+            "label": "OrdersService.buildOrder",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n3",
+            "label": "OrdersService.validate",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n4",
+            "label": "OrdersRepository.save",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n5",
+            "label": "Order",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "a_n6",
+            "label": "OrdersRepository.findById",
+            "shape": "rect",
+            "class": "changed"
+          },
+          {
+            "id": "ds_0",
+            "label": "OrdersService kotlin",
+            "shape": "rect",
+            "class": "ds_mod"
+          },
+          {
+            "id": "ds_1",
+            "label": "OrdersRepository kotlin",
+            "shape": "rect",
+            "class": "ds_mod"
+          },
+          {
+            "id": "ds_2",
+            "label": "OrdersHandler kotlin",
+            "shape": "rect",
+            "class": "ds_mod"
+          },
+          {
+            "id": "ds_3",
+            "label": "Order kotlin",
+            "shape": "rect",
+            "class": "ds_mod"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a_n0",
+            "to": "a_n1",
+            "style": "solid"
+          },
+          {
+            "from": "a_n1",
+            "to": "a_n2",
+            "style": "solid"
+          },
+          {
+            "from": "a_n1",
+            "to": "a_n3",
+            "style": "solid"
+          },
+          {
+            "from": "a_n1",
+            "to": "a_n4",
+            "style": "solid"
+          },
+          {
+            "from": "a_n2",
+            "to": "a_n5",
+            "style": "solid"
+          },
+          {
+            "from": "a_n6",
+            "to": "a_n5",
+            "style": "solid"
+          },
+          {
+            "from": "before_note",
+            "to": "a_n0",
+            "label": "evolves to",
+            "style": "dashed"
+          },
+          {
+            "from": "a_n0",
+            "to": "ds_0",
+            "label": "uses",
+            "style": "dashed"
+          }
+        ],
+        "class_defs": [
+          {
+            "name": "muted",
+            "fill": "#6e7681",
+            "stroke": "#6e7681",
+            "color": "#fff"
+          },
+          {
+            "name": "changed",
+            "fill": "#9e6a03",
+            "stroke": "#d29922",
+            "color": "#fff",
+            "stroke_width": "2px"
+          },
+          {
+            "name": "ds_new",
+            "fill": "#1c2128",
+            "stroke": "#3fb950",
+            "color": "#e6edf3",
+            "stroke_width": "1px"
+          },
+          {
+            "name": "ds_mod",
+            "fill": "#1c2128",
+            "stroke": "#d29922",
+            "color": "#e6edf3",
+            "stroke_width": "1px"
+          }
+        ]
+      },
+      "data_structures": [
+        {
+          "name": "OrdersService",
+          "kind": "modified",
+          "scope": "kotlin",
+          "description": "3 method(s) in scope",
+          "direction": "internal"
+        },
+        {
+          "name": "OrdersRepository",
+          "kind": "modified",
+          "scope": "kotlin",
+          "description": "2 method(s) in scope",
+          "direction": "internal"
+        },
+        {
+          "name": "OrdersHandler",
+          "kind": "modified",
+          "scope": "kotlin",
+          "description": "1 method(s) in scope",
+          "direction": "internal"
+        },
+        {
+          "name": "Order",
+          "kind": "modified",
+          "scope": "kotlin",
+          "description": "type definition",
+          "direction": "internal"
+        }
+      ],
+      "reference_link": {
+        "url": "https://mermaid.js.org/syntax/flowchart.html",
+        "title": "Mermaid flowchart reference"
+      }
+    },
+    "business_logic": {
+      "mermaid": "flowchart TB\n    User((👤 User))\n    entry[📦 Orders]\n    r0[createOrder]\n    r1[findById]\n    cat_db([💾 Database])\n    User --> entry\n    entry --> r0\n    entry --> r1\n    r0 -.-> cat_db\n    r1 -.-> cat_db\n    classDef actor fill:#1f6feb,stroke:#2f81f7,color:#fff\n    classDef scope fill:#1c2128,stroke:#d29922,color:#e6edf3,stroke-width:3px,stroke-dasharray:6 4\n    classDef category fill:#6e7681,stroke:#8b949e,color:#e6edf3\n    class User actor\n    class cat_db category\n    class entry,r0,r1 scope",
+      "structured": {
+        "direction": "TB",
+        "subgraphs": [],
+        "nodes": [
+          {
+            "id": "User",
+            "label": "👤 User",
+            "shape": "actor",
+            "class": "actor"
+          },
+          {
+            "id": "entry",
+            "label": "📦 Orders",
+            "shape": "rect",
+            "class": "scope"
+          },
+          {
+            "id": "r0",
+            "label": "createOrder",
+            "shape": "rect",
+            "class": "scope"
+          },
+          {
+            "id": "r1",
+            "label": "findById",
+            "shape": "rect",
+            "class": "scope"
+          },
+          {
+            "id": "cat_db",
+            "label": "💾 Database",
+            "shape": "stadium",
+            "class": "category"
+          }
+        ],
+        "edges": [
+          {
+            "from": "User",
+            "to": "entry",
+            "style": "solid"
+          },
+          {
+            "from": "entry",
+            "to": "r0",
+            "style": "solid"
+          },
+          {
+            "from": "entry",
+            "to": "r1",
+            "style": "solid"
+          },
+          {
+            "from": "r0",
+            "to": "cat_db",
+            "style": "dashed"
+          },
+          {
+            "from": "r1",
+            "to": "cat_db",
+            "style": "dashed"
+          }
+        ],
+        "class_defs": [
+          {
+            "name": "actor",
+            "fill": "#1f6feb",
+            "stroke": "#2f81f7",
+            "color": "#fff"
+          },
+          {
+            "name": "scope",
+            "fill": "#1c2128",
+            "stroke": "#d29922",
+            "color": "#e6edf3",
+            "stroke_width": "3px",
+            "stroke_dasharray": "6 4"
+          },
+          {
+            "name": "category",
+            "fill": "#6e7681",
+            "stroke": "#8b949e",
+            "color": "#e6edf3"
+          }
+        ]
+      },
+      "summary": "feat(orders): introduce OrdersService layer — Split orders into Handler/Service/Repository."
+    },
+    "value_card": {
+      "axes": [
+        {
+          "name": "money",
+          "label": "💰 Money",
+          "subtitle": "Net infra + dev-time delta",
+          "delta_percent": 2.9,
+          "direction": "up",
+          "confidence": "high",
+          "formula": "Δ% = (profit_usd − cost_usd) / baseline_monthly_dev_cost × 100. cost_usd = (LOC_added × 0.05 + files × 0.5) × $95/hr + infra_uplift; profit_usd = cleanup_savings + perf_savings.",
+          "inputs": {
+            "aws_cost_usd_monthly": 0.0,
+            "baseline_monthly_dev_cost_usd": 15200.0,
+            "cleanup_profit_usd": 0.0,
+            "dev_cost_usd": 399.0,
+            "dev_hour_rate_usd": 95.0,
+            "dev_hours_estimate": 4.2,
+            "files_touched": 3.0,
+            "loc_added": 54.0,
+            "loc_deleted": 8.0,
+            "perf_profit_usd_annual": 840.96,
+            "touches_infrastructure": false
+          },
+          "kv": [
+            {
+              "label": "Potential cost",
+              "value": "-$399",
+              "kind": "cost"
+            },
+            {
+              "label": "Potential profit",
+              "value": "+$841",
+              "kind": "profit"
+            }
+          ],
+          "source": "dev-rate: HiBob fully-burdened US 2026 ($95/hr). AWS reference: m5.large on-demand $0.096/hr us-east-1. LOC→hour heuristic: in-house 2026 baseline.",
+          "source_link": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/",
+          "additional_sources": [
+            {
+              "url": "https://aws.amazon.com/ec2/pricing/on-demand/",
+              "title": "AWS — EC2 On-Demand pricing",
+              "tag": "official"
+            },
+            {
+              "url": "https://calculator.aws/",
+              "title": "AWS Pricing Calculator",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.cncf.io/projects/opencost/",
+              "title": "CNCF — OpenCost (cost-allocation reference)",
+              "tag": "cncf"
+            },
+            {
+              "url": "https://opencost.io/docs/",
+              "title": "OpenCost docs",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.bls.gov/oes/current/oes151252.htm",
+              "title": "BLS — Software Developer Occupational Stats (US wages)",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/",
+              "title": "HiBob — fully-burdened labor rate",
+              "tag": "blog"
+            }
+          ]
+        },
+        {
+          "name": "customer",
+          "label": "👥 Customer / user value",
+          "subtitle": "Time saved + value added per session",
+          "delta_percent": 60.0,
+          "direction": "up",
+          "confidence": "high",
+          "formula": "Δ% = 0.6 × min(features/3, 1) × 100 + 0.4 × min((issues+fixes)/3, 1) × 100",
+          "inputs": {
+            "bug_fixes_count": 2.0,
+            "features_count": 1.0,
+            "issues_resolved_count": 1.0
+          },
+          "kv": [
+            {
+              "label": "Features delivered",
+              "value": "1",
+              "kind": "profit"
+            },
+            {
+              "label": "Issues resolved",
+              "value": "1",
+              "kind": "profit"
+            },
+            {
+              "label": "Bugs fixed",
+              "value": "2",
+              "kind": "profit"
+            }
+          ],
+          "source": "derived from PrCounts (Conventional Commits + GitHub linking keywords)",
+          "source_link": "https://www.conventionalcommits.org/en/v1.0.0/",
+          "additional_sources": [
+            {
+              "url": "https://www.conventionalcommits.org/en/v1.0.0/",
+              "title": "Conventional Commits v1.0.0",
+              "tag": "official"
+            },
+            {
+              "url": "https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue",
+              "title": "GitHub — Linking PRs to issues",
+              "tag": "official"
+            }
+          ]
+        },
+        {
+          "name": "runtime",
+          "label": "⚙️ Software runtime",
+          "subtitle": "Wire size, memory, serialization",
+          "delta_percent": 15.0,
+          "direction": "up",
+          "confidence": "low",
+          "formula": "Δ% derived from `perf:` commit count (Conventional Commits) and net LOC. Real benchmarks not available at static-analysis time.",
+          "inputs": {
+            "loc_added": 54.0,
+            "loc_deleted": 8.0,
+            "perf_commits": 1.0
+          },
+          "kv": [
+            {
+              "label": "perf: commits",
+              "value": "1",
+              "kind": "profit"
+            },
+            {
+              "label": "Net LOC",
+              "value": "+46",
+              "kind": "neutral"
+            }
+          ],
+          "source": "static-only proxy — no runtime benchmark integration yet",
+          "source_link": "https://www.conventionalcommits.org/en/v1.0.0/",
+          "additional_sources": [
+            {
+              "url": "https://github.com/cncf/tag-observability/blob/main/whitepaper.md",
+              "title": "CNCF Observability Whitepaper",
+              "tag": "cncf"
+            },
+            {
+              "url": "https://12factor.net/",
+              "title": "The Twelve-Factor App",
+              "tag": "official"
+            },
+            {
+              "url": "https://www.conventionalcommits.org/en/v1.0.0/",
+              "title": "Conventional Commits (perf: prefix)",
+              "tag": "official"
+            },
+            {
+              "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
+              "title": "Google SRE Book — Monitoring distributed systems",
+              "tag": "blog"
+            }
+          ]
+        },
+        {
+          "name": "runtime_ux",
+          "label": "🎨 Software runtime UX",
+          "subtitle": "Dev / debugging experience time delta",
+          "delta_percent": 6.0,
+          "direction": "up",
+          "confidence": "low",
+          "formula": "Δ% = min(60, 5·new_test_files + 3·bug_fixes + 4·docs_commits)",
+          "inputs": {
+            "bug_fixes": 2.0,
+            "docs_commits": 0.0,
+            "new_test_files": 0.0
+          },
+          "kv": [
+            {
+              "label": "New tests",
+              "value": "0",
+              "kind": "muted"
+            },
+            {
+              "label": "Docs commits",
+              "value": "0",
+              "kind": "muted"
+            }
+          ],
+          "source": "Conventional Commits docs/test signals + GitHub linking keywords",
+          "source_link": "https://www.conventionalcommits.org/en/v1.0.0/",
+          "additional_sources": [
+            {
+              "url": "https://12factor.net/logs",
+              "title": "12-Factor App — Logs",
+              "tag": "official"
+            },
+            {
+              "url": "https://sre.google/sre-book/being-on-call/",
+              "title": "Google SRE Book — Being on-call (developer UX)",
+              "tag": "blog"
+            },
+            {
+              "url": "https://www.conventionalcommits.org/en/v1.0.0/",
+              "title": "Conventional Commits (docs: prefix)",
+              "tag": "official"
+            }
+          ]
+        }
+      ],
+      "bars": [
+        {
+          "axis": "money",
+          "delta_percent": 2.9,
+          "direction": "up"
+        },
+        {
+          "axis": "customer",
+          "delta_percent": 60.0,
+          "direction": "up"
+        },
+        {
+          "axis": "runtime",
+          "delta_percent": 15.0,
+          "direction": "up"
+        },
+        {
+          "axis": "runtime_ux",
+          "delta_percent": 6.0,
+          "direction": "up"
+        }
+      ],
+      "bars_mermaid": "%%{init: {'theme':'base', 'themeVariables': {'xyChart': {'plotColorPalette': '#22c55e,#ef4444'}}}}%%\nxychart-beta\n    title \"PR drift by axis\"\n    x-axis [\"Money\", \"Customer\", \"Runtime\", \"Runtime UX\"]\n    y-axis \"Drift %\" -50 --> 100\n    bar [2.9, 60.0, 15.0, 6.0]",
+      "bars_structured": {
+        "title": "PR drift by axis",
+        "theme_palette": "#22c55e,#ef4444",
+        "x_axis_labels": [
+          "Money",
+          "Customer",
+          "Runtime",
+          "Runtime UX"
+        ],
+        "y_axis_label": "Drift %",
+        "y_min": -50.0,
+        "y_max": 100.0,
+        "bars": [
+          2.9,
+          60.0,
+          15.0,
+          6.0
+        ]
+      },
+      "bottom_line": "Bottom line — all 4 axes trend positive. Strongest: 👥 Customer / user value at +60.0%. Projected $ savings clear the dev-hours invested within ~9 weeks of merge."
+    },
+    "code_suggestions": [
+      {
+        "category": "B",
+        "category_label": "Product correctness — Raw SQL concatenation",
+        "kind": "sql_concat_injection",
+        "rule_id": "S4:sql-concat",
+        "file": "src/main/kotlin/com/example/repos/OrdersRepository.kt",
+        "line": 17,
+        "confidence": 0.78,
+        "severity": "high",
+        "why_it_matters": "Possible SQL injection at src/main/kotlin/com/example/repos/OrdersRepository.kt:17 — a SQL keyword appears next to string interpolation. Even if the variable is currently trusted, this pattern propagates through future code edits.",
+        "remediation_hint": "Use parameterized queries (`?` placeholders, prepared statements, or the ORM's bind-parameter API). Never concatenate user input into a SQL string.",
+        "references": [
+          {
+            "url": "https://owasp.org/Top10/A03_2021-Injection/",
+            "title": "OWASP Top 10 — A03:2021 Injection",
+            "tag": "official"
+          },
+          {
+            "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
+            "title": "OWASP Cheatsheet — SQL Injection Prevention",
+            "tag": "official"
+          }
+        ],
+        "diff": {
+          "before_lines": [
+            {
+              "line_number": 14,
+              "code": "",
+              "kind": "ctx"
+            },
+            {
+              "line_number": 15,
+              "code": "    fun save(order: Order): Long {",
+              "kind": "ctx"
+            },
+            {
+              "line_number": 16,
+              "code": "        val stmt = conn.prepareStatement(",
+              "kind": "ctx"
+            },
+            {
+              "line_number": 17,
+              "code": "            \"INSERT INTO orders (customer_email, total_cents, currency) \" +",
+              "kind": "del"
+            },
+            {
+              "line_number": 18,
+              "code": "                \"VALUES (?, ?, ?)\",",
+              "kind": "ctx"
+            },
+            {
+              "line_number": 19,
+              "code": "            Statement.RETURN_GENERATED_KEYS,",
+              "kind": "ctx"
+            },
+            {
+              "line_number": 20,
+              "code": "        )",
+              "kind": "ctx"
+            }
+          ],
+          "after_lines": []
+        },
+        "language": "kotlin",
+        "llm_prompt_hint": "Drift's static analyzer flagged a `sql_concat_injection` issue (kotlin, src/main/kotlin/com/example/repos/OrdersRepository.kt). Produce a one-paragraph 'Why it matters' and a unified-diff suggestion. Cite the references list."
+      }
+    ],
+    "visual_summary": {
+      "risks": {
+        "mermaid": "quadrantChart\n    title Risk Map\n    x-axis Low likelihood --> High likelihood\n    y-axis Low severity --> High severity\n    quadrant-1 Act before merge\n    quadrant-2 Monitor closely\n    quadrant-3 Acceptable\n    quadrant-4 Document & ship\n    \"PR size · 3 files\": [0.03, 0.32]\n    \"Uncovered roots · 2 (createOrder, findById)\": [0.40, 0.65]\n    \"Reliability gaps · 2 root(s) lack retry/timeout/fallback\": [0.50, 0.80]",
+        "structured": {
+          "title": "Risk Map",
+          "x_axis_low": "Low likelihood",
+          "x_axis_high": "High likelihood",
+          "y_axis_low": "Low severity",
+          "y_axis_high": "High severity",
+          "quadrant_1": "Act before merge",
+          "quadrant_2": "Monitor closely",
+          "quadrant_3": "Acceptable",
+          "quadrant_4": "Document & ship",
+          "items": [
+            {
+              "label": "PR size · 3 files",
+              "x": 0.03,
+              "y": 0.32
+            },
+            {
+              "label": "Uncovered roots · 2 (createOrder, findById)",
+              "x": 0.4,
+              "y": 0.65
+            },
+            {
+              "label": "Reliability gaps · 2 root(s) lack retry/timeout/fallback",
+              "x": 0.5,
+              "y": 0.8
+            }
+          ]
+        },
+        "items": [
+          {
+            "label": "PR size · 3 files",
+            "likelihood": 0.03,
+            "severity": 0.32,
+            "quadrant": "acceptable"
+          },
+          {
+            "label": "Uncovered roots · 2 (createOrder, findById)",
+            "likelihood": 0.4,
+            "severity": 0.65,
+            "quadrant": "monitor_closely"
+          },
+          {
+            "label": "Reliability gaps · 2 root(s) lack retry/timeout/fallback",
+            "likelihood": 0.5,
+            "severity": 0.8,
+            "quadrant": "act_before_merge"
+          }
+        ]
+      },
+      "key_files": {
+        "mermaid": "mindmap\n  root((Affected files))\n    db\n      OrdersRepository.kt\n      OrdersService.kt\n      OrdersHandler.kt",
+        "structured": {
+          "root": {
+            "label": "Affected files",
+            "is_root": true,
+            "children": [
+              {
+                "label": "db",
+                "is_root": false,
+                "children": [
+                  {
+                    "label": "OrdersRepository.kt",
+                    "is_root": false,
+                    "children": []
+                  },
+                  {
+                    "label": "OrdersService.kt",
+                    "is_root": false,
+                    "children": []
+                  },
+                  {
+                    "label": "OrdersHandler.kt",
+                    "is_root": false,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "groups": [
+          {
+            "name": "db",
+            "files": [
+              {
+                "path": "src/main/kotlin/com/example/repos/OrdersRepository.kt",
+                "why": "4 root(s) reach this file"
+              },
+              {
+                "path": "src/main/kotlin/com/example/services/OrdersService.kt",
+                "why": "3 root(s) reach this file"
+              },
+              {
+                "path": "src/main/kotlin/com/example/handlers/OrdersHandler.kt",
+                "why": "1 root(s) reach this file"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "pr_review_ext": {
+    "tech_debt": {
+      "high_complexity": [],
+      "long_functions": [],
+      "schema_validation": {
+        "libraries": [],
+        "found": false,
+        "files_inspected": 3,
+        "supported_languages": [
+          "go",
+          "java",
+          "javascript",
+          "kotlin",
+          "python",
+          "rust",
+          "scala",
+          "typescript"
+        ],
+        "per_language_known_libraries": {
+          "kotlin": [
+            {
+              "name": "konform",
+              "docs": "https://github.com/konform-kt/konform"
+            },
+            {
+              "name": "kotlinx.serialization",
+              "docs": "https://kotlinlang.org/docs/serialization.html"
+            },
+            {
+              "name": "valiktor",
+              "docs": "https://github.com/valiktor/valiktor"
+            },
+            {
+              "name": "ktor",
+              "docs": "https://ktor.io/docs/request-validation.html"
+            },
+            {
+              "name": "jakarta.validation",
+              "docs": "https://beanvalidation.org/"
+            }
+          ]
+        }
+      },
+      "summary_findings_top": [],
+      "thresholds": {
+        "complexity": 10,
+        "loc": 80
+      },
+      "sources": [
+        {
+          "label": "complexity",
+          "source": "SonarQube / radon — >10 = complex",
+          "source_link": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/"
+        },
+        {
+          "label": "loc",
+          "source": "Robert C. Martin, Clean Code — functions should be < ~80 LOC",
+          "source_link": "https://en.wikipedia.org/wiki/Code_smell"
+        },
+        {
+          "label": "schema_libs",
+          "source": "Library coverage for all 8 supported languages — see schema_validation.per_language_known_libraries for the full registry with citation URLs."
+        }
+      ]
+    },
+    "duplication": {
+      "threshold": 95,
+      "clusters": [],
+      "count": 0
+    },
+    "tests_in_graph": {
+      "test_files": 0,
+      "test_functions": 0,
+      "by_language": {},
+      "uncovered_roots": [
+        "createOrder",
+        "findById"
+      ],
+      "patterns": {
+        "filename": [
+          "^test_.*\\.py$",
+          ".*_test\\.py$",
+          ".*_test\\.go$",
+          ".*\\.test\\.[jt]sx?$",
+          ".*\\.spec\\.[jt]sx?$",
+          "^Test[A-Z].*\\.java$",
+          ".*Test\\.java$",
+          ".*Tests\\.java$",
+          ".*IT\\.java$",
+          "^tests?\\.rs$",
+          ".*Test\\.scala$",
+          ".*Spec\\.scala$",
+          ".*Test\\.kt$",
+          ".*Spec\\.kt$"
+        ],
+        "function": [
+          "^test[_A-Z]",
+          "^Test[A-Z]",
+          "^should[A-Z]",
+          "^it_[a-z]",
+          ".*_Spec$"
+        ]
+      }
+    },
+    "nfr_edge_cases": {
+      "families": {
+        "input_safety": 1,
+        "observability": 0,
+        "performance": 0,
+        "reliability": 0,
+        "scalability": 0,
+        "security": 0
+      },
+      "per_root": [
+        {
+          "root": "createOrder",
+          "covered": [
+            "input_safety"
+          ],
+          "missing": [
+            "observability",
+            "performance",
+            "reliability",
+            "scalability",
+            "security"
+          ]
+        },
+        {
+          "root": "findById",
+          "covered": [],
+          "missing": [
+            "input_safety",
+            "observability",
+            "performance",
+            "reliability",
+            "scalability",
+            "security"
+          ]
+        }
+      ],
+      "reliability_gaps": [
+        "createOrder",
+        "findById"
+      ],
+      "markers": {
+        "input_safety": [
+          "validate",
+          "schema",
+          "sanitize",
+          "escape",
+          "normalize"
+        ],
+        "observability": [
+          "metric",
+          "trace",
+          "telemetry",
+          "\\bspan\\b",
+          "\\blog\\b",
+          "audit"
+        ],
+        "performance": [
+          "cache",
+          "memoiz",
+          "batch",
+          "bulk",
+          "prefetch"
+        ],
+        "reliability": [
+          "retry",
+          "timeout",
+          "circuit",
+          "fallback",
+          "idempot",
+          "deadline"
+        ],
+        "scalability": [
+          "rate.?limit",
+          "throttle",
+          "backpressure",
+          "queue"
+        ],
+        "security": [
+          "auth",
+          "verify",
+          "hmac",
+          "signature",
+          "encrypt",
+          "sanitiz"
+        ]
+      },
+      "source": "identifier-keyword scan inspired by SonarQube + ScopeMaster NFR detection",
+      "source_link": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/"
+    }
+  }
+}
