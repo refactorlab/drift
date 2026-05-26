@@ -482,10 +482,14 @@ jobs:
           set -euo pipefail
           mkdir -p staging
           target=x86_64-unknown-linux-gnu
-          archive="staging/drift-static-profiler-${target}.tar.gz"
-          tar -czf "$archive" -C drift-static-profiler/target/release drift-static-profiler
-          shasum -a 256 "$archive" > "${archive}.sha256"
-          ls -lh "$archive" "${archive}.sha256"
+          asset="drift-static-profiler-${target}.tar.gz"
+          tar -czf "staging/${asset}" -C drift-static-profiler/target/release drift-static-profiler
+          # cd into staging so the .sha256 file records the bare asset
+          # name. `sha256sum --check` (used by install-profiler.sh) opens
+          # whatever path is in the file relative to cwd — embedding
+          # "staging/" here would make consumers' verification fail.
+          (cd staging && shasum -a 256 "$asset" > "${asset}.sha256")
+          ls -lh "staging/${asset}" "staging/${asset}.sha256"
 
       - name: Upload static-profiler artifact
         uses: actions/upload-artifact@v4

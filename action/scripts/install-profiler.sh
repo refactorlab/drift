@@ -150,13 +150,23 @@ if ! curl --fail --silent --show-error --location "${auth_args[@]}" \
   echo "⚠️  Could not download ${asset}.sha256 — proceeding without sha verification."
 fi
 
-# `taiki-e/upload-rust-binary-action` writes "<sha256>  <asset>" — same
-# format `shasum -c` expects.
+# Verify by extracting the expected hash and comparing manually rather
+# than using `sha256sum --check`. Some upstream release jobs embed a
+# directory prefix (e.g. "staging/<asset>") into the checksum file —
+# `--check` would then try to open that path and fail. Reading just the
+# first field sidesteps whatever filename is recorded.
 if [ -f "${asset}.sha256" ]; then
+  expected="$(awk 'NR==1{print $1}' "${asset}.sha256")"
   if command -v sha256sum > /dev/null 2>&1; then
-    sha256sum --check "${asset}.sha256"
+    actual="$(sha256sum "$asset" | awk '{print $1}')"
   else
-    shasum -a 256 --check "${asset}.sha256"
+    actual="$(shasum -a 256 "$asset" | awk '{print $1}')"
+  fi
+  if [ "$expected" != "$actual" ]; then
+    echo "❌ Checksum mismatch for $asset" >&2
+    echo "   expected: $expected" >&2
+    echo "   actual:   $actual" >&2
+    exit 1
   fi
 fi
 
