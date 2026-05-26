@@ -86,8 +86,14 @@ fn init_tracing() {
     // installing the layer below first would lose any event emitted
     // between subscriber-init and bus-init.
     log_bus::init();
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,drift=debug,drift_lab_lib=debug"));
+    // EnvFilter target matching is module-prefix with `::` separators —
+    // so `drift=debug` does NOT match `drift_static_profiler` (underscore
+    // is not a `::`). List the profiler explicitly so its per-phase
+    // `tracing::info!` lines surface alongside the desktop's own
+    // `drift_lab_lib=debug` events.
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("info,drift=debug,drift_lab_lib=debug,drift_static_profiler=debug")
+    });
     let stderr_layer = fmt::layer()
         .with_target(true)
         .with_writer(std::io::stderr)

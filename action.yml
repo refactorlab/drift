@@ -1,6 +1,6 @@
-name: 'Drift — Hello + Scan'
-description: 'Prints hello world by Andy, then runs drift-static-profiler scan-pr and prints a JSON summary. Incremental smoke test on the way to the full Drift action.'
-author: 'Drift'
+name: 'Andy'
+description: 'Andy — PR companion by Drift. Says hello, installs the latest drift-static-profiler CLI (cached across runs, auto-detects the latest release), runs a static PR-scoped scan, and prints a summary. Debug logs + progress bars surface in the action output. Zero-config for consumers.'
+author: 'refactor-labs'
 
 branding:
   icon: 'activity'
@@ -11,18 +11,44 @@ inputs:
     description: 'Name shown in the hello-world line.'
     required: false
     default: 'Andy'
-  profiler-version:
-    description: 'drift-static-profiler release tag to install (e.g. v0.6.0). Ignored when profiler-local-bin is set.'
-    required: false
-    default: 'v0.6.0'
-  profiler-local-bin:
-    description: 'Path to a prebuilt drift-static-profiler binary. When set + executable, skips the GitHub Release download (used by `make hello-test`).'
+  profiler-release-tag:
+    description: |
+      Pin to a specific release tag (e.g. drift-lab-v0.4.0). Default empty
+      → auto-detect the latest non-prerelease release in profiler-repo
+      whose tag matches drift-lab-v* OR drift-static-profiler-v* AND has
+      our binary asset attached. Zero-config for most consumers.
     required: false
     default: ''
+  profiler-repo:
+    description: 'GitHub repo hosting the drift-static-profiler binary releases.'
+    required: false
+    default: 'refactorlab/drift'
+  profiler-local-bin:
+    description: 'Path to a prebuilt drift-static-profiler binary. When set + executable, skips the GitHub Release download. Used by `make hello-test` for local act runs.'
+    required: false
+    default: ''
+  debug:
+    description: 'When true, sets DRIFT_LOG=info,drift_static_profiler=debug so the scanner emits verbose tracing events to stderr.'
+    required: false
+    default: 'false'
+  progress:
+    description: 'When true (default), the scanner shows per-phase progress (CliProgress / indicatif). When false, sets DRIFT_PROGRESS=off.'
+    required: false
+    default: 'true'
+  github-token:
+    description: |
+      Token used to authenticate the GitHub API call when auto-detecting
+      the latest release. Default = the workflow's GITHUB_TOKEN, which
+      consumers get automatically (no setup required). Raises the API
+      rate limit from 60/hr (anonymous, shared) to 5000/hr per consumer.
+      Public release downloads themselves work without a token.
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: 'composite'
   steps:
+    # ─── 1. Say hello (always) ───────────────────────────────────────
     - name: Say hello
       shell: bash
       env:
@@ -35,50 +61,176 @@ runs:
         echo "🔁 PR:     #${{ github.event.pull_request.number || 'n/a' }} (${{ github.event.pull_request.head.ref || 'n/a' }} → ${{ github.event.pull_request.base.ref || 'n/a' }})"
         echo "🔖 sha:    ${{ github.event.pull_request.head.sha || github.sha }}"
 
-    - name: Install drift-static-profiler
+    # ─── 2. Resolve the release tag (auto-detect or pinned) ──────────
+    # We resolve the tag HERE (before the cache step) because the cache
+    # key includes the tag. Auto-detect: most-recent published release
+    # in profiler-repo whose tag matches drift-lab-v* or
+    # drift-static-profiler-v* AND has the binary asset attached.
+    - name: Resolve release tag
+      id: resolve
       shell: bash
       env:
-        DRIFT_PROFILER_VERSION: ${{ inputs.profiler-version }}
-        DRIFT_PROFILER_LOCAL_BIN: ${{ inputs.profiler-local-bin }}
-      run: ${{ github.action_path }}/action/scripts/install-profiler.sh
+        DRIFT_PROFILER_REPO:         ${{ inputs.profiler-repo }}
+        DRIFT_PROFILER_RELEASE_TAG:  ${{ inputs.profiler-release-tag }}
+        DRIFT_PROFILER_LOCAL_BIN:    ${{ inputs.profiler-local-bin }}
+        GITHUB_TOKEN:                ${{ inputs.github-token }}
+      run: |
+        # Local-bin override: skip the API call entirely. install-profiler.sh
+        # also short-circuits when this env is set + executable.
+        if [ -n "${DRIFT_PROFILER_LOCAL_BIN:-}" ] && [ -x "${DRIFT_PROFILER_LOCAL_BIN}" ]; then
+          echo "tag=local" >> "$GITHUB_OUTPUT"
+          echo "arch=${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+          echo "🧪 Using local binary; cache step will be skipped."
+          exit 0
+        fi
+        # Pinned tag: use as-is.
+        if [ -n "${DRIFT_PROFILER_RELEASE_TAG:-}" ]; then
+          echo "tag=${DRIFT_PROFILER_RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "arch=${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+          echo "📌 Pinned tag: ${DRIFT_PROFILER_RELEASE_TAG}"
+          exit 0
+        fi
+        # Auto-detect.
+        case "${RUNNER_OS}" in
+          Linux)   target="${RUNNER_ARCH}-unknown-linux-gnu" ; ext="tar.gz" ;;
+          macOS)   target="${RUNNER_ARCH}-apple-darwin"      ; ext="tar.gz" ;;
+          Windows) target="${RUNNER_ARCH}-pc-windows-msvc"   ; ext="zip"    ;;
+        esac
+        # Normalize arch name to what the release assets use.
+        target=$(echo "$target" | sed -e 's/X64/x86_64/' -e 's/ARM64/aarch64/')
+        asset="drift-static-profiler-${target}.${ext}"
+        auth=()
+        [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+        echo "🔍 Auto-detecting latest release in ${DRIFT_PROFILER_REPO} containing ${asset}"
+        releases=$(curl --fail --silent --location "${auth[@]}" \
+          "https://api.github.com/repos/${DRIFT_PROFILER_REPO}/releases?per_page=30" 2>/dev/null || echo '[]')
+        tag=$(echo "$releases" | jq -r --arg asset "$asset" '
+          [.[]
+            | select(.draft == false)
+            | select(.prerelease == false)
+            | select(.tag_name | test("^(drift-lab-v|drift-static-profiler-v)"))
+            | select(any(.assets[]?; .name == $asset))
+          ][0].tag_name // empty
+        ')
+        if [ -z "$tag" ]; then
+          echo "⚠️  No release in ${DRIFT_PROFILER_REPO} has ${asset} yet — install + scan will skip."
+          echo "tag=none" >> "$GITHUB_OUTPUT"
+        else
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "📌 Resolved to: $tag"
+        fi
+        echo "arch=${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
-    - name: Run scan-pr (hello-world scope — 3 hardcoded files)
+    # ─── 3. Compute install path + cache key (tag-aware) ─────────────
+    # Cache layout mirrors $RUNNER_TOOL_CACHE/<tool>/<version>/<arch>.
+    # Suffix "-v1" is a SCHEMA version we bump if we ever change the
+    # on-disk layout — busts every old cache without touching the tag.
+    - name: Compute install path + cache key
+      id: paths
+      shell: bash
+      run: |
+        tag="${{ steps.resolve.outputs.tag }}"
+        install_dir="${RUNNER_TEMP}/drift-static-profiler/${tag}/${RUNNER_ARCH}"
+        cache_key="drift-static-profiler-${tag}-${RUNNER_OS}-${RUNNER_ARCH}-v1"
+        echo "install_dir=$install_dir" >> "$GITHUB_OUTPUT"
+        echo "cache_key=$cache_key"     >> "$GITHUB_OUTPUT"
+        echo "🔑 cache key:   $cache_key"
+        echo "📁 install dir: $install_dir"
+
+    # ─── 4. Restore drift-static-profiler from cache (if resolvable) ─
+    # Skip the cache layer entirely when tag=local (act dev path) or
+    # tag=none (no release found — nothing to cache).
+    - name: Restore drift-static-profiler from cache
+      id: cache
+      if: steps.resolve.outputs.tag != 'local' && steps.resolve.outputs.tag != 'none'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.paths.outputs.install_dir }}
+        key: ${{ steps.paths.outputs.cache_key }}
+
+    # ─── 5. Install (no-op on cache hit; downloads on miss) ──────────
+    - name: Install drift-static-profiler
+      id: install
+      shell: bash
+      env:
+        DRIFT_PROFILER_REPO:         ${{ inputs.profiler-repo }}
+        DRIFT_PROFILER_RELEASE_TAG:  ${{ steps.resolve.outputs.tag == 'local' && '' || steps.resolve.outputs.tag }}
+        DRIFT_PROFILER_LOCAL_BIN:    ${{ inputs.profiler-local-bin }}
+        DRIFT_PROFILER_INSTALL_DIR:  ${{ steps.paths.outputs.install_dir }}
+        GITHUB_TOKEN:                ${{ inputs.github-token }}
+      run: |
+        if [ "${{ steps.resolve.outputs.tag }}" = "none" ]; then
+          echo "⚠️  No release tag resolved — skipping install."
+          echo "installed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        ${{ github.action_path }}/action/scripts/install-profiler.sh
+        # Gate the cache-save step: only persist when the binary actually
+        # landed on disk (prevents the empty-dir-cache footgun).
+        bin="${{ steps.paths.outputs.install_dir }}/drift-static-profiler"
+        [ "${RUNNER_OS:-}" = "Windows" ] && bin="${bin}.exe"
+        if [ -x "$bin" ]; then
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "installed=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    # ─── 6. Save to cache (cache MISS + verified install only) ───────
+    - name: Save drift-static-profiler to cache
+      if: >-
+        steps.resolve.outputs.tag != 'local' &&
+        steps.resolve.outputs.tag != 'none' &&
+        steps.cache.outputs.cache-hit != 'true' &&
+        steps.install.outputs.installed == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.paths.outputs.install_dir }}
+        key: ${{ steps.paths.outputs.cache_key }}
+
+    # ─── 7. Run scan-pr (skips cleanly if binary missing from PATH) ──
+    - name: Run scan-pr
+      id: scan
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+        DRIFT_LOG: ${{ inputs.debug == 'true' && 'info,drift_static_profiler=debug' || '' }}
+        DRIFT_PROGRESS: ${{ inputs.progress == 'true' && '' || 'off' }}
       run: |
-        # For the hello-world smoke test we feed scan-pr a deterministic
-        # 3-file set so the output is reproducible. Real PRs feed
-        # `git diff --name-only` of the merge-base — that wiring lives in
-        # action.yml.full.
-        #
-        # Why not `git ls-files | head -3`? Exit 141 / SIGPIPE: head closes
-        # the pipe before git finishes, set -eo pipefail kills the step.
+        if ! command -v drift-static-profiler > /dev/null 2>&1; then
+          echo "⚠️  drift-static-profiler not on PATH — skipping scan."
+          echo "scan_ran=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "scan_ran=true" >> "$GITHUB_OUTPUT"
         files=$(printf '%s\n' \
           action/src/main.ts \
           action/src/report.ts \
           action/src/render/overview.ts)
-        echo "🔬 scanning these files:"
-        echo "$files" | sed 's/^/  /'
+        echo "🔬 scan-pr target files:"
+        echo "$files" | sed 's/^/    /'
+        echo ""
+        echo "🪵 debug mode:    ${{ inputs.debug }}     (DRIFT_LOG=${DRIFT_LOG:-<unset>})"
+        echo "📊 progress:      ${{ inputs.progress }}  (DRIFT_PROGRESS=${DRIFT_PROGRESS:-<default-on>})"
+        echo ""
         echo "$files" | drift-static-profiler scan-pr . \
           --changed-files-stdin \
           --pretty \
           --output "$DRIFT_REPORT_PATH"
 
+    # ─── 8. Print scan summary ───────────────────────────────────────
     - name: Print scan summary
+      if: steps.scan.outputs.scan_ran == 'true'
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
       run: |
         if [ ! -s "$DRIFT_REPORT_PATH" ]; then
-          echo "❌ no report at $DRIFT_REPORT_PATH"
-          exit 1
+          echo "⚠️  no report at $DRIFT_REPORT_PATH"
+          exit 0
         fi
         size=$(wc -c < "$DRIFT_REPORT_PATH" | tr -d ' ')
         echo "📊 Scan complete — ${size} bytes at $DRIFT_REPORT_PATH"
         if command -v jq >/dev/null 2>&1; then
-          # One field per line — multi-line jq templates break YAML's block
-          # scalar indent rule. Boring + readable beats clever here.
           echo "  schema:      $(jq -r '.schema_version' "$DRIFT_REPORT_PATH")"
           echo "  mode:        $(jq -r '.mode' "$DRIFT_REPORT_PATH")"
           echo "  tool:        $(jq -r '"\(.generator.tool) v\(.generator.version)"' "$DRIFT_REPORT_PATH")"

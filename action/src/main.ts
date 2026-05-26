@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
-import { loadReport, passesQualityBar } from './report.ts';
+import { loadReport, passesQualityBar, type ScanPrOutput } from './report.ts';
 import { renderOverview } from './render/overview.ts';
 import { upsertStickyComment } from './github/comment.ts';
 import { postReview } from './github/review.ts';
@@ -85,7 +85,7 @@ export async function main(): Promise<void> {
 }
 
 function shouldFail(
-  report: { pr_review?: { code_suggestions?: { category: 'A' | 'B' | 'C' }[] } },
+  report: ScanPrOutput,
   failOn: 'never' | 'regression' | 'any',
   passingCount: number,
 ): boolean {

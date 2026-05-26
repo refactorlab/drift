@@ -257,6 +257,12 @@ impl Report {
         // - attach_hot_zones: pagerank percentile is a graph-wide quantity.
         // Both run AFTER per-node detectors in `tree::build_inner` so they
         // can read those findings too.
+        let report_started_at = std::time::Instant::now();
+        tracing::info!(
+            entries = entries.len(),
+            files = all_tags.len(),
+            "report build start"
+        );
         progress.phase("computing pagerank percentile…");
         let pagerank_p90 = insights::compute_pagerank_p90(graph.pagerank.values().copied());
         let mut entries = entries;
@@ -412,6 +418,18 @@ impl Report {
             summary.sql_files_scanned = Some(s.scanned);
             summary.sql_files_with_findings = Some(s.with_findings);
         }
+        let total_findings: usize = entries
+            .iter()
+            .map(|e| count_findings(e))
+            .sum();
+        tracing::info!(
+            entries = entries.len(),
+            symbols = summary.symbols,
+            findings = total_findings,
+            sql_files_scanned = summary.sql_files_scanned.unwrap_or(0),
+            elapsed_ms = report_started_at.elapsed().as_millis() as u64,
+            "report build end"
+        );
         Self {
             schema_version: "1.0".into(),
             mode: "static".into(),
@@ -432,6 +450,17 @@ impl Report {
             entries,
         }
     }
+}
+
+/// Sum of findings across every node in a single entry tree. Hoisted
+/// here so the `report build end` log can quote a cheap-but-honest
+/// "total facts attached" number without re-walking elsewhere.
+fn count_findings(node: &CallTreeNode) -> usize {
+    let mut n = node.findings.len();
+    for c in &node.children {
+        n += count_findings(c);
+    }
+    n
 }
 
 /// Common loop body for the 6 attach passes inside `Report::build_with_progress`.

@@ -104,6 +104,16 @@ pub fn discover_roots_with_progress(
     progress: &dyn Progress,
 ) -> Vec<DiscoveredRoot> {
     let total = graph.symbols.len();
+    let started_at = std::time::Instant::now();
+    tracing::info!(
+        symbols = total,
+        min_reach = opts.min_reach,
+        max_roots = opts.max_roots,
+        skip_tests = opts.skip_tests,
+        skip_private = opts.skip_private,
+        skip_accessors = opts.skip_accessors,
+        "discovering roots"
+    );
     progress.step_start("scanning roots", total);
     // Manual loop instead of the previous iterator chain so we can
     // emit progress every 64 symbols. The semantics are identical to
@@ -175,7 +185,15 @@ pub fn discover_roots_with_progress(
 
     // Rank: biggest reach first; tie-break by name for stable output.
     out.sort_by(|a, b| b.reach.cmp(&a.reach).then_with(|| a.name.cmp(&b.name)));
+    let before_cap = out.len();
     out.truncate(opts.max_roots);
+    tracing::info!(
+        candidates = before_cap,
+        kept = out.len(),
+        top_reach = out.first().map(|r| r.reach).unwrap_or(0),
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "roots discovered"
+    );
     out
 }
 

@@ -158,8 +158,11 @@ pub fn extract_tags_for_files(
     progress: &dyn Progress,
 ) -> Vec<FileTags> {
     let total = files.len();
+    let started_at = std::time::Instant::now();
+    tracing::info!(files = total, "parse start");
     progress.parse_start(total);
     let done = AtomicUsize::new(0);
+    let errors = AtomicUsize::new(0);
     let tags: Vec<Option<FileTags>> = files
         .par_iter()
         .map(|(path, lang)| {
@@ -178,14 +181,48 @@ pub fn extract_tags_for_files(
             match res {
                 Ok(t) => Some(t),
                 Err(e) => {
+                    errors.fetch_add(1, Ordering::Relaxed);
+                    // Keep the legacy stderr line so users running the CLI
+                    // see the warning inline with progress; mirror to the
+                    // tracing pipeline (with truncated error text) so
+                    // structured-log consumers index it too.
                     eprintln!("warn: failed to parse {}: {e:#}", path.display());
+                    tracing::warn!(
+                        file = %path.display(),
+                        error = %truncate_tail(&format!("{e:#}"), 160),
+                        "parse failed"
+                    );
                     None
                 }
             }
         })
         .collect();
     progress.parse_end();
-    tags.into_iter().flatten().collect()
+    let out: Vec<FileTags> = tags.into_iter().flatten().collect();
+    let symbol_total: usize = out.iter().map(|f| f.symbols.len()).sum();
+    let ref_total: usize = out.iter().map(|f| f.references.len()).sum();
+    tracing::info!(
+        files = total,
+        ok = out.len(),
+        errors = errors.load(Ordering::Relaxed),
+        symbols = symbol_total,
+        refs = ref_total,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "parse end"
+    );
+    out
+}
+
+/// Keep the first `max` chars of `s`, appending `…` when truncated.
+/// Used to bound log lines so a pathological error message (e.g. a
+/// full tree-sitter diagnostic) doesn't blow up the line buffer.
+fn truncate_tail(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
 }
 
 pub fn extract_tags_from_source(

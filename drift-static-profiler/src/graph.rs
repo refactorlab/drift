@@ -68,6 +68,8 @@ impl CallGraph {
     /// large monorepo.
     pub fn build_with_progress(all: &[FileTags], progress: &dyn Progress) -> Self {
         let total = all.len();
+        let started_at = std::time::Instant::now();
+        tracing::info!(files = total, "graph build start");
         let mut symbols: HashMap<SymbolId, Symbol> = HashMap::new();
         let mut by_name: HashMap<String, Vec<SymbolId>> = HashMap::new();
         let mut edges: HashMap<SymbolId, Vec<SymbolId>> = HashMap::new();
@@ -102,6 +104,7 @@ impl CallGraph {
         }
         progress.step_progress(total, total);
         progress.step_end();
+        tracing::debug!(symbols = symbols.len(), "graph pass 1 indexed");
 
         // ── Pass 2: wire edges + external classifications ───────────────
         // For each reference R inside symbol X:
@@ -194,6 +197,13 @@ impl CallGraph {
         }
         progress.step_progress(total, total);
         progress.step_end();
+        let total_edges: usize = edges.values().map(|v| v.len()).sum();
+        let total_externals: usize = external_calls.values().map(|v| v.len()).sum();
+        tracing::debug!(
+            edges = total_edges,
+            externals = total_externals,
+            "graph pass 2 wired"
+        );
 
         // ── Phase B: graph-derived metrics ──
 
@@ -325,6 +335,16 @@ impl CallGraph {
             }
         }
 
+        let recursive_count = is_recursive.values().filter(|b| **b).count();
+        tracing::info!(
+            symbols = symbols.len(),
+            edges = edges.values().map(|v| v.len()).sum::<usize>(),
+            externals = external_calls.values().map(|v| v.len()).sum::<usize>(),
+            recursive = recursive_count,
+            pagerank_iters = pr_iters,
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+            "graph build end"
+        );
         Self {
             symbols,
             by_name,

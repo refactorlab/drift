@@ -389,6 +389,15 @@ pub fn walk_files_classified_with(
         wb.add_custom_ignore_filename(".driftignore");
     }
 
+    let started_at = std::time::Instant::now();
+    tracing::info!(
+        root = %root.display(),
+        exclude_tests = opts.exclude_tests,
+        exclude_static_assets = opts.exclude_static_assets,
+        respect_gitignore = opts.respect_gitignore,
+        respect_driftignore = opts.respect_driftignore,
+        "walk start"
+    );
     progress.walk_start();
     let mut out: Vec<ClassifiedFile> = Vec::new();
     let mut total_bytes: u64 = 0;
@@ -441,6 +450,14 @@ pub fn walk_files_classified_with(
         }
     }
     progress.walk_end(out.len(), total_bytes);
+    let supported = out.iter().filter(|f| f.language.is_some()).count();
+    tracing::info!(
+        files = out.len(),
+        supported,
+        bytes = total_bytes,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "walk end"
+    );
     out
 }
 

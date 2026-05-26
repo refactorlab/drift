@@ -7,6 +7,35 @@ use drift_static_profiler::{
 };
 use std::path::PathBuf;
 
+/// Install a `tracing` subscriber that prints compact, production-shaped
+/// log lines to stderr. The library crate emits `tracing::info!` /
+/// `debug!` / `warn!` at every pipeline boundary — without a subscriber
+/// those calls are no-ops. We install one here so the standalone CLI
+/// always produces an audit trail (`DRIFT_LOG=debug` for verbose).
+///
+/// Why the seam lives in the binary, not the library: Clean Architecture —
+/// the library publishes events through the `tracing` facade and is
+/// agnostic to where they end up; the binary chooses stderr + the
+/// EnvFilter default; the Tauri host (when embedding the lib) installs
+/// its own subscriber. Same logs, different sinks, zero coupling.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    let filter = std::env::var("DRIFT_LOG")
+        .ok()
+        .and_then(|s| EnvFilter::try_new(s).ok())
+        .or_else(|| EnvFilter::try_from_default_env().ok())
+        .unwrap_or_else(|| EnvFilter::new("info,drift_static_profiler=debug"));
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            fmt::layer()
+                .with_target(true)
+                .with_writer(std::io::stderr)
+                .compact(),
+        )
+        .try_init();
+}
+
 /// Pick the progress sink for the CLI context.
 ///
 /// `CliProgress` is backed by `indicatif::MultiProgress`, which:
@@ -550,10 +579,22 @@ fn run_scan_pr(
         AnalyzeOptions, DiscoverOpts,
     };
 
+    let scan_pr_started_at = std::time::Instant::now();
     let changed = read_changed_files(changed_files_path, changed_files_stdin)?;
     if changed.is_empty() {
         eprintln!("note: changed-files list is empty — emitting an empty PR-scope envelope");
+        tracing::warn!("scan-pr: changed-files list is empty");
     }
+    tracing::info!(
+        root = %path.display(),
+        changed = changed.len(),
+        no_review,
+        base_sha = base_sha.unwrap_or("<none>"),
+        has_commits = commits_path.is_some(),
+        has_diff_stats = diff_stats_path.is_some(),
+        has_pr_context = pr_context_file.is_some(),
+        "scan-pr start"
+    );
 
     let progress = pick_progress();
     let sql_dialect_override = resolve_sql_dialect(sql_dialect)?;
@@ -588,8 +629,18 @@ fn run_scan_pr(
         result.pr_scope.affected_root_names.len(),
         result.pr_scope.unreachable_changes.len(),
     );
+    tracing::info!(
+        changed = result.pr_scope.changed_files.len(),
+        affected_roots = result.pr_scope.affected_root_names.len(),
+        unreachable = result.pr_scope.unreachable_changes.len(),
+        "scan-pr factual phase complete"
+    );
 
     if no_review {
+        tracing::info!(
+            elapsed_ms = scan_pr_started_at.elapsed().as_millis() as u64,
+            "scan-pr complete (no review)"
+        );
         // Factual-only envelope.
         return write_envelope(&result, None, output, pretty);
     }
@@ -663,6 +714,15 @@ fn run_scan_pr(
         enriched.pr_review.visual_summary.risks.items.len(),
         enriched.pr_review_ext.duplication.count,
         enriched.pr_review_ext.tests_in_graph.test_files,
+    );
+    tracing::info!(
+        suggestions = enriched.pr_review.code_suggestions.len(),
+        data_structures = enriched.pr_review.architecture_flow.data_structures.len(),
+        risks = enriched.pr_review.visual_summary.risks.items.len(),
+        duplication = enriched.pr_review_ext.duplication.count,
+        test_files = enriched.pr_review_ext.tests_in_graph.test_files,
+        elapsed_ms = scan_pr_started_at.elapsed().as_millis() as u64,
+        "scan-pr complete (enriched)"
     );
 
     write_envelope(&result, Some(&enriched), output, pretty)
@@ -969,8 +1029,30 @@ fn run_orm_scan(path: &std::path::Path, out: Option<&std::path::Path>, max_files
 }
 
 fn main() -> Result<()> {
+    init_tracing();
+    let started_at = std::time::Instant::now();
     let cli = Cli::parse();
-    match cli.command {
+    // One-line entrypoint banner: `cmd=… version=…`. Lets log aggregators
+    // group all the pipeline phases that follow under a single run.
+    let cmd_name = match &cli.command {
+        Cmd::Analyze { .. } => "analyze",
+        Cmd::Tags { .. } => "tags",
+        Cmd::Scan { .. } => "scan",
+        Cmd::AnalyzeRoot { .. } => "analyze-root",
+        Cmd::ScanPrompt { .. } => "scan-prompt",
+        Cmd::RegenScansIndex { .. } => "regen-scans-index",
+        Cmd::OrmScan { .. } => "orm-scan",
+        Cmd::Diff { .. } => "diff",
+        Cmd::Dot { .. } => "dot",
+        Cmd::Sarif { .. } => "sarif",
+        Cmd::ScanPr { .. } => "scan-pr",
+    };
+    tracing::info!(
+        cmd = cmd_name,
+        version = env!("CARGO_PKG_VERSION"),
+        "drift-static-profiler starting"
+    );
+    let result = match cli.command {
         Cmd::Analyze {
             path,
             entry,
@@ -1124,7 +1206,13 @@ fn main() -> Result<()> {
             pretty,
             gzip,
         ),
+    };
+    let elapsed_ms = started_at.elapsed().as_millis();
+    match &result {
+        Ok(_) => tracing::info!(cmd = cmd_name, elapsed_ms, "drift-static-profiler done"),
+        Err(e) => tracing::error!(cmd = cmd_name, elapsed_ms, error = %e, "drift-static-profiler failed"),
     }
+    result
 }
 
 fn run_diff(

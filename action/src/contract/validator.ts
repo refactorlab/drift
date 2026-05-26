@@ -14,8 +14,13 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
-import Ajv2020 from 'ajv/dist/2020.js';
+// Ajv ships CJS + ESM dual interop; the namespace import lets us access
+// the constructor regardless of which loader the test runner uses.
+import * as Ajv2020Mod from 'ajv/dist/2020.js';
+import type { ErrorObject } from 'ajv';
 import addFormats from 'ajv-formats';
+const Ajv2020 =
+  (Ajv2020Mod as unknown as { default?: typeof Ajv2020Mod }).default ?? Ajv2020Mod;
 
 // `import.meta.dirname` works under node --test --experimental-strip-types.
 const here = dirname(fileURLToPath(import.meta.url));
@@ -43,11 +48,11 @@ export function loadValidator(file: string, name: SchemaName): Validator {
     $ref: `#/components/schemas/${name}`,
   };
 
-  const ajv = new Ajv2020.default({
+  const ajv = new (Ajv2020 as unknown as new (opts: object) => unknown)({
     allErrors: true,
     strict: false,        // OpenAPI uses some non-JSON-Schema metadata keywords (e.g. `xml`, `discriminator`)
     validateFormats: true,
-  });
+  }) as { compile: (s: unknown) => { (i: unknown): boolean; errors?: ErrorObject[] } };
   // `addFormats` ships ESM/CJS wrappers; the runtime-cast keeps both happy.
   (addFormats as unknown as (a: unknown) => void)(ajv);
 
@@ -57,7 +62,7 @@ export function loadValidator(file: string, name: SchemaName): Validator {
     const ok = validate(instance);
     if (ok) return { ok: true };
     const errors = (validate.errors ?? []).map(
-      (e) => `${e.instancePath || '<root>'} ${e.message ?? ''} (keyword=${e.keyword})`,
+      (e: ErrorObject) => `${e.instancePath || '<root>'} ${e.message ?? ''} (keyword=${e.keyword})`,
     );
     return { ok: false, errors };
   };
