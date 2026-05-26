@@ -1,5 +1,5 @@
-name: 'Andy'
-description: 'Andy — PR companion by Drift. Says hello, installs the latest drift-static-profiler CLI (cached across runs, auto-detects the latest release), runs a static PR-scoped scan, and prints a summary. Debug logs + progress bars surface in the action output. Zero-config for consumers.'
+name: 'andy'
+description: 'Andy — PR companion Handoff by Drift. Open-source performance & FinOps platform Zero-config for consumers.'
 author: 'refactor-labs'
 
 branding:
@@ -10,7 +10,7 @@ inputs:
   greeter:
     description: 'Name shown in the hello-world line.'
     required: false
-    default: 'Andy'
+    default: 'andy'
   profiler-release-tag:
     description: |
       Pin to a specific release tag (e.g. drift-lab-v0.4.0). Default empty
@@ -242,3 +242,21 @@ runs:
         else
           echo "  (jq not on PATH; install with apt/brew to see the summary)"
         fi
+
+    # ─── 9. Post sticky PR comment + inline suggestions + check run ──
+    # Runs the compiled bundle at dist/index.js. The bundle reads the
+    # JSON report at DRIFT_REPORT_PATH and uses GITHUB_TOKEN to:
+    #   - upsert a sticky overview comment (idempotent via marker)
+    #   - post inline review comments for code suggestions above the
+    #     quality bar (confidence ≥ 0.75, category A/B/C, has ref link)
+    #   - create a check run summarising the report
+    # Skips when there's no PR context (push events, manual dispatch).
+    - name: Post Drift PR review
+      if: steps.scan.outputs.scan_ran == 'true' && github.event.pull_request != null
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+        DRIFT_COMMENT:     'true'
+        DRIFT_FAIL_ON:     'regression'
+        GITHUB_TOKEN:      ${{ inputs.github-token }}
+      run: node "${{ github.action_path }}/dist/index.js"

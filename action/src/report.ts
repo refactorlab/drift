@@ -76,6 +76,7 @@ export type ValueKv = {
 export type ValueAxis = {
   name: 'money' | 'customer' | 'runtime' | 'runtime_ux';
   label: string;
+  subtitle?: string;
   delta_percent: number;
   direction: 'up' | 'down' | 'neutral';
   confidence: 'low' | 'medium' | 'high';
@@ -83,6 +84,8 @@ export type ValueAxis = {
   inputs?: Record<string, number | string | boolean>;
   kv?: ValueKv[];
   source?: string;
+  source_link?: string;
+  additional_sources?: ReferenceLink[];
 };
 
 export type ValueAxisBar = {
@@ -94,6 +97,7 @@ export type ValueAxisBar = {
 export type ValueCard = {
   axes: ValueAxis[];
   bars?: ValueAxisBar[];
+  bars_mermaid?: string;
   bottom_line?: string;
 };
 
