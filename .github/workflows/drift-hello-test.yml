@@ -22,6 +22,11 @@ on:
 #   checks: write         — the scanner check run (step 9 / createCheckRun)
 #   models: read          — actions/ai-inference call to GitHub Models
 #                           (without this the inference step gets HTTP 403)
+#
+# `models: read` is necessary but may not be SUFFICIENT for org-owned
+# repos: an org owner must also enable GitHub Models under
+# Settings → Copilot → Models, and the chosen model must actually be
+# served by the inference endpoint (gpt-4o is; gpt-5 currently is not).
 permissions:
   contents: read
   pull-requests: write

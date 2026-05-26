@@ -62,10 +62,23 @@ inputs:
   ai-model:
     description: |
       GitHub Models model ID for the AI suggestion pass. Defaults to
-      `openai/gpt-5`. Override to `openai/gpt-5-mini`, `openai/gpt-5-nano`,
-      or `openai/gpt-4o` if your org's catalog doesn't expose GPT-5.
+      `openai/gpt-4o` — the model the inference endpoint actually serves
+      today. NOTE: `openai/gpt-5` may appear "enabled" in your org's web
+      UI but is NOT yet live on the Models *inference* endpoint, so it
+      returns `400 Unavailable model`. Only override to gpt-5 once
+      `gh models list` (or the catalog endpoint) confirms it's served.
     required: false
-    default: 'openai/gpt-5'
+    default: 'openai/gpt-4o'
+  ai-endpoint:
+    description: |
+      GitHub Models inference endpoint. Defaults to the user-scoped
+      endpoint. For ORGANIZATION-owned repos you may need the
+      org-scoped endpoint for attribution + access:
+        https://models.github.ai/orgs/<your-org>/inference
+      (see docs.github.com/en/rest/models/inference). The org must have
+      GitHub Models enabled under Settings → Copilot → Models.
+    required: false
+    default: 'https://models.github.ai/inference'
   ai-max-files:
     description: |
       Maximum number of changed files to include in the AI context
@@ -352,6 +365,7 @@ runs:
       uses: actions/ai-inference@v1
       with:
         model: ${{ inputs.ai-model }}
+        endpoint: ${{ inputs.ai-endpoint }}
         token: ${{ inputs.github-token }}
         # NOTE: the pinned @v1 tag exposes `max-tokens` (not the newer
         # `max-completion-tokens`). 200 is the default — far too small

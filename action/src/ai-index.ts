@@ -43,7 +43,7 @@ async function aiMain(): Promise<void> {
   }
 
   const maxSuggestions = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
-  const model = process.env.DRIFT_AI_MODEL || 'openai/gpt-5';
+  const model = process.env.DRIFT_AI_MODEL || 'openai/gpt-4o';
   const dryRun = process.env.DRIFT_DRY_RUN === 'true';
 
   const parsed = parseAIOutput(raw, { maxSuggestions });
