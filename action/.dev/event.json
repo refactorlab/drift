@@ -1,0 +1,13 @@
+{
+  "pull_request": {
+    "number": 1,
+    "title": "Drift smoke run",
+    "html_url": "https://github.com/PLACEHOLDER_OWNER/PLACEHOLDER_REPO/pull/1",
+    "head": {
+      "ref": "smoke",
+      "sha": "deadbeefcafe1234567890abcdef0123456789ab"
+    },
+    "base": { "ref": "main" },
+    "user": { "login": "smoke-runner" }
+  }
+}

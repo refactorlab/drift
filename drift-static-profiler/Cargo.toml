@@ -31,6 +31,10 @@ ignore = "0.4"
 # filtering. We only need the default "perf" feature set; no Unicode
 # property classes — our needles are pure ASCII.
 regex = { version = "1", default-features = false, features = ["std", "perf"] }
+# String-similarity ratios for `pr_algorithms::duplication` — replaces
+# the Python rapidfuzz dep used by the previous Python implementation.
+# Pure-Rust, no system deps.
+strsim = "0.11"
 petgraph = "0.8"
 # Data-parallelism for tree-sitter parsing across files. Each worker
 # thread owns its own Parser and pre-compiled Query (one per language),

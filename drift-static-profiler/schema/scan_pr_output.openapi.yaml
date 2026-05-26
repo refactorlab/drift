@@ -1,0 +1,824 @@
+openapi: 3.1.0
+info:
+  title: drift-static-profiler scan-pr — output
+  version: 1.0.0
+  description: |
+    Output contract for the `scan-pr` CLI subcommand. The top-level
+    `ScanPrOutput` is a superset of the standard Drift compact report
+    (`profile.schema.json`) plus two additional blocks:
+
+      - **`pr_scope`** (FACTUAL — already emitted): the reverse-reachability
+        result computed by `pr_scope::affected_roots`. Populated by the
+        Rust binary today.
+      - **`pr_review`** (STATISTICAL — placeholder): the renderer envelope
+        for the PR-review bot's three visuals + suggestions + visual
+        summary. The fields are fully specified here so downstream
+        algorithms (LLM, business-value model, code-suggestion engine)
+        know exactly what shape to produce. Marked OPTIONAL at the top
+        level: today's CLI output is a conforming `ScanPrOutput` even
+        without it.
+
+    See:
+      - `action/pr-review-spec.md` — visual spec (3 images + suggestions)
+      - `action/pr36-github-ui-example.html` — full rendered example
+      - `schema/profile.schema.json` — the underlying compact report schema
+
+components:
+  schemas:
+    # ════════════════════════════════════════════════════════════════════
+    # ROOT
+    # ════════════════════════════════════════════════════════════════════
+    ScanPrOutput:
+      type: object
+      additionalProperties: false
+      required: [schema_version, mode, generator, pr_scope]
+      description: |
+        Slim envelope emitted by `scan-pr`. Designed for the GitHub
+        Action — contains ONLY what the PR-review path consumes:
+        `pr_scope` (factual), `pr_review` (4 images + suggestions),
+        `pr_review_ext` (tech debt / duplication / tests / NFR).
+
+        Compact-report fields (`string_table`, `frames`, `entries`,
+        `summary`) are DELIBERATELY OMITTED — they're internal call-graph
+        data the Action's renderer never reads. Callers needing the full
+        compact report should run `scan` (the full-fixture command), not
+        `scan-pr`. This split removes ~58% of the JSON payload on real
+        fixtures (kotlin-ktor: 34 KB → ~15 KB).
+      properties:
+        schema_version:
+          type: string
+          enum: ["1.0", "1.1", "1.2"]
+        mode:
+          type: string
+          enum: [static, sampled, evented]
+        generator:
+          $ref: '#/components/schemas/Generator'
+        # ─── pr_scope (factual) ──────────────────────────────────────
+        pr_scope:
+          $ref: '#/components/schemas/PrScope'
+        # ─── pr_review (statistical, optional) ───────────────────────
+        pr_review:
+          $ref: '#/components/schemas/PrReview'
+        # ─── pr_review_ext (algorithm extras, optional) ──────────────
+        pr_review_ext:
+          $ref: '#/components/schemas/PrReviewExt'
+
+    Generator:
+      type: object
+      required: [tool, version]
+      properties:
+        tool:
+          type: string
+          examples: ["drift-static-profiler"]
+        version:
+          type: string
+        source_root:
+          type: string
+        captured_at:
+          type: string
+          format: date-time
+
+    # ════════════════════════════════════════════════════════════════════
+    # pr_scope — FACTUAL (emitted today)
+    # ════════════════════════════════════════════════════════════════════
+    PrScope:
+      type: object
+      additionalProperties: false
+      required: [changed_files, affected_roots, unreachable_changes]
+      description: |
+        Result of `pr_scope::affected_roots`. Echoes the input file list
+        verbatim, names the roots whose call tree reaches them, and flags
+        files whose symbols are dead code.
+      properties:
+        changed_files:
+          type: array
+          items: { type: string }
+          description: The input list, preserved verbatim
+        affected_roots:
+          type: array
+          items: { type: string }
+          description: Names of roots whose call tree transitively covers ≥1 symbol from a changed file
+        unreachable_changes:
+          type: array
+          items: { type: string }
+          description: |
+            Changed files that had ≥1 in-graph symbol but whose upward BFS
+            reached no root — "you changed dead code". Files with zero
+            in-graph symbols (READMEs, JSON) are NOT included.
+
+    # ════════════════════════════════════════════════════════════════════
+    # pr_review — STATISTICAL (placeholder, not yet implemented)
+    # ════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════
+    # pr_review_ext — non-Image extras (statically derived)
+    # ════════════════════════════════════════════════════════════════════
+    PrReviewExt:
+      type: object
+      additionalProperties: false
+      description: |
+        Algorithm output that doesn't fit cleanly under one of the 4
+        Images. Renderers MAY show these (tech-debt details, dup
+        clusters, etc.) as a "details" expander below the main review.
+      properties:
+        tech_debt: { $ref: '#/components/schemas/TechDebtBlock' }
+        duplication: { $ref: '#/components/schemas/DuplicationBlock' }
+        tests_in_graph: { $ref: '#/components/schemas/TestsInGraphBlock' }
+        nfr_edge_cases: { $ref: '#/components/schemas/NfrCoverageBlock' }
+
+    TechDebtBlock:
+      type: object
+      description: |
+        Tech-debt findings: high-complexity functions (cyclomatic > 10),
+        long functions (LOC ≥ 80), JSON-schema-validator library
+        detection per language.
+      properties:
+        high_complexity: { type: array, items: { type: object } }
+        long_functions:  { type: array, items: { type: object } }
+        schema_validation: { type: object }
+        summary_findings_top: { type: array, items: { type: object } }
+        thresholds: { type: object }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceCitationBlock' }
+
+    SourceCitationBlock:
+      type: object
+      required: [label, source]
+      properties:
+        label: { type: string }
+        source: { type: string }
+        source_link: { type: string, format: uri }
+
+    DuplicationBlock:
+      type: object
+      properties:
+        threshold: { type: integer, minimum: 0, maximum: 100 }
+        clusters: { type: array, items: { type: object } }
+        count: { type: integer, minimum: 0 }
+
+    TestsInGraphBlock:
+      type: object
+      properties:
+        test_files: { type: integer, minimum: 0 }
+        test_functions: { type: integer, minimum: 0 }
+        by_language: { type: object }
+        uncovered_roots: { type: array, items: { type: string } }
+        patterns: { type: object }
+
+    NfrCoverageBlock:
+      type: object
+      properties:
+        families: { type: object }
+        per_root: { type: array, items: { type: object } }
+        reliability_gaps: { type: array, items: { type: string } }
+        markers: { type: object }
+        source: { type: string }
+        source_link: { type: string, format: uri }
+
+    PrReview:
+      type: object
+      additionalProperties: false
+      description: |
+        Renderer envelope for the PR-review bot. The fields here mirror
+        the four-section layout in `action/pr-review-spec.md`:
+          1. Architecture Flow (Image 1)
+          2. High-Level Business Logic (Image 2)
+          3. Business Value Report (Image 3)
+          4. Code Suggestions
+        plus a Visual Summary (risks + key files) and an overall drift
+        score. Every sub-block is OPTIONAL so the bot can ship partial
+        renders if a particular algorithm hasn't produced output yet.
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        overall_drift:
+          $ref: '#/components/schemas/OverallDrift'
+        counts:
+          $ref: '#/components/schemas/PrCounts'
+        architecture_flow:
+          $ref: '#/components/schemas/ArchitectureFlow'
+        business_logic:
+          $ref: '#/components/schemas/BusinessLogic'
+        value_card:
+          $ref: '#/components/schemas/ValueCard'
+        code_suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/CodeSuggestion' }
+        visual_summary:
+          $ref: '#/components/schemas/VisualSummary'
+
+    # ─── Overall drift score ──────────────────────────────────────────
+    OverallDrift:
+      type: object
+      additionalProperties: false
+      required: [percent, direction, confidence]
+      properties:
+        percent:
+          type: number
+          description: Aggregate signed percent (range typically -100..100)
+        direction:
+          type: string
+          enum: [up, down, neutral]
+          description: 'up = improvement, down = regression'
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        interpretation:
+          type: string
+          description: 'Human label, e.g. "Avg. customer + runtime ▲"'
+
+    # ─── Discrete counts (features / bugs / issues / tests) ──────────
+    PrCounts:
+      type: object
+      additionalProperties: false
+      description: |
+        Discrete-count chips at the top of the value card.
+        Source strings are free-text — the algorithm should cite where
+        each number came from (CHANGELOG.md, commit prefixes, etc.).
+      properties:
+        features:    { $ref: '#/components/schemas/CountChip' }
+        bug_fixes:   { $ref: '#/components/schemas/CountChip' }
+        issues_resolved: { $ref: '#/components/schemas/CountChip' }
+        new_test_files: { $ref: '#/components/schemas/CountChip' }
+
+    CountChip:
+      type: object
+      additionalProperties: false
+      required: [value, label]
+      properties:
+        value:
+          type: integer
+          minimum: 0
+        label:
+          type: string
+        detail:
+          type: string
+          description: 'One-line gloss shown under the number'
+        source:
+          type: string
+          description: 'How the algorithm computed this — cited inputs'
+
+    # ─── Image 1 — Architecture Flow ──────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────
+    # Mermaid structured types — every mermaid string in the output
+    # carries a typed sibling so future converters (SVG / PNG /
+    # alternate-theme mermaid) don't have to re-parse mermaid syntax.
+    # ────────────────────────────────────────────────────────────────────
+    MermaidFlowchart:
+      type: object
+      additionalProperties: true
+      required: [direction, nodes, edges, class_defs]
+      properties:
+        direction:
+          type: string
+          enum: [LR, RL, TB, BT]
+        title:
+          type: string
+        subgraphs:
+          type: array
+          items: { $ref: '#/components/schemas/MermaidSubgraph' }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/MermaidNode' }
+        edges:
+          type: array
+          items: { $ref: '#/components/schemas/MermaidEdge' }
+        class_defs:
+          type: array
+          items: { $ref: '#/components/schemas/MermaidClassDef' }
+
+    MermaidNode:
+      type: object
+      additionalProperties: true
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        shape:
+          type: string
+          enum: [rect, round, stadium, circle, subroutine, decision, actor]
+        class:
+          type: string
+
+    MermaidEdge:
+      type: object
+      additionalProperties: true
+      required: [from, to]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        label: { type: string }
+        style:
+          type: string
+          enum: [solid, dashed]
+
+    MermaidClassDef:
+      type: object
+      additionalProperties: true
+      required: [name, fill, stroke, color]
+      properties:
+        name: { type: string }
+        fill:
+          type: string
+          description: 'Hex color e.g. "#238636"'
+        stroke: { type: string }
+        color: { type: string }
+        stroke_width: { type: string }
+        stroke_dasharray: { type: string }
+
+    MermaidSubgraph:
+      type: object
+      additionalProperties: true
+      required: [id, label, node_ids]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        direction:
+          type: string
+          enum: [LR, RL, TB, BT]
+        node_ids:
+          type: array
+          items: { type: string }
+
+    MermaidQuadrantChart:
+      type: object
+      additionalProperties: true
+      required:
+        - title
+        - x_axis_low
+        - x_axis_high
+        - y_axis_low
+        - y_axis_high
+        - quadrant_1
+        - quadrant_2
+        - quadrant_3
+        - quadrant_4
+        - items
+      properties:
+        title: { type: string }
+        x_axis_low: { type: string }
+        x_axis_high: { type: string }
+        y_axis_low: { type: string }
+        y_axis_high: { type: string }
+        quadrant_1: { type: string }
+        quadrant_2: { type: string }
+        quadrant_3: { type: string }
+        quadrant_4: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MermaidQuadrantItem' }
+
+    MermaidQuadrantItem:
+      type: object
+      additionalProperties: true
+      required: [label, x, y]
+      properties:
+        label: { type: string }
+        x:
+          type: number
+          minimum: 0
+          maximum: 1
+        y:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    MermaidXyChart:
+      type: object
+      additionalProperties: true
+      required: [title, theme_palette, x_axis_labels, y_axis_label, y_min, y_max, bars]
+      properties:
+        title: { type: string }
+        theme_palette:
+          type: string
+          description: 'Comma-separated hex palette for mermaid xychart plotColorPalette'
+        x_axis_labels:
+          type: array
+          items: { type: string }
+        y_axis_label: { type: string }
+        y_min: { type: number }
+        y_max: { type: number }
+        bars:
+          type: array
+          items: { type: number }
+
+    MermaidMindmap:
+      type: object
+      additionalProperties: true
+      required: [root]
+      properties:
+        root: { $ref: '#/components/schemas/MermaidMindmapNode' }
+
+    MermaidMindmapNode:
+      type: object
+      additionalProperties: true
+      required: [label]
+      properties:
+        label: { type: string }
+        is_root: { type: boolean }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/MermaidMindmapNode' }
+
+    ArchitectureFlow:
+      type: object
+      additionalProperties: false
+      description: 'Image 1 from the spec: before-vs-after call-graph diff + the data structures connecting them'
+      properties:
+        before_mermaid:
+          type: string
+          description: Mermaid source for the BEFORE subgraph
+        after_mermaid:
+          type: string
+          description: Mermaid source for the AFTER subgraph
+        combined_mermaid:
+          type: string
+          description: 'Alternative: a single mermaid combining both sides'
+        after_structured:
+          $ref: '#/components/schemas/MermaidFlowchart'
+        before_structured:
+          $ref: '#/components/schemas/MermaidFlowchart'
+          description: |
+            O3: structured form of `before_mermaid`. Today this is
+            omitted until A1/--base-sha lands — without a real
+            before-state checkout we emit only the placeholder
+            string, never a structured payload.
+        combined_structured:
+          $ref: '#/components/schemas/MermaidFlowchart'
+          description: |
+            O3: structured form of `combined_mermaid` (the
+            three-subgraph BEFORE/AFTER/DS layout). Mirrors the
+            rendered string 1-to-1.
+        data_structures:
+          type: array
+          items: { $ref: '#/components/schemas/DataStructureEntry' }
+        reference_link:
+          $ref: '#/components/schemas/ReferenceLink'
+
+    DataStructureEntry:
+      type: object
+      additionalProperties: false
+      required: [name, kind]
+      properties:
+        name:
+          type: string
+          examples: ["Frame", "CallTreeNode", "PathAlias"]
+        version:
+          type: string
+          examples: ["v1.2"]
+        kind:
+          type: string
+          enum: [new, modified, removed, unchanged]
+          description: |
+            Lifecycle of the data structure relative to this PR.
+            Statically-derived from tree-sitter symbols. Without a
+            `--base-sha` checkout we can't distinguish `new` from
+            `modified`, so we default to `modified` (the safer
+            guess for a class in a PR-touched file).
+        scope:
+          type: string
+          examples: ["internal", "wire format", "write path", "join seam"]
+        description:
+          type: string
+          description: 'Short gloss — e.g. "symbol-intrinsics stored once"'
+        direction:
+          type: string
+          enum: [in, out, internal]
+          description: 'Data-flow direction relative to the PR slice'
+
+    # ─── Image 2 — Business Logic ─────────────────────────────────────
+    BusinessLogic:
+      type: object
+      additionalProperties: false
+      description: 'Image 2: high-level product flow with the PR scope dashed-boxed'
+      properties:
+        mermaid:
+          type: string
+          description: Mermaid `flowchart TD` source
+        structured:
+          $ref: '#/components/schemas/MermaidFlowchart'
+        summary:
+          type: string
+          description: One-paragraph "why does this PR exist" answer
+
+    # ─── Image 3 — Value Card (4 axes) ────────────────────────────────
+    ValueCard:
+      type: object
+      additionalProperties: false
+      description: 'Image 3: four-axis impact scoring (money, customer, runtime, runtime UX)'
+      required: [axes]
+      properties:
+        axes:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items: { $ref: '#/components/schemas/ValueAxis' }
+        bars:
+          type: array
+          items: { $ref: '#/components/schemas/ValueAxisBar' }
+          description: 'Compact "% Change by axis" bar-chart input (derived from `axes` but pre-computed for renderers that don''t want to recompute)'
+        bars_mermaid:
+          type: string
+          description: |
+            Mermaid `xychart-beta` source rendering the bars block.
+            Pre-built per the spec's Image 3 example so the renderer
+            can drop it straight into the PR comment without
+            re-deriving from `bars`.
+        bars_structured:
+          $ref: '#/components/schemas/MermaidXyChart'
+        bottom_line:
+          type: string
+          description: 'One-paragraph synthesis under the chart — "Bottom line —" in the HTML mockup'
+
+    # O2: bars_structured (mermaid::XyChart). Loose object — full
+    # structural shape is documented in src/pr_algorithms/mermaid.rs.
+    MermaidStructured:
+      type: object
+      description: |
+        Typed mermaid representation alongside the rendered string.
+        Future renderers (SVG/PNG/Graphviz) consume this instead of
+        re-parsing mermaid. Per-type shape is defined by the Rust
+        types in `src/pr_algorithms/mermaid.rs`.
+
+    ValueAxis:
+      type: object
+      additionalProperties: false
+      required: [name, label, delta_percent, direction, confidence]
+      properties:
+        name:
+          type: string
+          enum: [money, customer, runtime, runtime_ux]
+        label:
+          type: string
+          examples: ["💰 Money", "👥 Customer / user value", "⚙️ Software runtime", "🎨 Software runtime UX"]
+        subtitle:
+          type: string
+          description: |
+            V1: human subtitle line matching the HTML mockup, e.g.
+            "Net infra + dev-time delta" / "Wire size, memory,
+            serialization". Renderers show this UNDER the emoji label.
+          examples: ["Net infra + dev-time delta", "Time saved + value added per session", "Wire size, memory, serialization", "Dev / debugging experience time delta"]
+        delta_percent:
+          type: number
+          description: Signed percent change for this axis
+        direction:
+          type: string
+          enum: [up, down, neutral]
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        formula:
+          type: string
+          description: 'Free-text formula description shown in the info-dot tooltip'
+        inputs:
+          type: object
+          description: 'Algorithm inputs as named key→value pairs (numbers, strings, or booleans)'
+          additionalProperties:
+            oneOf:
+              - { type: number }
+              - { type: string }
+              - { type: boolean }
+        kv:
+          type: array
+          description: 'The "Potential cost" / "Potential profit" rows in the card'
+          items: { $ref: '#/components/schemas/ValueKv' }
+        source:
+          type: string
+          description: 'Where the algorithm got its data — e.g. "30-day telemetry", "BENCH_BASELINE.md"'
+        source_link:
+          type: string
+          format: uri
+          description: 'Canonical URL for the `source` prose — pulled from `pr_algorithms_constants.json` citations.'
+        additional_sources:
+          type: array
+          items: { $ref: '#/components/schemas/ReferenceLink' }
+          description: |
+            Authoritative-source list pulled from
+            `pr_algorithms_constants.json::axis_sources.<axis_name>`.
+            Examples — money: AWS pricing + CNCF OpenCost + BLS wages;
+            runtime: CNCF Observability Whitepaper + 12-Factor App;
+            nfr: ISO 25010. Renderers can show these as "Learn more →"
+            footer links so reviewers can audit any number to its
+            authoritative source.
+
+    ValueKv:
+      type: object
+      additionalProperties: false
+      required: [label, value]
+      properties:
+        label:
+          type: string
+          examples: ["Potential cost", "Time saved", "Value removed"]
+        value:
+          type: string
+          description: 'Pre-formatted display string (e.g. "-$1,840 / mo", "+12 min saved / session")'
+        kind:
+          type: string
+          enum: [cost, profit, muted, neutral]
+
+    ValueAxisBar:
+      type: object
+      additionalProperties: false
+      required: [axis, delta_percent, direction]
+      properties:
+        axis:
+          type: string
+          enum: [money, customer, runtime, runtime_ux]
+        delta_percent:
+          type: number
+        direction:
+          type: string
+          enum: [up, down, neutral]
+
+    # ─── Code suggestions ─────────────────────────────────────────────
+    CodeSuggestion:
+      type: object
+      additionalProperties: false
+      required: [category, file, confidence, why_it_matters]
+      description: |
+        One suggestion above threshold. Per the spec's "Quality Bar":
+        every suggestion must have a real reference link, must clear
+        the confidence threshold (default 0.75), and must fall into
+        category A/B/C.
+      properties:
+        category:
+          type: string
+          enum: [A, B, C]
+          description: 'A=optimization, B=product correctness, C=framework misuse'
+        category_label:
+          type: string
+          examples: ["Optimization", "Product correctness", "Framework misuse"]
+        file:
+          type: string
+          description: Repo-relative file path
+        function:
+          type: string
+          description: 'Function or method name the suggestion targets'
+        line:
+          type: integer
+          minimum: 1
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: '≥ threshold (default 0.75) per spec'
+        why_it_matters:
+          type: string
+          description: 'Prose explanation — what breaks if this isn''t fixed'
+        references:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ReferenceLink' }
+          description: 'At least one real doc/issue link is required by the spec''s quality bar'
+        diff:
+          $ref: '#/components/schemas/CodeDiff'
+        notes:
+          type: string
+          description: 'Optional follow-up — e.g. "Requires Frame.pagerank to become Option<f64>"'
+        # ─── LLM input-context fields (added when code_suggestions
+        # became the static input for a downstream LLM). These are
+        # statically derived by `pr_algorithms::code_suggestions`
+        # and serve as prompt-construction inputs for the LLM that
+        # generates the polished `after_lines` + final "Why it matters"
+        # prose. All optional so older renderers can ignore them.
+        kind:
+          type: string
+          description: 'Drift FindingKind slug (e.g. `n_plus_one`, `typeorm_antipattern`)'
+        rule_id:
+          type: string
+          description: 'Optional rule id from the finding evidence'
+        language:
+          type: string
+          description: 'Detected language of the file (python|typescript|...|kotlin)'
+        severity:
+          type: string
+          enum: [low, medium, high]
+        remediation_hint:
+          type: string
+          description: 'The original finding remediation text, when present'
+        llm_prompt_hint:
+          type: string
+          description: 'Pre-formatted framing string the downstream LLM can paste into its prompt'
+
+    CodeDiff:
+      type: object
+      additionalProperties: false
+      description: 'Unified-diff payload as before/after line lists, ready for a GitHub `suggestion` block'
+      properties:
+        before_lines:
+          type: array
+          items: { $ref: '#/components/schemas/DiffLine' }
+        after_lines:
+          type: array
+          items: { $ref: '#/components/schemas/DiffLine' }
+        unified:
+          type: string
+          description: 'Alternative: a single unified-diff string'
+
+    DiffLine:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        line_number:
+          type: integer
+          minimum: 1
+        code:
+          type: string
+        kind:
+          type: string
+          enum: [del, add, ctx]
+
+    ReferenceLink:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        tag:
+          type: string
+          enum: [official, wiki, stackoverflow, rfc, cncf, blog, other]
+
+    # ─── Visual Summary (risks + key files) ───────────────────────────
+    VisualSummary:
+      type: object
+      additionalProperties: false
+      description: 'Glance-able summaries: risk quadrant + key-files mindmap'
+      properties:
+        risks:
+          $ref: '#/components/schemas/RisksBlock'
+        key_files:
+          $ref: '#/components/schemas/KeyFilesBlock'
+
+    RisksBlock:
+      type: object
+      additionalProperties: false
+      properties:
+        mermaid:
+          type: string
+          description: 'Mermaid `quadrantChart` source'
+        structured:
+          $ref: '#/components/schemas/MermaidQuadrantChart'
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RiskItem' }
+
+    RiskItem:
+      type: object
+      additionalProperties: false
+      required: [label, likelihood, severity]
+      properties:
+        label:
+          type: string
+        likelihood:
+          type: number
+          minimum: 0
+          maximum: 1
+        severity:
+          type: number
+          minimum: 0
+          maximum: 1
+        quadrant:
+          type: string
+          enum: [act_before_merge, monitor_closely, acceptable, document_and_ship]
+
+    KeyFilesBlock:
+      type: object
+      additionalProperties: false
+      properties:
+        mermaid:
+          type: string
+          description: 'Mermaid `mindmap` source'
+        structured:
+          $ref: '#/components/schemas/MermaidMindmap'
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/KeyFileGroup' }
+
+    KeyFileGroup:
+      type: object
+      additionalProperties: false
+      required: [name, files]
+      properties:
+        name:
+          type: string
+          examples: ["Wire format", "Observability", "Desktop UI"]
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/KeyFile' }
+
+    KeyFile:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path:
+          type: string
+        why:
+          type: string
+          description: 'One-line "why is this file important to this PR"'

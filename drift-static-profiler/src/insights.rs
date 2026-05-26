@@ -153,6 +153,19 @@ pub enum FindingKind {
     SequelizeAntipattern,
     /// Mongoose antipattern (NoSQL). Detector lives in `src/orm/ts/mongoose.rs`.
     MongooseAntipattern,
+    /// Slick (Scala functional-relational mapper) antipattern. Detector
+    /// lives in `src/orm/jvm_scala/slick.rs`. Carries the rule id
+    /// (`SLI-INJ-001`, …) in `evidence[0].call`.
+    SlickAntipattern,
+    /// Quill / ProtoQuill (Scala compile-time LINQ) antipattern. Detector
+    /// lives in `src/orm/jvm_scala/quill.rs`.
+    QuillAntipattern,
+    /// JetBrains Exposed (Kotlin SQL framework) antipattern. Detector
+    /// lives in `src/orm/jvm_kotlin/exposed.rs`.
+    ExposedAntipattern,
+    /// Ktorm (Kotlin sequence-based ORM) antipattern. Detector lives in
+    /// `src/orm/jvm_kotlin/ktorm.rs`.
+    KtormAntipattern,
 }
 
 impl FindingKind {
@@ -185,6 +198,10 @@ impl FindingKind {
             FindingKind::AuthCryptoAntipattern => "auth_crypto_antipattern",
             FindingKind::SequelizeAntipattern => "sequelize_antipattern",
             FindingKind::MongooseAntipattern => "mongoose_antipattern",
+            FindingKind::SlickAntipattern => "slick_antipattern",
+            FindingKind::QuillAntipattern => "quill_antipattern",
+            FindingKind::ExposedAntipattern => "exposed_antipattern",
+            FindingKind::KtormAntipattern => "ktorm_antipattern",
         }
     }
 
@@ -208,7 +225,11 @@ impl FindingKind {
             | FindingKind::MongooseAntipattern
             | FindingKind::JpaAntipattern
             | FindingKind::GormAntipattern
-            | FindingKind::SqlxAntipattern => FindingCategory::Orm,
+            | FindingKind::SqlxAntipattern
+            | FindingKind::SlickAntipattern
+            | FindingKind::QuillAntipattern
+            | FindingKind::ExposedAntipattern
+            | FindingKind::KtormAntipattern => FindingCategory::Orm,
             FindingKind::SqlAntipattern | FindingKind::MigrationSafety => FindingCategory::Sql,
             FindingKind::NPlusOne
             | FindingKind::ExpensiveCompute
@@ -241,6 +262,10 @@ impl FindingKind {
             FindingKind::JpaAntipattern => Some("jpa"),
             FindingKind::GormAntipattern => Some("gorm"),
             FindingKind::SqlxAntipattern => Some("sqlx"),
+            FindingKind::SlickAntipattern => Some("slick"),
+            FindingKind::QuillAntipattern => Some("quill"),
+            FindingKind::ExposedAntipattern => Some("exposed"),
+            FindingKind::KtormAntipattern => Some("ktorm"),
             // SqlIrAntipattern: provenance lives on Finding.originating_orm.
             _ => None,
         }

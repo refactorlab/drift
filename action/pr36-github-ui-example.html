@@ -1,0 +1,1863 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live scan with features by ilyashusterman · Pull Request #36 · refactorlab/drift</title>
+
+<!-- Mermaid for the 3 diagrams -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+
+<!-- GitHub uses a custom font stack; we mirror it closely -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    /* GitHub dark dimmed palette — taken directly from the production tokens */
+    --bg-canvas: #0d1117;
+    --bg-default: #161b22;
+    --bg-subtle: #21262d;
+    --bg-overlay: #1c2128;
+    --bg-emphasis: #30363d;
+    --border-default: #30363d;
+    --border-muted: #21262d;
+    --border-emphasis: #6e7681;
+    --fg-default: #e6edf3;
+    --fg-muted: #7d8590;
+    --fg-subtle: #6e7681;
+    --fg-on-emphasis: #ffffff;
+    --accent-fg: #2f81f7;
+    --accent-emphasis: #1f6feb;
+    --accent-subtle: rgba(56,139,253,0.15);
+    --success-fg: #3fb950;
+    --success-emphasis: #238636;
+    --success-subtle: rgba(46,160,67,0.15);
+    --attention-fg: #d29922;
+    --attention-emphasis: #9e6a03;
+    --attention-subtle: rgba(187,128,9,0.15);
+    --danger-fg: #f85149;
+    --danger-emphasis: #da3633;
+    --danger-subtle: rgba(248,81,73,0.15);
+    --done-fg: #a371f7;
+    --done-emphasis: #8957e5;
+    --done-subtle: rgba(163,113,247,0.15);
+    --open-fg: #3fb950;
+    --diff-addition-bg: rgba(46,160,67,0.15);
+    --diff-addition-border: #2ea04326;
+    --diff-deletion-bg: rgba(248,81,73,0.15);
+    --diff-deletion-border: #f8514926;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg-canvas);
+    color: var(--fg-default);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent-fg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ---------- Top header ---------- */
+  .gh-header {
+    background: #010409;
+    border-bottom: 1px solid var(--border-default);
+    padding: 12px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .gh-logo {
+    width: 32px; height: 32px;
+    fill: var(--fg-default);
+  }
+  .gh-search {
+    flex: 0 0 320px;
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
+  .gh-nav { display: flex; gap: 16px; font-size: 14px; font-weight: 600; }
+  .gh-nav a { color: var(--fg-default); }
+  .gh-header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .gh-avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2f81f7, #a371f7);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white; font-weight: 600; font-size: 12px;
+  }
+
+  /* ---------- Repo header ---------- */
+  .repo-header {
+    background: var(--bg-canvas);
+    border-bottom: 1px solid var(--border-default);
+    padding: 16px 32px 0;
+  }
+  .repo-title {
+    font-size: 20px;
+    font-weight: 400;
+    margin: 0 0 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .repo-title svg { fill: var(--fg-muted); }
+  .repo-title .owner { color: var(--accent-fg); }
+  .repo-title .sep { color: var(--fg-muted); }
+  .repo-title .name { color: var(--accent-fg); font-weight: 600; }
+  .repo-title .badge {
+    margin-left: 10px;
+    font-size: 12px;
+    border: 1px solid var(--border-default);
+    border-radius: 2em;
+    padding: 0 7px;
+    color: var(--fg-muted);
+    font-weight: 500;
+  }
+
+  .repo-tabs {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+  }
+  .repo-tab {
+    padding: 8px 12px;
+    color: var(--fg-default);
+    font-size: 14px;
+    border-bottom: 2px solid transparent;
+    display: flex; align-items: center; gap: 8px;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .repo-tab:hover { background: var(--bg-subtle); text-decoration: none; }
+  .repo-tab.active {
+    border-bottom-color: #fd7e14;
+    font-weight: 600;
+  }
+  .repo-tab .count {
+    background: var(--bg-emphasis);
+    color: var(--fg-default);
+    border-radius: 2em;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .repo-tab svg { fill: var(--fg-muted); }
+
+  /* ---------- PR title block ---------- */
+  .pr-shell { max-width: 1280px; margin: 0 auto; padding: 24px 32px; }
+
+  .pr-title {
+    font-size: 32px;
+    font-weight: 400;
+    margin: 0 0 12px 0;
+    line-height: 1.25;
+  }
+  .pr-title .num { color: var(--fg-muted); font-weight: 300; }
+
+  .pr-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: 24px;
+    font-size: 14px;
+    color: var(--fg-muted);
+  }
+  .pr-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 2em;
+    background: var(--success-emphasis);
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .pr-state svg { fill: white; }
+  .pr-meta strong { color: var(--fg-default); font-weight: 600; }
+
+  /* ---------- PR sub-tabs (Conversation / Commits / Checks / Files) ---------- */
+  .pr-subtabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: 24px;
+    gap: 0;
+  }
+  .pr-subtab {
+    padding: 8px 16px;
+    color: var(--fg-default);
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    font-size: 14px;
+    cursor: pointer;
+    margin-bottom: -1px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .pr-subtab.active {
+    background: var(--bg-default);
+    border-color: var(--border-default);
+    font-weight: 600;
+  }
+  .pr-subtab .count {
+    background: var(--bg-emphasis);
+    border-radius: 2em;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  /* ---------- Layout ---------- */
+  .pr-body {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) 296px;
+    gap: 24px;
+  }
+  @media (max-width: 1000px) {
+    .pr-body { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- Timeline ---------- */
+  .timeline { position: relative; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 32px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border-muted);
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 16px;
+    padding-left: 72px;
+  }
+  .timeline-avatar {
+    position: absolute;
+    left: 16px;
+    top: 8px;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    z-index: 1;
+  }
+  .timeline-avatar.bot {
+    background: linear-gradient(135deg, #cc785c, #8b4513);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700;
+  }
+  .timeline-avatar.user {
+    background: linear-gradient(135deg, #3fb950, #1f6feb);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700;
+  }
+
+  .comment {
+    background: var(--bg-default);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    position: relative;
+  }
+  .comment::before {
+    content: '';
+    position: absolute;
+    left: -10px;
+    top: 12px;
+    border: 9px solid transparent;
+    border-right-color: var(--border-default);
+  }
+  .comment::after {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 13px;
+    border: 8px solid transparent;
+    border-right-color: var(--bg-default);
+  }
+  .comment-header {
+    background: var(--bg-subtle);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-default);
+    border-radius: 6px 6px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--fg-muted);
+  }
+  .comment-header strong { color: var(--fg-default); font-weight: 600; }
+  .comment-header .bot-badge {
+    background: var(--bg-emphasis);
+    border: 1px solid var(--border-default);
+    border-radius: 2em;
+    padding: 0 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-muted);
+    font-weight: 500;
+  }
+  .comment-body { padding: 16px; }
+
+  /* ---------- Drift bot comment styling ---------- */
+  .drift-banner {
+    background: linear-gradient(135deg, rgba(63,185,80,0.08), rgba(47,129,247,0.08));
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .drift-logo {
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #3fb950, #2f81f7);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: white;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .drift-banner h2 {
+    margin: 0 0 4px 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .drift-banner p {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
+  .drift-overall-score {
+    margin-left: auto;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .drift-overall-score .label {
+    font-size: 11px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .drift-overall-score .value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--success-fg);
+    font-family: var(--font-mono);
+    line-height: 1;
+  }
+
+  /* ---------- Section heading inside drift comment ---------- */
+  .ref-link {
+    font-size: 12px;
+    color: var(--fg-muted);
+    margin: 10px 0 0 0;
+    font-family: var(--font-mono);
+  }
+  .ref-link a { color: var(--fg-muted); border-bottom: 1px dotted var(--fg-subtle); }
+  .ref-link a:hover { color: var(--accent-fg); text-decoration: none; border-bottom-color: var(--accent-fg); }
+  .drift-section {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-muted);
+  }
+  .drift-section:first-of-type {
+    margin-top: 8px;
+    padding-top: 0;
+    border-top: none;
+  }
+  .drift-section h3 {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .drift-section .section-pill {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-default);
+    border-radius: 2em;
+    padding: 2px 8px;
+    font-weight: 500;
+  }
+  .drift-section .subtitle {
+    color: var(--fg-muted);
+    font-size: 13px;
+    margin: 0 0 16px 0;
+  }
+
+  /* ---------- Diagram cards ---------- */
+  .diagram-card {
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 12px;
+  }
+  .mermaid {
+    text-align: center;
+    background: transparent !important;
+  }
+
+  /* ---------- Data structure table (image 1) ---------- */
+  .ds-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    font-size: 13px;
+  }
+  .ds-table th,
+  .ds-table td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-muted);
+  }
+  .ds-table th {
+    background: var(--bg-subtle);
+    color: var(--fg-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .ds-table tbody tr:last-child td { border-bottom: none; }
+  .ds-table code {
+    background: var(--bg-subtle);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 2em;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .tag-new { background: var(--success-subtle); color: var(--success-fg); }
+  .tag-mod { background: var(--attention-subtle); color: var(--attention-fg); }
+  .tag-internal { background: var(--accent-subtle); color: var(--accent-fg); }
+
+  /* ---------- Value card (image 3) ---------- */
+  .value-card {
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .value-card-header {
+    background: var(--bg-subtle);
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-default);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .value-card-header h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .drift-scale {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-muted);
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--border-muted);
+  }
+  .metric-grid-4 {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
+  @media (max-width: 1100px) {
+    .metric-grid-4 { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 700px) {
+    .metric-grid { grid-template-columns: 1fr; }
+    .metric-grid-4 { grid-template-columns: 1fr; }
+  }
+  .axis-tag {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-default);
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .axis-money .axis-tag { color: #d29922; }
+  .axis-customer .axis-tag { color: #3fb950; }
+  .axis-runtime .axis-tag { color: #2f81f7; }
+  .axis-rux .axis-tag { color: #a371f7; }
+  .pct-big {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+    margin: 10px 0 14px 0;
+  }
+  .pct-big.up { color: var(--success-fg); }
+  .pct-big.down { color: var(--danger-fg); }
+  .kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    padding: 4px 0;
+    border-top: 1px solid var(--border-muted);
+  }
+  .kv > span:first-child {
+    color: var(--fg-muted);
+  }
+  .kv .cost { color: var(--danger-fg); font-family: var(--font-mono); }
+  .kv .profit { color: var(--success-fg); font-family: var(--font-mono); }
+  .kv .muted { color: var(--fg-subtle); font-family: var(--font-mono); }
+
+  .metric {
+    background: var(--bg-canvas);
+    padding: 16px 20px;
+  }
+  .metric .label {
+    font-size: 12px;
+    color: var(--fg-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .metric .values {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .metric .before {
+    color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    text-decoration: line-through;
+  }
+  .metric .after {
+    color: var(--fg-default);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .metric .arrow { color: var(--fg-subtle); }
+  .metric .drift {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 2px 8px;
+    border-radius: 2em;
+  }
+  .drift-pos { background: var(--success-subtle); color: var(--success-fg); }
+  .drift-neg { background: var(--danger-subtle); color: var(--danger-fg); }
+  .metric .confidence {
+    margin-left: 8px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* ---------- Count strip (features / bugs / issues / tests) ---------- */
+  .count-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--border-muted);
+    border-bottom: 1px solid var(--border-default);
+  }
+  @media (max-width: 900px) {
+    .count-strip { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 500px) {
+    .count-strip { grid-template-columns: 1fr; }
+  }
+  .count-chip {
+    background: var(--bg-canvas);
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+    cursor: help;
+    transition: background 120ms;
+  }
+  .count-chip:hover { background: var(--bg-default); }
+  .count-icon {
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-subtle);
+  }
+  .count-chip.features .count-icon { background: rgba(63,185,80,0.12); }
+  .count-chip.bugs .count-icon     { background: rgba(248,81,73,0.10); }
+  .count-chip.issues .count-icon   { background: rgba(47,129,247,0.12); }
+  .count-chip.tests .count-icon    { background: rgba(163,113,247,0.12); }
+  .count-body { min-width: 0; flex: 1; }
+  .count-num {
+    font-family: var(--font-mono);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--fg-default);
+  }
+  .count-chip.features .count-num { color: var(--success-fg); }
+  .count-chip.bugs .count-num     { color: var(--fg-subtle); }
+  .count-chip.issues .count-num   { color: var(--accent-fg); }
+  .count-chip.tests .count-num    { color: var(--done-fg); }
+  .count-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .count-detail {
+    font-size: 11px;
+    color: var(--fg-subtle);
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ---------- Info dot + tooltip ---------- */
+  .info-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--bg-emphasis);
+    color: var(--fg-muted);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: help;
+    font-family: var(--font-sans);
+    vertical-align: 1px;
+    transition: background 120ms, color 120ms;
+  }
+  .info-dot:hover {
+    background: var(--accent-emphasis);
+    color: white;
+  }
+
+  /* Tooltip system: any element with data-tip shows a popover on hover */
+  [data-tip] {
+    position: relative;
+  }
+  [data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background: #010409;
+    color: var(--fg-default);
+    border: 1px solid var(--border-emphasis);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    white-space: pre-line;
+    width: max-content;
+    max-width: 320px;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 140ms, transform 140ms;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  }
+  [data-tip]::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: var(--border-emphasis);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 140ms;
+    z-index: 101;
+  }
+  [data-tip]:hover::after,
+  [data-tip]:hover::before {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+  }
+  /* Edge-of-card tooltips: keep them in view */
+  .metric-grid .metric:first-child [data-tip]::after {
+    left: 0;
+    transform: translateX(0) translateY(4px);
+  }
+  .metric-grid .metric:first-child [data-tip]:hover::after {
+    transform: translateX(0) translateY(0);
+  }
+  .metric-grid .metric:first-child [data-tip]::before {
+    left: 14px;
+    transform: translateX(0);
+  }
+  .metric-grid .metric:last-child [data-tip]::after {
+    left: auto;
+    right: 0;
+    transform: translateX(0) translateY(4px);
+  }
+  .metric-grid .metric:last-child [data-tip]:hover::after {
+    transform: translateX(0) translateY(0);
+  }
+  .metric-grid .metric:last-child [data-tip]::before {
+    left: auto;
+    right: 14px;
+    transform: translateX(0);
+  }
+
+  /* ---------- Drift bar chart (custom SVG, no chart library) ---------- */
+  .drift-bars { padding: 20px; background: var(--bg-canvas); border-top: 1px solid var(--border-muted); }
+  .drift-bars h5 {
+    margin: 0 0 16px 0;
+    font-size: 12px;
+    color: var(--fg-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 130px 1fr 50px;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .bar-row:last-child { margin-bottom: 0; }
+  .bar-label { color: var(--fg-default); display: inline-block; }
+  .bar-label[data-tip] { cursor: help; border-bottom: 1px dotted var(--fg-subtle); }
+  .bar-track {
+    height: 8px;
+    background: var(--bg-subtle);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .bar-track::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-emphasis);
+    z-index: 1;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    position: absolute;
+    top: 0;
+  }
+  .bar-fill.pos {
+    background: linear-gradient(90deg, var(--success-emphasis), var(--success-fg));
+    left: 50%;
+  }
+  .bar-fill.neg {
+    background: linear-gradient(90deg, var(--danger-fg), var(--danger-emphasis));
+    right: 50%;
+  }
+  .bar-value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 12px;
+    text-align: right;
+  }
+  .bar-value.pos { color: var(--success-fg); }
+  .bar-value.neg { color: var(--danger-fg); }
+
+  /* ---------- Code suggestion ---------- */
+  .suggestion {
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    margin-top: 16px;
+    overflow: hidden;
+    background: var(--bg-canvas);
+  }
+  .suggestion-header {
+    padding: 12px 16px;
+    background: var(--bg-subtle);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-default);
+    flex-wrap: wrap;
+  }
+  .suggestion-cat {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 9px;
+    border-radius: 2em;
+  }
+  .cat-b { background: var(--accent-subtle); color: var(--accent-fg); border: 1px solid #1f6feb44; }
+  .cat-a { background: var(--attention-subtle); color: var(--attention-fg); border: 1px solid #9e6a0344; }
+  .cat-c { background: var(--done-subtle); color: var(--done-fg); border: 1px solid #8957e544; }
+  .suggestion-file {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-default);
+  }
+  .suggestion-file .path-dim { color: var(--fg-muted); }
+  .suggestion-conf {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+  .suggestion-conf .num { color: var(--success-fg); font-weight: 600; }
+  .suggestion-body { padding: 14px 16px; }
+  .suggestion-body p { margin: 0 0 10px 0; font-size: 13px; }
+  .suggestion-body p:last-of-type { margin-bottom: 14px; }
+  .suggestion-body p strong { color: var(--fg-default); }
+
+  .diff-block {
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  /* References block under each suggestion */
+  .ref-list {
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 0 0 14px 0;
+  }
+  .ref-list-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .ref-list ul {
+    margin: 0;
+    padding-left: 18px;
+    list-style: square;
+  }
+  .ref-list li {
+    font-size: 12.5px;
+    color: var(--fg-default);
+    padding: 3px 0;
+  }
+  .ref-list li::marker { color: var(--fg-subtle); }
+  .ref-list code {
+    background: var(--bg-subtle);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .ref-tag {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border-radius: 2em;
+    background: var(--bg-emphasis);
+    color: var(--fg-muted);
+    font-weight: 600;
+    vertical-align: 1px;
+  }
+  .diff-block .line {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    padding: 0;
+  }
+  .diff-block .gutter {
+    background: var(--bg-subtle);
+    color: var(--fg-subtle);
+    text-align: right;
+    padding: 0 8px;
+    user-select: none;
+    border-right: 1px solid var(--border-muted);
+  }
+  .diff-block .line.del { background: var(--diff-deletion-bg); }
+  .diff-block .line.add { background: var(--diff-addition-bg); }
+  .diff-block .line.del .gutter { background: rgba(248,81,73,0.2); color: var(--fg-default); }
+  .diff-block .line.add .gutter { background: rgba(46,160,67,0.2); color: var(--fg-default); }
+  .diff-block .line .code { padding: 0 12px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
+  .diff-block .line.del .code::before { content: '- '; color: var(--danger-fg); }
+  .diff-block .line.add .code::before { content: '+ '; color: var(--success-fg); }
+  .diff-block .line.ctx .code::before { content: '  '; }
+
+  .suggestion-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .btn {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-default);
+    color: var(--fg-default);
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn:hover { background: var(--bg-emphasis); }
+  .btn-primary {
+    background: var(--success-emphasis);
+    border-color: rgba(240,246,252,0.1);
+    color: white;
+  }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-link {
+    background: transparent;
+    border: none;
+    color: var(--accent-fg);
+    font-size: 12px;
+    padding: 0;
+    margin-left: auto;
+  }
+  .btn-link:hover { text-decoration: underline; }
+
+  /* ---------- Visual summary grid (risks + key files) ---------- */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 12px;
+  }
+  @media (max-width: 900px) {
+    .summary-grid { grid-template-columns: 1fr; }
+  }
+  .summary-card { padding: 16px; }
+  .summary-title {
+    margin: 0 0 12px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ---------- Risks list ---------- */
+  .risk-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .risk-item {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-muted);
+    font-size: 13px;
+    align-items: start;
+  }
+  .risk-item:last-child { border-bottom: none; }
+  .risk-sev {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 2em;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .sev-high { background: var(--danger-subtle); color: var(--danger-fg); }
+  .sev-med { background: var(--attention-subtle); color: var(--attention-fg); }
+  .sev-low { background: var(--accent-subtle); color: var(--accent-fg); }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar { font-size: 13px; }
+  .sidebar-section {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .sidebar-section:last-child { border-bottom: none; }
+  .sidebar-section h4 {
+    color: var(--fg-muted);
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0 0 8px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sidebar-section h4 .gear { color: var(--fg-muted); }
+  .label-pill {
+    display: inline-block;
+    padding: 0 8px;
+    margin: 2px 4px 2px 0;
+    border-radius: 2em;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .reviewer { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .reviewer-avatar {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #f85149, #d29922);
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 10px;
+  }
+
+  /* ---------- Files-changed banner ---------- */
+  .files-stat {
+    display: flex;
+    gap: 20px;
+    background: var(--bg-default);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .files-stat .add { color: var(--success-fg); }
+  .files-stat .del { color: var(--danger-fg); }
+
+  /* ---------- Misc ---------- */
+  .small-note {
+    font-size: 12px;
+    color: var(--fg-muted);
+    margin-top: 10px;
+    font-style: italic;
+  }
+  .blockquote-impact {
+    border-left: 3px solid var(--accent-emphasis);
+    padding: 8px 16px;
+    margin: 16px 0 0 0;
+    background: var(--accent-subtle);
+    color: var(--fg-default);
+    font-size: 13px;
+    border-radius: 0 6px 6px 0;
+  }
+  .blockquote-impact strong { color: var(--accent-fg); }
+
+  .key-files {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .key-files li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-muted);
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    gap: 16px;
+    align-items: start;
+    font-size: 13px;
+  }
+  .key-files li:last-child { border-bottom: none; }
+  .key-files code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-fg);
+    word-break: break-all;
+  }
+  .key-files .why { color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<!-- ====== TOP HEADER ====== -->
+<header class="gh-header">
+  <svg class="gh-logo" viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+  <input class="gh-search" type="text" placeholder="Type / to search" value="refactorlab/drift">
+  <nav class="gh-nav">
+    <a href="#">Pull requests</a>
+    <a href="#">Issues</a>
+    <a href="#">Marketplace</a>
+    <a href="#">Explore</a>
+  </nav>
+  <div class="gh-header-right">
+    <div class="gh-avatar">SC</div>
+  </div>
+</header>
+
+<!-- ====== REPO HEADER ====== -->
+<div class="repo-header">
+  <h1 class="repo-title">
+    <svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>
+    <a class="owner" href="#">refactorlab</a>
+    <span class="sep">/</span>
+    <a class="name" href="#">drift</a>
+    <span class="badge">Public</span>
+  </h1>
+  <nav class="repo-tabs">
+    <a class="repo-tab" href="#"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Z"/></svg> Code</a>
+    <a class="repo-tab" href="#"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg> Issues <span class="count">12</span></a>
+    <a class="repo-tab active" href="#"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"/></svg> Pull requests <span class="count">3</span></a>
+    <a class="repo-tab" href="#"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M1.75 2.5h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Zm.75 5.5h11a.75.75 0 0 1 0 1.5h-11a.75.75 0 0 1 0-1.5Zm0 5.5h11a.75.75 0 0 1 0 1.5h-11a.75.75 0 0 1 0-1.5Z"/></svg> Actions</a>
+    <a class="repo-tab" href="#"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Z"/></svg> Discussions</a>
+    <a class="repo-tab" href="#">Insights</a>
+  </nav>
+</div>
+
+<!-- ====== PR SHELL ====== -->
+<div class="pr-shell">
+
+  <h1 class="pr-title">Live scan with features <span class="num">#36</span></h1>
+
+  <div class="pr-meta">
+    <span class="pr-state">
+      <svg width="16" height="16" viewBox="0 0 16 16"><path d="M1.5 8a6.5 6.5 0 1 1 13 0 6.5 6.5 0 0 1-13 0ZM8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0Zm.75 4.75v3.5h3.5a.75.75 0 0 1 0 1.5h-4a.75.75 0 0 1-.75-.75v-4.25a.75.75 0 0 1 1.5 0Z"/></svg>
+      Open
+    </span>
+    <span><strong>@ilyashusterman</strong> wants to merge <strong>47</strong> commits into <strong>main</strong> from <strong>live-scan-features</strong></span>
+  </div>
+
+  <!-- PR SUB-TABS -->
+  <nav class="pr-subtabs">
+    <div class="pr-subtab active">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Z"/></svg>
+      Conversation <span class="count">8</span>
+    </div>
+    <div class="pr-subtab">Commits <span class="count">47</span></div>
+    <div class="pr-subtab">Checks <span class="count">9</span></div>
+    <div class="pr-subtab">Files changed <span class="count">100</span></div>
+  </nav>
+
+  <!-- FILES STAT -->
+  <div class="files-stat">
+    <span>100 files changed</span>
+    <span class="add">+15,722</span>
+    <span class="del">−2,628</span>
+    <span style="margin-left:auto; color: var(--fg-muted);">47 commits · 4 contributors</span>
+  </div>
+
+  <!-- BODY -->
+  <div class="pr-body">
+
+    <!-- ============ MAIN TIMELINE ============ -->
+    <main class="timeline">
+
+      <!-- AUTHOR DESCRIPTION -->
+      <div class="timeline-item">
+        <div class="timeline-avatar user">IH</div>
+        <div class="comment">
+          <div class="comment-header">
+            <strong>ilyashusterman</strong> commented 2 days ago
+          </div>
+          <div class="comment-body">
+            <p style="margin:0 0 10px 0;">Connects live runtime sampling with static code analysis into one correlated view. Also: schema v1.2 shrinks scan output 60%, new pub/sub layer replaces the global broadcaster, and a standalone CLI binary is shipped.</p>
+            <p style="margin:0; color: var(--fg-muted); font-size: 13px;">Big PR — sorry. Headline feature is the live↔static join. /cc @schuldi1</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ DRIFT BOT REVIEW ============ -->
+      <div class="timeline-item">
+        <div class="timeline-avatar bot">D</div>
+        <div class="comment">
+          <div class="comment-header">
+            <strong>drift-review</strong>
+            <span class="bot-badge">bot</span>
+            <span>reviewed 2 days ago</span>
+            <span style="margin-left:auto; color: var(--fg-muted);">PR #36 · refactorlab/drift</span>
+          </div>
+          <div class="comment-body">
+
+            <!-- BANNER -->
+            <div class="drift-banner">
+              <div class="drift-logo">D/R</div>
+              <div>
+                <h2>Automated PR Review</h2>
+                <p>3 visuals · 3 code suggestions · 1 visual summary</p>
+              </div>
+              <div class="drift-overall-score">
+                <div class="label">Avg. customer + runtime ▲</div>
+                <div class="value">▲ 41%</div>
+              </div>
+            </div>
+
+            <!-- ============ IMAGE 1 ============ -->
+            <section class="drift-section">
+              <h3>
+                <span>🏗 Architecture Flow</span>
+                <span class="section-pill">image 1 · before → after → data structures</span>
+              </h3>
+              <p class="subtitle">Walk top-down: what existed, what replaced it, and the data structures connecting the two.</p>
+
+              <div class="diagram-card">
+                <pre class="mermaid">
+flowchart TB
+    subgraph BEFORE["① 🔴 BEFORE — single-mode, fat wire format"]
+        direction LR
+        SP1[Static Profiler] --> CT1[CallTreeNode<br/>intrinsics × every position]:::removed
+        CT1 --> J1[JSON ~9.83 MB]:::removed
+        LS1[LiveScan UI] -. no correlation .-> CT1
+        OB1[events.Broadcaster<br/>single global stream]:::removed
+    end
+
+    subgraph AFTER["② 🟢 AFTER — correlated live↔static, compact wire"]
+        direction LR
+        SP2[Static Profiler] --> FR[Frame<br/>intrinsics once per symbol]:::added
+        FR --> CT2[CallTreeNode<br/>position fields only]:::modified
+        CT2 --> J2[JSON ~3.9 MB · −60%]:::added
+        LS2[LiveScan UI<br/>+ OverviewBar + StoryStrip]:::modified --> IDX[Static Scan Index]:::added
+        IDX --> PA[PathAlias<br/>container→host]:::added
+        PA --> FJ[FuzzyJoin · 7 tiers]:::added
+        FJ --> JR[JoinReport]:::added
+        JR -. confidence-ranked .-> LS2
+        OB2[pubsub.Bus + wsbroker<br/>per-topic routing]:::added
+    end
+
+    subgraph DS["③ 📦 DATA STRUCTURES INVOLVED"]
+        direction LR
+        D1["<b>Frame</b> v1.2<br/><i>new · internal</i><br/>symbol-intrinsics<br/>stored once"]:::dsnew
+        D2["<b>CallTreeNode</b> v1.2<br/><i>modified · internal</i><br/>position fields only"]:::dsmod
+        D3["<b>FrameIntrinsics</b><br/><i>new · write path</i><br/>carrier struct,<br/>stamped to Frame"]:::dsnew
+        D4["<b>StaticNode</b><br/><i>new · join seam</i><br/>flat symbol list<br/>scanner ↔ matcher"]:::dsnew
+        D5["<b>PathAlias</b><br/><i>new · join</i><br/>(container → host)<br/>heuristic mapping"]:::dsnew
+        D6["<b>JoinReport</b><br/><i>new · out → UI</i><br/>confidence-ranked<br/>correlations"]:::dsnew
+        D7["<b>pubsub.Payload</b><br/><i>new · internal</i><br/>raw JSON,<br/>shape-agnostic"]:::dsnew
+        D1 --- D2 --- D3
+        D4 --- D5 --- D6 --- D7
+    end
+
+    BEFORE -.evolves to.-> AFTER
+    AFTER -.uses.-> DS
+
+    classDef added fill:#238636,stroke:#3fb950,color:#fff,stroke-width:2px
+    classDef removed fill:#da3633,stroke:#f85149,color:#fff,stroke-width:2px
+    classDef modified fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px
+    classDef dsnew fill:#1c2128,stroke:#3fb950,color:#e6edf3,stroke-width:1px
+    classDef dsmod fill:#1c2128,stroke:#d29922,color:#e6edf3,stroke-width:1px
+                </pre>
+              </div>
+
+              <p class="ref-link">↳ <a href="https://drift.dev/docs/schema/v1.2" target="_blank" rel="noopener">drift.dev/docs/schema/v1.2 — wire format reference</a></p>
+            </section>
+
+            <!-- ============ IMAGE 2 ============ -->
+            <section class="drift-section">
+              <h3>
+                <span>🧭 High-Level Business Logic</span>
+                <span class="section-pill">image 2 · product context</span>
+              </h3>
+              <p class="subtitle">Why this PR exists. Dashed box = the slice this PR touches.</p>
+
+              <div class="diagram-card">
+                <pre class="mermaid">
+flowchart TD
+    Dev((👤 Developer)) --> Install[Install Drift agent<br/>in service / container]
+    Install --> Live[📡 Live sampling<br/>function frequency · memory · CPU]
+    Install --> Static[🔍 Static scan<br/>AST → call graph → SARIF / DOT]
+    Live --> UI[LiveScan UI<br/>icicle + flamegraph]:::scope
+    Static --> Index[Static Scan Index]:::scope
+    UI --> Join{{Live ↔ Static<br/>FuzzyJoin · 7 tiers}}:::scope
+    Index --> Join
+    Join --> Insight[🎯 Correlated insight:<br/>this hot frame = THIS source function]:::scope
+    Insight --> Action[Developer optimizes,<br/>refactors, deploys]
+
+    classDef scope fill:#1c2128,stroke:#d29922,stroke-width:3px,stroke-dasharray:6 4,color:#e6edf3
+    style Dev fill:#1f6feb,stroke:#2f81f7,color:#fff
+    style Action fill:#238636,stroke:#3fb950,color:#fff
+                </pre>
+              </div>
+
+              <div class="blockquote-impact">
+                <strong>Summary —</strong> A developer running Drift's live profiler sees hot functions as names and files — but those names come from the running process, not the source tree. This PR wires the live agent output to a previously-saved static scan via a 7-tier fuzzy matcher, with a heuristic that auto-detects container-to-host path mappings (e.g. <code>/app/orders.py</code> → <code>/Users/me/proj/orders.py</code>). The result: the desktop UI can now highlight <em>where in source</em> the currently-hot frame lives.
+              </div>
+            </section>
+
+            <!-- ============ IMAGE 3 ============ -->
+            <section class="drift-section">
+              <h3>
+                <span>📊 Business Value Report</span>
+                <span class="section-pill">image 3 · money · customer · runtime · runtime UX</span>
+              </h3>
+              <p class="subtitle">Four-axis impact scoring. Each axis shows direction (% up/down) plus estimated $ cost vs $ profit.</p>
+
+              <div class="value-card">
+                <div class="value-card-header">
+                  <h4>🎯 PR Value Card</h4>
+                  <span class="drift-scale">% change · ▲ improvement · ▼ regression</span>
+                </div>
+
+                <!-- Count strip — discrete items shipped in this PR -->
+                <div class="count-strip">
+                  <div class="count-chip features" data-tip="Calculation
+────────────
+count of new user-facing
+capabilities tagged ✨feature
+in CHANGELOG.md or referenced
+by 'feat:' commit messages
+
+source: 5 commits with 'feat:' prefix
++ 5 entries in CHANGELOG.md v0.7.0">
+                    <span class="count-icon">✨</span>
+                    <div class="count-body">
+                      <div class="count-num">5</div>
+                      <div class="count-label">New features</div>
+                      <div class="count-detail">join · CLI · SARIF · pub/sub · live UI</div>
+                    </div>
+                  </div>
+                  <div class="count-chip bugs" data-tip="Calculation
+────────────
+count of issues closed via
+'Fixes #N' or 'Closes #N' in
+commit messages or PR body
+
+source: 0 'fixes' refs found
+(1 'resolves' ref → counted as
+an issue resolved, not a bug fix)">
+                    <span class="count-icon">🐛</span>
+                    <div class="count-body">
+                      <div class="count-num">0</div>
+                      <div class="count-label">Bug fixes</div>
+                      <div class="count-detail">no 'fixes #N' refs in this PR</div>
+                    </div>
+                  </div>
+                  <div class="count-chip issues" data-tip="Calculation
+────────────
+count of issues marked 'resolves'
+or otherwise closed by this PR
+
+source: 1 issue — the container→host
+path-mapping blindspot in live↔static
+correlation">
+                    <span class="count-icon">📋</span>
+                    <div class="count-body">
+                      <div class="count-num">1</div>
+                      <div class="count-label">Issues resolved</div>
+                      <div class="count-detail">container-path join blindspot</div>
+                    </div>
+                  </div>
+                  <div class="count-chip tests" data-tip="Calculation
+────────────
+count of new *.rs / *.go / *.test.ts
+files added under tests/ directories
+or matching naming conventions
+(*_test.go, *_test.rs, *.spec.ts)
+
+source: 12 new files under
+drift-static-profiler/tests/">
+                    <span class="count-icon">🧪</span>
+                    <div class="count-body">
+                      <div class="count-num">12</div>
+                      <div class="count-label">New test files</div>
+                      <div class="count-detail">all in static-profiler/tests</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="metric-grid metric-grid-4">
+                  <!-- AXIS 1 — MONEY -->
+                  <div class="metric axis-money">
+                    <div class="axis-tag">💰 Money <span class="info-dot" data-tip="Formula
+────────────
+Δ% = (infra_cost_saved
+       + dev_hours_saved × $rate)
+     / baseline_monthly_cost × 100
+
+inputs:
+  infra_cost_saved: $1,840/mo
+    (from 60% smaller scan
+    artifacts × storage + egress)
+  dev_hours_saved: ~48 h/year
+    (debug-loop telemetry × team size)
+  $rate: standard cost-of-eng
+  baseline: 30-day cloud billing">ⓘ</span></div>
+                    <div class="label">Net infra + dev-time delta</div>
+                    <div class="pct-big up">▲ 32%</div>
+                    <div class="kv">
+                      <span>Potential cost</span><span class="cost">−$1,840 / mo</span>
+                    </div>
+                    <div class="kv">
+                      <span>Potential profit</span><span class="profit">+$4,200 / yr</span>
+                    </div>
+                    <div class="confidence">medium · 30-day telemetry</div>
+                  </div>
+
+                  <!-- AXIS 2 — CUSTOMER VALUE -->
+                  <div class="metric axis-customer">
+                    <div class="axis-tag">👥 Customer / user value <span class="info-dot" data-tip="Formula
+────────────
+Δ% = weighted_avg(
+       time_saved_per_session × w_time,
+       value_added_signals × w_value,
+       − value_removed_signals × w_loss
+     )
+
+inputs:
+  time_saved_per_session: +12 min
+    (median time-to-root-cause delta
+    in beta cohort)
+  w_time = 0.5, w_value = 0.4,
+  w_loss = 0.1
+  signal source: user-flow analytics">ⓘ</span></div>
+                    <div class="label">Time saved + value added per session</div>
+                    <div class="pct-big up">▲ 48%</div>
+                    <div class="kv">
+                      <span>Time added</span><span class="profit">+12 min saved / session</span>
+                    </div>
+                    <div class="kv">
+                      <span>Value added</span><span class="profit">live↔source correlation</span>
+                    </div>
+                    <div class="kv">
+                      <span>Value removed</span><span class="muted">none</span>
+                    </div>
+                    <div class="confidence">high · user-flow analysis</div>
+                  </div>
+
+                  <!-- AXIS 3 — SOFTWARE RUNTIME -->
+                  <div class="metric axis-runtime">
+                    <div class="axis-tag">⚙️ Software runtime <span class="info-dot" data-tip="Formula
+────────────
+Δ% = (before_metric − after_metric)
+     / before_metric × 100
+
+primary metric: wire size
+  before: 9.83 MB minified
+  after:  3.90 MB minified
+  Δ% = (9.83 − 3.90) / 9.83 × 100
+     = 60.3%
+
+secondary metrics tracked:
+  - serialize CPU time
+  - memory pressure at read
+source: BENCH_BASELINE.md">ⓘ</span></div>
+                    <div class="label">Wire size, memory, serialization</div>
+                    <div class="pct-big up">▲ 60%</div>
+                    <div class="kv">
+                      <span>Scan output</span><span class="profit">9.83 MB → 3.9 MB</span>
+                    </div>
+                    <div class="kv">
+                      <span>Potential cost</span><span class="cost">+1× hash-lookup / Frame</span>
+                    </div>
+                    <div class="kv">
+                      <span>Potential profit</span><span class="profit">−60% serialize time</span>
+                    </div>
+                    <div class="confidence">high · BENCH_BASELINE.md</div>
+                  </div>
+
+                  <!-- AXIS 4 — RUNTIME EXPERIENCE -->
+                  <div class="metric axis-rux">
+                    <div class="axis-tag">🎨 Software runtime UX <span class="info-dot" data-tip="Formula
+────────────
+Δ% = (debug_loop_time_before
+       − debug_loop_time_after)
+     / debug_loop_time_before × 100
+
+inputs:
+  before: ~16 min median to map
+    hot frame → source line
+  after:  ~12 min (with live↔static
+    join; −4 min per loop)
+
+source: UX heuristic survey (n=8
+internal users) cross-checked
+against live agent telemetry">ⓘ</span></div>
+                    <div class="label">Dev / debugging experience time delta</div>
+                    <div class="pct-big up">▲ 25%</div>
+                    <div class="kv">
+                      <span>Time added</span><span class="profit">−4 min per debug loop</span>
+                    </div>
+                    <div class="kv">
+                      <span>Value added</span><span class="profit">OverviewBar + StoryStrip + WhereAmIRunning</span>
+                    </div>
+                    <div class="kv">
+                      <span>Value removed</span><span class="cost">single-stream subs (breaking)</span>
+                    </div>
+                    <div class="confidence">medium · UX heuristic</div>
+                  </div>
+                </div>
+
+                <div class="drift-bars">
+                  <h5>% Change by axis · ▲ up = improvement · ▼ down = regression <span class="info-dot" data-tip="Bar width is % change normalized to 200% full range. Hover any axis label for that axis's formula and inputs.">ⓘ</span></h5>
+                  <div class="bar-row">
+                    <span class="bar-label" data-tip="Money — see card tooltip above. Bar width = 32% / 200% × 100% track width = 16%.">💰 Money</span>
+                    <div class="bar-track"><div class="bar-fill pos" style="width:16%;"></div></div>
+                    <span class="bar-value pos">▲ 32%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-label" data-tip="Customer value — weighted_avg of time_saved + value_added − value_removed. See card tooltip above.">👥 Customer value</span>
+                    <div class="bar-track"><div class="bar-fill pos" style="width:24%;"></div></div>
+                    <span class="bar-value pos">▲ 48%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-label" data-tip="Software runtime — wire size delta from BENCH_BASELINE.md. 9.83 MB → 3.9 MB = 60.3% reduction.">⚙️ Software runtime</span>
+                    <div class="bar-track"><div class="bar-fill pos" style="width:30%;"></div></div>
+                    <span class="bar-value pos">▲ 60%</span>
+                  </div>
+                  <div class="bar-row">
+                    <span class="bar-label" data-tip="Runtime UX — debug-loop time delta: 16 min → 12 min = 25% reduction. UX survey + telemetry cross-check.">🎨 Runtime UX</span>
+                    <div class="bar-track"><div class="bar-fill pos" style="width:12.5%;"></div></div>
+                    <span class="bar-value pos">▲ 25%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="blockquote-impact">
+                <strong>Bottom line —</strong> All four axes trend positive. The combined effect: customers reach root-cause faster (live↔source correlation closes a debugging blind spot), runtime cost drops (60% smaller wire format), and projected $ savings clear the dev-hours invested within ~9 weeks of merge.
+              </div>
+
+              <p class="ref-link">↳ <a href="https://drift.dev/docs/value-card" target="_blank" rel="noopener">drift.dev/docs/value-card — how the four axes are computed</a></p>
+            </section>
+
+            <!-- ============ CODE SUGGESTIONS ============ -->
+            <section class="drift-section">
+              <h3>
+                <span>💡 Code Suggestions</span>
+                <span class="section-pill">3 above threshold · click to accept</span>
+              </h3>
+              <p class="subtitle">Each suggestion includes a real documentation or issue link. Only suggestions above confidence threshold (0.75) are shown.</p>
+
+              <!-- Suggestion 1 -->
+              <div class="suggestion">
+                <div class="suggestion-header">
+                  <span class="suggestion-cat cat-b">🅑 Product correctness</span>
+                  <span class="suggestion-file">
+                    <span class="path-dim">drift-static-profiler/src/</span>compact.rs
+                    <span class="path-dim"> · fn </span>prefer_frame_f64
+                  </span>
+                  <span class="suggestion-conf">confidence <span class="num">0.77</span></span>
+                </div>
+                <div class="suggestion-body">
+                  <p><strong>Why it matters:</strong> <code>pagerank == 0.0</code> is a valid value for isolated nodes (no callers, no callees). The function treats <code>0.0</code> as "not set on Frame" and falls back to the node's value — also <code>0.0</code> — so today the output is accidentally correct. The next engineer who adds an f64 intrinsic where <code>0.0</code> is meaningful will copy this pattern and ship silent wrong output.</p>
+                  <div class="ref-list">
+                    <div class="ref-list-label">References approving this change</div>
+                    <ul>
+                      <li><a href="https://rust-lang.github.io/api-guidelines/type-safety.html#c-custom-type" target="_blank" rel="noopener">Rust API Guidelines — newtype / <code>Option</code> over sentinel values</a> <span class="ref-tag">official</span></li>
+                      <li><a href="https://en.wikipedia.org/wiki/Sentinel_value" target="_blank" rel="noopener">Wikipedia — Sentinel value (why <code>0.0</code>-as-missing is a known anti-pattern)</a> <span class="ref-tag">wiki</span></li>
+                      <li><a href="https://stackoverflow.com/questions/16139462/why-use-options-in-rust" target="_blank" rel="noopener">Stack Overflow — Why use <code>Option</code> in Rust?</a> <span class="ref-tag">stackoverflow</span></li>
+                    </ul>
+                  </div>
+
+                  <div class="diff-block">
+                    <div class="line del"><span class="gutter">42</span><span class="code">fn prefer_frame_f64(frame_v: f64, node_v: f64) -&gt; f64 {</span></div>
+                    <div class="line del"><span class="gutter">43</span><span class="code">    if frame_v != 0.0 { frame_v } else { node_v }</span></div>
+                    <div class="line del"><span class="gutter">44</span><span class="code">}</span></div>
+                    <div class="line add"><span class="gutter">42</span><span class="code">fn prefer_frame_f64(frame_v: Option&lt;f64&gt;, node_v: f64) -&gt; f64 {</span></div>
+                    <div class="line add"><span class="gutter">43</span><span class="code">    frame_v.unwrap_or(node_v)</span></div>
+                    <div class="line add"><span class="gutter">44</span><span class="code">}</span></div>
+                  </div>
+
+                  <p class="small-note">Requires <code>Frame.pagerank</code> to become <code>Option&lt;f64&gt;</code> and <code>FrameIntrinsics.pagerank</code> similarly.</p>
+
+                  <div class="suggestion-actions">
+                    <button class="btn btn-primary">Apply suggestion</button>
+                    <button class="btn">Reply</button>
+                    <button class="btn-link">Why this matters →</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Suggestion 2 -->
+              <div class="suggestion">
+                <div class="suggestion-header">
+                  <span class="suggestion-cat cat-b">🅑 Product correctness</span>
+                  <span class="suggestion-file">
+                    <span class="path-dim">drift-static-profiler/src/</span>compact.rs
+                    <span class="path-dim"> · fn </span>FramePool::intern_with_intrinsics
+                  </span>
+                  <span class="suggestion-conf">confidence <span class="num">0.76</span></span>
+                </div>
+                <div class="suggestion-body">
+                  <p><strong>Why it matters:</strong> The doc comment says <em>"the FIRST call for a given frame wins"</em> but <code>stamp_intrinsics</code> fires unconditionally whenever <code>intrinsics.is_empty()</code> is false. If two tree positions carry different <code>pagerank</code> values for the same symbol (PageRank is computed per-entry-point context), the <em>last</em> serialized tree wins — not the first.</p>
+                  <div class="ref-list">
+                    <div class="ref-list-label">References approving this change</div>
+                    <ul>
+                      <li><a href="https://doc.rust-lang.org/std/sync/struct.Once.html" target="_blank" rel="noopener">Rust std — <code>std::sync::Once</code> idempotent init pattern</a> <span class="ref-tag">official</span></li>
+                      <li><a href="https://en.wikipedia.org/wiki/Idempotence#Computer_science_meaning" target="_blank" rel="noopener">Wikipedia — Idempotence in computer science</a> <span class="ref-tag">wiki</span></li>
+                      <li><a href="https://en.wikipedia.org/wiki/PageRank" target="_blank" rel="noopener">Wikipedia — PageRank (why per-entry-point context matters)</a> <span class="ref-tag">wiki</span></li>
+                    </ul>
+                  </div>
+
+                  <div class="diff-block">
+                    <div class="line ctx"><span class="gutter">156</span><span class="code">pub fn intern_with_intrinsics(&amp;mut self, sym: Symbol, intrinsics: &amp;FrameIntrinsics) -&gt; usize {</span></div>
+                    <div class="line ctx"><span class="gutter">157</span><span class="code">    let ix = self.intern(sym);</span></div>
+                    <div class="line ctx"><span class="gutter">158</span><span class="code">    let slot = &amp;mut self.frames[ix];</span></div>
+                    <div class="line del"><span class="gutter">159</span><span class="code">    if intrinsics.is_empty() {</span></div>
+                    <div class="line del"><span class="gutter">160</span><span class="code">        return ix;</span></div>
+                    <div class="line del"><span class="gutter">161</span><span class="code">    }</span></div>
+                    <div class="line del"><span class="gutter">162</span><span class="code">    stamp_intrinsics(slot, intrinsics);</span></div>
+                    <div class="line add"><span class="gutter">159</span><span class="code">    // First call wins — if the slot already has intrinsics stamped</span></div>
+                    <div class="line add"><span class="gutter">160</span><span class="code">    // (non-empty callers is the reliable sentinel), leave it alone.</span></div>
+                    <div class="line add"><span class="gutter">161</span><span class="code">    if intrinsics.is_empty() || !slot.callers.is_empty() || slot.complexity != 0 {</span></div>
+                    <div class="line add"><span class="gutter">162</span><span class="code">        return ix;</span></div>
+                    <div class="line add"><span class="gutter">163</span><span class="code">    }</span></div>
+                    <div class="line add"><span class="gutter">164</span><span class="code">    stamp_intrinsics(slot, intrinsics);</span></div>
+                  </div>
+
+                  <div class="suggestion-actions">
+                    <button class="btn btn-primary">Apply suggestion</button>
+                    <button class="btn">Reply</button>
+                    <button class="btn-link">Why this matters →</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Suggestion 3 -->
+              <div class="suggestion">
+                <div class="suggestion-header">
+                  <span class="suggestion-cat cat-b">🅑 Product correctness</span>
+                  <span class="suggestion-file">
+                    <span class="path-dim">drift-observability/observability-server/internal/ingest/</span>ingest.go
+                    <span class="path-dim"> · fn </span>AppendNDJSON
+                  </span>
+                  <span class="suggestion-conf">confidence <span class="num">0.82</span></span>
+                </div>
+                <div class="suggestion-body">
+                  <p><strong>Why it matters:</strong> The function returns <code>(accepted int, firstSoftErr error)</code>. Any HTTP handler that does <code>n, err := w.AppendNDJSON(r); if err != nil { http.Error(w, ..., 400) }</code> will return 400 even when <code>n &gt; 0</code> valid lines were already written to disk — causing the client to retry a partially-accepted batch. The signature pushes error-type disambiguation onto every caller.</p>
+                  <div class="ref-list">
+                    <div class="ref-list-label">References approving this change</div>
+                    <ul>
+                      <li><a href="https://go.dev/blog/errors-are-values" target="_blank" rel="noopener">Go Blog — Errors are values; distinguish by type, not string</a> <span class="ref-tag">official</span></li>
+                      <li><a href="https://datatracker.ietf.org/doc/html/rfc4918#section-11.1" target="_blank" rel="noopener">RFC 4918 §11.1 — HTTP 207 Multi-Status semantics</a> <span class="ref-tag">rfc</span></li>
+                      <li><a href="https://www.cncf.io/blog/2023/03/15/observability-whitepaper-overview/" target="_blank" rel="noopener">CNCF — Observability whitepaper (ingestion fidelity is a stated goal)</a> <span class="ref-tag">cncf</span></li>
+                      <li><a href="https://stackoverflow.com/questions/13633946/how-to-handle-partial-failure-in-batch-http-requests" target="_blank" rel="noopener">Stack Overflow — Partial-failure batch HTTP handling</a> <span class="ref-tag">stackoverflow</span></li>
+                    </ul>
+                  </div>
+
+                  <div class="diff-block">
+                    <div class="line del"><span class="gutter">87</span><span class="code">func (w *Writer) AppendNDJSON(r io.Reader) (int, error) {</span></div>
+                    <div class="line add"><span class="gutter">87</span><span class="code">// AppendNDJSONResult carries accepted count and soft validation errors</span></div>
+                    <div class="line add"><span class="gutter">88</span><span class="code">// separately from fatal disk errors, so callers can return 207 Multi-Status</span></div>
+                    <div class="line add"><span class="gutter">89</span><span class="code">// rather than 400 when some lines were valid.</span></div>
+                    <div class="line add"><span class="gutter">90</span><span class="code">type AppendNDJSONResult struct {</span></div>
+                    <div class="line add"><span class="gutter">91</span><span class="code">    Accepted     int</span></div>
+                    <div class="line add"><span class="gutter">92</span><span class="code">    FirstSoftErr error // ErrEmpty or ErrInvalidJSON; nil if all lines valid</span></div>
+                    <div class="line add"><span class="gutter">93</span><span class="code">}</span></div>
+                    <div class="line add"><span class="gutter">94</span><span class="code"></span></div>
+                    <div class="line add"><span class="gutter">95</span><span class="code">func (w *Writer) AppendNDJSON(r io.Reader) (AppendNDJSONResult, error) {</span></div>
+                  </div>
+
+                  <div class="suggestion-actions">
+                    <button class="btn btn-primary">Apply suggestion</button>
+                    <button class="btn">Reply</button>
+                    <button class="btn-link">Why this matters →</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- ============ VISUAL SUMMARIES (risks + key files) ============ -->
+            <section class="drift-section">
+              <h3>
+                <span>🧭 Visual Summary</span>
+                <span class="section-pill">risks · key files · at-a-glance</span>
+              </h3>
+              <p class="subtitle">Risks plotted by severity × likelihood. Key files as a hot-touch mindmap. Glanceable instead of scannable.</p>
+
+              <div class="summary-grid">
+
+                <!-- Risk quadrant chart -->
+                <div class="diagram-card summary-card">
+                  <h5 class="summary-title">⚠️ Risks · severity ↑ × likelihood →</h5>
+                  <pre class="mermaid">
+quadrantChart
+    title Risk Map
+    x-axis Low likelihood --> High likelihood
+    y-axis Low severity --> High severity
+    quadrant-1 Act before merge
+    quadrant-2 Monitor closely
+    quadrant-3 Acceptable
+    quadrant-4 Document &amp; ship
+    "PR size · 100 files": [0.85, 0.90]
+    "Schema v1.2 compat": [0.55, 0.70]
+    "Pub/sub drop-overflow": [0.65, 0.65]
+    "Log bus lagged subs": [0.70, 0.55]
+    "Tier-7 fuzzy matches": [0.45, 0.50]
+    "PathAlias heuristic": [0.50, 0.45]
+    "Win CLI installer stub": [0.30, 0.55]
+    "First-wins not enforced": [0.40, 0.45]
+    "No CLI binary tests": [0.55, 0.25]
+                  </pre>
+                </div>
+
+                <!-- Key files mindmap -->
+                <div class="diagram-card summary-card">
+                  <h5 class="summary-title">🗂 Key files · hot-touch mindmap</h5>
+                  <pre class="mermaid">
+mindmap
+  root((PR #36<br/>hot files))
+    (Wire format)
+      compact.rs
+        Schema v1.2
+    (Live↔Static join)
+      join_commands.rs
+        core logic
+      path_alias.rs
+        heuristic
+    (Observability)
+      pubsub/bus.go
+        per-topic
+      wsbroker.go
+        Phoenix verbs
+    (Desktop UI)
+      LiveScan.tsx
+        entry point
+      log_bus.rs
+        call init first!
+                  </pre>
+                </div>
+
+              </div>
+
+              <p class="ref-link">↳ <a href="https://drift.dev/docs/review/visual-summary" target="_blank" rel="noopener">drift.dev/docs/review/visual-summary — how these charts are computed</a></p>
+              <p class="small-note">Generated by drift-review · PR #36 · refactorlab/drift · 2026-05-25</p>
+            </section>
+
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <h4>Reviewers <span class="gear">⚙</span></h4>
+        <div class="reviewer">
+          <span class="reviewer-avatar">SC</span>
+          <span><strong>schuldi1</strong> <span style="color:var(--fg-muted);">· requested</span></span>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h4>Assignees <span class="gear">⚙</span></h4>
+        <div class="reviewer">
+          <span class="reviewer-avatar" style="background:linear-gradient(135deg,#3fb950,#1f6feb);">IH</span>
+          <span><strong>ilyashusterman</strong></span>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h4>Labels <span class="gear">⚙</span></h4>
+        <span class="label-pill" style="background:#1f6feb33; color:#79c0ff; border-color:#1f6feb;">feature</span>
+        <span class="label-pill" style="background:#8957e533; color:#d2a8ff; border-color:#8957e5;">schema-change</span>
+        <span class="label-pill" style="background:#d2992233; color:#e3b341; border-color:#d29922;">breaking</span>
+        <span class="label-pill" style="background:#da363333; color:#ff7b72; border-color:#da3633;">needs-split</span>
+        <span class="label-pill" style="background:#23863633; color:#7ee787; border-color:#238636;">perf</span>
+      </div>
+      <div class="sidebar-section">
+        <h4>Milestone <span class="gear">⚙</span></h4>
+        <a href="#">v0.7.0 — live↔static</a>
+        <div style="color:var(--fg-muted); font-size:12px; margin-top:4px;">68% complete · 17 of 25 issues closed</div>
+      </div>
+      <div class="sidebar-section">
+        <h4>Drift Review</h4>
+        <div style="font-family:var(--font-mono); font-size:12px; line-height:1.8;">
+          <div>💰 Money &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--success-fg); font-weight:600;">▲ 32%</span></div>
+          <div>👥 Customer &nbsp;&nbsp;&nbsp;<span style="color:var(--success-fg); font-weight:600;">▲ 48%</span></div>
+          <div>⚙️ Runtime &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--success-fg); font-weight:600;">▲ 60%</span></div>
+          <div>🎨 Runtime UX &nbsp;<span style="color:var(--success-fg); font-weight:600;">▲ 25%</span></div>
+          <div style="border-top:1px solid var(--border-muted); margin-top:6px; padding-top:6px;">Suggestions &nbsp;<span style="color:var(--fg-default);">3 / 3 above threshold</span></div>
+          <div>Confidence &nbsp;&nbsp;&nbsp;<span style="color:var(--attention-fg);">medium</span></div>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h4>Linked issues</h4>
+        <a href="#">#28 — Live profile lacks source link</a><br>
+        <a href="#">#31 — Scan output too large for CI</a><br>
+        <a href="#">#33 — Broadcaster blocks slow subs</a>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#0d1117',
+      primaryColor: '#21262d',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#30363d',
+      lineColor: '#7d8590',
+      secondaryColor: '#1c2128',
+      tertiaryColor: '#161b22',
+      mainBkg: '#21262d',
+      clusterBkg: '#161b22',
+      clusterBorder: '#30363d',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    },
+    flowchart: {
+      curve: 'basis',
+      padding: 20,
+      nodeSpacing: 50,
+      rankSpacing: 60
+    }
+  });
+</script>
+
+</body>
+</html>

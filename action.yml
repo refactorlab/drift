@@ -1,5 +1,5 @@
-name: 'Drift — Hello World'
-description: 'Prints hello world by Andy when a PR opens. Smoke test for the composite-action wiring; will be swapped for the full Drift action once the green path is confirmed.'
+name: 'Drift — Hello + Scan'
+description: 'Prints hello world by Andy, then runs drift-static-profiler scan-pr and prints a JSON summary. Incremental smoke test on the way to the full Drift action.'
 author: 'Drift'
 
 branding:
@@ -11,6 +11,14 @@ inputs:
     description: 'Name shown in the hello-world line.'
     required: false
     default: 'Andy'
+  profiler-version:
+    description: 'drift-static-profiler release tag to install (e.g. v0.6.0). Ignored when profiler-local-bin is set.'
+    required: false
+    default: 'v0.6.0'
+  profiler-local-bin:
+    description: 'Path to a prebuilt drift-static-profiler binary. When set + executable, skips the GitHub Release download (used by `make hello-test`).'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -26,3 +34,59 @@ runs:
         echo "🌿 event:  ${GITHUB_EVENT_NAME:-<unset>}"
         echo "🔁 PR:     #${{ github.event.pull_request.number || 'n/a' }} (${{ github.event.pull_request.head.ref || 'n/a' }} → ${{ github.event.pull_request.base.ref || 'n/a' }})"
         echo "🔖 sha:    ${{ github.event.pull_request.head.sha || github.sha }}"
+
+    - name: Install drift-static-profiler
+      shell: bash
+      env:
+        DRIFT_PROFILER_VERSION: ${{ inputs.profiler-version }}
+        DRIFT_PROFILER_LOCAL_BIN: ${{ inputs.profiler-local-bin }}
+      run: ${{ github.action_path }}/action/scripts/install-profiler.sh
+
+    - name: Run scan-pr (hello-world scope — 3 hardcoded files)
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+      run: |
+        # For the hello-world smoke test we feed scan-pr a deterministic
+        # 3-file set so the output is reproducible. Real PRs feed
+        # `git diff --name-only` of the merge-base — that wiring lives in
+        # action.yml.full.
+        #
+        # Why not `git ls-files | head -3`? Exit 141 / SIGPIPE: head closes
+        # the pipe before git finishes, set -eo pipefail kills the step.
+        files=$(printf '%s\n' \
+          action/src/main.ts \
+          action/src/report.ts \
+          action/src/render/overview.ts)
+        echo "🔬 scanning these files:"
+        echo "$files" | sed 's/^/  /'
+        echo "$files" | drift-static-profiler scan-pr . \
+          --changed-files-stdin \
+          --pretty \
+          --output "$DRIFT_REPORT_PATH"
+
+    - name: Print scan summary
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+      run: |
+        if [ ! -s "$DRIFT_REPORT_PATH" ]; then
+          echo "❌ no report at $DRIFT_REPORT_PATH"
+          exit 1
+        fi
+        size=$(wc -c < "$DRIFT_REPORT_PATH" | tr -d ' ')
+        echo "📊 Scan complete — ${size} bytes at $DRIFT_REPORT_PATH"
+        if command -v jq >/dev/null 2>&1; then
+          # One field per line — multi-line jq templates break YAML's block
+          # scalar indent rule. Boring + readable beats clever here.
+          echo "  schema:      $(jq -r '.schema_version' "$DRIFT_REPORT_PATH")"
+          echo "  mode:        $(jq -r '.mode' "$DRIFT_REPORT_PATH")"
+          echo "  tool:        $(jq -r '"\(.generator.tool) v\(.generator.version)"' "$DRIFT_REPORT_PATH")"
+          echo "  changed:     $(jq -r '.pr_scope.changed_files | length' "$DRIFT_REPORT_PATH") file(s)"
+          echo "  roots:       $(jq -r '.pr_scope.affected_roots | length' "$DRIFT_REPORT_PATH")"
+          echo "  unreachable: $(jq -r '.pr_scope.unreachable_changes | length' "$DRIFT_REPORT_PATH")"
+          echo "  pr_review?:  $(jq -r 'has("pr_review")' "$DRIFT_REPORT_PATH")"
+          echo "  suggestions: $(jq -r '(.pr_review.code_suggestions // []) | length' "$DRIFT_REPORT_PATH")"
+        else
+          echo "  (jq not on PATH; install with apt/brew to see the summary)"
+        fi

@@ -1,6 +1,10 @@
 action/node_modules/
 .DS_Store
 
+# One-shot scratch outputs from `make action-scan-demo` etc. — JSON
+# fixtures regenerated locally; never committed.
+/tmp/
+
 # Tauri updater signing keys — generated locally by `tauri signer generate`.
 # Private key must never be committed. See drift-lab/UPDATER.md.
 .tauri-keys/
@@ -17,3 +21,4 @@ drift-static-profiler/research/django-check
 # real `.env` stays out of git.
 .env
 **/.env
+tmp/

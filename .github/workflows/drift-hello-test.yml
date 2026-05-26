@@ -1,0 +1,32 @@
+# Canonical self-test for the Drift action.
+#
+# Mirrors the pattern used by actions/checkout, actions/setup-node, etc.:
+#   1) `actions/checkout` materializes the workspace
+#   2) `uses: ./` invokes the local action at the repo root
+#
+# Run locally with `make hello-test` (which wraps `act --bind`). On real
+# GitHub, this workflow fires on every push to a PR — same machinery, just
+# via GH's runner instead of a local Docker container.
+name: drift / self-test (hello world)
+
+on:
+  pull_request:
+  push:
+    branches: [drift-action-hello-test, main]
+  workflow_dispatch:
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Invoke local Drift action
+        uses: ./
+        with:
+          greeter: Andy
+          # Local act run: $DRIFT_PROFILER_LOCAL_BIN is injected via `act --env`
+          # and points at the host's debug build of drift-static-profiler.
+          # On real GitHub CI this env var is unset, so the input is empty and
+          # install-profiler.sh falls through to the GitHub Release download.
+          profiler-local-bin: ${{ env.DRIFT_PROFILER_LOCAL_BIN }}

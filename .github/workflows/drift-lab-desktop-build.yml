@@ -410,12 +410,33 @@ jobs:
           fi
           cargo tauri build ${{ matrix.tauri_args }}
 
+      # ── drift-static-profiler standalone CLI (Linux x86_64 only) ─────
+      # The Drift GitHub Action's install-profiler.sh downloads this binary
+      # by exact URL/filename. Building it here means every main-branch
+      # release ships it alongside the desktop bundles — no out-of-band
+      # tagging or separate workflow run required.
+      #
+      # The binary is staged into the SAME `staging/` dir as the desktop
+      # bundles, so the existing upload-artifact step picks it up and the
+      # publish job's `compute-shasums.sh` includes it in SHA256SUMS.
+      # Asset naming matches action/scripts/install-profiler.sh exactly:
+      #   drift-static-profiler-x86_64-unknown-linux-gnu.tar.gz   (+ .sha256)
+      - name: Build drift-static-profiler (Linux x86_64)
+        if: matrix.label == 'linux-x86_64'
+        working-directory: drift-static-profiler
+        run: |
+          set -euo pipefail
+          cargo build --release --bin drift-static-profiler
+          ls -lh target/release/drift-static-profiler
+
       # Stage every shippable artifact into a flat dir + write SHA256SUMS.
       # Output layout matches `make drift-lab-export`:
       #   staging/
       #     Drift Lab_<v>_<arch>.dmg
       #     Drift Lab_<v>_<arch>.app.tar.gz(.sig)?
       #     drift-lab_<v>_amd64.{deb,AppImage,AppImage.tar.gz(.sig)?,rpm}
+      #     drift-static-profiler-x86_64-unknown-linux-gnu.tar.gz       (Linux only)
+      #     drift-static-profiler-x86_64-unknown-linux-gnu.tar.gz.sha256
       #     SHA256SUMS
       # Logic is unit-tested in drift-lab/scripts/ci/test-collect-artifacts.sh.
       - name: Stage artifacts + compute SHA256SUMS
@@ -423,6 +444,24 @@ jobs:
           BUNDLE_DIR: drift-lab/src-tauri/target/${{ matrix.bundle_dir }}
         run: |
           bash drift-lab/scripts/ci/collect-artifacts.sh "$BUNDLE_DIR" staging
+
+      # Drop the drift-static-profiler tarball into the SAME staging/ dir
+      # so the existing upload-artifact step ships it, and the publish
+      # job's compute-shasums.sh includes it in the combined SHA256SUMS.
+      # No separate artifact name needed.
+      - name: Stage drift-static-profiler tarball (Linux x86_64 only)
+        if: matrix.label == 'linux-x86_64'
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          archive="staging/drift-static-profiler-${target}.tar.gz"
+          tar -czf "$archive" -C drift-static-profiler/target/release drift-static-profiler
+          # Per-file .sha256 in the same format as the dedicated
+          # drift-static-profiler-release.yml workflow emits, so the
+          # action's install-profiler.sh sees a consistent layout
+          # regardless of which workflow produced the asset.
+          shasum -a 256 "$archive" > "${archive}.sha256"
+          ls -lh "$archive" "${archive}.sha256"
 
       - name: Upload bundle artifact (flat dir + SHA256SUMS)
         uses: actions/upload-artifact@v4
@@ -593,10 +632,17 @@ jobs:
           # updater manifest + the tar.gz updater bundles + their detached
           # signatures. The plugin fetches `latest.json` first, then the
           # platform tar.gz it points to. Manual installers stay too.
+          #
+          # `drift-static-profiler-*.tar.gz` (+ `.sha256` sidecar) is the
+          # Linux x86_64 standalone CLI the Drift GitHub Action downloads
+          # via action/scripts/install-profiler.sh — see the linux build
+          # step above for how it lands in staging/.
           mapfile -t files < <(find dist -maxdepth 1 -type f \
             \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \
             -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
             -o -name "*.AppImage.tar.gz" -o -name "*.AppImage.tar.gz.sig" \
+            -o -name "drift-static-profiler-*.tar.gz" \
+            -o -name "drift-static-profiler-*.tar.gz.sha256" \
             -o -name "latest.json" -o -name "SHA256SUMS" \))
 
           if [ ${#files[@]} -eq 0 ]; then

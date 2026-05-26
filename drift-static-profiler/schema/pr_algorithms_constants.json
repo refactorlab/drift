@@ -1,0 +1,312 @@
+{
+  "$schema_version": "1",
+  "$generated_at": "2026-05-26",
+  "$source": "Manually curated. A future refresh script (scripts/refresh_pr_algorithms_constants.py) will update `rates` from the AWS Pricing API + salary surveys, and `heuristics` from in-house telemetry.",
+  "$consumers": [
+    "drift-static-profiler/src/pr_algorithms/value_money.rs",
+    "drift-static-profiler/src/pr_algorithms/tech_debt.rs",
+    "drift-static-profiler/src/pr_algorithms/duplication.rs",
+    "drift-static-profiler/src/pr_algorithms/counts.rs",
+    "drift-static-profiler/src/pr_algorithms/tests_in_graph.rs",
+    "drift-static-profiler/src/pr_algorithms/value_customer.rs",
+    "drift-static-profiler/src/pr_algorithms/value_runtime.rs",
+    "drift-static-profiler/src/pr_algorithms/value_runtime_ux.rs",
+    "drift-static-profiler/src/pr_algorithms/nfr_edge_cases.rs"
+  ],
+  "axis_sources": {
+    "money": [
+      { "url": "https://aws.amazon.com/ec2/pricing/on-demand/",         "title": "AWS — EC2 On-Demand pricing", "tag": "official" },
+      { "url": "https://calculator.aws/",                                "title": "AWS Pricing Calculator", "tag": "official" },
+      { "url": "https://www.cncf.io/projects/opencost/",                 "title": "CNCF — OpenCost (cost-allocation reference)", "tag": "cncf" },
+      { "url": "https://opencost.io/docs/",                              "title": "OpenCost docs", "tag": "official" },
+      { "url": "https://www.bls.gov/oes/current/oes151252.htm",          "title": "BLS — Software Developer Occupational Stats (US wages)", "tag": "official" },
+      { "url": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/", "title": "HiBob — fully-burdened labor rate", "tag": "blog" }
+    ],
+    "customer": [
+      { "url": "https://www.conventionalcommits.org/en/v1.0.0/",         "title": "Conventional Commits v1.0.0", "tag": "official" },
+      { "url": "https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue", "title": "GitHub — Linking PRs to issues", "tag": "official" }
+    ],
+    "runtime": [
+      { "url": "https://github.com/cncf/tag-observability/blob/main/whitepaper.md", "title": "CNCF Observability Whitepaper", "tag": "cncf" },
+      { "url": "https://12factor.net/",                                  "title": "The Twelve-Factor App", "tag": "official" },
+      { "url": "https://www.conventionalcommits.org/en/v1.0.0/",         "title": "Conventional Commits (perf: prefix)", "tag": "official" },
+      { "url": "https://sre.google/sre-book/monitoring-distributed-systems/", "title": "Google SRE Book — Monitoring distributed systems", "tag": "blog" }
+    ],
+    "runtime_ux": [
+      { "url": "https://12factor.net/logs",                              "title": "12-Factor App — Logs", "tag": "official" },
+      { "url": "https://sre.google/sre-book/being-on-call/",             "title": "Google SRE Book — Being on-call (developer UX)", "tag": "blog" },
+      { "url": "https://www.conventionalcommits.org/en/v1.0.0/",         "title": "Conventional Commits (docs: prefix)", "tag": "official" }
+    ],
+    "nfr": [
+      { "url": "https://iso25000.com/index.php/en/iso-25000-standards/iso-25010", "title": "ISO/IEC 25010 — Software product quality model (canonical NFR taxonomy)", "tag": "official" },
+      { "url": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/", "title": "SonarQube — Metric definitions", "tag": "official" },
+      { "url": "https://github.com/cncf/tag-observability/blob/main/whitepaper.md", "title": "CNCF Observability Whitepaper", "tag": "cncf" }
+    ],
+    "tech_debt": [
+      { "url": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/", "title": "SonarQube — Metric definitions (complexity, debt)", "tag": "official" },
+      { "url": "https://radon.readthedocs.io/en/latest/intro.html",      "title": "radon — Python cyclomatic complexity", "tag": "official" },
+      { "url": "https://refactoring.guru/refactoring/smells",            "title": "Refactoring.guru — Code smell catalog", "tag": "blog" }
+    ]
+  },
+  "rates": {
+    "dev_hour_usd": {
+      "value": 95.0,
+      "unit": "USD/hour",
+      "as_of": "2026",
+      "citation": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/",
+      "notes": "US fully-loaded mid-senior engineer rate. Generally accepted formula: base salary × 1.25-1.40. Override DEV_HOUR_USD env (future) for org-specific rates."
+    },
+    "aws_ec2_m5_large_usd_per_hour": {
+      "value": 0.096,
+      "unit": "USD/hour",
+      "as_of": "2026",
+      "region": "us-east-1",
+      "citation": "https://aws.amazon.com/ec2/pricing/on-demand/",
+      "notes": "Canonical general-purpose baseline. 2 vCPU / 8 GiB."
+    },
+    "aws_ec2_m5_xlarge_usd_per_hour": {
+      "value": 0.192,
+      "unit": "USD/hour",
+      "as_of": "2026",
+      "region": "us-east-1",
+      "citation": "https://aws.amazon.com/ec2/pricing/on-demand/",
+      "notes": "2× m5.large. Used as baseline for heavier-service estimation."
+    },
+    "aws_eks_control_plane_usd_per_hour": {
+      "value": 0.10,
+      "unit": "USD/hour",
+      "as_of": "2026",
+      "citation": "https://aws.amazon.com/eks/pricing/",
+      "notes": "EKS cluster control-plane fee."
+    },
+    "aws_hours_per_month": {
+      "value": 730.0,
+      "unit": "hours/month",
+      "citation": "24 × 30.42",
+      "notes": "Standard cloud-billing hours-per-month constant. AWS uses 730 for monthly cost projections."
+    }
+  },
+  "heuristics": {
+    "hours_per_loc_added": {
+      "value": 0.05,
+      "unit": "hours/loc",
+      "citation": "COCOMO II lower band; in-house 2026 baseline",
+      "notes": "3 minutes per LOC including review + tests. PR adding 100 LOC ≈ 5h of engineering time."
+    },
+    "hours_per_file_touched": {
+      "value": 0.5,
+      "unit": "hours/file",
+      "citation": "in-house 2026 baseline",
+      "notes": "Per-file switching cost: read context, decide scope, update tests."
+    }
+  },
+  "thresholds": {
+    "cyclomatic_high_risk": {
+      "value": 10,
+      "applies_to": "tech_debt",
+      "description": "Cyclomatic-complexity cutoff above which a function is flagged as 'complex' in the tech-debt block. Functions with complexity > N appear in pr_review_ext.tech_debt.high_complexity[].",
+      "citation": "https://docs.sonarsource.com/sonarqube-server/latest/user-guide/code-metrics/metrics-definition/",
+      "alt_source": "https://radon.readthedocs.io/en/latest/intro.html",
+      "notes": "SonarQube + radon converge on >10 as the 'complex' cutoff."
+    },
+    "long_function_loc": {
+      "value": 80,
+      "applies_to": "tech_debt",
+      "description": "Function-LOC cutoff for the 'long function' smell. Functions with loc ≥ N appear in pr_review_ext.tech_debt.long_functions[].",
+      "citation": "https://en.wikipedia.org/wiki/Code_smell",
+      "source_text": "Robert C. Martin — Clean Code (functions should be < ~80 LOC)",
+      "notes": "Cutoff for the 'long function' smell. Wikipedia's Code smell page is the most stable URL covering this rule."
+    },
+    "duplication_ratio_threshold": {
+      "value": 95,
+      "applies_to": "duplication",
+      "description": "rapidfuzz-style ratio threshold (0..100). Function-name pairs at ≥ this ratio are clustered as duplicates.",
+      "citation": "https://github.com/rapidfuzz/RapidFuzz",
+      "notes": "rapidfuzz-style ratio. 95 = identical-modulo-trivial-edits (case/underscore differences)."
+    },
+    "duplication_max_compare_candidates": {
+      "value": 1500,
+      "applies_to": "duplication",
+      "description": "Hard cap on the pairwise comparison set to bound the O(n²) loop. Sorted-truncate above this; bounded Levenshtein early-exit keeps practical cost low.",
+      "citation": "in-house DoS bound",
+      "notes": "Cap on pairwise comparison set. Bounded Levenshtein early-exit keeps practical cost much lower; 1500² is the worst case."
+    },
+    "code_suggestions_confidence_threshold": {
+      "value": 0.75,
+      "applies_to": "code_suggestions",
+      "description": "Minimum drift-finding confidence (0..1) required to lift a finding into pr_review.code_suggestions[]. Per the spec's Quality Bar: 'Only emit a suggestion if confidence > threshold (default 0.75).'",
+      "citation": "action/pr-review-spec.md §Code Suggestions",
+      "notes": "Per-finding gate. Drift's ORM antipatterns are typically 0.85–0.95; lowering below 0.75 surfaces low-signal hits."
+    },
+    "code_suggestions_before_lines_context": {
+      "value": 3,
+      "applies_to": "code_suggestions",
+      "description": "Number of context lines emitted above + below the flagged line in diff.before_lines for each suggestion. Higher = more LLM context; lower = smaller JSON.",
+      "citation": "in-house — matches GitHub diff-hunk convention",
+      "notes": "GitHub diff-hunks default to 3 lines of context. Symmetric: 3 before + 3 after + the flagged line = 7 lines total."
+    },
+    "architecture_flow_max_roots_in_mermaid": {
+      "value": 8,
+      "applies_to": "architecture_flow",
+      "description": "Cap on number of affected-roots rendered into the after_mermaid flowchart. Above this we truncate to keep the diagram readable in a PR comment.",
+      "citation": "mermaid readability heuristic — in-house",
+      "notes": "GitHub PR comments cap mermaid render at ~30 nodes; 8 roots × 6 children = 48 worst-case, but in practice rarely > 20."
+    },
+    "architecture_flow_max_children_per_root": {
+      "value": 6,
+      "applies_to": "architecture_flow",
+      "description": "Cap on first-level callees rendered per affected root. Keeps the flowchart from exploding when one root has many callees.",
+      "citation": "mermaid readability heuristic — in-house",
+      "notes": "Pairs with max_roots above for a worst-case bound of 48 nodes."
+    },
+    "architecture_flow_max_data_structures": {
+      "value": 12,
+      "applies_to": "architecture_flow",
+      "description": "Cap on entries in the data_structures[] table. Top-N by method count; ties broken alphabetically.",
+      "citation": "in-house — matches the spec's Image 1 table size",
+      "notes": "The HTML mockup shows ~7 data structures; 12 leaves headroom without scrolling the table."
+    },
+    "value_customer_features_normalizer": {
+      "value": 3,
+      "applies_to": "value_customer",
+      "description": "Denominator for the features-percentage term. delta% = min(features/N, 1) × 100. Setting N = 3 means '3 features = 100% on this term'.",
+      "citation": "in-house heuristic — calibrated for typical PR sizes",
+      "notes": "PRs adding ≥3 user-visible features clamp at the high end of the customer-value axis."
+    },
+    "value_customer_features_weight": {
+      "value": 0.6,
+      "applies_to": "value_customer",
+      "description": "Linear weight applied to the features term in the customer-value axis. Combined with issues_weight; both sum to 1.0.",
+      "citation": "in-house heuristic",
+      "notes": "Features weighted higher than issues+fixes (0.6 vs 0.4) because user-visible features are the primary 'customer value' signal."
+    },
+    "value_customer_issues_weight": {
+      "value": 0.4,
+      "applies_to": "value_customer",
+      "description": "Linear weight applied to the (issues_resolved + bug_fixes) term in the customer-value axis.",
+      "citation": "in-house heuristic",
+      "notes": "Complementary to features_weight; the two MUST sum to 1.0."
+    },
+    "value_runtime_perf_commit_weight": {
+      "value": 15.0,
+      "applies_to": "value_runtime",
+      "description": "Percentage-points awarded per `perf:` Conventional-Commits prefix. Clamped at value_runtime_max_delta.",
+      "citation": "in-house heuristic — conservative",
+      "notes": "Without real benchmark data, a `perf:` commit is the strongest static signal. 15pp/commit caps a single perf-focused PR at the axis ceiling."
+    },
+    "value_runtime_max_delta": {
+      "value": 60.0,
+      "applies_to": "value_runtime",
+      "description": "Upper bound for value_runtime.delta_percent. Prevents runaway positive scores from many perf commits.",
+      "citation": "in-house heuristic",
+      "notes": "Matches the HTML mockup's runtime axis ceiling of +60%."
+    },
+    "value_runtime_ux_new_test_weight": {
+      "value": 5.0,
+      "applies_to": "value_runtime_ux",
+      "description": "Percentage-points per new test file added. Higher than fixes/docs because tests durably improve dev-loop reliability.",
+      "citation": "in-house heuristic",
+      "notes": "5pp × 3 new test files = +15pp; cap at value_runtime_ux_max_delta."
+    },
+    "value_runtime_ux_bug_fix_weight": {
+      "value": 3.0,
+      "applies_to": "value_runtime_ux",
+      "description": "Percentage-points per bug fix. Bug fixes improve dev experience (less debugging same bug twice).",
+      "citation": "in-house heuristic",
+      "notes": "Lower than new tests (5pp) because a fix without a test can regress."
+    },
+    "value_runtime_ux_docs_commit_weight": {
+      "value": 4.0,
+      "applies_to": "value_runtime_ux",
+      "description": "Percentage-points per `docs:` Conventional-Commits prefix.",
+      "citation": "https://www.conventionalcommits.org/en/v1.0.0/",
+      "notes": "Docs improve onboarding UX. Mid-range between fixes (3) and new tests (5)."
+    },
+    "value_runtime_ux_max_delta": {
+      "value": 60.0,
+      "applies_to": "value_runtime_ux",
+      "description": "Upper bound for value_runtime_ux.delta_percent.",
+      "citation": "in-house heuristic",
+      "notes": "Matches the HTML mockup's runtime UX axis ceiling."
+    },
+    "value_money_baseline_engineer_hours_per_month": {
+      "value": 160,
+      "applies_to": "value_money",
+      "description": "Hours-per-month one full-time engineer represents. Used as the denominator when normalizing PR cost/profit to a percent.",
+      "citation": "40 hours/week × 4 weeks (standard US payroll convention)",
+      "notes": "delta_pct = (profit_usd − cost_usd) / (160h × dev_hour_usd) × 100."
+    },
+    "value_money_perf_profit_lookahead_months": {
+      "value": 12,
+      "applies_to": "value_money",
+      "description": "Months over which `perf:` commit savings are projected (e.g. 1 m5.large worth of compute saved × 12 months = annual figure).",
+      "citation": "in-house — annual projection convention",
+      "notes": "Annualizing makes the savings comparable to dev-hour costs (which are paid upfront)."
+    },
+    "value_money_cleanup_profit_factor": {
+      "value": 0.3,
+      "applies_to": "value_money",
+      "description": "Fraction of the future-maintenance cost recovered when LOC is deleted vs added. delta% net deletions × hours_per_loc × 0.3 = cleanup_profit_hours.",
+      "citation": "in-house heuristic — 30% rule",
+      "notes": "Deletion saves future maintenance but doesn't recoup the full per-LOC cost — most of the cost was the writing, not the maintenance."
+    },
+    "visual_summary_pr_size_likelihood_normalizer": {
+      "value": 100,
+      "applies_to": "visual_summary",
+      "description": "Files-changed value at which the PR-size risk's likelihood saturates at 1.0. likelihood = min(files / N, 1).",
+      "citation": "in-house heuristic — 100-file threshold for 'large PR'",
+      "notes": "Below 100 files, likelihood scales linearly. The spec calls out 100-file PRs as 'PR size · 100 files' in the risk-map example."
+    },
+    "visual_summary_pr_size_severity_normalizer": {
+      "value": 200,
+      "applies_to": "visual_summary",
+      "description": "Files-changed value at which PR-size severity term reaches 0.7 (max). severity = min(files/200 + 0.3, 1).",
+      "citation": "in-house heuristic",
+      "notes": "Severity floors at 0.3 (every PR has SOME blast-radius risk) and grows slowly — even a 200-file PR caps at 1.0."
+    },
+    "visual_summary_blast_radius_min_roots": {
+      "value": 5,
+      "applies_to": "visual_summary",
+      "description": "Affected-root count above which we emit a 'Wide blast radius' risk item.",
+      "citation": "in-house heuristic",
+      "notes": "Below 5 roots the blast radius is narrow enough not to warrant a dedicated risk pin."
+    },
+    "visual_summary_untested_loc_threshold": {
+      "value": 200,
+      "applies_to": "visual_summary",
+      "description": "LOC-added threshold above which 'untested code' risk fires WHEN no test files were touched.",
+      "citation": "in-house heuristic",
+      "notes": "Below 200 LOC, missing test changes is usually acceptable (small refactor, doc fix). Above 200, the absence of tests is a meaningful signal."
+    },
+    "tests_in_graph_uncovered_root_severity_normalizer": {
+      "value": 5,
+      "applies_to": "visual_summary",
+      "description": "Used by VS1's risks_from_ext_signals: severity = 0.55 + n_uncovered/20, clamped at 0.85. Likelihood normalizer = N.",
+      "citation": "in-house heuristic",
+      "notes": "Uncovered roots are a stronger correctness signal than mere duplication; severity floors at 0.55."
+    }
+  },
+  "test_filename_patterns": [
+    { "pattern": "^test_.*\\.py$",       "language": "python",     "source": "pytest" },
+    { "pattern": ".*_test\\.py$",         "language": "python",     "source": "pytest+unittest" },
+    { "pattern": ".*_test\\.go$",         "language": "go",         "source": "go test" },
+    { "pattern": ".*\\.test\\.[jt]sx?$",  "language": "typescript", "source": "jest/vitest" },
+    { "pattern": ".*\\.spec\\.[jt]sx?$",  "language": "typescript", "source": "jest/vitest/mocha" },
+    { "pattern": "^Test[A-Z].*\\.java$",  "language": "java",       "source": "JUnit (prefix style)" },
+    { "pattern": ".*Test\\.java$",         "language": "java",       "source": "JUnit (suffix style)" },
+    { "pattern": ".*Tests\\.java$",        "language": "java",       "source": "JUnit / Spring (plural-suffix style)" },
+    { "pattern": ".*IT\\.java$",           "language": "java",       "source": "Maven Failsafe integration tests" },
+    { "pattern": "^tests?\\.rs$",          "language": "rust",       "source": "cargo test convention (tests.rs / test.rs)" },
+    { "pattern": ".*Test\\.scala$",        "language": "scala",      "source": "ScalaTest" },
+    { "pattern": ".*Spec\\.scala$",        "language": "scala",      "source": "ScalaTest / specs2" },
+    { "pattern": ".*Test\\.kt$",           "language": "kotlin",     "source": "JUnit / Kotest" },
+    { "pattern": ".*Spec\\.kt$",           "language": "kotlin",     "source": "Kotest" }
+  ],
+  "test_function_patterns": [
+    { "pattern": "^test[_A-Z]",  "languages": ["python", "java"],        "source": "pytest test_* / JUnit testFoo" },
+    { "pattern": "^Test[A-Z]",   "languages": ["go"],                    "source": "go test TestFoo" },
+    { "pattern": "^should[A-Z]", "languages": ["java", "typescript"],    "source": "BDD-style shouldFoo" },
+    { "pattern": "^it_[a-z]",    "languages": ["ruby", "python"],        "source": "RSpec-style it_should_foo" },
+    { "pattern": ".*_Spec$",     "languages": ["scala"],                 "source": "ScalaTest spec methods" }
+  ]
+}

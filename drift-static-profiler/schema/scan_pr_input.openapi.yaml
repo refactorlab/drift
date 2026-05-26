@@ -1,0 +1,228 @@
+openapi: 3.1.0
+info:
+  title: drift-static-profiler scan-pr — input
+  version: 1.0.0
+  description: |
+    Input contract for the `scan-pr` CLI subcommand and its GitHub Action
+    wrapper. Describes everything a PR-review bot needs to pass to the
+    static profiler to produce a PR-scoped report.
+
+    Two consumption shapes are supported:
+      - **CLI minimal**: `project_root` + a newline-delimited file of
+        repo-relative paths. Mirrors `git diff --name-only`.
+      - **Action enriched**: full `pr_context` + per-file diff statuses +
+        discover/analyze opts. Mirrors `GET /repos/{owner}/{repo}/pulls/{n}/files`.
+
+    The Rust binary itself only needs `project_root` + `changed_files[].path`;
+    the rest is consumed by the wrapper (or echoed verbatim into
+    `pr_review.metadata` in the output) for downstream renderers.
+
+components:
+  schemas:
+    # ────────────────────────────────────────────────────────────────────
+    # Top-level: ScanPrInput
+    # ────────────────────────────────────────────────────────────────────
+    ScanPrInput:
+      type: object
+      additionalProperties: false
+      required: [project_root, changed_files]
+      properties:
+        project_root:
+          type: string
+          description: |
+            Absolute or relative path to the repo root the profiler walks.
+            In a GitHub Action this is typically `$GITHUB_WORKSPACE` after
+            `actions/checkout@v4`.
+          examples: ["/Users/runner/work/drift/drift", "."]
+        changed_files:
+          type: array
+          minItems: 0
+          description: |
+            Repo-relative paths the PR touched. Each entry can be a bare
+            path (CLI minimal form) or a full Diff Entry mirroring the
+            GitHub REST API response shape (Action enriched form).
+          items:
+            $ref: '#/components/schemas/ChangedFile'
+        pr_context:
+          $ref: '#/components/schemas/PrContext'
+          description: PR metadata from `github.event.pull_request` (optional)
+        discover_opts:
+          $ref: '#/components/schemas/DiscoverOpts'
+        analyze_opts:
+          $ref: '#/components/schemas/AnalyzeOpts'
+
+    # ────────────────────────────────────────────────────────────────────
+    # ChangedFile — mirrors GitHub REST API Diff Entry
+    # ────────────────────────────────────────────────────────────────────
+    ChangedFile:
+      type: object
+      additionalProperties: false
+      required: [path]
+      description: |
+        One entry of the PR diff. Field set matches
+        https://docs.github.com/en/rest/pulls/pulls#list-pull-requests-files
+        ("Diff Entry"). For the CLI minimal form only `path` is required;
+        everything else is the Action wrapper's enrichment.
+      properties:
+        path:
+          type: string
+          description: Repo-relative path (the GitHub API's `filename` field)
+          examples: ["app/services.py", "src/users.py"]
+        status:
+          type: string
+          enum: [added, removed, modified, renamed, copied, changed, unchanged]
+          description: |
+            GitHub's diff status. The profiler cares about
+            `added | modified | renamed | copied | changed` — `removed` is
+            silently dropped because there's no AST to walk.
+        additions:
+          type: integer
+          minimum: 0
+        deletions:
+          type: integer
+          minimum: 0
+        changes:
+          type: integer
+          minimum: 0
+        previous_filename:
+          type: string
+          description: |
+            Set when `status=renamed` or `status=copied`. The profiler
+            doesn't need the old path (the file has been moved on disk
+            and only the new path is walkable), but renderers use it to
+            show the rename.
+        sha:
+          type: [string, "null"]
+          description: Blob SHA of the new file content
+        blob_url:
+          type: string
+          format: uri
+        raw_url:
+          type: string
+          format: uri
+        contents_url:
+          type: string
+          format: uri
+        patch:
+          type: string
+          description: |
+            The unified-diff hunk for this file. Optional — large diffs
+            are truncated by GitHub. Renderers may use this for line-level
+            suggestions; the profiler itself ignores it.
+
+    # ────────────────────────────────────────────────────────────────────
+    # PrContext — fields the Action wrapper pulls from github.event.pull_request
+    # ────────────────────────────────────────────────────────────────────
+    PrContext:
+      type: object
+      additionalProperties: false
+      properties:
+        number:
+          type: integer
+          minimum: 1
+          description: PR number (`github.event.pull_request.number`)
+        repo:
+          type: string
+          pattern: "^[^/]+/[^/]+$"
+          description: '`{owner}/{name}` slug — e.g. "refactorlab/drift"'
+          examples: ["refactorlab/drift"]
+        base_sha:
+          type: string
+          description: '`github.event.pull_request.base.sha` — used by `git diff $BASE..$HEAD`'
+        head_sha:
+          type: string
+          description: '`github.event.pull_request.head.sha` — last commit on the head branch'
+        base_ref:
+          type: string
+          description: Target branch name (e.g. "main")
+        head_ref:
+          type: string
+          description: Source branch name
+        title:
+          type: string
+        body:
+          type: string
+          description: Markdown body of the PR. Renderers parse it for `Fixes #N` etc.
+        author:
+          type: string
+          description: GitHub login of the PR author
+        commits:
+          type: integer
+          minimum: 0
+        contributors:
+          type: integer
+          minimum: 0
+        labels:
+          type: array
+          items:
+            type: string
+        linked_issues:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        milestone:
+          type: string
+          description: 'Milestone title (e.g. "v0.7.0")'
+
+    # ────────────────────────────────────────────────────────────────────
+    # DiscoverOpts — passthrough to drift's roots::DiscoverOpts
+    # ────────────────────────────────────────────────────────────────────
+    DiscoverOpts:
+      type: object
+      additionalProperties: false
+      description: |
+        Mirrors `drift_static_profiler::roots::DiscoverOpts`. All fields
+        optional; defaults match the Rust struct.
+      properties:
+        min_reach:
+          type: integer
+          minimum: 1
+          default: 2
+        max_roots:
+          type: integer
+          minimum: 1
+          default: 5000
+          description: |
+            scan-pr defaults to 5000 (higher than `analyze-root`'s 200) so
+            the PR-scope filter sees every plausible root before winnowing.
+        skip_tests:
+          type: boolean
+          default: false
+        skip_private:
+          type: boolean
+          default: true
+        skip_accessors:
+          type: boolean
+          default: true
+
+    # ────────────────────────────────────────────────────────────────────
+    # AnalyzeOpts — passthrough to drift's api::AnalyzeOptions
+    # ────────────────────────────────────────────────────────────────────
+    AnalyzeOpts:
+      type: object
+      additionalProperties: false
+      description: |
+        Mirrors `drift_static_profiler::api::AnalyzeOptions`. All fields
+        optional; defaults match the Rust struct.
+      properties:
+        max_depth:
+          type: integer
+          minimum: 1
+          default: 12
+        skip_accessors:
+          type: boolean
+          default: false
+        exclude_tests:
+          type: boolean
+          default: false
+        exclude_static_assets:
+          type: boolean
+          default: true
+        scan_sql_files:
+          type: boolean
+          default: true
+        sql_dialect:
+          type: string
+          enum: [postgres, mysql, sqlite, mssql, snowflake, bigquery, generic]
+          description: Explicit SQL dialect override; defaults to per-file inference

@@ -53,7 +53,7 @@ RESET  := \033[0m
         setup install install-rust install-viewer check-rust \
         build release \
         test-verbose test-python test-java test-ts list-tests \
-        demo-python demo-java demo-ts demo-js \
+        demo-python demo-java demo-ts demo-js scan-pr-demo pr-review-demo \
         tags-python tags-java tags-ts tags-js \
         refresh refresh-python refresh-java refresh-ts refresh-js refresh-go refresh-rust refresh-scala refresh-kotlin refresh-insights-demo refresh-docker-app viewer-data \
         viewer-bun viewer-stop viewer-install viewer-build \
@@ -157,6 +157,66 @@ demo-ts: $(BIN) ## TypeScript NestJS fixture
 demo-js: $(BIN) ## JavaScript Express + Mongoose fixture
 	@printf "\n$(CYAN)=== JAVASCRIPT / Express + Mongoose ===$(RESET)\n"
 	@$(BIN) analyze $(word 1,$(FIXTURE_js)) --entry $(word 2,$(FIXTURE_js)) --no-accessors
+
+# PR-scoped scan demo: pretends `app/services.py` and `app/repositories.py`
+# changed in the python-fastapi fixture, runs the reverse-reachability
+# filter, and prints the pretty JSON envelope.
+#
+# Useful for eyeballing the output the GitHub Action will receive on
+# real PRs: the standard scan report + a `pr_scope` block listing the
+# affected roots (here: the `create_order` route handler) and any
+# unreachable_changes (here: none, because both files climb to the
+# route via OrderService).
+scan-pr-demo: $(BIN) ## PR-scoped scan against the FastAPI fixture (changed: services.py + repositories.py)
+	@printf "\n$(CYAN)=== SCAN-PR / FastAPI (pretend services.py + repositories.py changed) ===$(RESET)\n"
+	@printf "app/services.py\napp/repositories.py\n" \
+	  | $(BIN) scan-pr $(word 1,$(FIXTURE_python)) \
+	      --changed-files-stdin \
+	      --pretty
+
+# Full PR-review pipeline: scan-pr → pr_algorithms.cli enrich → enriched JSON
+# Mirrors what the GitHub Action's wrapper invokes step-by-step.
+# Output goes to /tmp/drift-pr-review.json so you can inspect it.
+#
+# Usage:
+#   make pr-review-demo                                  # default fastapi fixture
+#   make pr-review-demo PR_REVIEW_FIXTURE=tests/fixtures/typescript-nestjs PR_REVIEW_FILES="src/services/users.service.ts"
+#
+# The commit-messages list is synthesized (feat:, fix:, perf:, docs:) so
+# the value-card axes have non-zero deltas to demonstrate; in real CI
+# you'd replace this with `git log $BASE..$HEAD --format=%B%x00`.
+PR_REVIEW_FIXTURE ?= tests/fixtures/python-fastapi
+PR_REVIEW_FILES   ?= app/services.py app/repositories.py
+PR_REVIEW_OUT     ?= /tmp/drift-pr-review.json
+pr-review-demo: $(BIN) ## All-in-one PR-review pipeline (single Rust binary — scan-pr + enrich)
+	@printf "\n$(CYAN)=== PR-REVIEW PIPELINE on $(PR_REVIEW_FIXTURE) ===$(RESET)\n"
+	@printf "$(BLUE)▶$(RESET) Writing synthesized commits to /tmp/drift-commits\n"
+	@printf 'feat: introduce OrderService\0fix: handle empty payload\n\nFixes #42\0perf: batch validation pass\0docs: update README\0' > /tmp/drift-commits
+	@printf "$(BLUE)▶$(RESET) Running pr-review → $(PR_REVIEW_OUT)\n"
+	@printf '%s\n' $(PR_REVIEW_FILES) \
+	  | $(BIN) pr-review "$(PR_REVIEW_FIXTURE)" \
+	      --changed-files-stdin \
+	      --commits /tmp/drift-commits \
+	      --output "$(PR_REVIEW_OUT)" \
+	      --pretty
+	@printf "$(GREEN)✓$(RESET) wrote $(PR_REVIEW_OUT)\n"
+	@printf "$(BLUE)▶$(RESET) Headline numbers:\n"
+	@python3 -c "import json; d=json.load(open('$(PR_REVIEW_OUT)')); pr=d['pr_review']; \
+	  print(f'  overall drift:        {pr[\"overall_drift\"][\"percent\"]}%  ({pr[\"overall_drift\"][\"direction\"]}, {pr[\"overall_drift\"][\"confidence\"]})'); \
+	  print(f'  features:             {pr[\"counts\"][\"features\"][\"value\"]}'); \
+	  print(f'  bug fixes:            {pr[\"counts\"][\"bug_fixes\"][\"value\"]}'); \
+	  print(f'  new test files:       {pr[\"counts\"][\"new_test_files\"][\"value\"]}'); \
+	  print('  value-card axes:'); \
+	  [print(f'    {a[\"label\"]:<30}  {a[\"direction\"]} {a[\"delta_percent\"]:.1f}%  ({a[\"confidence\"]})') for a in pr['value_card']['axes']]; \
+	  print(f'  risks flagged:        {len(pr[\"visual_summary\"][\"risks\"][\"items\"])}'); \
+	  print(f'  code suggestions:     {len(pr[\"code_suggestions\"])}  (LLM input context — categories/refs/before-lines)'); \
+	  ext=d['pr_review_ext']; \
+	  sv=ext['tech_debt']['schema_validation']; \
+	  print(f'  tech-debt high-cplx:  {len(ext[\"tech_debt\"][\"high_complexity\"])}'); \
+	  print(f'  duplication clusters: {ext[\"duplication\"][\"count\"]}'); \
+	  print(f'  test files in graph:  {ext[\"tests_in_graph\"][\"test_files\"]}'); \
+	  print(f'  NFR reliability gaps: {len(ext[\"nfr_edge_cases\"][\"reliability_gaps\"])}'); \
+	  print(f'  schema-validation langs: {len(sv[\"supported_languages\"])}/8  (libs detected this PR: {len(sv[\"libraries\"])})')"
 
 ### Raw tag dumps
 

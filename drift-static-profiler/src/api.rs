@@ -406,6 +406,134 @@ pub fn analyze_roots_with_progress(
     })
 }
 
+/// Application-level metadata describing a PR-scoped scan. Carried
+/// alongside the standard `AnalyzeOutcome` on `AnalyzePrOutcome` so the
+/// CLI (or any other adapter) can render the "this PR touched these
+/// roots / these files are dead code" block on top of the standard
+/// report JSON.
+///
+/// Deliberately NOT part of `AnalyzeOutcome` so existing scan-all flows
+/// stay byte-identical: the standard `Report` schema is unchanged,
+/// `pr_scope` is purely an outer-envelope concept.
+#[derive(Debug, Clone)]
+pub struct PrScopeSummary {
+    /// The original list of changed files the caller passed in,
+    /// preserved verbatim (we don't canonicalize or rewrite them) so
+    /// downstream tooling can match them back against PR diff data.
+    pub changed_files: Vec<PathBuf>,
+    /// Names of roots whose call tree transitively reaches at least
+    /// one symbol from a changed file. Same ordering as the standard
+    /// `discover_roots` output (biggest reach first).
+    pub affected_root_names: Vec<String>,
+    /// Changed files that had ≥1 in-graph symbol but whose upward BFS
+    /// reached no root — i.e. "dead code touched by this PR". Files
+    /// with zero in-graph symbols (READMEs, JSON, removed paths) are
+    /// NOT included; only real source files whose symbols are
+    /// orphans.
+    pub unreachable_changes: Vec<PathBuf>,
+}
+
+/// Output of [`analyze_pr_with_progress`]: the standard
+/// `AnalyzeOutcome` plus the PR-scope summary. Kept as a wrapper (not
+/// a new field on `AnalyzeOutcome`) so existing analyze paths don't
+/// have to construct a stub PrScopeSummary; the type system says
+/// "this outcome came from a PR scan" by virtue of being
+/// `AnalyzePrOutcome`.
+#[derive(Debug, Clone)]
+pub struct AnalyzePrOutcome {
+    pub outcome: AnalyzeOutcome,
+    pub pr_scope: PrScopeSummary,
+}
+
+/// PR-scoped scan: build the graph, discover ALL roots, then filter
+/// them down to only the roots whose call trees transitively cover at
+/// least one symbol from `changed_files`. The resulting report
+/// contains only those filtered roots — so PR review tooling sees the
+/// SAME shape it does for a normal scan, but scoped to the call trees
+/// the PR actually touched.
+///
+/// Pipeline:
+///
+///   walk → graph → discover_roots → pr_scope::affected_roots
+///        → build_trees_for(only_affected) → Report::build_with_progress
+///
+/// All shared steps reuse the same `build_graph_context` and
+/// `build_trees_from_ids` helpers the existing scan paths use — this
+/// function is purely additive orchestration; the existing flows are
+/// untouched.
+///
+/// Path matching: `changed_files` entries can be repo-relative
+/// (`src/users.py`) or absolute (`/abs/repo/src/users.py`); see
+/// [`crate::pr_scope::affected_roots`] for the component-aware suffix
+/// match. The caller (a GitHub Action wrapper) is responsible for
+/// resolving paths to whatever form best matches the walker's output
+/// — but in practice, either form works.
+pub fn analyze_pr_with_progress(
+    root: &Path,
+    changed_files: &[PathBuf],
+    discover: &DiscoverOpts,
+    opts: &AnalyzeOptions,
+    progress: &dyn Progress,
+) -> Result<AnalyzePrOutcome> {
+    let ctx = build_graph_context(root, opts, progress);
+
+    // Discover EVERY root first; the pr_scope filter winnows it down
+    // afterward. We can't short-circuit discovery to "just the
+    // changed-file roots" because a changed file's symbol may have
+    // an ancestor root that's defined in an unchanged file — the
+    // whole point of reverse-reachability is to find those.
+    let all_discovered = crate::roots::discover_roots_with_progress(
+        &ctx.graph,
+        root,
+        discover,
+        progress,
+    );
+
+    // Pure filter — no I/O, no per-language code (see pr_scope.rs).
+    progress.phase("filtering roots by PR scope…");
+    let affected = crate::pr_scope::affected_roots(&ctx.graph, &all_discovered, changed_files);
+
+    // Build trees only for the affected roots. Reusing
+    // `build_trees_from_ids` keeps the focused report's per-entry
+    // structure identical to a normal scan — same docker labelling,
+    // same tree-builder limits, same progress reporting.
+    let ids: Vec<_> = affected.roots.iter().map(|r| r.id.clone()).collect();
+    let mut roots_trees = build_trees_from_ids(&ctx, root, &ids, opts, progress);
+    docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots_trees);
+
+    let sql_opts = sql_file_opts_from(opts);
+    let report = Report::build_with_progress(
+        &ctx.all_tags,
+        &ctx.graph,
+        roots_trees,
+        &ctx.language_stats,
+        Some(root),
+        ctx.entry_declarations,
+        sql_opts.as_ref(),
+        &ctx.walk_opts,
+        progress,
+    );
+
+    let pr_scope = PrScopeSummary {
+        changed_files: changed_files.to_vec(),
+        affected_root_names: affected.roots.iter().map(|r| r.name.clone()).collect(),
+        unreachable_changes: affected.unreachable_changes,
+    };
+    let outcome = AnalyzeOutcome {
+        report,
+        unresolved_entries: Vec::new(),
+        language_stats: ctx.language_stats,
+        profiled_language: ctx.profiled_language,
+        // Carry through the affected roots (not the full all_discovered
+        // list) — consumers expect `discovered_roots` to match the
+        // entries in the report, and the report only contains affected
+        // ones.
+        discovered_roots: affected.roots,
+        containment: ctx.containment,
+    };
+    Ok(AnalyzePrOutcome { outcome, pr_scope })
+}
+
 /// One row of display data for the interactive root picker — enough
 /// for the caller (e.g. a CLI prompt) to render a meaningful menu
 /// without needing to know about `CallGraph` or `GraphContext`.

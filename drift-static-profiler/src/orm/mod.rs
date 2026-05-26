@@ -13,6 +13,8 @@ pub mod dialect;
 pub mod fusion;
 pub mod go;
 pub mod jvm;
+pub mod jvm_kotlin;
+pub mod jvm_scala;
 pub mod model_graph;
 pub mod n_plus_one;
 pub mod parallel;
@@ -365,6 +367,42 @@ fn file_might_contain_orm_signal(lang: FileLang, source: &str) -> bool {
         ],
         FileLang::Go => &["gorm.io", "jinzhu/gorm", "AutoMigrate"],
         FileLang::Rust => &["sqlx::", "diesel::", "sea_orm", "::sqlx"],
+        FileLang::Scala => &[
+            // Slick
+            "slick.jdbc",
+            "slick.lifted",
+            "TableQuery",
+            "sql\"",
+            "sqlu\"",
+            ".result",
+            // Quill
+            "io.getquill",
+            "import io.getquill",
+            "quote {",
+            "ctx.run",
+            "liftQuery",
+            "infix\"",
+        ],
+        FileLang::Kotlin => &[
+            // Exposed
+            "org.jetbrains.exposed",
+            "import org.jetbrains.exposed",
+            "IntEntity",
+            "LongEntity",
+            "IntEntityClass",
+            "LongEntityClass",
+            "transaction {",
+            "newSuspendedTransaction",
+            ".findById(",
+            "SchemaUtils",
+            // Ktorm
+            "org.ktorm",
+            "import org.ktorm",
+            "useConnection",
+            "sequenceOf(",
+            "joinReferencesAndSelect",
+            "flushChanges()",
+        ],
     };
     needles.iter().any(|n| source.contains(n))
 }
@@ -409,7 +447,11 @@ fn collect_files(node: &crate::tree::CallTreeNode, out: &mut std::collections::H
         || node.file.ends_with(".cjs")
         || node.file.ends_with(".java")
         || node.file.ends_with(".go")
-        || node.file.ends_with(".rs");
+        || node.file.ends_with(".rs")
+        || node.file.ends_with(".scala")
+        || node.file.ends_with(".sc")
+        || node.file.ends_with(".kt")
+        || node.file.ends_with(".kts");
     if ext_ok {
         out.insert(node.file.clone());
     }
@@ -427,6 +469,10 @@ fn detect_lang(path: &std::path::Path) -> Option<FileLang> {
         "java" => Some(FileLang::Java),
         "go" => Some(FileLang::Go),
         "rs" => Some(FileLang::Rust),
+        // `.sc` is the worksheet/script form; both go to tree-sitter-scala.
+        "scala" | "sc" => Some(FileLang::Scala),
+        // `.kts` is the script form; both go to tree-sitter-kotlin-ng.
+        "kt" | "kts" => Some(FileLang::Kotlin),
         _ => None,
     }
 }
@@ -439,6 +485,8 @@ pub enum FileLang {
     Java,
     Go,
     Rust,
+    Scala,
+    Kotlin,
 }
 
 /// Iterative deepest-first attach: pick the smallest CallTreeNode
@@ -572,6 +620,8 @@ fn parse_one(wf: WorkspaceFile) -> Option<ParsedFile> {
         FileLang::Java => crate::languages::java::language(),
         FileLang::Go => crate::languages::go::language(),
         FileLang::Rust => crate::languages::rust::language(),
+        FileLang::Scala => crate::languages::scala::language(),
+        FileLang::Kotlin => crate::languages::kotlin::language(),
     };
     parser.set_language(&lang_obj).ok()?;
     let tree = parser.parse(&wf.source, None)?;
@@ -702,6 +752,8 @@ fn analyze_source_inner(
         FileLang::Java => crate::languages::java::language(),
         FileLang::Go => crate::languages::go::language(),
         FileLang::Rust => crate::languages::rust::language(),
+        FileLang::Scala => crate::languages::scala::language(),
+        FileLang::Kotlin => crate::languages::kotlin::language(),
     };
     parser.set_language(&lang_obj).ok()?;
     let tree = parser.parse(source, None)?;
@@ -873,6 +925,58 @@ fn analyze_with_tree(
                 );
                 let preds = sqlx.predict_all(&ctx);
                 run_sql_ir(&preds, "sqlx", &mut sql_ir_findings);
+            }
+        }
+        FileLang::Scala => {
+            let mut ctx = jvm_scala::build_context(source, &tree);
+            ctx.model_graph = Some(model_graph);
+            let slick = jvm_scala::slick::SlickDialect;
+            if slick.matches(&ctx) {
+                run_rules_with_kind(
+                    &jvm_scala::slick::SLICK_RULES,
+                    &ctx,
+                    crate::insights::FindingKind::SlickAntipattern,
+                    &mut orm_findings,
+                );
+                let preds = slick.predict_all(&ctx);
+                run_sql_ir(&preds, "slick", &mut sql_ir_findings);
+            }
+            let quill = jvm_scala::quill::QuillDialect;
+            if quill.matches(&ctx) {
+                run_rules_with_kind(
+                    &jvm_scala::quill::QUILL_RULES,
+                    &ctx,
+                    crate::insights::FindingKind::QuillAntipattern,
+                    &mut orm_findings,
+                );
+                let preds = quill.predict_all(&ctx);
+                run_sql_ir(&preds, "quill", &mut sql_ir_findings);
+            }
+        }
+        FileLang::Kotlin => {
+            let mut ctx = jvm_kotlin::build_context(source, &tree);
+            ctx.model_graph = Some(model_graph);
+            let exposed = jvm_kotlin::exposed::ExposedDialect;
+            if exposed.matches(&ctx) {
+                run_rules_with_kind(
+                    &jvm_kotlin::exposed::EXPOSED_RULES,
+                    &ctx,
+                    crate::insights::FindingKind::ExposedAntipattern,
+                    &mut orm_findings,
+                );
+                let preds = exposed.predict_all(&ctx);
+                run_sql_ir(&preds, "exposed", &mut sql_ir_findings);
+            }
+            let ktorm = jvm_kotlin::ktorm::KtormDialect;
+            if ktorm.matches(&ctx) {
+                run_rules_with_kind(
+                    &jvm_kotlin::ktorm::KTORM_RULES,
+                    &ctx,
+                    crate::insights::FindingKind::KtormAntipattern,
+                    &mut orm_findings,
+                );
+                let preds = ktorm.predict_all(&ctx);
+                run_sql_ir(&preds, "ktorm", &mut sql_ir_findings);
             }
         }
     }
