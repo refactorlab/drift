@@ -1,0 +1,214 @@
+name: drift-action / release
+
+# Auto-releases the composite GitHub Action defined at repo root (action.yml).
+#
+# Trigger: any push to main that touches the action's runtime surface —
+# action.yml itself, or the helper scripts it invokes. Each such push cuts
+# a new patch release (drift-action-vX.Y.Z) and moves the major pointer
+# (drift-action-vX) so consumers pinned to the major version pick it up.
+#
+# Marketplace listing: this workflow keeps the listing's "latest release"
+# in sync automatically, but the FIRST publish to the Marketplace must be
+# done manually through the Releases UI (toggle "Publish this Action to the
+# GitHub Marketplace" on one release). The Marketplace flag has no REST API.
+#
+# Manual control: workflow_dispatch accepts an explicit version (for minor /
+# major bumps, re-publishes, or hotfix tags out of band).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'action.yml'
+      - 'action/scripts/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit version like 0.2.0 (no prefix). Leave empty to auto-bump.'
+        required: false
+        default: ''
+      bump:
+        description: 'Bump level when version is empty'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+concurrency:
+  group: drift-action-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Marketplace-required keys: name, description, runs, branding.icon,
+      # branding.color. Catch missing pieces here so the release doesn't
+      # half-succeed downstream.
+      - name: Validate action.yml
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+          d = yaml.safe_load(open('action.yml'))
+          missing = [k for k in ('name', 'description', 'runs') if k not in d]
+          if missing:
+              print(f"::error::action.yml missing top-level keys: {missing}")
+              sys.exit(1)
+          br = d.get('branding') or {}
+          if not br.get('icon') or not br.get('color'):
+              print("::error::action.yml missing branding.icon / branding.color (required for Marketplace)")
+              sys.exit(1)
+          print(f"✓ action.yml valid — name={d['name']!r}, branding={br}")
+          PY
+
+      - name: Compute next version
+        id: ver
+        env:
+          EXPLICIT: ${{ inputs.version }}
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          set -e
+          git fetch --tags --force
+          if [ -n "$EXPLICIT" ]; then
+            NEW="$EXPLICIT"
+            echo "📌 Using explicit version: $NEW"
+          else
+            LATEST=$(git tag --list 'drift-action-v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+            if [ -z "$LATEST" ]; then
+              NEW="0.1.0"
+              echo "🆕 No prior drift-action-v* tag — starting at $NEW"
+            else
+              CUR=${LATEST#drift-action-v}
+              IFS='.' read -r MAJ MIN PAT <<< "$CUR"
+              case "$BUMP" in
+                major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
+                minor) MIN=$((MIN+1)); PAT=0 ;;
+                patch) PAT=$((PAT+1)) ;;
+                *) echo "::error::unknown bump: $BUMP"; exit 1 ;;
+              esac
+              NEW="$MAJ.$MIN.$PAT"
+              echo "⬆️  Bumping $LATEST → drift-action-v$NEW ($BUMP)"
+            fi
+          fi
+          # Validate semver shape (X.Y.Z numeric)
+          if ! [[ "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version $NEW is not in X.Y.Z form"
+            exit 1
+          fi
+          MAJOR="${NEW%%.*}"
+          echo "tag=drift-action-v$NEW" >> "$GITHUB_OUTPUT"
+          echo "major_tag=drift-action-v$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          # Compute previous tag (for release-notes diff base)
+          PREV=$(git tag --list 'drift-action-v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          echo "prev_tag=$PREV" >> "$GITHUB_OUTPUT"
+
+      # Abort if the chosen tag already exists — usually means a duplicate
+      # workflow_dispatch with the same explicit version.
+      - name: Guard against existing tag
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists on origin — pick a different version"
+            exit 1
+          fi
+
+      - name: Create version tag
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      # Use GitHub's own release-notes generator: groups commits by PR labels,
+      # links author + PR, identical to what the UI produces when you click
+      # "Generate release notes".
+      - name: Generate release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          PREV: ${{ steps.ver.outputs.prev_tag }}
+        run: |
+          set -e
+          PAYLOAD=$(python3 -c "
+          import json, os
+          body = {'tag_name': os.environ['TAG']}
+          prev = os.environ.get('PREV')
+          if prev:
+              body['previous_tag_name'] = prev
+          print(json.dumps(body))
+          ")
+          curl -s --fail -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/generate-notes" \
+            -d "$PAYLOAD" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('body',''))" \
+            > release-notes.md
+          echo "--- generated notes ---"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -e
+          BODY_JSON=$(python3 -c "import json; print(json.dumps(open('release-notes.md').read()))")
+          PAYLOAD=$(python3 -c "
+          import json, os, sys
+          print(json.dumps({
+              'tag_name':   os.environ['TAG'],
+              'name':       os.environ['TAG'],
+              'body':       open('release-notes.md').read(),
+              'draft':      False,
+              'prerelease': False,
+              'make_latest': 'true',
+          }))
+          ")
+          curl -s --fail -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "$PAYLOAD" \
+            > release.json
+          html=$(python3 -c "import json; print(json.load(open('release.json'))['html_url'])")
+          echo "🚀 Release: $html"
+
+      # Force-move the major-version pointer (drift-action-vX) so consumers
+      # pinned with `uses: refactorlab/drift@drift-action-v0` pick up the
+      # new patch automatically. Standard actions convention.
+      - name: Move major-version pointer
+        env:
+          TAG:   ${{ steps.ver.outputs.tag }}
+          MAJOR: ${{ steps.ver.outputs.major_tag }}
+        run: |
+          git tag -f "$MAJOR" "$TAG"
+          git push -f origin "$MAJOR"
+          echo "🔁 $MAJOR → $TAG"
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          MAJOR: ${{ steps.ver.outputs.major_tag }}
+        run: |
+          {
+            echo "## Released $TAG"
+            echo ""
+            echo "- Version tag: \`$TAG\`"
+            echo "- Major pointer: \`$MAJOR\`"
+            echo "- Release: https://github.com/${{ github.repository }}/releases/tag/$TAG"
+            echo ""
+            echo "Marketplace listing updates automatically (assuming the listing"
+            echo "exists — first publish must be done manually via the Releases UI)."
+          } >> "$GITHUB_STEP_SUMMARY"

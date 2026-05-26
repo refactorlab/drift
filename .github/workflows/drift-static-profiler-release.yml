@@ -35,8 +35,65 @@ permissions:
   contents: write  # upload-rust-binary-action attaches assets to the release
 
 jobs:
+  # taiki-e/upload-rust-binary-action REQUIRES a GitHub Release to exist
+  # beforehand — it uploads assets to releases but does not create them.
+  # This job creates the tag (workflow_dispatch path) and the empty release
+  # once; the matrix `build` job then uploads each platform's archive to it.
+  # Without this, all 5 matrix legs race and every leg fails at the upload
+  # step because no release matches the ref.
+  create-release:
+    name: create release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # workflow_dispatch path: create the tag on the current commit so the
+      # downstream release creation + matrix upload steps can resolve it.
+      - name: Create tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — proceeding."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      # Idempotent: skips creation if a release for this tag already exists.
+      # prerelease=false so the Marketplace + auto-detect treat it as latest.
+      - name: Create GitHub Release (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -e
+          if curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" >/dev/null 2>&1; then
+            echo "Release for $TAG already exists — using it."
+          else
+            PAYLOAD=$(python3 -c "
+          import json, os
+          print(json.dumps({
+              'tag_name':   os.environ['TAG'],
+              'name':       os.environ['TAG'],
+              'draft':      False,
+              'prerelease': False,
+          }))")
+            curl -sf -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases" \
+              -d "$PAYLOAD" >/dev/null
+            echo "Created release for $TAG"
+          fi
+
   build:
     name: build / ${{ matrix.target }}
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -52,23 +109,6 @@ jobs:
         working-directory: drift-static-profiler
     steps:
       - uses: actions/checkout@v4
-
-      # workflow_dispatch path: create the tag on the current commit so the
-      # rest of the job (which assumes a tag exists) can resolve it.
-      - name: Create tag (workflow_dispatch only)
-        if: github.event_name == 'workflow_dispatch'
-        working-directory: ${{ github.workspace }}
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists — proceeding."
-          else
-            git tag "$TAG"
-            git push origin "$TAG"
-          fi
 
       - uses: dtolnay/rust-toolchain@stable
         with:

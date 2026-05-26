@@ -47,6 +47,7 @@ RESET  := \033[0m
         drift-lab-export drift-lab-export-clean \
         drift-lab-ci-preflight \
         action-scan-demo action-scan-demo-kotlin-exposed action-test action-build \
+        action-render-comment action-render-comment-kotlin action-render-comments \
         hello-test hello-test-clean
 
 # Internal: assert the Tauri signing key exists before invoking cargo. Cheaper
@@ -443,10 +444,15 @@ drift-lab-ci-preflight: drift-lab-viewer-bundle ## CI parity check — viewer + 
 
 # Config — override on CLI to point at a different fixture:
 #   make action-scan-demo FIXTURE=java-spring
-DRIFT_ACTION_FIXTURE  ?= python-fastapi
-DRIFT_ACTION_CHANGED  ?= app/services.py app/repositories.py app/db.py
-DRIFT_ACTION_OUTPUT   ?= tmp/scan-pr-output.json
-DRIFT_ACTION_TMPDIR   ?= tmp/action-inputs
+DRIFT_ACTION_FIXTURE        ?= python-fastapi
+DRIFT_ACTION_CHANGED        ?= app/services.py app/repositories.py app/db.py
+DRIFT_ACTION_OUTPUT         ?= tmp/scan-pr-output.json
+DRIFT_ACTION_TMPDIR         ?= tmp/action-inputs
+# Rendered PR-comment markdown (what `octokit.rest.issues.createComment` would
+# upload as the `body` field). Same string the action posts in CI — handy for
+# eyeballing the comment before pushing.
+DRIFT_ACTION_COMMENT        ?= tmp/pr-comment-python-fastapi.md
+DRIFT_ACTION_COMMENT_KOTLIN ?= tmp/pr-comment-kotlin-ktor.md
 
 # Realistic synthesized inputs that mirror what the Action wrapper
 # pipes into scan-pr on a real PR. Override any of these with custom
@@ -570,6 +576,9 @@ action-scan-demo: ## scan-pr on fastapi WITH realistic Action inputs (commits + 
 	  printf "    code_suggestions:        "; jq -r '.pr_review.code_suggestions | length' $(DRIFT_ACTION_OUTPUT); \
 	fi
 	@printf "    Open $(CYAN)$(DRIFT_ACTION_OUTPUT)$(RESET) to inspect the full JSON.\n"
+	@# Render the exact PR-comment markdown the action would post for this scan,
+	@# so reviewers can preview the comment body next to the raw JSON.
+	@$(MAKE) --no-print-directory action-render-comment
 
 # Per-fixture demo for the Kotlin / Ktor + Exposed-ORM fixture.
 # Same realistic-Action-context plumbing as action-scan-demo but pinned
@@ -626,6 +635,38 @@ action-scan-demo-kotlin-exposed: ## scan-pr on kotlin-ktor WITH realistic Action
 	  printf "    kotlin schema-val libs:  "; jq -r '.pr_review_ext.tech_debt.schema_validation.per_language_known_libraries.kotlin | length' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
 	fi
 	@printf "    Open $(CYAN)$(DRIFT_ACTION_KOTLIN_OUTPUT)$(RESET) to inspect the full JSON.\n"
+	@$(MAKE) --no-print-directory action-render-comment-kotlin
+
+# ── PR-comment renderers ────────────────────────────────────────────────
+# Render the scan-pr JSON into the exact GitHub-Flavored Markdown body the
+# action would POST as `issues.createComment.body`. Useful for:
+#   - eyeballing the comment before opening a PR
+#   - diffing rendered output across fixtures
+#   - feeding the .md into a markdown previewer (VS Code, GitHub gist) to
+#     confirm mermaid / quadrantChart / mindmap / <details> render the way
+#     the spec mockup at action/pr36-github-ui-example.html expects.
+#
+# Inputs: tmp/scan-pr-output*.json (produced by action-scan-demo[-kotlin-exposed])
+# Outputs: tmp/pr-comment-*.md
+action-render-comment: ## Render tmp/scan-pr-output.json → tmp/pr-comment-python-fastapi.md (markdown the action would post)
+	@test -s $(DRIFT_ACTION_OUTPUT) || { \
+	  printf "$(RED)✗$(RESET) $(DRIFT_ACTION_OUTPUT) missing or empty — run $(CYAN)make action-scan-demo$(RESET) first\n"; \
+	  exit 1; }
+	@printf "$(BLUE)▶$(RESET) rendering PR-comment markdown ($(DRIFT_ACTION_OUTPUT) → $(DRIFT_ACTION_COMMENT))\n"
+	@node --experimental-strip-types --no-warnings \
+	  action/scripts/render-comment.ts $(DRIFT_ACTION_OUTPUT) $(DRIFT_ACTION_COMMENT) \
+	  | sed 's/^/    /'
+
+action-render-comment-kotlin: ## Render tmp/scan-pr-output-kotlin-ktor.json → tmp/pr-comment-kotlin-ktor.md
+	@test -s $(DRIFT_ACTION_KOTLIN_OUTPUT) || { \
+	  printf "$(RED)✗$(RESET) $(DRIFT_ACTION_KOTLIN_OUTPUT) missing or empty — run $(CYAN)make action-scan-demo-kotlin-exposed$(RESET) first\n"; \
+	  exit 1; }
+	@printf "$(BLUE)▶$(RESET) rendering PR-comment markdown ($(DRIFT_ACTION_KOTLIN_OUTPUT) → $(DRIFT_ACTION_COMMENT_KOTLIN))\n"
+	@node --experimental-strip-types --no-warnings \
+	  action/scripts/render-comment.ts $(DRIFT_ACTION_KOTLIN_OUTPUT) $(DRIFT_ACTION_COMMENT_KOTLIN) \
+	  | sed 's/^/    /'
+
+action-render-comments: action-render-comment action-render-comment-kotlin ## Render BOTH fixtures' PR-comment markdown
 
 action-build: ## Build the Drift Action bundle (action/src/* → dist/index.js via esbuild)
 	@printf "$(BLUE)▶$(RESET) npm run build (Drift Action)\n"
