@@ -387,6 +387,23 @@ jobs:
           # message rather than a cryptic Tauri error.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Override Cargo.toml's [profile.release] for THIS workflow only.
+          # Cargo.toml has `lto = "fat"` + `codegen-units = 1` so the
+          # production release.yml ships the smallest possible binary, but
+          # those two settings together inflate target/ to ~2-3 GB on the
+          # mac universal build (LLVM bitcode embedded in every .rlib for
+          # whole-program optimization, duplicated across aarch64 +
+          # x86_64 subdirs). The resulting Swatinem/rust-cache@v2 save
+          # in the post-job phase was hitting timeouts on macOS
+          # (cf. rust-cache issues #215 + #225 — both open, no fix).
+          # `thin` LTO keeps cross-crate dead-code-elimination + hot-path
+          # inlining (so the .dmg stays small) but drops the bitcode size
+          # ~half, and codegen-units=16 (default) restores parallel
+          # codegen so the build finishes within timeout-minutes: 45.
+          # Pattern follows corrode.dev's recommended CI/release split:
+          # https://corrode.dev/blog/tips-for-faster-ci-builds/
+          CARGO_PROFILE_RELEASE_LTO: thin
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: |
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
             echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set — this is a fork PR or the secret hasn't been provisioned. cargo tauri build will fail because tauri.conf.json's plugins.updater.pubkey requires a matching private key."

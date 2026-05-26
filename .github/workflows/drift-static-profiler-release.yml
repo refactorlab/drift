@@ -1,0 +1,109 @@
+name: drift-static-profiler / release
+
+# Builds and publishes cross-platform binaries for `drift-static-profiler`.
+# Triggered by a tag of the form `drift-static-profiler-vX.Y.Z`.
+#
+# The Drift GitHub Action (action.yml at repo root) installs these binaries
+# via action/scripts/install-profiler.sh — the asset naming below MUST match
+# what that script expects:
+#
+#     drift-static-profiler-<arch>-<os>.{tar.gz | zip}
+#     + a sibling .sha256 file per asset
+#
+# Pipeline:
+#   build    — 5-platform matrix (linux x86_64+aarch64, macOS x86_64+aarch64,
+#              windows x86_64). Uses taiki-e/upload-rust-binary-action which
+#              handles archive packaging, sha256 generation, and the GitHub
+#              Release upload in one step.
+
+on:
+  push:
+    tags:
+      - 'drift-static-profiler-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. drift-static-profiler-v0.6.0). Created on the current commit if it does not exist.'
+        required: true
+
+# Serialize releases so two pushes can't race on the same tag.
+concurrency:
+  group: drift-static-profiler-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write  # upload-rust-binary-action attaches assets to the release
+
+jobs:
+  build:
+    name: build / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-latest  }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest  }
+          - { target: x86_64-apple-darwin,       os: macos-latest   }
+          - { target: aarch64-apple-darwin,      os: macos-latest   }
+          - { target: x86_64-pc-windows-msvc,    os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: drift-static-profiler
+    steps:
+      - uses: actions/checkout@v4
+
+      # workflow_dispatch path: create the tag on the current commit so the
+      # rest of the job (which assumes a tag exists) can resolve it.
+      - name: Create tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: ${{ github.workspace }}
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — proceeding."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Cross-compile aarch64 Linux requires a cross linker. The other 4
+      # targets all build natively on their respective runner.
+      - name: Install aarch64 linker (Linux only)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq -y gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          {
+            echo '[target.aarch64-unknown-linux-gnu]'
+            echo 'linker = "aarch64-linux-gnu-gcc"'
+          } >> .cargo/config.toml
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-static-profiler
+          key: ${{ matrix.target }}
+
+      # Builds, archives, generates `<archive>.sha256`, and uploads everything
+      # to the GitHub Release matching the current tag. Asset naming follows
+      # `drift-static-profiler-<target>.{tar.gz | zip}` — the format
+      # install-profiler.sh downloads.
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: drift-static-profiler
+          target: ${{ matrix.target }}
+          archive: $bin-$target
+          tar: unix
+          zip: windows
+          checksum: sha256
+          manifest-path: drift-static-profiler/Cargo.toml
+          ref: refs/tags/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
