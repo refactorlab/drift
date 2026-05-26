@@ -1,0 +1,108 @@
+name: drift-static-profiler / version-bump PR
+
+# Opens (or updates) a PR that bumps drift-static-profiler's version — the
+# AUTOMATED entry to the "release on version bump" model.
+#
+# `main` is protected, so the bump must land via a reviewable PR. Merging
+# that PR changes drift-static-profiler/Cargo.toml on main, which triggers
+# drift-static-profiler-release.yml to build + publish the release. The
+# binary's `--version` matches the tag because the version is committed
+# BEFORE the build.
+#
+# You can ALSO bump by pushing a Cargo.toml version change to main directly
+# (if you can bypass branch protection) — the release workflow's push
+# trigger fires either way. This workflow just automates *producing* that
+# change as a clean, reviewable PR.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Semver level to bump drift-static-profiler to.'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write        # push the release/* branch
+  pull-requests: write   # open / update the PR
+
+# Only one bump PR in flight at a time.
+concurrency:
+  group: drift-static-profiler-bump
+  cancel-in-progress: false
+
+jobs:
+  bump-pr:
+    name: open bump PR (${{ github.event.inputs.bump }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pure-bash semver bump — no Rust toolchain needed. Edits BOTH the
+      # manifest and the crate's own Cargo.lock entry so the PR is clean.
+      # Handles plain MAJOR.MINOR.PATCH (the only form this crate uses);
+      # mirrors the version parsing already in the release workflow.
+      - name: Bump version
+        id: bump
+        run: |
+          set -euo pipefail
+          manifest=drift-static-profiler/Cargo.toml
+          lock=drift-static-profiler/Cargo.lock
+
+          old=$(grep -m1 '^version' "$manifest" | sed -E 's/.*"([^"]+)".*/\1/')
+          IFS='.' read -r MA MI PA <<< "$old"
+          case "${{ github.event.inputs.bump }}" in
+            major) MA=$((MA + 1)); MI=0; PA=0 ;;
+            minor) MI=$((MI + 1)); PA=0 ;;
+            patch) PA=$((PA + 1)) ;;
+            *) echo "::error::unknown bump level '${{ github.event.inputs.bump }}'"; exit 1 ;;
+          esac
+          new="${MA}.${MI}.${PA}"
+          echo "🔖 drift-static-profiler ${old} → ${new} (${{ github.event.inputs.bump }})"
+
+          # Bump the package version (the FIRST `version = "..."` line; deps
+          # are `name = "..."` / `name = { version = ... }` and never match
+          # the `^version` anchor).
+          sed -i -E '0,/^version = "[^"]+"/ s//version = "'"${new}"'"/' "$manifest"
+
+          # Sync the crate's OWN entry in Cargo.lock: match its `name` line,
+          # then the very next line is its `version` (consecutive in the
+          # [[package]] block). Leaves all dependency pins untouched.
+          sed -i -E '/^name = "drift-static-profiler"$/{n; s/^version = "[^"]+"/version = "'"${new}"'"/}' "$lock"
+
+          # Guard: fail loudly if either file didn't actually change.
+          if ! grep -q "^version = \"${new}\"" "$manifest"; then
+            echo "::error::Cargo.toml was not bumped to ${new}"; exit 1
+          fi
+
+          {
+            echo "old=$old"
+            echo "new=$new"
+            echo "tag=drift-static-profiler-v${new}"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice title=Version bump::drift-static-profiler ${old} → ${new}"
+
+      - name: Create / update release PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ github.token }}
+          base: main
+          branch: release/drift-static-profiler-v${{ steps.bump.outputs.new }}
+          delete-branch: true
+          add-paths: |
+            drift-static-profiler/Cargo.toml
+            drift-static-profiler/Cargo.lock
+          commit-message: 'release(profiler): drift-static-profiler v${{ steps.bump.outputs.new }}'
+          title: 'release(profiler): drift-static-profiler v${{ steps.bump.outputs.new }}'
+          labels: release
+          body: |
+            Automated version bump **${{ steps.bump.outputs.old }} → ${{ steps.bump.outputs.new }}** (`${{ github.event.inputs.bump }}`).
+
+            Merging this PR changes `drift-static-profiler/Cargo.toml` on `main`, which triggers
+            **drift-static-profiler / release** to build + publish **${{ steps.bump.outputs.tag }}**
+            for `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
+
+            > ℹ️ PRs opened by `GITHUB_TOKEN` don't trigger required status checks. If branch
+            > protection blocks the merge, an admin can "merge without waiting for requirements",
+            > or swap `token:` for a GitHub App / PAT token to make checks run.
