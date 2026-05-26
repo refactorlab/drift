@@ -1,0 +1,126 @@
+name: 'Drift Performance Scan'
+description: 'Static performance analysis on every PR with one-click code suggestions.'
+author: 'Drift'
+
+branding:
+  icon: 'activity'
+  color: 'purple'
+
+inputs:
+  profiler-version:
+    description: 'drift-static-profiler release tag to install (e.g. v0.6.0).'
+    required: false
+    default: 'v0.6.0'
+  profiler-repo:
+    description: 'GitHub repo hosting the drift-static-profiler releases.'
+    required: false
+    default: 'drift-dev/drift'
+  report-path:
+    description: 'Path the scan step writes its JSON report to.'
+    required: false
+    default: '/tmp/drift-report.json'
+  fail-on:
+    description: 'Verdict that should fail the check: never | regression | any.'
+    required: false
+    default: 'regression'
+  comment:
+    description: 'Post a sticky PR comment with the verdict summary.'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'Token used to post the Check Run, review, and PR comment.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  files-changed:
+    description: 'Number of files changed in this PR per the scan.'
+    value: ${{ steps.review.outputs.files-changed }}
+  high-issues:
+    description: 'Number of high-severity issues detected.'
+    value: ${{ steps.review.outputs.high-issues }}
+  suggestions-shown:
+    description: 'Number of code suggestions that passed the quality bar.'
+    value: ${{ steps.review.outputs.suggestions-shown }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install drift-static-profiler
+      shell: bash
+      env:
+        DRIFT_PROFILER_VERSION: ${{ inputs.profiler-version }}
+        DRIFT_PROFILER_REPO: ${{ inputs.profiler-repo }}
+      run: ${{ github.action_path }}/action/scripts/install-profiler.sh
+
+    - name: Compute changed files + diff stats + commits + PR context
+      id: diff
+      shell: bash
+      env:
+        # github.event.pull_request fields the scanner consumes for counts,
+        # business_logic, and value-card axes. Empty strings are fine when not
+        # in a pull_request workflow — the scanner treats them as absent.
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY:  ${{ github.event.pull_request.body }}
+      run: |
+        # `actions/checkout@v4` with fetch-depth: 0 must have run before us so
+        # we can resolve the base ref. Fall back to a fetch in case the caller
+        # used a shallow checkout.
+        if ! git rev-parse --verify "origin/${GITHUB_BASE_REF}" >/dev/null 2>&1; then
+          git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
+        fi
+        merge_base=$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)
+
+        out="${RUNNER_TEMP:-/tmp}"
+        # 1) File paths — feeds --changed-files
+        git diff --name-only --diff-filter=ACMRT "$merge_base" HEAD > "$out/drift-changed-files.txt"
+        # 2) Diff stats (additions/deletions/path) — feeds --diff-stats / value_money.loc_added
+        git diff --numstat --diff-filter=ACMRT "$merge_base" HEAD > "$out/drift-diff-stats.tsv"
+        # 3) Commit subjects — feeds --commits / counts.features / counts.bug_fixes
+        git log --format='%s' "$merge_base..HEAD" > "$out/drift-commits.txt"
+
+        echo "changed-files=$out/drift-changed-files.txt" >> "$GITHUB_OUTPUT"
+        echo "diff-stats=$out/drift-diff-stats.tsv"       >> "$GITHUB_OUTPUT"
+        echo "commits=$out/drift-commits.txt"             >> "$GITHUB_OUTPUT"
+        echo "merge-base=$merge_base"                      >> "$GITHUB_OUTPUT"
+
+        echo "📝 $(wc -l < "$out/drift-changed-files.txt") changed file(s) · $(wc -l < "$out/drift-commits.txt") commit(s)"
+
+    - name: Scan the PR
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH:   ${{ inputs.report-path }}
+        DRIFT_CHANGED_FILES: ${{ steps.diff.outputs.changed-files }}
+        DRIFT_DIFF_STATS:    ${{ steps.diff.outputs.diff-stats }}
+        DRIFT_COMMITS:       ${{ steps.diff.outputs.commits }}
+        # Merge-base SHA — feeds --base-sha so the scanner can reconstruct
+        # the BEFORE architecture graph (otherwise it's a placeholder).
+        DRIFT_BASE_SHA:      ${{ steps.diff.outputs.merge-base }}
+        # `github.event.pull_request.title|body` arrive here as raw strings;
+        # passing them via --pr-title / --pr-body avoids needing a temp file.
+        # An empty string disables that source (scanner treats absent as null).
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY:  ${{ github.event.pull_request.body }}
+      run: |
+        # Build the argv conditionally — drift-static-profiler rejects unknown
+        # empty-value flags, so we only pass optional flags when set.
+        args=( scan-pr . \
+          --changed-files "$DRIFT_CHANGED_FILES" \
+          --diff-stats "$DRIFT_DIFF_STATS" \
+          --commits "$DRIFT_COMMITS" \
+          --pretty \
+          --output "$DRIFT_REPORT_PATH" )
+        [ -n "$DRIFT_BASE_SHA" ] && args+=( --base-sha "$DRIFT_BASE_SHA" )
+        [ -n "$PR_TITLE" ]       && args+=( --pr-title "$PR_TITLE" )
+        [ -n "$PR_BODY"  ]       && args+=( --pr-body  "$PR_BODY"  )
+        drift-static-profiler "${args[@]}"
+
+    - name: Post Drift review
+      id: review
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH: ${{ inputs.report-path }}
+        DRIFT_FAIL_ON: ${{ inputs.fail-on }}
+        DRIFT_COMMENT: ${{ inputs.comment }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "${{ github.action_path }}/dist/index.js"
