@@ -57,6 +57,29 @@ async function aiContextMain(): Promise<void> {
       `${result.diffFiles} diff file(s), ` +
       `source=${result.source} → ${outPath}`,
   );
+  // Diagnostics — make an empty/fallback context debuggable from the logs.
+  core.info(
+    `   diagnostics: reportLoaded=${result.reportLoaded}, ` +
+      `code_suggestions_in_report=${result.codeSuggestionsInReport}, ` +
+      `diff_strategy=${result.diffStrategy}`,
+  );
+  if (result.reportLoaded && result.codeSuggestionsInReport === 0) {
+    core.info(
+      '   note: scanner report loaded but emitted 0 code_suggestions — ' +
+        'AI ran in diff-fallback mode (no focal points to enrich).',
+    );
+  }
+  if (!result.reportLoaded) {
+    core.warning(
+      `   scanner report not found/parseable at ${reportPath} — AI context is diff-only.`,
+    );
+  }
+  if (result.diffStrategy === 'none') {
+    core.warning(
+      '   git diff produced no hunks (shallow clone with no shared history?) — ' +
+        'GPT-5 has no diff lines to anchor suggestions to.',
+    );
+  }
 }
 
 aiContextMain().catch((err) => {

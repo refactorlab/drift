@@ -34,6 +34,10 @@ export type BuildContextResult = {
   focalPoints: number;
   diffFiles: number;
   source: 'focal+diff' | 'diff-fallback';
+  // Diagnostics — surfaced so an empty result is debuggable from the logs.
+  reportLoaded: boolean;
+  codeSuggestionsInReport: number;
+  diffStrategy: 'three-dot' | 'two-dot' | 'none';
 };
 
 const CODE_WINDOW_BEFORE = 8;
@@ -62,6 +66,7 @@ export function buildAIContext(args: BuildContextArgs): BuildContextResult {
     // Fall through — report is optional context.
   }
 
+  const codeSuggestionsInReport = report?.pr_review?.code_suggestions?.length ?? 0;
   const focalSuggestions = pickFocalSuggestions(report, maxFocalPoints);
   const source: BuildContextResult['source'] =
     focalSuggestions.length > 0 ? 'focal+diff' : 'diff-fallback';
@@ -122,6 +127,9 @@ export function buildAIContext(args: BuildContextArgs): BuildContextResult {
     focalPoints: focalSuggestions.length,
     diffFiles: diff.fileCount,
     source,
+    reportLoaded: report !== null,
+    codeSuggestionsInReport,
+    diffStrategy: diff.strategy,
   };
 }
 
@@ -226,35 +234,57 @@ function getPrDiff(
   headSha: string,
   maxFiles: number,
   focalFiles: Set<string>,
-): { text: string; fileCount: number } {
-  let names: string[];
-  try {
-    const raw = execFileSync(
-      'git',
-      ['diff', '--name-only', `${baseSha}...${headSha}`],
-      { cwd: workspaceRoot, encoding: 'utf8' },
-    );
-    names = raw.split('\n').map((s) => s.trim()).filter(Boolean);
-  } catch {
-    return { text: '', fileCount: 0 };
-  }
+): { text: string; fileCount: number; strategy: 'three-dot' | 'two-dot' | 'none' } {
+  // Three-dot (`base...head`) is what GitHub's "Files changed" uses, but it
+  // needs the merge-base commit — absent on the shallow clones actions/checkout
+  // produces, which fails with "no merge base". Two-dot (`base..head`) diffs
+  // the two endpoints directly and only needs both commit objects present
+  // (our fetch step guarantees that). Try three-dot for fidelity, fall back.
+  const names = gitDiffNames(workspaceRoot, baseSha, headSha);
+  if (!names) return { text: '', fileCount: 0, strategy: 'none' };
 
   // Prefer focal files; pad with other changed files until we hit max.
   const prioritized: string[] = [];
-  for (const n of names) if (focalFiles.has(n)) prioritized.push(n);
-  for (const n of names) {
+  for (const n of names.files) if (focalFiles.has(n)) prioritized.push(n);
+  for (const n of names.files) {
     if (!focalFiles.has(n) && prioritized.length < maxFiles) prioritized.push(n);
   }
   const slice = prioritized.slice(0, maxFiles);
-  if (slice.length === 0) return { text: '', fileCount: 0 };
+  if (slice.length === 0) return { text: '', fileCount: 0, strategy: names.strategy };
 
+  const range = names.strategy === 'three-dot' ? `${baseSha}...${headSha}` : `${baseSha}..${headSha}`;
   try {
-    const args = ['diff', '--unified=5', `${baseSha}...${headSha}`, '--', ...slice];
+    const args = ['diff', '--unified=5', range, '--', ...slice];
     const text = execFileSync('git', args, { cwd: workspaceRoot, encoding: 'utf8' });
-    return { text, fileCount: slice.length };
+    return { text, fileCount: slice.length, strategy: names.strategy };
   } catch {
-    return { text: '', fileCount: 0 };
+    return { text: '', fileCount: 0, strategy: names.strategy };
   }
+}
+
+/**
+ * `git diff --name-only` with a three-dot→two-dot fallback. Returns the
+ * file list plus which range strategy actually succeeded (so the diff
+ * step below uses the same one).
+ */
+function gitDiffNames(
+  workspaceRoot: string,
+  baseSha: string,
+  headSha: string,
+): { files: string[]; strategy: 'three-dot' | 'two-dot' } | null {
+  for (const [sep, strategy] of [['...', 'three-dot'], ['..', 'two-dot']] as const) {
+    try {
+      const raw = execFileSync(
+        'git',
+        ['diff', '--name-only', `${baseSha}${sep}${headSha}`],
+        { cwd: workspaceRoot, encoding: 'utf8' },
+      );
+      return { files: raw.split('\n').map((s) => s.trim()).filter(Boolean), strategy };
+    } catch {
+      // try the next separator
+    }
+  }
+  return null;
 }
 
 function oneLine(s: string): string {

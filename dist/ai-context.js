@@ -19165,6 +19165,7 @@ function buildAIContext(args) {
     if ((0, import_node_fs2.existsSync)(reportPath)) report = loadReport(reportPath);
   } catch {
   }
+  const codeSuggestionsInReport = report?.pr_review?.code_suggestions?.length ?? 0;
   const focalSuggestions = pickFocalSuggestions(report, maxFocalPoints);
   const source = focalSuggestions.length > 0 ? "focal+diff" : "diff-fallback";
   if (report) {
@@ -19217,7 +19218,10 @@ function buildAIContext(args) {
     bytes: text.length,
     focalPoints: focalSuggestions.length,
     diffFiles: diff.fileCount,
-    source
+    source,
+    reportLoaded: report !== null,
+    codeSuggestionsInReport,
+    diffStrategy: diff.strategy
   };
 }
 function pickFocalSuggestions(report, max) {
@@ -19283,31 +19287,37 @@ function readCodeWindow(workspaceRoot, file, line, before, after) {
   return out.join("\n");
 }
 function getPrDiff(workspaceRoot, baseSha, headSha, maxFiles, focalFiles) {
-  let names;
-  try {
-    const raw = (0, import_node_child_process.execFileSync)(
-      "git",
-      ["diff", "--name-only", `${baseSha}...${headSha}`],
-      { cwd: workspaceRoot, encoding: "utf8" }
-    );
-    names = raw.split("\n").map((s) => s.trim()).filter(Boolean);
-  } catch {
-    return { text: "", fileCount: 0 };
-  }
+  const names = gitDiffNames(workspaceRoot, baseSha, headSha);
+  if (!names) return { text: "", fileCount: 0, strategy: "none" };
   const prioritized = [];
-  for (const n of names) if (focalFiles.has(n)) prioritized.push(n);
-  for (const n of names) {
+  for (const n of names.files) if (focalFiles.has(n)) prioritized.push(n);
+  for (const n of names.files) {
     if (!focalFiles.has(n) && prioritized.length < maxFiles) prioritized.push(n);
   }
   const slice = prioritized.slice(0, maxFiles);
-  if (slice.length === 0) return { text: "", fileCount: 0 };
+  if (slice.length === 0) return { text: "", fileCount: 0, strategy: names.strategy };
+  const range = names.strategy === "three-dot" ? `${baseSha}...${headSha}` : `${baseSha}..${headSha}`;
   try {
-    const args = ["diff", "--unified=5", `${baseSha}...${headSha}`, "--", ...slice];
+    const args = ["diff", "--unified=5", range, "--", ...slice];
     const text = (0, import_node_child_process.execFileSync)("git", args, { cwd: workspaceRoot, encoding: "utf8" });
-    return { text, fileCount: slice.length };
+    return { text, fileCount: slice.length, strategy: names.strategy };
   } catch {
-    return { text: "", fileCount: 0 };
+    return { text: "", fileCount: 0, strategy: names.strategy };
   }
+}
+function gitDiffNames(workspaceRoot, baseSha, headSha) {
+  for (const [sep, strategy] of [["...", "three-dot"], ["..", "two-dot"]]) {
+    try {
+      const raw = (0, import_node_child_process.execFileSync)(
+        "git",
+        ["diff", "--name-only", `${baseSha}${sep}${headSha}`],
+        { cwd: workspaceRoot, encoding: "utf8" }
+      );
+      return { files: raw.split("\n").map((s) => s.trim()).filter(Boolean), strategy };
+    } catch {
+    }
+  }
+  return null;
 }
 function oneLine(s) {
   return s.replace(/\s+/g, " ").trim();
@@ -19351,6 +19361,24 @@ async function aiContextMain() {
   info(
     `\u{1F4DD} AI context: ${result.bytes} bytes, ${result.focalPoints} focal point(s), ${result.diffFiles} diff file(s), source=${result.source} \u2192 ${outPath}`
   );
+  info(
+    `   diagnostics: reportLoaded=${result.reportLoaded}, code_suggestions_in_report=${result.codeSuggestionsInReport}, diff_strategy=${result.diffStrategy}`
+  );
+  if (result.reportLoaded && result.codeSuggestionsInReport === 0) {
+    info(
+      "   note: scanner report loaded but emitted 0 code_suggestions \u2014 AI ran in diff-fallback mode (no focal points to enrich)."
+    );
+  }
+  if (!result.reportLoaded) {
+    warning(
+      `   scanner report not found/parseable at ${reportPath} \u2014 AI context is diff-only.`
+    );
+  }
+  if (result.diffStrategy === "none") {
+    warning(
+      "   git diff produced no hunks (shallow clone with no shared history?) \u2014 GPT-5 has no diff lines to anchor suggestions to."
+    );
+  }
 }
 aiContextMain().catch((err) => {
   warning(

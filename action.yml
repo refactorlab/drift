@@ -353,7 +353,10 @@ runs:
       with:
         model: ${{ inputs.ai-model }}
         token: ${{ inputs.github-token }}
-        max-completion-tokens: '4000'
+        # NOTE: the pinned @v1 tag exposes `max-tokens` (not the newer
+        # `max-completion-tokens`). 200 is the default — far too small
+        # for a JSON array of suggestions, so we raise it.
+        max-tokens: '4000'
         system-prompt: |
           You are an expert senior reviewer producing INLINE GitHub PR
           code suggestions. The user prompt below contains:
@@ -403,7 +406,9 @@ runs:
           Hard limits: max 8 suggestions. If nothing clears the bar,
           output `{"suggestions": []}`. Silence is better than noise.
         prompt-file: ${{ steps.ai-context.outputs.path }}
-        response-file: ${{ runner.temp }}/ai-suggestions.json
+        # @v1 has no `response-file` INPUT — it auto-saves the model
+        # response to a temp file and exposes the path as the
+        # `response-file` OUTPUT, which the post step reads below.
 
     # ─── 12. Post AI suggestions as a PR review (Octokit) ────────────
     # Runs the compiled bundle at dist/ai-suggest.js. It reads the
@@ -421,7 +426,11 @@ runs:
         github.event.pull_request != null
       shell: bash
       env:
-        AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
+        # The inference action wrote the model response here and
+        # surfaced the path as its `response-file` output. The output
+        # name contains a dash, so it MUST be read with index syntax
+        # (dot syntax `outputs.response-file` parses as subtraction).
+        AI_SUGGESTIONS_PATH:      ${{ steps.ai.outputs['response-file'] }}
         DRIFT_MAX_AI_SUGGESTIONS: ${{ inputs.ai-max-suggestions }}
         DRIFT_AI_MODEL:           ${{ inputs.ai-model }}
         GITHUB_TOKEN:             ${{ inputs.github-token }}
