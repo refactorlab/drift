@@ -5,6 +5,7 @@
 //! tree-based pipeline, but in milliseconds.
 
 use drift_static_profiler::orm::scan_workspace;
+use drift_static_profiler::walker::WalkOpts;
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> PathBuf {
@@ -12,6 +13,13 @@ fn fixture(name: &str) -> PathBuf {
     p.push("tests/fixtures");
     p.push(name);
     p
+}
+
+/// Mirrors the production CLI posture (`run_orm_scan`) — default
+/// gitignore/driftignore behavior, tests included. Lives here so
+/// every test goes through the same walker config.
+fn walk_opts() -> WalkOpts {
+    WalkOpts::default()
 }
 
 fn rule_ids(findings: &[(PathBuf, drift_static_profiler::insights::Finding)]) -> Vec<String> {
@@ -24,7 +32,7 @@ fn rule_ids(findings: &[(PathBuf, drift_static_profiler::insights::Finding)]) ->
 #[test]
 fn orm_scan_python_django_finds_expected_rules() {
     let root = fixture("python-django");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["DJ-N1-001", "DJ-PERF-007", "DJ-RAW-011", "DJ-N1-003"] {
         assert!(
@@ -37,7 +45,7 @@ fn orm_scan_python_django_finds_expected_rules() {
 #[test]
 fn orm_scan_python_sqlalchemy_finds_expected_rules() {
     let root = fixture("python-sqlalchemy");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["SA-EXEC-009", "SA-LAZY-008", "SA-SESS-007", "SA-N1-001"] {
         assert!(
@@ -50,7 +58,7 @@ fn orm_scan_python_sqlalchemy_finds_expected_rules() {
 #[test]
 fn orm_scan_typescript_prisma_finds_expected_rules() {
     let root = fixture("typescript-prisma");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["PRI-N1-002", "PRI-RAW-003", "PRI-PAG-004"] {
         assert!(
@@ -63,7 +71,7 @@ fn orm_scan_typescript_prisma_finds_expected_rules() {
 #[test]
 fn orm_scan_java_jpa_finds_expected_rules() {
     let root = fixture("java-jpa");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["JPA-N1-001", "JPA-SAVE-004"] {
         assert!(
@@ -76,7 +84,7 @@ fn orm_scan_java_jpa_finds_expected_rules() {
 #[test]
 fn orm_scan_go_gorm_finds_expected_rules() {
     let root = fixture("go-gorm");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["GORM-N1-001", "GORM-RAW-002", "GORM-AUTO-003"] {
         assert!(
@@ -89,7 +97,7 @@ fn orm_scan_go_gorm_finds_expected_rules() {
 #[test]
 fn orm_scan_rust_sqlx_finds_expected_rules() {
     let root = fixture("rust-sqlx");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["SQLX-RAW-001", "SQLX-N1-002"] {
         assert!(
@@ -102,7 +110,7 @@ fn orm_scan_rust_sqlx_finds_expected_rules() {
 #[test]
 fn orm_scan_python_llm_finds_expected_rules() {
     let root = fixture("python-llm");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["LLM-CLI-001", "LLM-LOOP-002", "LLM-SYNC-003", "LLM-CACHE-004"] {
         assert!(
@@ -115,7 +123,7 @@ fn orm_scan_python_llm_finds_expected_rules() {
 #[test]
 fn orm_scan_python_auth_crypto_finds_expected_rules() {
     let root = fixture("python-auth-crypto");
-    let findings = scan_workspace(&root, 1000);
+    let findings = scan_workspace(&root, 1000, &walk_opts());
     let ids = rule_ids(&findings);
     for expected in ["AC-BCRYPT-001", "AC-RSA-002", "AC-JWKS-003"] {
         assert!(
@@ -130,7 +138,7 @@ fn orm_scan_is_fast() {
     // All fixtures combined should scan in well under 5 seconds.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let start = std::time::Instant::now();
-    let findings = scan_workspace(&root, 8000);
+    let findings = scan_workspace(&root, 8000, &walk_opts());
     let elapsed = start.elapsed();
     assert!(
         elapsed.as_secs() < 5,

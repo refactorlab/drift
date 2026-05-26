@@ -1,84 +1,101 @@
-import { runProfile, type ProfileReport } from './profile.ts';
-import { uploadScan } from './api.ts';
-import { createCheckRun } from './check.ts';
-import { upsertStickyComment } from './comment.ts';
-import { setOutput, setFailed, info, getInput, getEvent } from './core.ts';
-import { checkConclusion, shouldFail } from './render.ts';
+import * as core from '@actions/core';
+import { context, getOctokit } from '@actions/github';
+import { loadReport, passesQualityBar } from './report.ts';
+import { renderOverview } from './render/overview.ts';
+import { upsertStickyComment } from './github/comment.ts';
+import { postReview } from './github/review.ts';
+import { createCheckRun } from './github/check.ts';
 
 export async function main(): Promise<void> {
-  const apiUrl = getInput('DRIFT_API_URL', 'https://api.drift.dev');
-  const apiToken = getInput('DRIFT_API_TOKEN');
-  const profileCommand = getInput('DRIFT_PROFILE_COMMAND', 'npx drift-profile');
-  const failOn = getInput('DRIFT_FAIL_ON', 'regression') as
-    | 'never'
-    | 'regression'
-    | 'any';
-  const wantComment = getInput('DRIFT_COMMENT', 'true') === 'true';
-  const githubToken = getInput('GITHUB_TOKEN');
-
-  const event = getEvent();
-  const pr = event.pull_request;
+  const pr = context.payload.pull_request;
   if (!pr) {
-    info('No pull_request payload — Drift only runs on pull_request events. Skipping.');
+    core.info('No pull_request payload — Drift only runs on pull_request events. Skipping.');
     return;
   }
 
-  const repoFull = process.env.GITHUB_REPOSITORY;
-  if (!repoFull) throw new Error('GITHUB_REPOSITORY is not set');
-  const [owner, repo] = repoFull.split('/');
-  const headSha = pr.head.sha;
-  const baselineRef = getInput('DRIFT_BASELINE_REF') || pr.base.ref;
-
-  info(`Profiling PR #${pr.number} (${headSha.slice(0, 7)}) against ${baselineRef}`);
-  const report: ProfileReport = await runProfile(profileCommand);
-
-  info(`Uploading scan to ${apiUrl}`);
-  const scan = await uploadScan(apiUrl, apiToken, {
-    repo: { owner, name: repo },
-    pr: {
-      number: pr.number,
-      title: pr.title,
-      branch: pr.head.ref,
-      baseBranch: pr.base.ref,
-      author: pr.user.login,
-      url: pr.html_url,
-      headSha,
-    },
-    baselineRef,
-    report,
-  });
-
-  setOutput('scan-id', String(scan.id));
-  setOutput('scan-url', scan.url);
-  setOutput('verdict', scan.verdict);
-  setOutput('p95-latency-ms', String(scan.p95LatencyMs));
-
-  info(`Verdict: ${scan.verdict} (p95 ${scan.p95LatencyMs}ms vs baseline ${scan.p95BaselineMs}ms)`);
-
-  if (githubToken) {
-    await createCheckRun({
-      token: githubToken,
-      owner,
-      repo,
-      headSha,
-      conclusion: checkConclusion(scan.verdict),
-      scan,
-    });
-    if (wantComment) {
-      await upsertStickyComment({
-        token: githubToken,
-        owner,
-        repo,
-        prNumber: pr.number,
-        scan,
-      });
-    }
-  } else {
-    info('No GITHUB_TOKEN provided — skipping check run + PR comment');
+  const reportPath = process.env.DRIFT_REPORT_PATH;
+  if (!reportPath) {
+    throw new Error('DRIFT_REPORT_PATH is not set — the scan step must produce a JSON report.');
   }
 
-  if (shouldFail(scan.verdict, failOn)) {
-    setFailed(`Drift verdict: ${scan.verdict}. See ${scan.url}`);
+  const failOn = (process.env.DRIFT_FAIL_ON ?? 'regression') as 'never' | 'regression' | 'any';
+  const wantComment = (process.env.DRIFT_COMMENT ?? 'true') === 'true';
+  const githubToken = process.env.GITHUB_TOKEN ?? '';
+
+  core.info(`Loading Drift report from ${reportPath}`);
+  const report = loadReport(reportPath);
+  const suggestions = report.pr_review?.code_suggestions ?? [];
+  const passing = suggestions.filter(passesQualityBar);
+
+  core.setOutput('changed-files', String(report.pr_scope.changed_files.length));
+  core.setOutput('affected-roots', String(report.pr_scope.affected_roots.length));
+  core.setOutput('unreachable-changes', String(report.pr_scope.unreachable_changes.length));
+  core.setOutput('suggestions-shown', String(passing.length));
+
+  core.info(
+    `Report ${report.schema_version}: ${report.pr_scope.changed_files.length} changed file(s), ` +
+      `${report.pr_scope.affected_roots.length} affected root(s), ` +
+      `${passing.length}/${suggestions.length} suggestions pass quality bar`,
+  );
+
+  if (!githubToken) {
+    core.warning('No GITHUB_TOKEN provided — skipping check run + PR comment + review.');
+    return;
+  }
+
+  const octokit = getOctokit(githubToken);
+  const { owner, repo } = context.repo;
+  const headSha: string = pr.head.sha;
+  const prNumber: number = pr.number;
+
+  const tasks: Promise<unknown>[] = [
+    createCheckRun({ octokit, owner, repo, headSha, report }).catch((err) =>
+      core.warning(`check run failed: ${describeError(err)}`),
+    ),
+    postReview({
+      octokit,
+      owner,
+      repo,
+      prNumber,
+      headSha,
+      suggestions,
+    }).catch((err) => core.warning(`review failed: ${describeError(err)}`)),
+  ];
+
+  if (wantComment) {
+    tasks.push(
+      upsertStickyComment({
+        octokit,
+        owner,
+        repo,
+        prNumber,
+        body: renderOverview(report),
+      }).catch((err) => core.warning(`sticky comment failed: ${describeError(err)}`)),
+    );
+  }
+
+  await Promise.all(tasks);
+
+  if (shouldFail(report, failOn, passing.length)) {
+    const correctness = passing.filter((s) => s.category === 'B').length;
+    core.setFailed(
+      `Drift found ${correctness} product-correctness issue(s) above threshold.`,
+    );
   }
 }
 
+function shouldFail(
+  report: { pr_review?: { code_suggestions?: { category: 'A' | 'B' | 'C' }[] } },
+  failOn: 'never' | 'regression' | 'any',
+  passingCount: number,
+): boolean {
+  if (failOn === 'never') return false;
+  const passing = (report.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
+  const correctness = passing.filter((s) => s.category === 'B').length;
+  if (failOn === 'any') return passingCount > 0;
+  return correctness > 0; // 'regression' = any product-correctness issue
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

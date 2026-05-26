@@ -45,7 +45,9 @@ RESET  := \033[0m
         drift-lab-viewer-bundle \
         drift-lab-build drift-lab-build-release drift-lab-verify \
         drift-lab-export drift-lab-export-clean \
-        drift-lab-ci-preflight
+        drift-lab-ci-preflight \
+        action-scan-demo action-scan-demo-kotlin-exposed action-test action-build \
+        hello-test hello-test-clean
 
 # Internal: assert the Tauri signing key exists before invoking cargo. Cheaper
 # to fail here than wait for the bundle stage to hit the same wall. The key
@@ -421,3 +423,215 @@ drift-lab-ci-preflight: drift-lab-viewer-bundle ## CI parity check — viewer + 
 	@bash drift-lab/scripts/ci/test.sh
 	@printf "$(GREEN)✓$(RESET) preflight passed\n"
 	@printf "    (run $(CYAN)make drift-lab-verify$(RESET) for the heavier mirror: cargo check + lib tests)\n"
+
+### Drift Action — GitHub Action (action/) + scan-pr integration
+# Targets that exercise the end-to-end scanner → action JSON contract,
+# simulating EXACTLY what the GitHub Action wrapper has access to at
+# runtime. Per
+#   - actions/checkout@v4 docs (https://github.com/actions/checkout)
+#   - tj-actions/changed-files docs (https://github.com/tj-actions/changed-files)
+#   - github.event.pull_request context
+# the Action can compute:
+#   - changed files list      → `git diff --name-only --diff-filter=ACMRT $BASE $HEAD`
+#   - diff stats              → `git diff --numstat $BASE $HEAD`
+#   - commit messages         → `git log $BASE..$HEAD --format=%B%x00`
+#   - PR title/body/labels    → from `$GITHUB_EVENT_PATH` JSON
+# These four artifacts are everything the algorithms need. The make
+# targets below SIMULATE all four with realistic fixture data so the
+# downstream renderer (action/dist/index.js) sees the SAME JSON shape
+# it will see in production.
+
+# Config — override on CLI to point at a different fixture:
+#   make action-scan-demo FIXTURE=java-spring
+DRIFT_ACTION_FIXTURE  ?= python-fastapi
+DRIFT_ACTION_CHANGED  ?= app/services.py app/repositories.py app/db.py
+DRIFT_ACTION_OUTPUT   ?= tmp/scan-pr-output.json
+DRIFT_ACTION_TMPDIR   ?= tmp/action-inputs
+
+# Realistic synthesized inputs that mirror what the Action wrapper
+# pipes into scan-pr on a real PR. Override any of these with custom
+# files if you want to test edge cases.
+#   commits:      4 conventional-commit messages (feat / fix / perf / docs)
+#   diff stats:   git numstat format (additions TAB deletions TAB path)
+#   pr-context:   JSON matching the OpenAPI PrContext component shape
+### Drift Action — local CI parity test (act)
+# Runs the action's own self-test workflow inside a Docker-based GitHub
+# runner (via `nektos/act`) — the closest you can get to a real GitHub
+# Actions run without pushing to a remote.
+#
+# `--bind` mounts the local repo into the container (vs. the default
+# copy), so `uses: ./` in the workflow resolves to OUR action.yml.
+# This is the canonical self-test pattern used by actions/checkout,
+# actions/setup-node, etc. — checkout the workspace, then `uses: ./`
+# the local action.
+#
+# Required tools (installed via `brew install act` and Docker Desktop):
+#   - act    ≥ 0.2.88
+#   - docker daemon running
+#
+# Event payload: action/.dev/event.json (mock pull_request webhook).
+
+# Cross-compile drift-static-profiler to linux/amd64 inside a Linux Docker
+# container so it runs in the act-emulated GitHub runner. The host (macOS,
+# Windows) produces a binary that wouldn't otherwise be executable in the
+# Linux container.
+#
+# Why a separate target dir? `target/` on the host holds the host-arch
+# build artifacts (macOS .dylib paths, .rmeta, etc.); reusing it for a
+# Linux cross-build corrupts both. `tmp/drift-profiler-linux/target` is
+# entirely owned by the docker build, gitignored, and dropped by
+# `hello-test-clean` below.
+DRIFT_PROFILER_LINUX_TARGET := $(PWD)/tmp/drift-profiler-linux/target
+DRIFT_PROFILER_LINUX_BIN    := $(DRIFT_PROFILER_LINUX_TARGET)/release/drift-static-profiler
+
+$(DRIFT_PROFILER_LINUX_BIN): drift-static-profiler/Cargo.toml drift-static-profiler/Cargo.lock
+	@docker info >/dev/null 2>&1 || { \
+	  printf "$(RED)✗$(RESET) Docker daemon not running — start Docker Desktop and retry\n"; exit 1; }
+	@mkdir -p $(DRIFT_PROFILER_LINUX_TARGET)
+	@printf "$(BLUE)▶$(RESET) cross-building drift-static-profiler for linux/amd64 via docker\n"
+	@printf "    (one-time pull + first build ~3-5 min; rebuilds are incremental ~10s)\n"
+	@docker run --rm \
+	  --platform linux/amd64 \
+	  -v $(PWD)/drift-static-profiler:/src \
+	  -v $(DRIFT_PROFILER_LINUX_TARGET):/src/target \
+	  -w /src \
+	  rust:bookworm \
+	  cargo build --release --quiet
+	@test -x $(DRIFT_PROFILER_LINUX_BIN) || { printf "$(RED)✗$(RESET) cross-build produced no binary\n"; exit 1; }
+	@printf "$(GREEN)✓$(RESET) linux binary at $(CYAN)$(DRIFT_PROFILER_LINUX_BIN)$(RESET)\n"
+
+hello-test: $(DRIFT_PROFILER_LINUX_BIN) ## Run hello+scan action locally via `act` (uses cross-built linux binary)
+	@command -v act >/dev/null 2>&1 || { \
+	  printf "$(RED)✗$(RESET) act not installed — run: $(CYAN)brew install act$(RESET)\n"; exit 1; }
+	@printf "$(BLUE)▶$(RESET) running .github/workflows/drift-hello-test.yml under act\n"
+	@# DRIFT_PROFILER_LOCAL_BIN inside the container points at the SAME
+	@# path the host sees (because --bind mounts the workspace), so the
+	@# install-profiler.sh local-fast-path triggers and skips the
+	@# GitHub-Release download. The cross-built linux/amd64 binary
+	@# matches the runner-container arch so it executes cleanly.
+	@act pull_request \
+	  -W .github/workflows/drift-hello-test.yml \
+	  -e action/.dev/event.json \
+	  -P ubuntu-latest=catthehacker/ubuntu:act-latest \
+	  --container-architecture linux/amd64 \
+	  --bind \
+	  --env DRIFT_PROFILER_LOCAL_BIN=$(DRIFT_PROFILER_LINUX_BIN) \
+	  2>&1 | grep -E "(👋|🛠|📂|🌿|🔁|🔖|📦|🔬|📊|^  (schema|mode|tool|changed|roots|unreachable|pr_review|suggestions):|Success|Failure|error)" | head -40
+	@printf "$(GREEN)✓$(RESET) hello-test complete — see output above\n"
+
+hello-test-clean: ## Drop the cross-built linux binary + its target dir (forces a fresh build next time)
+	@rm -rf $(PWD)/tmp/drift-profiler-linux
+	@printf "$(GREEN)✓$(RESET) cleaned tmp/drift-profiler-linux\n"
+
+action-scan-demo: ## scan-pr on fastapi WITH realistic Action inputs (commits + diff-stats + pr-context)
+	@mkdir -p $$(dirname $(DRIFT_ACTION_OUTPUT)) $(DRIFT_ACTION_TMPDIR)
+	@if [ ! -x drift-static-profiler/target/debug/drift-static-profiler ]; then \
+	  printf "$(BLUE)▶$(RESET) building drift-static-profiler (debug)\n"; \
+	  cd drift-static-profiler && cargo build --quiet; \
+	fi
+	@printf "$(BLUE)▶$(RESET) synthesizing realistic Action-context inputs (commits, diff-stats, pr-context)\n"
+	@# Realistic Conventional-Commits stream — what `git log --format=%B%x00 $$BASE..$$HEAD` emits
+	@printf 'feat(orders): introduce OrderService layer\0fix: handle empty payload\n\nFixes #42\0perf: batch validation pass\0docs(README): document the new endpoint\0' \
+	  > $(DRIFT_ACTION_TMPDIR)/commits.txt
+	@# Realistic `git diff --numstat` output — additions TAB deletions TAB path
+	@printf '32\t5\tapp/services.py\n18\t2\tapp/repositories.py\n4\t8\tapp/db.py\n' \
+	  > $(DRIFT_ACTION_TMPDIR)/diff-stats.tsv
+	@# Realistic PR-context JSON — mirrors $$GITHUB_EVENT_PATH .pull_request shape
+	@printf '%s\n' \
+	    '{' \
+	    '  "title": "feat(orders): introduce OrderService layer",' \
+	    '  "body": "Splits order creation into a dedicated service. Fixes #42. Resolves #58. Replaces inline DB writes with a thin repository.",' \
+	    '  "number": 36,' \
+	    '  "base": { "sha": "deadbeef" }, "head": { "sha": "cafebabe" }' \
+	    '}' \
+	  > $(DRIFT_ACTION_TMPDIR)/pr-context.json
+	@printf "$(BLUE)▶$(RESET) scan-pr (fastapi · $(words $(DRIFT_ACTION_CHANGED)) changed files · with FULL Action context)\n"
+	@printf '%s\n' $(DRIFT_ACTION_CHANGED) | \
+	  drift-static-profiler/target/debug/drift-static-profiler scan-pr \
+	    drift-static-profiler/tests/fixtures/$(DRIFT_ACTION_FIXTURE) \
+	    --changed-files-stdin \
+	    --commits $(DRIFT_ACTION_TMPDIR)/commits.txt \
+	    --diff-stats $(DRIFT_ACTION_TMPDIR)/diff-stats.tsv \
+	    --pr-context-file $(DRIFT_ACTION_TMPDIR)/pr-context.json \
+	    --pretty \
+	    --output $(DRIFT_ACTION_OUTPUT) \
+	  2>&1 | grep -E "^(✓|✗|note:) " || true
+	@SIZE=$$(wc -c < $(DRIFT_ACTION_OUTPUT) | tr -d ' '); \
+	  printf "$(GREEN)✓$(RESET) wrote $(CYAN)$(DRIFT_ACTION_OUTPUT)$(RESET) ($$SIZE bytes)\n"
+	@if command -v jq >/dev/null 2>&1; then \
+	  printf "    pr_scope changed:        "; jq -r '.pr_scope.changed_files | length' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    pr_review present?       "; jq -r 'has("pr_review")' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    counts: feat / fix / issues / new_tests: "; \
+	    jq -r '[.pr_review.counts.features.value, .pr_review.counts.bug_fixes.value, .pr_review.counts.issues_resolved.value, .pr_review.counts.new_test_files.value] | @csv' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    business_logic.summary:  "; jq -r '.pr_review.business_logic.summary | tostring | .[0:80]' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    value_money loc_added:   "; jq -r '.pr_review.value_card.axes[0].inputs.loc_added' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    bottom_line:             "; jq -r '.pr_review.value_card.bottom_line' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    risks count:             "; jq -r '.pr_review.visual_summary.risks.items | length' $(DRIFT_ACTION_OUTPUT); \
+	  printf "    code_suggestions:        "; jq -r '.pr_review.code_suggestions | length' $(DRIFT_ACTION_OUTPUT); \
+	fi
+	@printf "    Open $(CYAN)$(DRIFT_ACTION_OUTPUT)$(RESET) to inspect the full JSON.\n"
+
+# Per-fixture demo for the Kotlin / Ktor + Exposed-ORM fixture.
+# Same realistic-Action-context plumbing as action-scan-demo but pinned
+# to the kotlin-ktor fixture's actual file layout
+# (`src/main/kotlin/com/example/...`). The pr_review block then
+# surfaces Kotlin-specific signals (kotlin schema-validation libs,
+# kotlin test discovery patterns, kotlin file-language detection).
+DRIFT_ACTION_KOTLIN_OUTPUT ?= tmp/scan-pr-output-kotlin-ktor.json
+DRIFT_ACTION_KOTLIN_TMPDIR ?= tmp/action-inputs-kotlin
+action-scan-demo-kotlin-exposed: ## scan-pr on kotlin-ktor WITH realistic Action inputs
+	@mkdir -p $$(dirname $(DRIFT_ACTION_KOTLIN_OUTPUT)) $(DRIFT_ACTION_KOTLIN_TMPDIR)
+	@if [ ! -x drift-static-profiler/target/debug/drift-static-profiler ]; then \
+	  printf "$(BLUE)▶$(RESET) building drift-static-profiler (debug)\n"; \
+	  cd drift-static-profiler && cargo build --quiet; \
+	fi
+	@printf "$(BLUE)▶$(RESET) synthesizing realistic Action-context inputs (commits, diff-stats, pr-context)\n"
+	@printf 'feat(orders): introduce OrdersService\0fix: handle null order ids\n\nFixes #11\0perf: batch query loop in OrdersRepository\0refactor: thin OrdersHandler\0' \
+	  > $(DRIFT_ACTION_KOTLIN_TMPDIR)/commits.txt
+	@printf '24\t3\tsrc/main/kotlin/com/example/handlers/OrdersHandler.kt\n18\t1\tsrc/main/kotlin/com/example/services/OrdersService.kt\n12\t4\tsrc/main/kotlin/com/example/repos/OrdersRepository.kt\n' \
+	  > $(DRIFT_ACTION_KOTLIN_TMPDIR)/diff-stats.tsv
+	@printf '%s\n' \
+	    '{' \
+	    '  "title": "feat(orders): introduce OrdersService layer",' \
+	    '  "body": "Split orders into Handler/Service/Repository. Resolves #11.",' \
+	    '  "number": 7,' \
+	    '  "base": { "sha": "00000000" }, "head": { "sha": "11111111" }' \
+	    '}' \
+	  > $(DRIFT_ACTION_KOTLIN_TMPDIR)/pr-context.json
+	@printf "$(BLUE)▶$(RESET) scan-pr (kotlin-ktor · 3 changed files · with FULL Action context)\n"
+	@printf '%s\n' \
+	    "src/main/kotlin/com/example/handlers/OrdersHandler.kt" \
+	    "src/main/kotlin/com/example/services/OrdersService.kt" \
+	    "src/main/kotlin/com/example/repos/OrdersRepository.kt" \
+	  | drift-static-profiler/target/debug/drift-static-profiler scan-pr \
+	      drift-static-profiler/tests/fixtures/kotlin-ktor \
+	      --changed-files-stdin \
+	      --commits $(DRIFT_ACTION_KOTLIN_TMPDIR)/commits.txt \
+	      --diff-stats $(DRIFT_ACTION_KOTLIN_TMPDIR)/diff-stats.tsv \
+	      --pr-context-file $(DRIFT_ACTION_KOTLIN_TMPDIR)/pr-context.json \
+	      --pretty \
+	      --output $(DRIFT_ACTION_KOTLIN_OUTPUT) \
+	  2>&1 | grep -E "^(✓|✗|note:) " || true
+	@SIZE=$$(wc -c < $(DRIFT_ACTION_KOTLIN_OUTPUT) | tr -d ' '); \
+	  printf "$(GREEN)✓$(RESET) wrote $(CYAN)$(DRIFT_ACTION_KOTLIN_OUTPUT)$(RESET) ($$SIZE bytes)\n"
+	@if command -v jq >/dev/null 2>&1; then \
+	  printf "    pr_scope changed:        "; jq -r '.pr_scope.changed_files | length' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    counts: feat / fix / issues / new_tests: "; \
+	    jq -r '[.pr_review.counts.features.value, .pr_review.counts.bug_fixes.value, .pr_review.counts.issues_resolved.value, .pr_review.counts.new_test_files.value] | @csv' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    business_logic.summary:  "; jq -r '.pr_review.business_logic.summary | tostring | .[0:80]' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    value_money loc_added:   "; jq -r '.pr_review.value_card.axes[0].inputs.loc_added' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    bottom_line:             "; jq -r '.pr_review.value_card.bottom_line' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    risks count:             "; jq -r '.pr_review.visual_summary.risks.items | length' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    data_structures:         "; jq -r '.pr_review.architecture_flow.data_structures | length' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	  printf "    kotlin schema-val libs:  "; jq -r '.pr_review_ext.tech_debt.schema_validation.per_language_known_libraries.kotlin | length' $(DRIFT_ACTION_KOTLIN_OUTPUT); \
+	fi
+	@printf "    Open $(CYAN)$(DRIFT_ACTION_KOTLIN_OUTPUT)$(RESET) to inspect the full JSON.\n"
+
+action-build: ## Build the Drift Action bundle (action/src/* → dist/index.js via esbuild)
+	@printf "$(BLUE)▶$(RESET) npm run build (Drift Action)\n"
+	@cd action && npm run build
+	@printf "$(GREEN)✓$(RESET) bundled → $(CYAN)dist/index.js$(RESET)\n"
+
+action-test: ## Run the Drift Action test suite (contract + render + e2e — uses tmp scan output if present)
+	@printf "$(BLUE)▶$(RESET) npm test (Drift Action)\n"
+	@cd action && npm test 2>&1 | grep -E "^(✔|✖|ℹ tests|ℹ pass|ℹ fail) "

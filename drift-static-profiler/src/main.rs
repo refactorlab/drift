@@ -345,6 +345,527 @@ enum Cmd {
         #[arg(long)]
         no_tests: bool,
     },
+    /// PR-review pipeline: runs `scan-pr` internally then enriches
+    /// the output with the full `pr_review` block (counts, value-card
+    /// axes, mermaid diagrams, statically-derived code suggestions,
+    /// tech-debt, duplication, NFR coverage). One-shot replacement
+    /// for the previous Python `pr_algorithms` layer — everything
+    /// runs in this binary.
+    ///
+    /// Output: the standard compact report PLUS `pr_review` (the
+    /// renderer envelope) PLUS `pr_review_ext` (extras: tech_debt,
+    /// duplication, tests_in_graph, nfr_edge_cases).
+    ///
+    /// Example:
+    ///   git log $BASE..$HEAD --format=%B%x00 > /tmp/commits
+    ///   git diff --name-only --diff-filter=ACMRT $BASE $HEAD > /tmp/changed
+    ///   drift-static-profiler pr-review /path/to/repo \
+    ///       --changed-files /tmp/changed \
+    ///       --commits /tmp/commits \
+    ///       --output /tmp/drift-pr-review.json
+    /// PR-scoped scan: builds the call graph, filters to roots
+    /// transitively reaching the PR's changed files, AND enriches
+    /// the output with the full review envelope (4 images, code
+    /// suggestions, tech debt, duplication, NFR coverage) unless
+    /// `--no-review` is passed.
+    ///
+    /// Output (single envelope):
+    ///   - standard CompactReport fields (`string_table`, `frames`,
+    ///     `summary`, `entries`)
+    ///   - `pr_scope` — changed_files / affected_roots / unreachable_changes
+    ///   - `pr_review` — overall_drift, counts, architecture_flow,
+    ///     business_logic, value_card, code_suggestions, visual_summary
+    ///   - `pr_review_ext` — tech_debt, duplication, tests_in_graph,
+    ///     nfr_edge_cases
+    ///
+    /// Example:
+    ///   git diff --name-only --diff-filter=ACMRT $BASE $HEAD > changed.txt
+    ///   git log --format=%B%x00 $BASE..$HEAD > commits.txt
+    ///   drift-static-profiler scan-pr /path/to/repo \
+    ///       --changed-files changed.txt --commits commits.txt \
+    ///       --output drift.json --pretty
+    #[command(alias = "pr-review")]
+    ScanPr {
+        /// Absolute or relative path to the project root.
+        path: PathBuf,
+        /// Newline-delimited file listing repo-relative paths the PR
+        /// touched. Exactly one of `--changed-files` / `--changed-files-stdin`
+        /// must be supplied.
+        #[arg(long, value_name = "FILE")]
+        changed_files: Option<PathBuf>,
+        /// Read the newline-delimited list of changed files from stdin
+        /// instead of a file.
+        #[arg(long, conflicts_with = "changed_files")]
+        changed_files_stdin: bool,
+        /// File of commit messages, NUL-byte separated
+        /// (`git log --format=%B%x00 $BASE..$HEAD`). Used by the
+        /// counts / value-card / NFR algorithms. Optional — without
+        /// it, count chips and `perf:`/`feat:` signals will be zero
+        /// but the rest of the review still works.
+        #[arg(long, value_name = "FILE")]
+        commits: Option<PathBuf>,
+        /// I3: TSV file of per-file diff stats. Format per line:
+        /// `path<TAB>additions<TAB>deletions` (the shape produced by
+        /// `git diff --numstat`). Wires real LOC numbers into
+        /// `value_money` (otherwise `loc_added = 0` always).
+        #[arg(long, value_name = "FILE")]
+        diff_stats: Option<PathBuf>,
+        /// I1: JSON file matching the `PrContext` component schema.
+        /// Supplies title / body / labels / linked-issues without
+        /// needing separate flags. Preferred for action callers.
+        #[arg(long, value_name = "FILE")]
+        pr_context_file: Option<PathBuf>,
+        /// I5/A1: base-ref SHA (the merge-base or `$GITHUB_EVENT_PATH
+        /// .pull_request.base.sha`). When supplied, the architecture
+        /// flow's `before_mermaid` placeholder is suppressed because
+        /// the renderer knows a true before-state COULD be
+        /// reconstructed (today the heavy graph-diff lives in the
+        /// action wrapper, not here — this flag is the contract surface).
+        #[arg(long, value_name = "SHA")]
+        base_sha: Option<String>,
+        /// PR title — feeds `business_logic.summary`.
+        #[arg(long)]
+        pr_title: Option<String>,
+        /// PR body — feeds `business_logic.summary`. First sentence
+        /// is used.
+        #[arg(long)]
+        pr_body: Option<String>,
+        /// Skip the review-enrichment step. Output then contains only
+        /// the factual scan (no `pr_review` / `pr_review_ext`). Useful
+        /// for fast smoke checks; the default is to ALWAYS enrich.
+        #[arg(long)]
+        no_review: bool,
+        /// Write JSON to this file (default: stdout).
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// Pretty-print the JSON.
+        #[arg(long)]
+        pretty: bool,
+        /// Passthrough to `DiscoverOpts.min_reach`. Default 2.
+        #[arg(long, default_value_t = 2)]
+        min_reach: usize,
+        /// Passthrough to `DiscoverOpts.max_roots` — applies to the
+        /// FULL discovered list before PR filtering.
+        #[arg(long, default_value_t = 5000)]
+        max_roots: usize,
+        /// Skip test/spec/mock files at the walker stage.
+        #[arg(long)]
+        no_tests: bool,
+        /// Max tree depth per affected root.
+        #[arg(long, default_value_t = 12)]
+        max_depth: usize,
+        /// Hide trivial getX/setX/isX accessors in per-root trees.
+        #[arg(long)]
+        no_accessors: bool,
+        /// Skip the `.sql` file scan pass.
+        #[arg(long)]
+        no_sql_files: bool,
+        /// Force SQL dialect.
+        #[arg(long, value_name = "DIALECT")]
+        sql_dialect: Option<String>,
+    },
+}
+
+/// Read a newline-delimited list of repo-relative paths.
+///
+/// Source is either a file (when `path` is `Some`) or stdin (when
+/// `from_stdin` is true). Exactly one of the two must be selected;
+/// the Cli layer enforces this via `conflicts_with`.
+///
+/// Lines are trimmed; empty lines and `#` comment lines are ignored
+/// so PR-action wrappers can include human-readable annotations
+/// without breaking parsing.
+fn read_changed_files(
+    path: Option<&std::path::Path>,
+    from_stdin: bool,
+) -> Result<Vec<PathBuf>> {
+    let raw = match (path, from_stdin) {
+        (Some(p), false) => std::fs::read_to_string(p)
+            .with_context(|| format!("read changed-files list {}", p.display()))?,
+        (None, true) => {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .context("read changed-files list from stdin")?;
+            buf
+        }
+        _ => anyhow::bail!(
+            "scan-pr requires exactly one of --changed-files <FILE> or --changed-files-stdin"
+        ),
+    };
+    let out: Vec<PathBuf> = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(PathBuf::from)
+        .collect();
+    Ok(out)
+}
+
+/// PR-scoped scan entry point.
+///
+/// Wires the CLI flags into [`drift_static_profiler::analyze_pr_with_progress`],
+/// then serializes the standard compact report envelope with a
+/// top-level `pr_scope` block appended via `#[serde(flatten)]`.
+#[allow(clippy::too_many_arguments)]
+/// One-shot scan-pr pipeline:
+///   1. read changed-files list
+///   2. read commit messages (optional)
+///   3. run `analyze_pr_with_progress` to build the call graph +
+///      pr_scope
+///   4. if `--no-review` not set, run `pr_algorithms::enrich` and
+///      emit a full envelope (4 images + code suggestions + ext)
+///   5. else emit the factual envelope only
+///
+/// Output is JSON to `--output` or stdout. Progress sinks emit one
+/// `phase()` per algorithm so CI logs show what's running.
+#[allow(clippy::too_many_arguments)]
+fn run_scan_pr(
+    path: &std::path::Path,
+    changed_files_path: Option<&std::path::Path>,
+    changed_files_stdin: bool,
+    commits_path: Option<&std::path::Path>,
+    diff_stats_path: Option<&std::path::Path>,
+    pr_context_file: Option<&std::path::Path>,
+    base_sha: Option<&str>,
+    pr_title: Option<&str>,
+    pr_body: Option<&str>,
+    no_review: bool,
+    output: Option<&std::path::Path>,
+    pretty: bool,
+    min_reach: usize,
+    max_roots: usize,
+    no_tests: bool,
+    max_depth: usize,
+    no_accessors: bool,
+    no_sql_files: bool,
+    sql_dialect: Option<&str>,
+) -> Result<()> {
+    use drift_static_profiler::{
+        analyze_pr_with_progress,
+        pr_algorithms::{
+            business_logic::PrContextInput, counts::ChangedFile, enrich, EnrichInputs,
+        },
+        AnalyzeOptions, DiscoverOpts,
+    };
+
+    let changed = read_changed_files(changed_files_path, changed_files_stdin)?;
+    if changed.is_empty() {
+        eprintln!("note: changed-files list is empty — emitting an empty PR-scope envelope");
+    }
+
+    let progress = pick_progress();
+    let sql_dialect_override = resolve_sql_dialect(sql_dialect)?;
+
+    let discover = DiscoverOpts {
+        min_reach,
+        skip_tests: no_tests,
+        skip_private: true,
+        skip_accessors: true,
+        max_roots,
+    };
+    let opts = AnalyzeOptions {
+        max_depth,
+        skip_accessors: no_accessors,
+        exclude_tests: no_tests,
+        scan_sql_files: !no_sql_files,
+        sql_dialect_override,
+        ..AnalyzeOptions::default()
+    };
+    let result = analyze_pr_with_progress(
+        path,
+        &changed,
+        &discover,
+        &opts,
+        progress.as_ref(),
+    )?;
+    progress.finish();
+
+    eprintln!(
+        "✓ scan-pr (factual): {} changed file(s) → {} affected root(s), {} unreachable",
+        result.pr_scope.changed_files.len(),
+        result.pr_scope.affected_root_names.len(),
+        result.pr_scope.unreachable_changes.len(),
+    );
+
+    if no_review {
+        // Factual-only envelope.
+        return write_envelope(&result, None, output, pretty);
+    }
+
+    // ── Enrichment phase ───────────────────────────────────────────
+    let commit_messages = read_commit_messages(commits_path)?;
+    // I3: read --diff-stats TSV (path<TAB>additions<TAB>deletions) if
+    // supplied. We index by repo-relative path for O(1) lookup when
+    // building the ChangedFile list below.
+    let diff_stats_map = read_diff_stats(diff_stats_path)?;
+    let changed_files: Vec<ChangedFile> = changed
+        .iter()
+        .map(|p| {
+            let path_str = p.display().to_string();
+            let (additions, deletions) = diff_stats_map
+                .get(&path_str)
+                .copied()
+                .unwrap_or((0, 0));
+            ChangedFile {
+                path: path_str,
+                status: None,
+                additions,
+                deletions,
+            }
+        })
+        .collect();
+    // I1: read --pr-context FILE if supplied. The JSON shape matches
+    // the OpenAPI `PrContext` component; we project title+body into
+    // the algorithm-facing `PrContextInput`.
+    // C2: support `--pr-body @path` syntax for file-backed bodies.
+    let body_str = resolve_at_path(pr_body)?;
+    let pr_context = if let Some(file) = pr_context_file {
+        Some(read_pr_context_file(file)?)
+    } else {
+        match (pr_title, body_str.as_deref()) {
+            (None, None) => None,
+            (t, b) => Some(PrContextInput {
+                title: t.unwrap_or("").to_string(),
+                body: b.unwrap_or("").to_string(),
+            }),
+        }
+    };
+
+    let enrich_progress = pick_progress();
+    let mut enriched = enrich(EnrichInputs {
+        outcome: &result,
+        commit_messages: &commit_messages,
+        changed_files: &changed_files,
+        pr_context: pr_context.as_ref(),
+        repo_root: Some(path),
+        progress: Some(enrich_progress.as_ref()),
+    });
+    enrich_progress.finish();
+
+    // A1/I5: when no --base-sha was supplied, the before_mermaid is
+    // a placeholder ("Before-state requires --base-sha…"). Drop it
+    // entirely per the spec's "silence > noise" rule so renderers
+    // don't show a confusing dead panel. When base-sha IS supplied,
+    // keep the placeholder text — future work in the action wrapper
+    // will replace it with a real before-state graph from `git
+    // checkout $BASE`.
+    if base_sha.is_none() {
+        enriched.pr_review.architecture_flow.before_mermaid.clear();
+    }
+
+    eprintln!(
+        "✓ scan-pr (enriched): {} code-suggestion(s) · {} data-structure(s) · \
+         {} risk(s) · {} duplication cluster(s) · {} test-files-in-graph",
+        enriched.pr_review.code_suggestions.len(),
+        enriched.pr_review.architecture_flow.data_structures.len(),
+        enriched.pr_review.visual_summary.risks.items.len(),
+        enriched.pr_review_ext.duplication.count,
+        enriched.pr_review_ext.tests_in_graph.test_files,
+    );
+
+    write_envelope(&result, Some(&enriched), output, pretty)
+}
+
+/// Slim envelope writer.
+///
+/// The output deliberately OMITS the heavy CompactReport internals
+/// (`string_table`, `frames`, `entries`, `summary`) — those exist
+/// only so the algorithms can build pr_review_ext + pr_scope from
+/// the call graph, and they're internal to drift. Downstream
+/// consumers (the GitHub Action / LLM renderer / PR-comment poster)
+/// only need:
+///
+///   - `schema_version` + `mode` — version stamps
+///   - `generator` — provenance (tool name, version, captured_at)
+///   - `pr_scope` — factual changed-files / affected-roots / unreachable
+///   - `pr_review` — Image 1/2/3/4 mermaid + code suggestions
+///   - `pr_review_ext` — tech_debt / duplication / tests_in_graph / NFR
+///
+/// Before this slim form, kotlin-ktor output was ~34 KB; after, ~10 KB.
+/// The internal call-graph data is regenerated on every scan-pr, so
+/// nothing is lost.
+fn write_envelope(
+    result: &drift_static_profiler::AnalyzePrOutcome,
+    enriched: Option<&drift_static_profiler::pr_algorithms::EnrichedReport>,
+    output: Option<&std::path::Path>,
+    pretty: bool,
+) -> Result<()> {
+    use drift_static_profiler::pr_algorithms::{PrReview, PrReviewExt};
+    use drift_static_profiler::report::Generator;
+    use serde::Serialize;
+    use std::io::{BufWriter, Write};
+
+    #[derive(Serialize)]
+    struct PrScopeBlock<'a> {
+        changed_files: &'a [PathBuf],
+        affected_roots: &'a [String],
+        unreachable_changes: &'a [PathBuf],
+    }
+
+    #[derive(Serialize)]
+    struct Envelope<'a> {
+        schema_version: &'a str,
+        mode: &'a str,
+        generator: &'a Generator,
+        pr_scope: PrScopeBlock<'a>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pr_review: Option<&'a PrReview>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pr_review_ext: Option<&'a PrReviewExt>,
+    }
+
+    let report = &result.outcome.report;
+    let envelope = Envelope {
+        schema_version: &report.schema_version,
+        mode: &report.mode,
+        generator: &report.generator,
+        pr_scope: PrScopeBlock {
+            changed_files: &result.pr_scope.changed_files,
+            affected_roots: &result.pr_scope.affected_root_names,
+            unreachable_changes: &result.pr_scope.unreachable_changes,
+        },
+        pr_review: enriched.map(|e| &e.pr_review),
+        pr_review_ext: enriched.map(|e| &e.pr_review_ext),
+    };
+
+    match output {
+        Some(p) => {
+            let file = std::fs::File::create(p)
+                .with_context(|| format!("create scan-pr output {}", p.display()))?;
+            let mut buf = BufWriter::with_capacity(256 * 1024, file);
+            if pretty {
+                serde_json::to_writer_pretty(&mut buf, &envelope).context("serialize")?;
+            } else {
+                serde_json::to_writer(&mut buf, &envelope).context("serialize")?;
+            }
+            buf.flush()
+                .with_context(|| format!("flush scan-pr output {}", p.display()))?;
+            eprintln!("✓ wrote {}", p.display());
+        }
+        None => {
+            let stdout = std::io::stdout();
+            let mut buf = BufWriter::with_capacity(256 * 1024, stdout.lock());
+            if pretty {
+                serde_json::to_writer_pretty(&mut buf, &envelope).context("serialize")?;
+            } else {
+                serde_json::to_writer(&mut buf, &envelope).context("serialize")?;
+            }
+            buf.write_all(b"\n").ok();
+            buf.flush().context("flush stdout")?;
+        }
+    }
+    Ok(())
+}
+
+/// I3: parse `git diff --numstat` output. Returns a path-keyed
+/// hashmap of (additions, deletions). TSV format per line:
+///     <additions>\t<deletions>\t<path>
+/// We also accept the legacy `path\tadds\tdels` ordering for
+/// hand-written test files. Binary diffs (numstat shows `-\t-`)
+/// are skipped silently.
+fn read_diff_stats(
+    path: Option<&std::path::Path>,
+) -> Result<std::collections::HashMap<String, (usize, usize)>> {
+    use std::collections::HashMap;
+    let Some(p) = path else { return Ok(HashMap::new()) };
+    let raw = std::fs::read_to_string(p)
+        .with_context(|| format!("read diff-stats file {}", p.display()))?;
+    let mut out: HashMap<String, (usize, usize)> = HashMap::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        // Detect ordering: if column 0 parses as an integer, this is
+        // git-numstat ordering (`adds\tdels\tpath`). Otherwise
+        // assume the hand-written `path\tadds\tdels` ordering.
+        let (adds, dels, path) = if cols[0].parse::<usize>().is_ok() {
+            (cols[0], cols[1], cols[2..].join("\t"))
+        } else {
+            (cols[1], cols[2], cols[0].to_string())
+        };
+        let Ok(a) = adds.parse::<usize>() else { continue };
+        let Ok(d) = dels.parse::<usize>() else { continue };
+        out.insert(path, (a, d));
+    }
+    Ok(out)
+}
+
+/// I1: parse a `PrContext`-shaped JSON file and project it into the
+/// algorithm-facing `PrContextInput` (title + body). We keep the
+/// `PrContext` schema rich for forward-compat (labels, linked
+/// issues, head/base SHAs) but the algorithm only needs title+body
+/// today.
+fn read_pr_context_file(
+    path: &std::path::Path,
+) -> Result<drift_static_profiler::pr_algorithms::business_logic::PrContextInput> {
+    use drift_static_profiler::pr_algorithms::business_logic::PrContextInput;
+    use serde::Deserialize;
+    #[derive(Deserialize, Default)]
+    struct PrContextDoc {
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        body: String,
+    }
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read pr-context file {}", path.display()))?;
+    let doc: PrContextDoc = serde_json::from_str(&raw)
+        .with_context(|| format!("parse pr-context JSON {}", path.display()))?;
+    Ok(PrContextInput {
+        title: doc.title,
+        body: doc.body,
+    })
+}
+
+/// C2: support `--pr-body @path/to/file` syntax. If the body starts
+/// with `@`, treat the rest as a file path; otherwise the body is
+/// the literal string. Mirrors curl's `@file` convention.
+fn resolve_at_path(s: Option<&str>) -> Result<Option<String>> {
+    let Some(raw) = s else { return Ok(None) };
+    if let Some(p) = raw.strip_prefix('@') {
+        let text = std::fs::read_to_string(p)
+            .with_context(|| format!("read --pr-body @{p}"))?;
+        return Ok(Some(text));
+    }
+    Ok(Some(raw.to_string()))
+}
+
+/// Read null-byte separated commit messages from disk (or `-` for
+/// stdin). Convention: `git log --format=%B%x00 $BASE..$HEAD`.
+/// Falls back to `\n\n` splitting when no null bytes are present.
+fn read_commit_messages(path: Option<&std::path::Path>) -> Result<Vec<String>> {
+    let raw = match path {
+        Some(p) if p.to_string_lossy() == "-" => {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .context("read commits from stdin")?;
+            buf
+        }
+        Some(p) => std::fs::read_to_string(p)
+            .with_context(|| format!("read commits file {}", p.display()))?,
+        None => return Ok(Vec::new()),
+    };
+    let out: Vec<String> = if raw.contains('\0') {
+        raw.split('\0')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        raw.split("\n\n")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+    Ok(out)
 }
 
 fn run_orm_scan(path: &std::path::Path, out: Option<&std::path::Path>, max_files: usize) -> Result<()> {
@@ -526,6 +1047,47 @@ fn main() -> Result<()> {
             no_sql_files,
             sql_dialect.as_deref(),
             print,
+        ),
+        Cmd::ScanPr {
+            path,
+            changed_files,
+            changed_files_stdin,
+            commits,
+            diff_stats,
+            pr_context_file,
+            base_sha,
+            pr_title,
+            pr_body,
+            no_review,
+            output,
+            pretty,
+            min_reach,
+            max_roots,
+            no_tests,
+            max_depth,
+            no_accessors,
+            no_sql_files,
+            sql_dialect,
+        } => run_scan_pr(
+            &path,
+            changed_files.as_deref(),
+            changed_files_stdin,
+            commits.as_deref(),
+            diff_stats.as_deref(),
+            pr_context_file.as_deref(),
+            base_sha.as_deref(),
+            pr_title.as_deref(),
+            pr_body.as_deref(),
+            no_review,
+            output.as_deref(),
+            pretty,
+            min_reach,
+            max_roots,
+            no_tests,
+            max_depth,
+            no_accessors,
+            no_sql_files,
+            sql_dialect.as_deref(),
         ),
         Cmd::AnalyzeRoot {
             path,

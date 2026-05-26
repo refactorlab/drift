@@ -15,6 +15,8 @@ pub mod metrics;
 pub mod orm;
 pub mod pagerank;
 pub mod parser;
+pub mod pr_algorithms;
+pub mod pr_scope;
 pub mod progress;
 pub mod report;
 pub mod resolver;
@@ -27,11 +29,13 @@ pub mod tree;
 pub mod walker;
 
 pub use api::{
-    analyze, analyze_picked_with_progress, analyze_roots, analyze_roots_with_progress,
-    analyze_with_progress, AnalyzeOptions, AnalyzeOutcome, PickerCaller, PickerRoot,
+    analyze, analyze_picked_with_progress, analyze_pr_with_progress, analyze_roots,
+    analyze_roots_with_progress, analyze_with_progress, AnalyzeOptions, AnalyzeOutcome,
+    AnalyzePrOutcome, PickerCaller, PickerRoot, PrScopeSummary,
 };
 pub use progress::{CliProgress, NullProgress, Progress};
 pub use linguist::{compute_language_stats, LanguageStats};
+pub use pr_scope::{affected_roots, AffectedRoots};
 pub use roots::{discover_roots, DiscoverOpts, DiscoveredRoot};
 
 use serde::{Deserialize, Serialize};

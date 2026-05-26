@@ -280,6 +280,47 @@ jobs:
           fi
           echo "::notice::drift CLI present in .deb"
 
+      # ── drift-static-profiler standalone release asset (Linux only) ──
+      # The Drift GitHub Action's install-profiler.sh downloads this binary
+      # by URL. Two reasons it lives in this workflow (not its own):
+      #   1) Linux runners here already have rust toolchain + rust-cache
+      #      warmed up — incremental rebuild ~10s.
+      #   2) Single release-tag operation produces both bundles + the CLI
+      #      binary, no out-of-band tagging required.
+      #
+      # Asset names match action/scripts/install-profiler.sh's URL convention:
+      #   drift-static-profiler-<arch>-<os>.tar.gz   + .sha256 sidecar
+      #
+      # macOS leg + ARM Linux + Windows are still produced by the dedicated
+      # drift-static-profiler-release.yml workflow (separate matrix).
+      - name: Build drift-static-profiler (Linux x86_64)
+        if: runner.os == 'Linux'
+        working-directory: drift-static-profiler
+        run: |
+          set -euo pipefail
+          cargo build --release --bin drift-static-profiler
+          ls -lh target/release/drift-static-profiler
+
+      - name: Package + upload drift-static-profiler to release
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG:  ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          archive="drift-static-profiler-${target}.tar.gz"
+          # The release-asset CDN serves the file from this exact name; the
+          # action's install script depends on it byte-for-byte.
+          tar -czf "$archive" -C drift-static-profiler/target/release drift-static-profiler
+          shasum -a 256 "$archive" > "${archive}.sha256"
+          ls -lh "$archive" "${archive}.sha256"
+          echo "::notice::Attaching $archive to release $NEW_TAG"
+          # tauri-action created the draft release on this tag. gh release
+          # upload (--clobber) is idempotent: re-running this step on a
+          # retry replaces the asset instead of failing.
+          gh release upload "$NEW_TAG" "$archive" "${archive}.sha256" --clobber
+
       # Post-process latest.json on the draft release. Two fixes:
       #
       # 1. Mirror the macOS universal entry to darwin-x86_64. tauri-action only
