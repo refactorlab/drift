@@ -110,14 +110,14 @@ jobs:
             prev="$last_tag"
           fi
 
-          # Commits that touched drift-lab/ OR drift-static-profiler/ (the
-          # path-dependency the desktop app links against) OR this workflow
-          # file count for a release. CI fixes need to ship a release too,
-          # otherwise the "fix" is invisible until the next code change.
+          # Only commits that touched drift-lab/ count for a desktop release.
+          # The profiler CLI is DECOUPLED — it ships via its own
+          # drift-static-profiler-v* release (drift-static-profiler-release.yml),
+          # so profiler-only changes must NOT cut a desktop release. Workflow-
+          # file edits trigger a validation build (see trigger paths) but, on
+          # their own, don't warrant publishing the app.
           relevant=$(git log "$range" --no-merges --pretty=format:'%H' -- \
             drift-lab/ \
-            drift-static-profiler/ \
-            .github/workflows/drift-lab-desktop-build.yml \
             || true)
           if [ -z "$relevant" ]; then
             echo "No drift-lab-relevant commits since $prev — skipping release."
