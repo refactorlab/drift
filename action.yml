@@ -579,7 +579,7 @@ runs:
         # NOTE: the pinned @v1 tag exposes `max-tokens` (not the newer
         # `max-completion-tokens`). 200 is the default — far too small
         # for a JSON array of suggestions, so we raise it.
-        max-tokens: '40000'
+        max-tokens: '8000'
         system-prompt: |
           You are an expert senior reviewer producing INLINE GitHub PR
           code suggestions. The user prompt below contains:
