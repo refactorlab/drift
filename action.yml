@@ -124,6 +124,32 @@ inputs:
       the action is fail-soft on its own errors too.
     required: false
     default: ''
+  audio-summary:
+    description: |
+      When true (default), synthesize a spoken WAV of the PR's
+      `pr_review.business_logic.summary` with Piper (offline neural TTS),
+      upload it as a workflow artifact, and link it at the END of the Drift
+      sticky comment (posted via Octokit in dist/index.js). Fully fail-soft:
+      any TTS / download / upload error is a ::warning:: and never breaks the
+      review. The Piper binary AND the voice model are cached across runs, so
+      a warm run adds only the synthesis time.
+    required: false
+    default: 'true'
+  piper-voice:
+    description: |
+      Piper voice id from the HF `rhasspy/piper-voices` catalog, formatted
+      `<lang>-<name>-<quality>` (e.g. en_US-amy-medium, en_GB-alba-medium).
+      The download path is derived from the id.
+    required: false
+    default: 'en_US-amy-medium'
+  piper-version:
+    description: |
+      rhasspy/piper release TAG for the prebuilt Linux TTS binary (default
+      2023.11.14-2, the last classic release; assets piper_linux_x86_64 /
+      piper_linux_aarch64). If this tag/asset can't be fetched the install
+      falls back to the older v1.2.0 piper_amd64 / piper_arm64 tarball.
+    required: false
+    default: '2023.11.14-2'
 
 runs:
   using: 'composite'
@@ -464,6 +490,159 @@ runs:
           fi
         fi
 
+    # ─── 8b. Audio summary — cache + install Piper binary ────────────
+    # Offline neural TTS. We cache the binary (keyed by version + arch) so
+    # only the first run on a given key pays the download. Installed under
+    # RUNNER_TEMP (never the consumer's workspace) like the profiler.
+    - name: Cache Piper binary
+      id: piper-bin-cache
+      if: >-
+        inputs.audio-summary == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        github.event.pull_request != null
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/piper
+        key: piper-${{ runner.arch }}-${{ inputs.piper-version }}-v1
+
+    - name: Install Piper binary
+      if: >-
+        inputs.audio-summary == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        github.event.pull_request != null &&
+        steps.piper-bin-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PIPER_VERSION: ${{ inputs.piper-version }}
+        PIPER_PARENT:  ${{ runner.temp }}
+      run: |
+        # rhasspy/piper ships exactly two Linux arch tarballs, each expanding
+        # to a top-level `piper/` dir (binary + bundled libs + espeak-ng-data).
+        # We extract into RUNNER_TEMP → ${RUNNER_TEMP}/piper/piper.
+        #
+        # PRIMARY: the canonical 2023.11.14-2 release uses the
+        #   piper_linux_<x86_64|aarch64>.tar.gz naming.
+        # FALLBACK: the older v1.2.0 release uses piper_<amd64|arm64>.tar.gz.
+        # Both layouts are identical, so the fallback is drop-in. If both
+        # fail the synth step detects the missing binary and skips (fail-soft).
+        case "${RUNNER_ARCH}" in
+          ARM64) new=aarch64 ; old=arm64 ;;
+          *)     new=x86_64  ; old=amd64 ;;   # X64 (GitHub-hosted) + default
+        esac
+        primary="https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/piper_linux_${new}.tar.gz"
+        fallback="https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${old}.tar.gz"
+        installed=false
+        for url in "$primary" "$fallback"; do
+          echo "⬇️  ${url}"
+          if curl -fSL -o /tmp/piper.tar.gz "$url" && tar -xzf /tmp/piper.tar.gz -C "$PIPER_PARENT"; then
+            rm -f /tmp/piper.tar.gz
+            echo "✅ installed to ${PIPER_PARENT}/piper"
+            installed=true
+            break
+          fi
+          echo "   ↳ failed; trying next URL…"
+        done
+        [ "$installed" = "true" ] || \
+          echo "⚠️  Piper download failed (primary + fallback) — audio summary will be skipped (fail-soft)."
+
+    # ─── 8c. Audio summary — cache + download the voice model ────────
+    - name: Cache Piper voice
+      id: piper-voice-cache
+      if: >-
+        inputs.audio-summary == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        github.event.pull_request != null
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/piper-voices
+        key: piper-voice-${{ inputs.piper-voice }}-v1
+
+    - name: Download Piper voice
+      if: >-
+        inputs.audio-summary == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        github.event.pull_request != null &&
+        steps.piper-voice-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PIPER_VOICE: ${{ inputs.piper-voice }}
+        VOICE_DIR:   ${{ runner.temp }}/piper-voices
+      run: |
+        # Derive the HF path from the voice id `<lang>-<name>-<quality>`:
+        #   en_US-amy-medium → top=en lang=en_US name=amy quality=medium
+        lang="${PIPER_VOICE%%-*}"          # en_US
+        rest="${PIPER_VOICE#*-}"           # amy-medium
+        name="${rest%%-*}"                 # amy
+        quality="${rest#*-}"               # medium
+        top="${lang%%_*}"                  # en
+        # HF canonical ref is `main` (the rhasspy/piper-voices README links
+        # resolve/main/...). Both main and the v1.0.0 tag serve the same
+        # files; main matches the documented download URL.
+        base="https://huggingface.co/rhasspy/piper-voices/resolve/main/${top}/${lang}/${name}/${quality}"
+        mkdir -p "$VOICE_DIR"
+        echo "⬇️  voice ${PIPER_VOICE} ← ${base}"
+        curl -fSL -o "${VOICE_DIR}/${PIPER_VOICE}.onnx"      "${base}/${PIPER_VOICE}.onnx?download=true"      || echo "⚠️  voice .onnx download failed"
+        curl -fSL -o "${VOICE_DIR}/${PIPER_VOICE}.onnx.json" "${base}/${PIPER_VOICE}.onnx.json?download=true" || echo "⚠️  voice config download failed"
+
+    # ─── 8d. Synthesize the WAV from pr_review.business_logic.summary ─
+    # Continue-on-error: a TTS failure must never break the deterministic
+    # review. The text is the scan's business-logic summary (PR-title fallback).
+    - name: Synthesize audio summary
+      id: audio
+      if: >-
+        inputs.audio-summary == 'true' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        github.event.pull_request != null
+      continue-on-error: true
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+        PIPER_DIR:   ${{ runner.temp }}/piper
+        VOICE_DIR:   ${{ runner.temp }}/piper-voices
+        PIPER_VOICE: ${{ inputs.piper-voice }}
+        WAV_PATH:    ${{ runner.temp }}/drift-pr-summary.wav
+        PR_TITLE:    ${{ github.event.pull_request.title }}
+      run: |
+        bin="${PIPER_DIR}/piper"
+        model="${VOICE_DIR}/${PIPER_VOICE}.onnx"
+        if [ ! -x "$bin" ] || [ ! -f "$model" ]; then
+          echo "⚠️  Piper binary or voice model missing — skipping audio summary."
+          echo "synthesized=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Prefer the scan's business-logic summary; fall back to the PR title.
+        summary="$(jq -r '.pr_review.business_logic.summary // ""' "$DRIFT_REPORT_PATH" 2>/dev/null || echo "")"
+        if [ -z "$summary" ]; then
+          summary="${PR_TITLE:-This pull request}. See the Drift review for details."
+        fi
+        text="Drift pull request summary. ${summary}"
+        echo "🗣️  synthesizing $(printf '%s' "$text" | wc -c | tr -d ' ') chars → ${WAV_PATH}"
+        # Run from the Piper dir so it resolves its bundled espeak-ng-data
+        # + shared libs ($ORIGIN rpath). Model + output use absolute paths.
+        if ( cd "$PIPER_DIR" && printf '%s' "$text" | ./piper --model "$model" --output_file "$WAV_PATH" ) 2>/tmp/piper-synth.log; then
+          echo "✅ wrote $(wc -c < "$WAV_PATH" | tr -d ' ') bytes"
+          echo "synthesized=true" >> "$GITHUB_OUTPUT"
+          echo "wav_path=${WAV_PATH}" >> "$GITHUB_OUTPUT"
+        else
+          echo "⚠️  Piper synthesis failed (audio summary skipped):"
+          sed 's/^/    /' /tmp/piper-synth.log 2>/dev/null || true
+          echo "synthesized=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    # ─── 8e. Upload the WAV as a workflow artifact (host for the link) ─
+    - name: Upload audio summary artifact
+      id: audio-upload
+      if: >-
+        inputs.audio-summary == 'true' &&
+        steps.audio.outputs.synthesized == 'true' &&
+        github.event.pull_request != null
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: drift-pr-audio-summary
+        path: ${{ steps.audio.outputs.wav_path }}
+        retention-days: 14
+
     # ─── 9. Post sticky PR comment + inline suggestions + check run ──
     # Runs the compiled bundle at dist/index.js. The bundle reads the
     # JSON report at DRIFT_REPORT_PATH and uses GITHUB_TOKEN to:
@@ -479,6 +658,9 @@ runs:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         DRIFT_COMMENT:     'true'
         DRIFT_FAIL_THRESHOLD: ${{ inputs.fail-threshold }}
+        # Artifact URL of the synthesized WAV (empty when audio is disabled or
+        # synthesis failed → dist/index.js omits the "🔊 Listen" footer).
+        DRIFT_AUDIO_URL:   ${{ steps.audio-upload.outputs.artifact-url }}
         GITHUB_TOKEN:      ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/index.js"
 

@@ -110,6 +110,19 @@ pub struct PrFinding {
     pub blocking_in_async: bool,
 }
 
+impl PrFinding {
+    /// True if this finding degrades runtime — a performance / ORM / SQL
+    /// issue, or a blocking call on an async path. Single source of truth
+    /// for "runtime-relevant finding", shared by the runtime + money axes
+    /// (so the predicate isn't duplicated across modules).
+    pub fn is_runtime_degrading(&self) -> bool {
+        matches!(
+            self.category,
+            FindingCategory::Performance | FindingCategory::Orm | FindingCategory::Sql
+        ) || self.kind == FindingKind::BlockingInAsync
+    }
+}
+
 /// The PR-scoped, ranked, deduped, capped view plus the rollups consumers
 /// need. Returned by [`collect`].
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

@@ -9,21 +9,10 @@
 //! penalty that can drag the axis negative and, when they contradict the
 //! `perf:` claim, hold confidence at Low.
 
-use crate::insights::{FindingCategory, FindingKind};
 use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::pr_signals::{PrFinding, PrSignals, SignalTier};
 use crate::pr_algorithms::types::*;
 use std::collections::BTreeMap;
-
-/// A finding degrades runtime if it's a performance/ORM/SQL issue or a
-/// blocking call on an async path. Reliability/observability findings don't
-/// count here (they're the runtime_ux / other axes' concern).
-fn is_runtime_regression(f: &PrFinding) -> bool {
-    matches!(
-        f.category,
-        FindingCategory::Performance | FindingCategory::Orm | FindingCategory::Sql
-    ) || f.kind == FindingKind::BlockingInAsync
-}
 
 /// Per-finding penalty (Δ% points) by review tier.
 fn tier_penalty(tier: SignalTier) -> f64 {
@@ -59,7 +48,7 @@ pub fn compute(
 
     // Runtime-degrading findings actually detected in the changed code.
     let regressions: Vec<&PrFinding> =
-        signals.findings.iter().filter(|f| is_runtime_regression(f)).collect();
+        signals.findings.iter().filter(|f| f.is_runtime_degrading()).collect();
     let critical_regressions = regressions
         .iter()
         .filter(|f| f.tier == SignalTier::Critical)
@@ -178,7 +167,7 @@ pub fn compute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::insights::{Effort, Finding, Severity};
+    use crate::insights::{Effort, Finding, FindingKind, Severity};
     use crate::pr_algorithms::pr_signals::{collect, QualityBar};
     use crate::pr_algorithms::test_helpers::{mk_node, with_findings};
 
