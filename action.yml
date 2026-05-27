@@ -62,13 +62,14 @@ inputs:
   ai-model:
     description: |
       GitHub Models model ID for the AI suggestion pass. Defaults to
-      `openai/gpt-4o` — the model the inference endpoint actually serves
-      today. NOTE: `openai/gpt-5` may appear "enabled" in your org's web
-      UI but is NOT yet live on the Models *inference* endpoint, so it
-      returns `400 Unavailable model`. Only override to gpt-5 once
-      `gh models list` (or the catalog endpoint) confirms it's served.
+      `openai/gpt-5`. The per-suggestion inference loop sends the correct
+      token field automatically — `max_completion_tokens` for reasoning
+      models (gpt-5, o-series), `max_tokens` for classic models
+      (gpt-4o). If your org's Models *inference* endpoint does not serve
+      the chosen model, the preflight below catches it and the AI pass
+      skips fail-soft — override to `openai/gpt-4o` in that case.
     required: false
-    default: 'openai/gpt-4o'
+    default: 'openai/gpt-5'
   ai-endpoint:
     description: |
       GitHub Models inference endpoint. Default `auto` resolves it from
@@ -85,17 +86,23 @@ inputs:
     default: 'auto'
   ai-max-files:
     description: |
-      Maximum number of changed files to include in the AI context
-      bundle. Caps prompt size so we stay inside the model's token
-      budget on large PRs.
+      DEPRECATED / unused since the per-suggestion loop landed. Each AI
+      call now diffs exactly ONE focal file, so there is no multi-file
+      context bundle to cap. Kept for backward compatibility; setting it
+      has no effect. Loop size is governed by `ai-max-suggestions`.
     required: false
     default: '20'
   ai-max-suggestions:
     description: |
-      Hard cap on the number of AI-generated suggestions actually
-      posted to the PR. Applied AFTER the quality bar (confidence,
-      reference, category). Defaults to 3 — small + noticeable
-      beats large + ignored.
+      Hard cap on the number of AI code suggestions, end-to-end. Used
+      in TWO places to keep the model's prompt inside its token budget:
+        - INPUT: the top-N highest-confidence scanner findings handed to
+          the model as focal points (→ AI_MAX_FOCAL_POINTS). Capping
+          this is what keeps the request body under the 8000-token
+          gpt-4o input limit on GitHub Models.
+        - OUTPUT: suggestions actually posted to the PR, applied AFTER
+          the quality bar (confidence, reference, category).
+      Defaults to 3 — small + noticeable beats large + ignored.
     required: false
     default: '3'
   fail-threshold:
@@ -449,39 +456,26 @@ runs:
         GITHUB_TOKEN:      ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/index.js"
 
-    # ─── 10. Build AI review context (focal points + diff) ───────────
-    # Runs the bundled context builder at dist/ai-context.js. It reads
-    # the scanner's report and uses `pr_review.code_suggestions[]` as
-    # FOCAL POINTS — for each one it surfaces file:line + function +
-    # category + scanner's why_it_matters + llm_prompt_hint + a code
-    # window read from the checkout. When code_suggestions is empty
-    # it falls back to the raw PR diff. See src/ai/build-context.ts
-    # and the unit tests in src/__tests__/ai-context.test.ts.
-    - name: Build AI review context
-      id: ai-context
-      # ONLY after a successful scan — the AI step's input is the
-      # scanner's `pr_review.code_suggestions[]`, so there is nothing
-      # to enrich until scan-pr has produced its report.
+    # ─── 10. Prep AI diff (fetch both PR SHAs) ───────────────────────
+    # The per-suggestion inference loop (step 12) runs `git diff` once
+    # per focal file, so it needs BOTH commit endpoints present.
+    # actions/checkout with fetch-depth: 0 already has them; these are a
+    # best-effort top-up for shallow consumer clones. (The old monolithic
+    # context builder is gone: each loop iteration now builds its own
+    # tiny one-finding prompt — see src/ai/focal-prompt.ts.)
+    - name: Prep AI diff
+      id: ai-prep
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         github.event.pull_request != null
       shell: bash
       env:
-        DRIFT_REPORT_PATH:    ${{ runner.temp }}/drift-report.json
-        AI_CONTEXT_PATH:      ${{ runner.temp }}/ai-context.txt
-        AI_MAX_FILES:         ${{ inputs.ai-max-files }}
-        AI_MAX_FOCAL_POINTS:  '5'
-        AI_BYTE_BUDGET:       '80000'
-        AI_BASE_SHA:          ${{ github.event.pull_request.base.sha }}
-        AI_HEAD_SHA:          ${{ github.event.pull_request.head.sha }}
+        AI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        AI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
-        # Make sure both SHAs are fetched (consumer's checkout may have
-        # done a shallow clone with only HEAD).
         git fetch --no-tags --depth=1 origin "$AI_BASE_SHA" 2>/dev/null || true
         git fetch --no-tags --depth=1 origin "$AI_HEAD_SHA" 2>/dev/null || true
-        node "${{ github.action_path }}/dist/ai-context.js"
-        echo "path=$AI_CONTEXT_PATH" >> "$GITHUB_OUTPUT"
 
     # ─── 11. Resolve endpoint + PREFLIGHT GitHub Models access ───────
     # Resolves the right inference endpoint (org repos need
@@ -495,7 +489,7 @@ runs:
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        steps.ai-context.outcome == 'success' &&
+        steps.ai-prep.outcome == 'success' &&
         github.event.pull_request != null
       shell: bash
       env:
@@ -520,6 +514,14 @@ runs:
 
         # ── Preflight: hit the REAL chat/completions path so we see the
         #    body that the inference action hides. 1-token probe. ──────
+        # gpt-5 / o-series are reasoning models: they REQUIRE
+        # max_completion_tokens and reject max_tokens, so pick the field
+        # that matches the model — otherwise the probe itself 400s on a
+        # param error and we'd misread it as "model unavailable".
+        case "${AI_MODEL}" in
+          *gpt-5*|*o1*|*o2*|*o3*|*o4*) tok='"max_completion_tokens":16' ;;
+          *)                            tok='"max_tokens":1' ;;
+        esac
         body="$(mktemp)"
         status="$(curl -s -o "$body" -w '%{http_code}' \
           -X POST "${resolved}/chat/completions" \
@@ -527,7 +529,7 @@ runs:
           -H "Accept: application/vnd.github+json" \
           -H "Content-Type: application/json" \
           -H "X-GitHub-Api-Version: 2022-11-28" \
-          -d "{\"model\":\"${AI_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
+          -d "{\"model\":\"${AI_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],${tok}}" \
           2>/dev/null || echo "000")"
         snippet="$(tr -d '\n' < "$body" | head -c 400)"
         echo "🔎 preflight POST ${resolved}/chat/completions → HTTP ${status}"
@@ -556,87 +558,56 @@ runs:
         esac
         rm -f "$body"
 
-    # ─── 12. AI inference — model produces inline suggestions ────────
-    # Uses actions/ai-inference (GitHub Models). Only runs when the
-    # preflight returned 200 — so we never invoke the opaque inference
-    # action when we already KNOW access is blocked (the preflight step
-    # above has already printed the precise reason). continue-on-error
-    # keeps the rest of the action green on any residual failure.
-    - name: AI inference (code suggestions)
-      id: ai
+    # ─── 12. AI inference LOOP — one model call per scanner finding ──
+    # A composite action CANNOT loop a `uses:` step, so we replace
+    # actions/ai-inference@v1 with our own bash `for` loop that POSTs one
+    # SMALL request per focal point (≤ ai-max-suggestions). Each call
+    # sees a single finding + that file's numbered diff, so the request
+    # stays tiny — no 8000-token input 413, regardless of PR size.
+    # dist/ai-infer-one.js builds the one-finding prompt, calls the
+    # Models endpoint (max_completion_tokens for gpt-5, max_tokens for
+    # gpt-4o), parses the reply, and APPENDS the passing suggestion to
+    # AI_OUT. Only runs on a green preflight; continue-on-error keeps the
+    # rest of the action green on any residual failure.
+    - name: AI inference (per-suggestion loop)
+      id: ai-loop
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        steps.ai-context.outcome == 'success' &&
+        steps.ai-prep.outcome == 'success' &&
         steps.ai-ep.outputs.preflight_status == '200' &&
         github.event.pull_request != null
       continue-on-error: true
-      uses: actions/ai-inference@v1
-      with:
-        model: ${{ inputs.ai-model }}
-        endpoint: ${{ steps.ai-ep.outputs.endpoint }}
-        token: ${{ inputs.github-token }}
-        # NOTE: the pinned @v1 tag exposes `max-tokens` (not the newer
-        # `max-completion-tokens`). 200 is the default — far too small
-        # for a JSON array of suggestions, so we raise it.
-        max-tokens: '8000'
-        system-prompt: |
-          You are an expert senior reviewer producing INLINE GitHub PR
-          code suggestions. The user prompt below contains:
-
-            1. Scanner pr_scope (deterministic call-graph signals).
-            2. "Focal points" — locations the static scanner has
-               already flagged. For each, you get file:line +
-               function + category + why_it_matters + remediation_hint
-               + llm_prompt_hint + a code window read from HEAD.
-               YOUR JOB is to refine these into concrete, applyable
-               inline suggestions, AND/OR to add new suggestions on
-               other lines in the same files.
-            3. The PR diff hunks. EACH diff line is prefixed with its
-               new-file line number; lines marked `+` are new code
-               (prefer these). Use that exact prefixed number as the
-               suggestion's `line` (and `start_line` for a range).
-               Every `line` you emit MUST be a numbered line that
-               appears in these hunks — suggestions on any other line
-               are discarded.
-
-          Output ONE JSON object (no prose, no fence, no commentary):
-
-            {
-              "suggestions": [
-                {
-                  "file":           string,
-                  "line":           int,
-                  "start_line":     int,   // optional — multi-line replacement
-                  "category":       "A" | "B" | "C",
-                  "confidence":     number, // 0..1
-                  "why_it_matters": string,
-                  "references":     [ { "url": string, "title": string } ],
-                  "after_code":     string  // literal replacement code for a GitHub suggestion block — no diff prefix, no fence
-                }
-              ]
-            }
-
-          Categories:
-            A = optimization (N+1, hot loops, allocations)
-            B = product correctness (silent failures, bad error handling)
-            C = framework misuse (wrong API, anti-patterns)
-
-          Quality bar (drop anything that doesn't pass ALL):
-            - confidence ≥ 0.75
-            - references[0].url is a REAL documentation/issue URL — do NOT invent.
-              When you refine a scanner-flagged focal point you MAY cite the
-              scanner's `references[]` verbatim.
-            - category ∈ {A, B, C}
-            - `line` is a line number actually present in the diff hunks
-            - `after_code` is what should LITERALLY replace that line
-
-          Hard limits: max 8 suggestions. If nothing clears the bar,
-          output `{"suggestions": []}`. Silence is better than noise.
-        prompt-file: ${{ steps.ai-context.outputs.path }}
-        # @v1 has no `response-file` INPUT — it auto-saves the model
-        # response to a temp file and exposes the path as the
-        # `response-file` OUTPUT, which the post step reads below.
+      shell: bash
+      env:
+        AI_OUT:               ${{ runner.temp }}/ai-suggestions.json
+        DRIFT_REPORT_PATH:    ${{ runner.temp }}/drift-report.json
+        AI_ENDPOINT:          ${{ steps.ai-ep.outputs.endpoint }}
+        AI_MODEL:             ${{ inputs.ai-model }}
+        AI_MAX:               ${{ inputs.ai-max-suggestions }}
+        # Per-call OUTPUT budget. Reasoning models (gpt-5) also spend
+        # hidden reasoning tokens out of this, so keep it generous — one
+        # suggestion's visible JSON is small. Lower it only if a classic
+        # model (gpt-4o) rejects it against a smaller output cap.
+        AI_MAX_OUTPUT_TOKENS: '8000'
+        AI_BASE_SHA:          ${{ github.event.pull_request.base.sha }}
+        AI_HEAD_SHA:          ${{ github.event.pull_request.head.sha }}
+        GITHUB_TOKEN:         ${{ inputs.github-token }}
+      run: |
+        # Fresh envelope; each iteration appends one suggestion (if any).
+        echo '{"suggestions":[]}' > "$AI_OUT"
+        total="$(jq '(.pr_review.code_suggestions // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0)"
+        limit="$total"
+        [ "$total" -gt "$AI_MAX" ] 2>/dev/null && limit="$AI_MAX"
+        echo "🔁 ${limit} of ${total} scanner finding(s) → one inference call each (model: ${AI_MODEL})"
+        i=0
+        while [ "$i" -lt "$limit" ]; do
+          echo "──── inference $((i + 1))/${limit} ────"
+          node "${{ github.action_path }}/dist/ai-infer-one.js" "$i"
+          i=$((i + 1))
+        done
+        n="$(jq '(.suggestions // []) | length' "$AI_OUT" 2>/dev/null || echo 0)"
+        echo "✅ loop done — ${n} suggestion(s) cleared the bar → $AI_OUT"
 
     # ─── 11b. Decode an inference failure into actionable guidance ───
     # The ai-inference action surfaces GitHub Models errors as opaque
@@ -648,9 +619,9 @@ runs:
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        steps.ai-context.outcome == 'success' &&
+        steps.ai-prep.outcome == 'success' &&
         github.event.pull_request != null &&
-        (steps.ai-ep.outputs.preflight_status != '200' || steps.ai.outcome == 'failure')
+        (steps.ai-ep.outputs.preflight_status != '200' || steps.ai-loop.outcome == 'failure')
       shell: bash
       env:
         AI_MODEL:    ${{ inputs.ai-model }}
@@ -709,15 +680,15 @@ runs:
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        steps.ai.outcome == 'success' &&
+        steps.ai-loop.outcome == 'success' &&
         github.event.pull_request != null
       shell: bash
       env:
-        # The inference action wrote the model response here and
-        # surfaced the path as its `response-file` output. The output
-        # name contains a dash, so it MUST be read with index syntax
-        # (dot syntax `outputs.response-file` parses as subtraction).
-        AI_SUGGESTIONS_PATH:      ${{ steps.ai.outputs['response-file'] }}
+        # The per-suggestion loop wrote every passing suggestion into one
+        # envelope at this fixed path. The post bundle validates it
+        # against the schema, re-applies the quality bar + diff anchoring,
+        # caps at DRIFT_MAX_AI_SUGGESTIONS, and POSTs one createReview.
+        AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
         DRIFT_MAX_AI_SUGGESTIONS: ${{ inputs.ai-max-suggestions }}
         DRIFT_AI_MODEL:           ${{ inputs.ai-model }}
         GITHUB_TOKEN:             ${{ inputs.github-token }}
