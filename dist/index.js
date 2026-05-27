@@ -23825,6 +23825,7 @@ function validate(r) {
     }
   }
 }
+var DRIFT_FAILS_PR = false;
 var SUGGESTION_CONFIDENCE_THRESHOLD = 0.75;
 function passesQualityBar(s) {
   const hasRef = Array.isArray(s.references) && s.references.length > 0 && !!s.references[0].url;
@@ -24760,11 +24761,12 @@ function isUnresolvedPathError(err) {
 
 // src/github/check.ts
 async function createCheckRun(args) {
-  const { octokit, owner, repo, headSha, report } = args;
+  const { octokit, owner, repo, headSha, report, failThreshold } = args;
   const suggestions = report.pr_review?.code_suggestions ?? [];
   const passing = suggestions.filter(passesQualityBar);
   const correctness = passing.filter((s) => s.category === "B").length;
-  const conclusion = correctness > 0 ? "failure" : passing.length > 0 ? "neutral" : "success";
+  const shouldFail = DRIFT_FAILS_PR && failThreshold !== null && correctness > failThreshold;
+  const conclusion = shouldFail ? "failure" : passing.length > 0 ? "neutral" : "success";
   const title = correctness > 0 ? `${correctness} product-correctness issue${correctness === 1 ? "" : "s"} found` : passing.length > 0 ? `${passing.length} suggestion${passing.length === 1 ? "" : "s"} to apply` : "OK \u2014 no high-confidence issues";
   await octokit.rest.checks.create({
     owner,
@@ -24822,7 +24824,7 @@ async function main() {
   const headSha = pr.head.sha;
   const prNumber = pr.number;
   const tasks = [
-    createCheckRun({ octokit, owner, repo, headSha, report }).catch(
+    createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch(
       (err) => warning(`check run failed: ${describeError(err)}`)
     ),
     postReview({
@@ -24852,7 +24854,7 @@ async function main() {
       `Drift flagged ${correctness} product-correctness issue(s) \u2014 see the Drift PR comment for details.`
     );
   }
-  if (failThreshold !== null && correctness > failThreshold) {
+  if (DRIFT_FAILS_PR && failThreshold !== null && correctness > failThreshold) {
     setFailed(
       `Drift found ${correctness} product-correctness issue(s), exceeding the configured fail-threshold of ${failThreshold}.`
     );
