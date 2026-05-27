@@ -7,6 +7,60 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Per-job path filtering isn't native to Actions, so this job computes
+  # which areas changed and the slower jobs gate on its outputs. Right now
+  # only the Rust crate uses it; add more filters here as needed.
+  changes:
+    name: detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      profiler: ${{ steps.filter.outputs.profiler }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            profiler:
+              - 'drift-static-profiler/**'
+
+  # Compiles the crate (so newly added .rs files are actually built) and
+  # runs the full test suite. Only runs when drift-static-profiler/** changed.
+  #
+  # Deliberately NOT gating on `cargo fmt --check` or `clippy -D warnings`:
+  # the crate doesn't currently pass either under stable (rustfmt's evolving
+  # `let ... else` style; ~130 clippy style lints in test code), so enforcing
+  # them now would be pure red noise. Add them after a dedicated cleanup pass.
+  profiler:
+    name: profiler / build + test
+    needs: changes
+    if: needs.changes.outputs.profiler == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: drift-static-profiler
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Same cache key strategy as the release workflow so the two share a warm
+      # target/ where possible.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-static-profiler
+
+      # `--locked` fails if Cargo.lock drifts from Cargo.toml — keeps the
+      # committed lockfile honest (and matches the version-bump invariant the
+      # release workflow relies on).
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
   action:
     name: action / build + test
     runs-on: ubuntu-latest
