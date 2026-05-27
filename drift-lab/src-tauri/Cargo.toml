@@ -81,7 +81,7 @@ tauri-plugin-store = "2"
 # Persistence: SQLite via sqlx (async, runtime-tokio). Used for the local-
 # runtime discovery cache so the UI can render last-known runtimes
 # instantly while a fresh probe runs in the background.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 
 # Static-call-tree analyzer. Sibling crate consumed as a library so the
 # desktop app can invoke the same pipeline the `drift-static-profiler` CLI
