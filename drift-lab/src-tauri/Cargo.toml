@@ -121,7 +121,7 @@ axum = "0.7"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 utoipa = { version = "5", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "8", features = ["axum"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 # Embed the built viewer (drift-static-profiler/viewer/dist) into the
 # binary so the desktop app has no filesystem dependency at runtime.
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
