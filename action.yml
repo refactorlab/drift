@@ -62,14 +62,18 @@ inputs:
   ai-model:
     description: |
       GitHub Models model ID for the AI suggestion pass. Defaults to
-      `openai/gpt-5`. The per-suggestion inference loop sends the correct
+      `openai/gpt-4o` — the most widely-served model on org inference
+      endpoints. The per-suggestion inference loop sends the correct
       token field automatically — `max_completion_tokens` for reasoning
       models (gpt-5, o-series), `max_tokens` for classic models
       (gpt-4o). If your org's Models *inference* endpoint does not serve
       the chosen model, the preflight below catches it and the AI pass
-      skips fail-soft — override to `openai/gpt-4o` in that case.
+      skips fail-soft. `openai/gpt-5` is in the global catalog but is NOT
+      served by every org endpoint until an org admin enables it under
+      Settings → Copilot → Policies → Models — override to `openai/gpt-5`
+      once that's done.
     required: false
-    default: 'openai/gpt-5'
+    default: 'openai/gpt-4o'
   ai-endpoint:
     description: |
       GitHub Models inference endpoint. Default `auto` resolves it from
