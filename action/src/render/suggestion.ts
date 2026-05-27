@@ -3,6 +3,7 @@
 // button — it MUST be inside a review comment, not an issue comment.
 
 import type { CodeSuggestion } from '../report.ts';
+import { suggestionBlock } from '../suggestion-fence.ts';
 
 const CATEGORY_BADGE: Record<'A' | 'B' | 'C', string> = {
   A: '🅐 Optimization',
@@ -25,7 +26,9 @@ export function renderSuggestionBody(s: CodeSuggestion): string {
 
   const after = extractAfterCode(s);
   if (after) {
-    lines.push('', '```suggestion', after, '```');
+    // Dynamic fence: scale past any backticks inside the replacement code so
+    // GitHub doesn't close the suggestion block early (see suggestion-fence).
+    lines.push('', suggestionBlock(after));
   }
 
   if (s.notes) {

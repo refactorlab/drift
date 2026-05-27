@@ -142,7 +142,7 @@ wiremock = "0.6"
 # Temp file fixtures for the event_log JSONL parser tests.
 tempfile = "3"
 
-# Known Dependabot alert: RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g
+# Known advisory: RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g
 # (`glib::VariantStrIter` unsoundness). `glib 0.18.5` is pulled in
 # transitively through `tauri 2.11.1 → wry → webkit2gtk 2.0.x →
 # gtk 0.18.2 → glib ^0.18`. The fix (`glib 0.20.0+`) cannot be applied
@@ -153,12 +153,7 @@ tempfile = "3"
 # — and the fix is gated on tauri/wry migrating to gtk4. The vulnerable
 # `VariantStrIter::impl_get` path is `cfg(target_os = "linux")` only,
 # so macOS/Windows builds don't even compile it in, and wry doesn't
-# invoke it in practice.
-#
-# Dependabot's PR noise for this advisory is silenced via the `ignore`
-# rule in `.github/dependabot.yml`. The alert itself can be dismissed
-# on the GitHub Security tab with reason "Vulnerable code is not
-# reachable" once an org-owner reviews it.
+# invoke it in practice. This advisory is knowingly accepted.
 
 # Release profile — aggressive size optimization. Without this, Cargo's
 # defaults (no LTO, 16 codegen units, no symbol strip) produced ~550 MB

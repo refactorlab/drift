@@ -7,6 +7,7 @@
 //   https://docs.github.com/articles/incorporating-feedback-in-your-pull-request
 
 import type { AISuggestion } from './schema.ts';
+import { suggestionBlock, unwrapFence } from '../suggestion-fence.ts';
 
 const CATEGORY_BADGE: Record<'A' | 'B' | 'C', string> = {
   A: '🅐 Optimization',
@@ -26,9 +27,9 @@ export function renderAISuggestionBody(s: AISuggestion, model: string): string {
     '',
     `Reference: [${refLabel}](${ref.url})`,
     '',
-    '```suggestion',
-    s.after_code,
-    '```',
+    // Dynamic fence so backticks inside the replacement code can't terminate
+    // the suggestion early; unwrap a fence the model may have added itself.
+    suggestionBlock(unwrapFence(s.after_code)),
   ].join('\n');
 }
 

@@ -24035,6 +24035,16 @@ function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// src/suggestion-fence.ts
+function suggestionBlock(code) {
+  const runs = code.match(/`+/g) ?? [];
+  const longest = runs.reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}suggestion
+${code}
+${fence}`;
+}
+
 // src/render/suggestion.ts
 var CATEGORY_BADGE = {
   A: "\u{1F150} Optimization",
@@ -24054,7 +24064,7 @@ function renderSuggestionBody(s) {
   }
   const after = extractAfterCode(s);
   if (after) {
-    lines.push("", "```suggestion", after, "```");
+    lines.push("", suggestionBlock(after));
   }
   if (s.notes) {
     lines.push("", `> ${s.notes}`);

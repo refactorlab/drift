@@ -23858,6 +23858,21 @@ function parseAIOutput(raw) {
   };
 }
 
+// src/suggestion-fence.ts
+function suggestionBlock(code) {
+  const runs = code.match(/`+/g) ?? [];
+  const longest = runs.reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}suggestion
+${code}
+${fence}`;
+}
+function unwrapFence(raw) {
+  const s = raw.replace(/\r\n/g, "\n");
+  const m = s.match(/^\s*`{3,}[^\n]*\n([\s\S]*?)\n`{3,}\s*$/);
+  return m ? m[1] : raw;
+}
+
 // src/ai/render.ts
 var CATEGORY_BADGE = {
   A: "\u{1F150} Optimization",
@@ -23875,9 +23890,9 @@ function renderAISuggestionBody(s, model) {
     "",
     `Reference: [${refLabel}](${ref.url})`,
     "",
-    "```suggestion",
-    s.after_code,
-    "```"
+    // Dynamic fence so backticks inside the replacement code can't terminate
+    // the suggestion early; unwrap a fence the model may have added itself.
+    suggestionBlock(unwrapFence(s.after_code))
   ].join("\n");
 }
 function shortenUrl(url) {

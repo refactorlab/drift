@@ -15,7 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { parsePatch } from 'diff';
+import { parsePatch, type StructuredPatchHunk } from 'diff';
 import type { CodeSuggestion, ScanPrOutput } from '../report.ts';
 import { loadReport } from '../report.ts';
 
@@ -180,6 +180,112 @@ export function annotateDiff(diffText: string): string {
         // '\' (no-newline marker) is dropped
       }
     }
+  }
+  return out.join('\n');
+}
+
+type AnnotatedRow = { newLine: number | null; text: string };
+
+/**
+ * Number ONE hunk's lines exactly as annotateDiff does, row by row, but
+ * keep the new-file line number alongside each rendered row so a caller can
+ * window the hunk by line. Deletions (`-`) carry no new-side number.
+ */
+function annotateHunkRows(hunk: StructuredPatchHunk): AnnotatedRow[] {
+  const rows: AnnotatedRow[] = [];
+  let n = hunk.newStart;
+  const pad = String(hunk.newStart + hunk.newLines).length;
+  for (const row of hunk.lines) {
+    const c = row[0];
+    const code = row.slice(1);
+    if (c === '+') {
+      rows.push({ newLine: n, text: `${String(n).padStart(pad)} +${code}` });
+      n += 1;
+    } else if (c === ' ') {
+      rows.push({ newLine: n, text: `${String(n).padStart(pad)}  ${code}` });
+      n += 1;
+    } else if (c === '-') {
+      rows.push({ newLine: null, text: `${' '.repeat(pad)} -${code}` });
+    }
+    // '\' (no-newline marker) is dropped, as in annotateDiff
+  }
+  return rows;
+}
+
+/**
+ * Pick the single hunk to show for a focal line: the one whose new-side
+ * range covers it, else the nearest by distance. Falls back to the first
+ * hunk when there is no focal line.
+ */
+function pickFocalHunk(
+  hunks: StructuredPatchHunk[],
+  focalLine: number | undefined,
+): StructuredPatchHunk | null {
+  if (!hunks.length) return null;
+  if (typeof focalLine !== 'number') return hunks[0];
+  for (const h of hunks) {
+    if (focalLine >= h.newStart && focalLine < h.newStart + h.newLines) return h;
+  }
+  let best = hunks[0];
+  let bestDist = Infinity;
+  for (const h of hunks) {
+    const start = h.newStart;
+    const end = h.newStart + h.newLines - 1;
+    const dist = focalLine < start ? start - focalLine : focalLine - end;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = h;
+    }
+  }
+  return best;
+}
+
+/**
+ * Like annotateDiff, but built for the per-suggestion loop's tight token
+ * budget: emit ONLY the diff region around `focalLine` instead of every
+ * hunk of the file. We pick the hunk covering (or nearest to) the focal
+ * line, drop the rest, and — when that hunk is itself large — keep a window
+ * of `radius` rows on each side of the focal row, replacing dropped spans
+ * with an explicit `… N line(s) omitted …` marker so the model never
+ * silently sees a cut diff. New-file numbers are identical to annotateDiff,
+ * so any emitted `+` line still maps 1:1 to a GitHub-commentable line.
+ *
+ * `radius === Infinity` ⇒ the full file diff (delegates to annotateDiff) —
+ * the first, best-context attempt the caller tries for small files before
+ * shrinking the window to fit the budget.
+ */
+export function annotateFocusedDiff(
+  diffText: string,
+  focalLine: number | undefined,
+  radius: number,
+): string {
+  if (!Number.isFinite(radius)) return annotateDiff(diffText);
+
+  let files: ReturnType<typeof parsePatch>;
+  try {
+    files = parsePatch(diffText);
+  } catch {
+    return annotateDiff(diffText);
+  }
+
+  const out: string[] = [];
+  for (const file of files) {
+    const hunk = pickFocalHunk(file.hunks, focalLine);
+    if (!hunk) continue;
+    const name = (file.newFileName || file.oldFileName || 'file').replace(/^[ab]\//, '');
+    out.push(`### ${name}`);
+    out.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
+
+    const rows = annotateHunkRows(hunk);
+    // Center the window on the focal line's row; fall back to the hunk
+    // middle when the exact line isn't materialized in this hunk.
+    let center = rows.findIndex((r) => r.newLine === focalLine);
+    if (center < 0) center = Math.floor(rows.length / 2);
+    const lo = Math.max(0, center - radius);
+    const hi = Math.min(rows.length - 1, center + radius);
+    if (lo > 0) out.push(`… ${lo} line(s) omitted …`);
+    for (let i = lo; i <= hi; i += 1) out.push(rows[i].text);
+    if (hi < rows.length - 1) out.push(`… ${rows.length - 1 - hi} line(s) omitted …`);
   }
   return out.join('\n');
 }

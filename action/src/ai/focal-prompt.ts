@@ -1,7 +1,13 @@
 // Build the prompt for ONE scanner finding (one focal point) — the unit
 // of the per-suggestion inference loop. Each model call sees exactly one
-// finding plus the numbered diff of its file, so the request stays tiny
-// and well under the GitHub Models input cap regardless of PR size.
+// finding plus the numbered diff of its file.
+//
+// The diff is BUDGETED to the GitHub Models input cap (8000 tokens on the
+// Free/low tier). A single file's full diff can blow that cap on its own —
+// a newly-added or heavily-changed file is the whole file as `+` lines —
+// which 413'd ("Request body too large … Max size: 8000 tokens") and made
+// every suggestion come back empty. We now count tokens before the POST
+// and shrink the diff to the hunk around the focal line until it fits.
 //
 // Technique mirrors qodo PR-Agent: present the new hunk with each line
 // prefixed by its NEW-FILE number and anchor only to `+` lines. Output
@@ -14,8 +20,9 @@ import {
   pickFocalSuggestions,
   renderFocalPoint,
   getPrDiff,
-  annotateDiff,
+  annotateFocusedDiff,
 } from './build-context.ts';
+import { countTokens, inputCeiling } from './budget.ts';
 
 export const FOCAL_SYSTEM_PROMPT = [
   'You are an expert senior reviewer. Refine ONE scanner-flagged finding',
@@ -48,6 +55,9 @@ export const FOCAL_SYSTEM_PROMPT = [
   '    commit verbatim — GitHub "Apply suggestion" swaps those exact lines for',
   '    it. No diff prefixes (+/-), no surrounding fence, no line numbers.',
   '  - Replace whole lines, never sub-line fragments.',
+  '  - Preserve the EXACT leading whitespace of the original line(s): after_code',
+  '    is committed verbatim by "Apply suggestion", so wrong indentation breaks',
+  '    the commit.',
   '  - Anchor ONLY to `+` lines actually shown in the diff. Never invent a line.',
   '  - Quality bar: confidence >= 0.75; a REAL reference URL (you MAY reuse the',
   '    scanner references verbatim); category in {A, B, C}.',
@@ -77,10 +87,10 @@ export function buildFocalUserPrompt(
   const focal = pickFocalSuggestions(report, idx + 1, commentable)[idx];
   if (!focal) return null;
 
-  const parts: string[] = [];
-  parts.push('=== Focal point (1 scanner-flagged location) ===');
-  parts.push(renderFocalPoint(focal, 1, ctx.workspaceRoot));
-  parts.push('');
+  const head = [
+    '=== Focal point (1 scanner-flagged location) ===',
+    renderFocalPoint(focal, 1, ctx.workspaceRoot),
+  ].join('\n');
 
   const diff = getPrDiff(
     ctx.workspaceRoot,
@@ -89,17 +99,30 @@ export function buildFocalUserPrompt(
     1, // just this file
     new Set([focal.file]),
   );
-  if (diff.text) {
-    parts.push(
-      `=== PR diff for ${focal.file} ` +
-        '(each line prefixed with its new-file line number) ===',
-    );
-    parts.push(annotateDiff(diff.text));
-  } else {
-    parts.push(`=== PR diff for ${focal.file} ===`);
-    parts.push('(no diff available)');
+  if (!diff.text) {
+    return `${head}\n\n=== PR diff for ${focal.file} ===\n(no diff available)`;
   }
-  return parts.join('\n');
+
+  const diffHeader =
+    `=== PR diff for ${focal.file} ` +
+    '(each line prefixed with its new-file line number) ===';
+
+  // Keep the WHOLE request (system + this user prompt) under the GitHub
+  // Models input cap. The per-file diff alone can exceed it — that is what
+  // 413'd the old build, which sent every hunk of the focal file. Try the
+  // full file diff first (best context); when it's over budget, fall back
+  // to the hunk around the focal line and shrink the window until it fits.
+  // The first window that fits wins; if even the tightest is over (huge
+  // head or pathological long lines) we send it anyway — a fail-soft
+  // over-attempt beats silently dropping the finding.
+  const userBudget = Math.max(600, inputCeiling() - countTokens(FOCAL_SYSTEM_PROMPT));
+  let body = '';
+  for (const radius of [Infinity, 80, 48, 28, 16, 8]) {
+    body = annotateFocusedDiff(diff.text, focal.line, radius);
+    const user = `${head}\n\n${diffHeader}\n${body}`;
+    if (countTokens(user) <= userBudget) return user;
+  }
+  return `${head}\n\n${diffHeader}\n${body}`;
 }
 
 /** How many focal points the report offers — the loop's upper bound. */

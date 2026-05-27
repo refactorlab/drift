@@ -587,14 +587,18 @@ runs:
     # ─── 12. AI inference LOOP — one model call per scanner finding ──
     # A composite action CANNOT loop a `uses:` step, so we replace
     # actions/ai-inference@v1 with our own bash `for` loop that POSTs one
-    # SMALL request per focal point (≤ ai-max-suggestions). Each call
-    # sees a single finding + that file's numbered diff, so the request
-    # stays tiny — no 8000-token input 413, regardless of PR size.
-    # dist/ai-infer-one.js builds the one-finding prompt, calls the
-    # Models endpoint (max_completion_tokens for gpt-5, max_tokens for
-    # gpt-4o), parses the reply, and APPENDS the passing suggestion to
-    # AI_OUT. Only runs on a green preflight; continue-on-error keeps the
-    # rest of the action green on any residual failure.
+    # request per focal point (≤ ai-max-suggestions). Each call sees a
+    # single finding + that file's numbered diff, BUDGETED to the GitHub
+    # Models input cap: dist/ai-infer-one.js counts tokens BEFORE the POST
+    # (gpt-tokenizer, o200k_base) and shrinks the diff to the hunk around
+    # the focal line until system+user fit under AI_MAX_INPUT_TOKENS.
+    # Without that budget one large or newly-added file's full diff blows
+    # the 8000-token cap → HTTP 413 ("Request body too large") and ZERO
+    # suggestions — exactly the failure this replaced. The call uses
+    # max_completion_tokens for gpt-5, max_tokens for gpt-4o, parses the
+    # reply, and APPENDS the passing suggestion to AI_OUT. Only runs on a
+    # green preflight; continue-on-error keeps the rest of the action green
+    # on any residual failure.
     - name: AI inference (per-suggestion loop)
       id: ai-loop
       if: >-
@@ -611,6 +615,12 @@ runs:
         AI_ENDPOINT:          ${{ steps.ai-ep.outputs.endpoint }}
         AI_MODEL:             ${{ inputs.ai-model }}
         AI_MAX:               ${{ inputs.ai-max-suggestions }}
+        # Per-call INPUT budget (system + user, in tokens). The diff for the
+        # focal file is trimmed to fit under this BEFORE the POST, so a large
+        # or newly-added file can't 413 the request. Set below the 8000-token
+        # Free/low-tier cap to leave headroom for the chat envelope the server
+        # also counts. Raise on a higher tier (Enterprise High input = 16000).
+        AI_MAX_INPUT_TOKENS:  '7000'
         # Per-call OUTPUT budget. Reasoning models (gpt-5) also spend
         # hidden reasoning tokens out of this, so keep it generous — one
         # suggestion's visible JSON is small. Lower it only if a classic
