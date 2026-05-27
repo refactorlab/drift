@@ -67,7 +67,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] 
 # already transitively present; pulling them in as direct deps lets us
 # call them by name. `sha2` for the hash, `hex` for hex-encoding the
 # truncated digest.
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 # LLM client. Every supported runtime (cloud or local) speaks OpenAI-compat
