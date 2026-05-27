@@ -20,7 +20,11 @@
       { "url": "https://www.cncf.io/projects/opencost/",                 "title": "CNCF — OpenCost (cost-allocation reference)", "tag": "cncf" },
       { "url": "https://opencost.io/docs/",                              "title": "OpenCost docs", "tag": "official" },
       { "url": "https://www.bls.gov/oes/current/oes151252.htm",          "title": "BLS — Software Developer Occupational Stats (US wages)", "tag": "official" },
-      { "url": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/", "title": "HiBob — fully-burdened labor rate", "tag": "blog" }
+      { "url": "https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/", "title": "HiBob — fully-burdened labor rate", "tag": "blog" },
+      { "url": "https://www.sonarsource.com/blog/new-research-from-sonar-on-cost-of-technical-debt", "title": "Sonar — Cost of technical debt (dev-hours/yr per 1M LOC)", "tag": "blog" },
+      { "url": "https://testomat.io/blog/software-bug-cost/",             "title": "Testomat — Real cost of software bugs (defect escalation)", "tag": "blog" },
+      { "url": "https://benchlm.ai/llm-pricing",                          "title": "BenchLM — LLM API token pricing (2026)", "tag": "blog" },
+      { "url": "https://digitaleconomy.stanford.edu/news/how-are-ai-agents-spending-your-tokens/", "title": "Stanford Digital Economy Lab — how AI agents spend tokens", "tag": "blog" }
     ],
     "customer": [
       { "url": "https://www.conventionalcommits.org/en/v1.0.0/",         "title": "Conventional Commits v1.0.0", "tag": "official" },
@@ -97,7 +101,65 @@
       "value": 0.5,
       "unit": "hours/file",
       "citation": "in-house 2026 baseline",
-      "notes": "Per-file switching cost: read context, decide scope, update tests."
+      "notes": "DEPRECATED — new-feature dev-time is no longer modeled. The money axis now measures tech-debt servicing (bugs + maintenance + AI tokens), not the cost to write the feature. Kept for back-compat of the constants file."
+    }
+  },
+  "tech_debt_economics": {
+    "bug_hours_critical": {
+      "value": 8.0,
+      "unit": "hours/finding",
+      "as_of": "2026",
+      "citation": "https://testomat.io/blog/software-bug-cost/",
+      "notes": "Servicing hours for a Critical latent defect (correctness/security/runtime). Defect cost escalates ~10-100x from coding stage to production; a finding that ships is on the expensive end."
+    },
+    "bug_hours_important": {
+      "value": 3.0,
+      "unit": "hours/finding",
+      "as_of": "2026",
+      "citation": "https://cloudqa.io/how-much-do-software-bugs-cost-2025-report/",
+      "notes": "Servicing hours for an Important finding."
+    },
+    "bug_hours_minor": {
+      "value": 0.5,
+      "unit": "hours/finding",
+      "as_of": "2026",
+      "citation": "https://cloudqa.io/how-much-do-software-bugs-cost-2025-report/",
+      "notes": "Servicing hours for a Minor finding."
+    },
+    "maint_hours_per_finding": {
+      "value": 1.5,
+      "unit": "hours/finding",
+      "as_of": "2026",
+      "citation": "https://www.sonarsource.com/blog/new-research-from-sonar-on-cost-of-technical-debt",
+      "notes": "Ongoing iteration drag per debt item. Sonar: ~5,500 dev-hours/yr of remediation per 1M LOC; each debt item compounds maintenance time."
+    },
+    "maint_hours_per_loc": {
+      "value": 0.01,
+      "unit": "hours/loc",
+      "as_of": "2026",
+      "citation": "https://pegotec.net/software-maintenance-cost-percentage-2026-industry-benchmarks/",
+      "notes": "Annualized maintenance tax per LOC (Sonar ~0.0055 h/LOC/yr over a multi-year horizon). NOT the cost to write the LOC — that new-feature dev-time is intentionally not modeled."
+    },
+    "llm_tokens_per_iteration": {
+      "value": 1000000.0,
+      "unit": "tokens/iteration",
+      "as_of": "2026",
+      "citation": "https://digitaleconomy.stanford.edu/news/how-are-ai-agents-spending-your-tokens/",
+      "notes": "Tokens an AI coding agent spends to make ONE change to this code, agentic baseline (~1M input + ~40K output incl. the re-read context snowball). Clean tasks are far cheaper (~33K); messy ones balloon (Cursor 188K w/ errors vs Claude 33K)."
+    },
+    "llm_expected_iterations": {
+      "value": 6.0,
+      "unit": "iterations",
+      "as_of": "2026",
+      "citation": "https://pegotec.net/software-maintenance-cost-percentage-2026-industry-benchmarks/",
+      "notes": "Times this code is revisited by an AI agent over its maintenance life. Maintenance is ~60% of lifecycle cost; code is touched repeatedly."
+    },
+    "llm_blended_usd_per_mtoken": {
+      "value": 5.0,
+      "unit": "USD/1M tokens",
+      "as_of": "2026",
+      "citation": "https://benchlm.ai/llm-pricing",
+      "notes": "Blended agentic rate. At GPT-4.1 ($2/$8) / Claude-Sonnet ($3/$15) with a 25:1 input:output ratio the raw blend is ~$3.5/1M; the retry/self-correction snowball pushes the effective agentic cost to ~$5/1M."
     }
   },
   "thresholds": {

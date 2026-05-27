@@ -24841,7 +24841,7 @@ async function main() {
         owner,
         repo,
         prNumber,
-        body: renderOverview(report)
+        body: withAudioFooter(renderOverview(report))
       }).catch((err) => warning(`sticky comment failed: ${describeError(err)}`))
     );
   }
@@ -24872,6 +24872,14 @@ function parseThreshold(raw) {
 }
 function describeError(err) {
   return err instanceof Error ? err.message : String(err);
+}
+function withAudioFooter(body) {
+  const url = process.env.DRIFT_AUDIO_URL?.trim();
+  if (!url) return body;
+  return `${body}
+
+---
+\u{1F50A} **[Listen to this PR summary](${url})** \u2014 spoken business-logic summary (Piper TTS \xB7 downloadable WAV artifact).`;
 }
 
 // src/index.ts

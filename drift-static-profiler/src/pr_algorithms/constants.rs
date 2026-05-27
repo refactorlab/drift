@@ -26,6 +26,7 @@ const RAW_JSON: &str = include_str!("../../schema/pr_algorithms_constants.json")
 pub struct Constants {
     pub rates: Rates,
     pub heuristics: Heuristics,
+    pub tech_debt_economics: TechDebtEconomics,
     pub thresholds: Thresholds,
     pub test_filename_patterns: Vec<TestFilenamePattern>,
     pub test_function_patterns: Vec<TestFunctionPattern>,
@@ -59,8 +60,25 @@ pub struct Rates {
 
 #[derive(Debug, Deserialize)]
 pub struct Heuristics {
+    #[allow(dead_code)]
     pub hours_per_loc_added: NumberWithCitation,
+    #[allow(dead_code)]
     pub hours_per_file_touched: NumberWithCitation,
+}
+
+/// Tech-debt servicing economics — the money axis measures the cost of
+/// SERVICING what a PR ships (bugs + maintenance + AI-token iteration),
+/// not the (no-longer-modeled) cost of writing the feature.
+#[derive(Debug, Deserialize)]
+pub struct TechDebtEconomics {
+    pub bug_hours_critical: NumberWithCitation,
+    pub bug_hours_important: NumberWithCitation,
+    pub bug_hours_minor: NumberWithCitation,
+    pub maint_hours_per_finding: NumberWithCitation,
+    pub maint_hours_per_loc: NumberWithCitation,
+    pub llm_tokens_per_iteration: NumberWithCitation,
+    pub llm_expected_iterations: NumberWithCitation,
+    pub llm_blended_usd_per_mtoken: NumberWithCitation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,12 +170,45 @@ pub fn aws_hours_per_month() -> f64 {
     constants().rates.aws_hours_per_month.value
 }
 
+// DEPRECATED: new-feature dev-time is no longer modeled by the money axis.
+// Kept (allow dead_code) so the constants file + struct stay intact.
+#[allow(dead_code)]
 pub fn hours_per_loc_added() -> f64 {
     constants().heuristics.hours_per_loc_added.value
 }
 
+#[allow(dead_code)]
 pub fn hours_per_file_touched() -> f64 {
     constants().heuristics.hours_per_file_touched.value
+}
+
+// ── Tech-debt servicing economics (money axis) ──
+pub fn bug_hours_critical() -> f64 {
+    constants().tech_debt_economics.bug_hours_critical.value
+}
+pub fn bug_hours_important() -> f64 {
+    constants().tech_debt_economics.bug_hours_important.value
+}
+pub fn bug_hours_minor() -> f64 {
+    constants().tech_debt_economics.bug_hours_minor.value
+}
+pub fn maint_hours_per_finding() -> f64 {
+    constants().tech_debt_economics.maint_hours_per_finding.value
+}
+pub fn maint_hours_per_loc() -> f64 {
+    constants().tech_debt_economics.maint_hours_per_loc.value
+}
+pub fn llm_tokens_per_iteration() -> f64 {
+    constants().tech_debt_economics.llm_tokens_per_iteration.value
+}
+pub fn llm_expected_iterations() -> f64 {
+    constants().tech_debt_economics.llm_expected_iterations.value
+}
+pub fn llm_blended_usd_per_mtoken() -> f64 {
+    constants().tech_debt_economics.llm_blended_usd_per_mtoken.value
+}
+pub fn tech_debt_economics_citation() -> &'static str {
+    &constants().tech_debt_economics.bug_hours_critical.citation
 }
 
 pub fn cyclomatic_high_risk() -> usize {

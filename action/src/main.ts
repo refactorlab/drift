@@ -74,7 +74,7 @@ export async function main(): Promise<void> {
         owner,
         repo,
         prNumber,
-        body: renderOverview(report),
+        body: withAudioFooter(renderOverview(report)),
       }).catch((err) => core.warning(`sticky comment failed: ${describeError(err)}`)),
     );
   }
@@ -123,4 +123,20 @@ function parseThreshold(raw: string | undefined): number | null {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Append a "🔊 Listen" link to the sticky comment when the action's audio
+ * step uploaded a synthesized WAV (DRIFT_AUDIO_URL = the artifact URL).
+ * Empty/unset env (audio disabled or synthesis failed) → body unchanged, so
+ * this is fully fail-soft and a no-op in the common case.
+ */
+export function withAudioFooter(body: string): string {
+  const url = process.env.DRIFT_AUDIO_URL?.trim();
+  if (!url) return body;
+  return (
+    `${body}\n\n---\n` +
+    `🔊 **[Listen to this PR summary](${url})** — spoken business-logic summary ` +
+    `(Piper TTS · downloadable WAV artifact).`
+  );
 }
