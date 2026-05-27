@@ -11,6 +11,7 @@
 //!   3. classified A / B / C
 
 use crate::insights::{FindingKind, Severity};
+use crate::pr_algorithms::pr_signals;
 use crate::pr_algorithms::types::*;
 use crate::report::TopSymbol;
 use crate::tree::CallTreeNode;
@@ -585,6 +586,16 @@ fn silent_except_suggestions(
             continue;
         };
         let language = language_of(path);
+        // Only scan files drift actually parses. S5 (sentinel) had no
+        // language gate, so it matched code embedded in non-source files
+        // — e.g. a saved GitHub-UI HTML diff that renders a Rust snippet —
+        // and anchored a finding to the .html line, which the downstream
+        // LLM then "fixed" as if it were live Rust. S3/S4 already self-gate
+        // via their per-language match arms; this makes the skip explicit
+        // and uniform across all three text-pattern detectors.
+        if language == "unknown" {
+            continue;
+        }
         // Per-language match. We DON'T use full regex with backrefs —
         // each pattern is a substring scan over compacted whitespace.
         let lines: Vec<&str> = src.lines().collect();
@@ -683,6 +694,16 @@ fn sql_concat_suggestions(
             continue;
         };
         let language = language_of(path);
+        // Only scan files drift actually parses. S5 (sentinel) had no
+        // language gate, so it matched code embedded in non-source files
+        // — e.g. a saved GitHub-UI HTML diff that renders a Rust snippet —
+        // and anchored a finding to the .html line, which the downstream
+        // LLM then "fixed" as if it were live Rust. S3/S4 already self-gate
+        // via their per-language match arms; this makes the skip explicit
+        // and uniform across all three text-pattern detectors.
+        if language == "unknown" {
+            continue;
+        }
         for (i, line) in src.lines().enumerate() {
             let upper = line.to_ascii_uppercase();
             if !sql_kws.iter().any(|kw| upper.contains(kw)) {
@@ -773,6 +794,16 @@ fn sentinel_value_suggestions(
             continue;
         };
         let language = language_of(path);
+        // Only scan files drift actually parses. S5 (sentinel) had no
+        // language gate, so it matched code embedded in non-source files
+        // — e.g. a saved GitHub-UI HTML diff that renders a Rust snippet —
+        // and anchored a finding to the .html line, which the downstream
+        // LLM then "fixed" as if it were live Rust. S3/S4 already self-gate
+        // via their per-language match arms; this makes the skip explicit
+        // and uniform across all three text-pattern detectors.
+        if language == "unknown" {
+            continue;
+        }
         for (i, line) in src.lines().enumerate() {
             // Look for `if x != SENTINEL` shape.
             let trimmed = line.trim();
@@ -866,57 +897,51 @@ pub fn compute(inputs: Inputs<'_>) -> Vec<CodeSuggestion> {
     out.extend(sql_concat_suggestions(inputs.changed_files, inputs.repo_root));
     out.extend(sentinel_value_suggestions(inputs.changed_files, inputs.repo_root));
 
-    for node in walk(inputs.entries) {
-        // PR-scope filter: only emit suggestions for findings on
-        // nodes whose own file is in the PR diff. Findings on
-        // unchanged-file descendants reachable from a changed root
-        // are PRE-EXISTING — flagging them in PR review is noise.
-        // Empty `changed_files` (unit tests, legacy callers)
-        // disables the filter via [`in_pr_changed_files`].
-        if !crate::pr_algorithms::in_pr_changed_files(&node.file, inputs.changed_files) {
+    // Main findings → suggestions. Reuse the shared PR-signals view so the
+    // walk + PR-scope filter + confidence floor + cross-tree dedupe live in
+    // ONE place (`pr_signals::collect`) instead of being re-implemented here
+    // (DRY). A permissive bar preserves the historical behavior — every
+    // categorizable finding at/above the confidence threshold is a candidate,
+    // with no tier floor and no caps (the Action layer applies its own per-PR
+    // caps). The net gain over the old inline walk is cross-tree dedupe by
+    // (file, kind, line): a changed leaf reached from two roots no longer
+    // yields two identical suggestions.
+    let bar = pr_signals::QualityBar {
+        min_confidence: threshold,
+        min_tier: pr_signals::SignalTier::Minor,
+        per_category_cap: usize::MAX,
+        total_cap: usize::MAX,
+    };
+    for f in pr_signals::collect(inputs.entries, inputs.changed_files, &bar).findings {
+        let Some((category, category_label)) = categorize(&f.kind) else {
+            continue;
+        };
+        let language = language_of(&f.file);
+        let refs = references_for(&f.kind, language);
+        if refs.is_empty() {
             continue;
         }
-        let language = language_of(&node.file);
-        for f in &node.findings {
-            if f.confidence < threshold {
-                continue;
-            }
-            let Some((category, category_label)) = categorize(&f.kind) else {
-                continue;
-            };
-            let refs = references_for(&f.kind, language);
-            if refs.is_empty() {
-                continue;
-            }
-            let line = if f.line > 0 { f.line } else { node.line };
-            let before_lines = read_around(inputs.repo_root, &node.file, line, 3);
-            let rule_id = f
-                .evidence
-                .first()
-                .map(|e| e.call.clone())
-                .unwrap_or_default();
-
-            out.push(CodeSuggestion {
-                category,
-                category_label: category_label.into(),
-                kind: kind_slug(&f.kind),
-                rule_id,
-                file: node.file.clone(),
-                function: node.name.clone(),
-                line,
-                confidence: f.confidence,
-                severity: severity_str(&f.severity).into(),
-                why_it_matters: f.message.clone(),
-                remediation_hint: f.remediation.clone().unwrap_or_default(),
-                references: refs,
-                diff: CodeDiff {
-                    before_lines,
-                    after_lines: Vec::new(),
-                },
-                language: language.into(),
-                llm_prompt_hint: llm_prompt_hint(&kind_slug(&f.kind), &node.name, &node.file, language),
-            });
-        }
+        let before_lines = read_around(inputs.repo_root, &f.file, f.line, 3);
+        out.push(CodeSuggestion {
+            category,
+            category_label: category_label.into(),
+            kind: kind_slug(&f.kind),
+            rule_id: f.rule_id.clone(),
+            file: f.file.clone(),
+            function: f.function.clone(),
+            line: f.line,
+            confidence: f.confidence,
+            severity: severity_str(&f.severity).into(),
+            why_it_matters: f.message.clone(),
+            remediation_hint: f.remediation.clone().unwrap_or_default(),
+            references: refs,
+            diff: CodeDiff {
+                before_lines,
+                after_lines: Vec::new(),
+            },
+            language: language.into(),
+            llm_prompt_hint: llm_prompt_hint(&kind_slug(&f.kind), &f.function, &f.file, language),
+        });
     }
 
     out.sort_by(|a, b| {
@@ -1120,5 +1145,79 @@ mod tests {
         let r = compute_simple(&entries, None);
         let sev: Vec<&str> = r.iter().map(|s| s.severity.as_str()).collect();
         assert_eq!(sev, vec!["high", "medium", "low"]);
+    }
+
+    fn tmpdir(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "drift-code-suggestions-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Regression (S5): a changed `.html` file whose text embeds a Rust
+    /// snippet matching the sentinel heuristic (`if x != 0.0 { … }`) must
+    /// NOT produce a suggestion. Before the language gate, S5 read the
+    /// HTML, matched the embedded `if frame_v != 0.0`, and anchored a
+    /// `sentinel_value` finding to the .html line — which the downstream
+    /// LLM then "fixed" as if it were live Rust.
+    #[test]
+    fn text_detectors_skip_non_source_changed_files() {
+        let dir = tmpdir("html");
+        // A saved GitHub-UI mockup: the Rust diff is rendered as HTML.
+        std::fs::write(
+            dir.join("pr-ui.html"),
+            "<div class=\"line del\"><span class=\"code\">    \
+             if frame_v != 0.0 { frame_v } else { node_v }</span></div>\n",
+        )
+        .unwrap();
+
+        let changed = vec!["pr-ui.html".to_string()];
+        let r = compute(Inputs {
+            repo_root: Some(&dir),
+            changed_files: &changed,
+            ..Default::default()
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            r.iter().all(|s| !s.file.ends_with(".html")),
+            "no suggestion may anchor to a non-source .html file, got {:?}",
+            r.iter().map(|s| (&s.file, &s.kind)).collect::<Vec<_>>(),
+        );
+        assert!(r.is_empty(), "expected zero suggestions for an HTML-only PR, got {r:?}");
+    }
+
+    /// Positive control: the SAME sentinel line in a real `.rs` file MUST
+    /// still fire S5. Guards against the language gate over-correcting and
+    /// silencing legitimate source findings.
+    #[test]
+    fn s5_still_fires_on_real_rust_source() {
+        let dir = tmpdir("rust");
+        std::fs::write(
+            dir.join("compact.rs"),
+            "fn prefer(frame_v: f64, node_v: f64) -> f64 {\n    \
+             if frame_v != 0.0 { frame_v } else { node_v }\n}\n",
+        )
+        .unwrap();
+
+        let changed = vec!["compact.rs".to_string()];
+        let r = compute(Inputs {
+            repo_root: Some(&dir),
+            changed_files: &changed,
+            ..Default::default()
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let hit = r.iter().find(|s| s.kind == "sentinel_value");
+        assert!(hit.is_some(), "S5 must still fire on real .rs source, got {r:?}");
+        let hit = hit.unwrap();
+        assert_eq!(hit.file, "compact.rs");
+        assert_eq!(hit.language, "rust");
     }
 }

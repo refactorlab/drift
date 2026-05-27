@@ -29,6 +29,19 @@ pub enum Severity {
     High,
 }
 
+impl Severity {
+    /// Rank for sorting / impact weighting: higher = more severe.
+    /// Mirrors [`Effort::rank`] so impact math can treat the two axes
+    /// uniformly (e.g. `severity.rank() as f64 * confidence`).
+    pub fn rank(self) -> u8 {
+        match self {
+            Severity::Low => 1,
+            Severity::Medium => 2,
+            Severity::High => 3,
+        }
+    }
+}
+
 /// Rough fix-cost estimate — the second axis alongside severity.
 /// Mirrors SonarQube's remediation-time signal and Sentry's "is this a
 /// quick win" surface. Values are intentionally coarse; the goal is to
