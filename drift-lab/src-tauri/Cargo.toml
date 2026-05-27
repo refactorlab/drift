@@ -117,7 +117,7 @@ udiffx = "0.1"
 # REST API (Swagger UI at /docs) so external tools and the user's browser
 # can drive scans and inspect ~/.drift/scans/* without going through Tauri's
 # IPC. Bound to 127.0.0.1 only.
-axum = "0.7"
+axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 utoipa = { version = "5", features = ["axum_extras"] }
