@@ -7,6 +7,7 @@
 use crate::pr_algorithms::constants::{
     duplication_max_compare_candidates, duplication_ratio_threshold,
 };
+use crate::pr_algorithms::pr_signals::PrSignals;
 use crate::pr_algorithms::types::*;
 use crate::tree::CallTreeNode;
 use std::collections::{HashMap, HashSet};
@@ -190,6 +191,12 @@ pub struct Inputs<'a> {
     /// pre-existing dup, not actionable for this PR. Empty slice =
     /// no filter (legacy / unit-test callers).
     pub changed_files: &'a [String],
+    /// PR-scoped findings. When present, clusters that touch a
+    /// finding-bearing file are ranked first — a duplicate that is ALSO
+    /// flagged (e.g. two copies of an N+1) is more worth fixing than a
+    /// cosmetically-duplicated pair with no detected problem. `None` keeps
+    /// the legacy member-count ordering.
+    pub signals: Option<&'a PrSignals>,
 }
 
 impl<'a> Default for Inputs<'a> {
@@ -199,6 +206,7 @@ impl<'a> Default for Inputs<'a> {
             repo_root: None,
             line_spans: None,
             changed_files: &[],
+            signals: None,
         }
     }
 }
@@ -403,10 +411,20 @@ pub fn compute_with(inputs: Inputs<'_>) -> DuplicationReport {
                 })
         })
         .collect();
+    // Impact-aware ordering: clusters touching a finding-bearing file come
+    // first (a duplicate that is ALSO flagged is the higher-priority fix),
+    // then by member count, then name for determinism.
+    let impactful_files: HashSet<&str> = inputs
+        .signals
+        .map(|s| s.findings.iter().map(|f| f.file.as_str()).collect())
+        .unwrap_or_default();
+    let has_impact = |c: &DuplicationCluster| {
+        c.members.iter().any(|m| impactful_files.contains(m.file.as_str()))
+    };
     clusters.sort_by(|a, b| {
-        b.members
-            .len()
-            .cmp(&a.members.len())
+        has_impact(b)
+            .cmp(&has_impact(a))
+            .then_with(|| b.members.len().cmp(&a.members.len()))
             .then_with(|| a.members[0].name.cmp(&b.members[0].name))
     });
     let count = clusters.len();
@@ -567,5 +585,56 @@ mod tests {
         let r = compute(&entries);
         assert!(r.count >= 1);
         assert_eq!(r.clusters[0].members.len(), 2);
+    }
+
+    /// Impact-aware ranking: a cluster touching a finding-bearing file is
+    /// ordered ahead of an equal-size cluster with no detected problem,
+    /// overriding the default alphabetical tie-break.
+    #[test]
+    fn impactful_cluster_ranked_first() {
+        use crate::insights::{Effort, Finding, FindingKind, Severity};
+        use crate::pr_algorithms::pr_signals::{collect, QualityBar};
+        use crate::pr_algorithms::test_helpers::with_findings;
+
+        let entries = vec![
+            node("processOrder", "svc/hot.rs"),
+            node("processOrders", "svc/hot.rs"),
+            node("calculateTotal", "lib/plain.rs"),
+            node("calculateTotals", "lib/plain.rs"),
+        ];
+        let fnode = with_findings(
+            node("anything", "svc/hot.rs"),
+            vec![Finding {
+                kind: FindingKind::NPlusOne,
+                severity: Severity::High,
+                effort: Effort::Medium,
+                confidence: 0.9,
+                line: 1,
+                message: "m".into(),
+                evidence: vec![],
+                remediation: None,
+                byte_range: None,
+                fidelity: None,
+                fusion_paths: vec![],
+                predicted_sql: None,
+                originating_orm: None,
+            }],
+        );
+        let sig = collect(&[fnode], &["svc/hot.rs".to_string()], &QualityBar::default());
+
+        // Without signals, the alphabetical tie-break puts calculate* first.
+        let plain = compute_with(Inputs {
+            entries: &entries,
+            ..Default::default()
+        });
+        assert_eq!(plain.clusters[0].members[0].name, "calculateTotal");
+
+        // With signals, the finding-bearing svc/hot.rs cluster ranks first.
+        let ranked = compute_with(Inputs {
+            entries: &entries,
+            signals: Some(&sig),
+            ..Default::default()
+        });
+        assert_eq!(ranked.clusters[0].members[0].name, "processOrder");
     }
 }

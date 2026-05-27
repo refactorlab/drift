@@ -2,7 +2,9 @@
 
 use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::mermaid::{Mindmap, MindmapNode, QuadrantChart, QuadrantItem};
+use crate::pr_algorithms::pr_signals::{PrSignals, SignalTier};
 use crate::pr_algorithms::types::*;
+use crate::insights::FindingKind;
 use crate::tree::CallTreeNode;
 use std::collections::BTreeMap;
 
@@ -200,6 +202,61 @@ fn risks_from_ext_signals(
     out
 }
 
+/// Map a finding's review tier onto the risk-quadrant severity axis.
+/// Critical lands in the top band (act-before-merge when likelihood is
+/// also high), Important mid, Minor low.
+fn severity_axis(tier: SignalTier) -> f64 {
+    match tier {
+        SignalTier::Critical => 0.9,
+        SignalTier::Important => 0.6,
+        SignalTier::Minor => 0.4,
+    }
+}
+
+/// Human label for a finding kind on a chart. A few high-frequency kinds
+/// get a hand-tuned name; the rest fall back to the snake_case slug with
+/// underscores spaced out (deterministic, no per-kind maintenance burden).
+fn pretty_kind(kind: FindingKind) -> String {
+    match kind {
+        FindingKind::NPlusOne => "N+1 query".into(),
+        FindingKind::BlockingInAsync => "Blocking call in async".into(),
+        FindingKind::ExpensiveCompute => "Expensive compute".into(),
+        FindingKind::MissingCaching => "Missing caching".into(),
+        FindingKind::LogAmplification => "Log amplification".into(),
+        FindingKind::AuthCryptoAntipattern => "Auth/crypto antipattern".into(),
+        FindingKind::MigrationSafety => "Unsafe migration".into(),
+        other => other.as_str().replace('_', " "),
+    }
+}
+
+/// VS3 (highest-signal source): turn the top PR findings — the issues the
+/// profiler ACTUALLY detected in the changed code — into risk items, ranked
+/// by impact. Likelihood is the finding's confidence; severity is its tier.
+/// This is what makes the risk map reflect real problems instead of PR-shape
+/// heuristics (file count, LOC).
+fn risks_from_findings(signals: &PrSignals, max: usize) -> Vec<RiskItem> {
+    signals
+        .findings
+        .iter()
+        .take(max)
+        .map(|f| {
+            let likelihood = (f.confidence * 100.0).round() / 100.0;
+            let severity = severity_axis(f.tier);
+            let basename = f.file.rsplit('/').next().unwrap_or(&f.file);
+            RiskItem {
+                label: format!("{} · {} ({basename}:{})", pretty_kind(f.kind), f.function, f.line),
+                likelihood,
+                severity,
+                quadrant: RiskCandidate {
+                    likelihood: f.confidence,
+                    severity,
+                }
+                .quadrant(),
+            }
+        })
+        .collect()
+}
+
 /// Build the typed `QuadrantChart`. The mermaid-rendering is done by
 /// the type's `.render()` method; we just supply the structure.
 fn build_risks_quadrant(items: &[RiskItem]) -> QuadrantChart {
@@ -376,6 +433,10 @@ pub struct Inputs<'a> {
     pub uncovered_roots: &'a [String],
     pub reliability_gaps: &'a [String],
     pub high_complexity_count: usize,
+    /// VS3: the PR-scoped structured findings. `None` for callers that
+    /// don't have them (legacy/tests) — then the risk map keeps its
+    /// heuristic-only behavior.
+    pub signals: Option<&'a PrSignals>,
 }
 
 impl<'a> Default for Inputs<'a> {
@@ -389,16 +450,25 @@ impl<'a> Default for Inputs<'a> {
             uncovered_roots: &[],
             reliability_gaps: &[],
             high_complexity_count: 0,
+            signals: None,
         }
     }
 }
 
 pub fn compute(inputs: Inputs<'_>) -> VisualSummary {
-    let mut risks_items = score_risks(
+    let mut risks_items: Vec<RiskItem> = Vec::new();
+    // VS3: lead with the issues actually detected in the changed code,
+    // ranked by impact. These are the highest-signal risk items, so they
+    // come first; the heuristic risks below pad the map when findings are
+    // sparse.
+    if let Some(sig) = inputs.signals {
+        risks_items.extend(risks_from_findings(sig, 6));
+    }
+    risks_items.extend(score_risks(
         inputs.changed_files,
         inputs.commit_messages,
         inputs.affected_roots_count,
-    );
+    ));
     // VS1: append the extra risks lifted from pr_review_ext signals.
     risks_items.extend(risks_from_ext_signals(
         inputs.duplication_count,
@@ -487,4 +557,45 @@ mod tests {
         assert!(r.key_files.mermaid.contains("mindmap"));
     }
 
+    /// VS3: a real Critical finding (N+1) in changed code becomes the
+    /// leading risk item and lands in "Act before merge".
+    #[test]
+    fn findings_drive_act_before_merge_risk() {
+        use crate::insights::{Effort, Finding, FindingKind, Severity};
+        use crate::pr_algorithms::pr_signals::{collect, QualityBar};
+        use crate::pr_algorithms::test_helpers::{mk_node, with_findings};
+
+        let node = with_findings(
+            mk_node("load_orders", "src/orders.rs"),
+            vec![Finding {
+                kind: FindingKind::NPlusOne,
+                severity: Severity::High,
+                effort: Effort::Medium,
+                confidence: 0.9,
+                line: 12,
+                message: "n+1".into(),
+                evidence: vec![],
+                remediation: None,
+                byte_range: None,
+                fidelity: None,
+                fusion_paths: vec![],
+                predicted_sql: None,
+                originating_orm: None,
+            }],
+        );
+        let signals = collect(&[node], &["src/orders.rs".to_string()], &QualityBar::default());
+        let inputs = Inputs {
+            changed_files: &[cf("src/orders.rs", 10)],
+            signals: Some(&signals),
+            ..Default::default()
+        };
+        let r = compute(inputs);
+        let item = r.risks.items.iter().find(|it| it.label.contains("N+1 query"));
+        assert!(
+            item.is_some(),
+            "expected an N+1 risk item, got {:?}",
+            r.risks.items.iter().map(|i| &i.label).collect::<Vec<_>>(),
+        );
+        assert!(matches!(item.unwrap().quadrant, Quadrant::ActBeforeMerge));
+    }
 }

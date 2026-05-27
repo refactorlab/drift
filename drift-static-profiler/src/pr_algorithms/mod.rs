@@ -36,6 +36,7 @@ pub mod duplication;
 pub mod mermaid;
 pub mod merge;
 pub mod nfr_edge_cases;
+pub mod pr_signals;
 pub mod tech_debt;
 pub mod tests_in_graph;
 pub mod types;

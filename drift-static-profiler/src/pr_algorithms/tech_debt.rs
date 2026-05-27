@@ -8,6 +8,7 @@
 use crate::pr_algorithms::constants::{
     cyclomatic_citation, cyclomatic_high_risk, long_function_citation, long_function_loc,
 };
+use crate::pr_algorithms::pr_signals::PrSignals;
 use crate::pr_algorithms::types::*;
 use crate::pr_algorithms::types::SourceCitation;
 use crate::tree::CallTreeNode;
@@ -147,6 +148,10 @@ pub fn compute(
     // transitive callees is signal noise, not actionable. Empty
     // slice = no filter (legacy / unit-test callers).
     changed_files: &[String],
+    // PR-scoped, impact-ranked structured findings. Surfaced as
+    // `pr_findings_top` so the tech-debt block leads with what THIS PR
+    // introduced, not the global scan's top findings.
+    signals: &PrSignals,
 ) -> TechDebt {
     let mut high_complexity: Vec<ComplexitySite> = Vec::new();
     let mut long_functions: Vec<LongFunctionSite> = Vec::new();
@@ -310,6 +315,13 @@ pub fn compute(
             .take(10)
             .map(|f| serde_json::to_value(f).unwrap_or(serde_json::Value::Null))
             .collect(),
+        // PR-scoped, impact-ranked findings (the changed code only).
+        pr_findings_top: signals
+            .findings
+            .iter()
+            .take(10)
+            .map(|f| serde_json::to_value(f).unwrap_or(serde_json::Value::Null))
+            .collect(),
         thresholds: TechDebtThresholds {
             complexity: cyclomatic_high_risk(),
             loc: long_function_loc(),
@@ -337,7 +349,7 @@ mod tests {
             node("easy", "a.py", vec![], 2, 10),
             node("scary", "b.py", vec![], 25, 60),
         ];
-        let r = compute(&entries, &[], &[], &[]);
+        let r = compute(&entries, &[], &[], &[], &PrSignals::default());
         let names: Vec<&str> = r.high_complexity.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"scary"));
         assert!(!names.contains(&"easy"));
@@ -349,7 +361,7 @@ mod tests {
             node("short_fn", "a.py", vec![], 1, 20),
             node("god_fn", "b.py", vec![], 1, 200),
         ];
-        let r = compute(&entries, &[], &[], &[]);
+        let r = compute(&entries, &[], &[], &[], &PrSignals::default());
         let names: Vec<&str> = r.long_functions.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"god_fn"));
     }
@@ -360,7 +372,7 @@ mod tests {
     #[test]
     fn per_language_filter_emits_only_requested_languages() {
         let pr_langs = vec!["kotlin".to_string()];
-        let r = compute(&[], &[], &pr_langs, &[]);
+        let r = compute(&[], &[], &pr_langs, &[], &PrSignals::default());
         let keys: HashSet<&String> =
             r.schema_validation.per_language_known_libraries.keys().collect();
         let kotlin = "kotlin".to_string();
@@ -378,13 +390,13 @@ mod tests {
     /// (backwards-compat for callers that don't yet pass the filter).
     #[test]
     fn empty_pr_languages_emits_all_8() {
-        let r = compute(&[], &[], &[], &[]);
+        let r = compute(&[], &[], &[], &[], &PrSignals::default());
         assert_eq!(r.schema_validation.per_language_known_libraries.len(), 8);
     }
 
     #[test]
     fn supports_all_8_languages() {
-        let r = compute(&[], &[], &[], &[]);
+        let r = compute(&[], &[], &[], &[], &PrSignals::default());
         let langs: HashSet<String> = r.schema_validation.supported_languages.iter().cloned().collect();
         let expected: HashSet<String> = [
             "python", "javascript", "typescript",
@@ -402,7 +414,7 @@ mod tests {
     #[test]
     fn detects_python_pydantic() {
         let entries = vec![node("create_user", "app/users.py", vec!["BaseModel from pydantic"], 1, 10)];
-        let r = compute(&entries, &[], &[], &[]);
+        let r = compute(&entries, &[], &[], &[], &PrSignals::default());
         let names: Vec<(String, String)> = r
             .schema_validation
             .libraries
@@ -416,7 +428,7 @@ mod tests {
     #[test]
     fn detects_kotlin_konform() {
         let entries = vec![node("validateUser", "src/main/kotlin/Users.kt", vec!["Validation konform"], 1, 10)];
-        let r = compute(&entries, &[], &[], &[]);
+        let r = compute(&entries, &[], &[], &[], &PrSignals::default());
         let names: Vec<(String, String)> = r
             .schema_validation
             .libraries
@@ -429,7 +441,7 @@ mod tests {
     #[test]
     fn detects_scala_circe() {
         let entries = vec![node("parseUser", "src/main/scala/Users.scala", vec!["circe decode"], 1, 10)];
-        let r = compute(&entries, &[], &[], &[]);
+        let r = compute(&entries, &[], &[], &[], &PrSignals::default());
         let names: Vec<(String, String)> = r
             .schema_validation
             .libraries
@@ -455,6 +467,7 @@ mod tests {
             &[],
             &[],
             &["app/services.py".to_string()], // PR only touched services.py
+            &PrSignals::default(),
         );
         let names: Vec<&str> = r.high_complexity.iter().map(|s| s.name.as_str()).collect();
         assert!(
@@ -480,6 +493,7 @@ mod tests {
             &[],
             &[],
             &["app/services.py".to_string()],
+            &PrSignals::default(),
         );
         let names: Vec<&str> = r.long_functions.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"newLongFn"));
@@ -495,7 +509,38 @@ mod tests {
             node("hot", "any.py", vec![], 20, 30),
             node("also_hot", "other.py", vec![], 15, 30),
         ];
-        let r = compute(&entries, &[], &[], &[]);
+        let r = compute(&entries, &[], &[], &[], &PrSignals::default());
         assert_eq!(r.high_complexity.len(), 2);
+    }
+
+    /// `pr_findings_top` is populated from the PR-scoped signals (the
+    /// changed code only), distinct from the global `summary_findings_top`.
+    #[test]
+    fn pr_findings_top_populated_from_signals() {
+        use crate::insights::{Effort, Finding, FindingKind, Severity};
+        use crate::pr_algorithms::pr_signals::{collect, QualityBar};
+        use crate::pr_algorithms::test_helpers::with_findings;
+
+        let n = with_findings(
+            mk_node("f", "a.rs"),
+            vec![Finding {
+                kind: FindingKind::NPlusOne,
+                severity: Severity::High,
+                effort: Effort::Medium,
+                confidence: 0.9,
+                line: 5,
+                message: "m".into(),
+                evidence: vec![],
+                remediation: None,
+                byte_range: None,
+                fidelity: None,
+                fusion_paths: vec![],
+                predicted_sql: None,
+                originating_orm: None,
+            }],
+        );
+        let sig = collect(&[n], &["a.rs".to_string()], &QualityBar::default());
+        let r = compute(&[], &[], &[], &[], &sig);
+        assert_eq!(r.pr_findings_top.len(), 1, "PR-scoped findings should surface");
     }
 }

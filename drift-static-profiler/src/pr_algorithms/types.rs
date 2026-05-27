@@ -361,6 +361,13 @@ pub struct TechDebt {
     pub long_functions: Vec<LongFunctionSite>,
     pub schema_validation: SchemaValidationReport,
     pub summary_findings_top: Vec<serde_json::Value>,
+    /// PR-scoped, impact-ranked structured findings (from `pr_signals`).
+    /// Distinct from `summary_findings_top`, which is the GLOBAL scan's top
+    /// findings: this list is only the *changed* code, ranked by review tier
+    /// + impact, so the renderer can lead with what THIS PR introduced.
+    /// Each element is a serialized `pr_signals::PrFinding`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pr_findings_top: Vec<serde_json::Value>,
     pub thresholds: TechDebtThresholds,
     /// Per-rule source citations. Each entry pairs a label
     /// (e.g. "complexity") with prose (`source`) and a URL

@@ -8,8 +8,8 @@ use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::types::*;
 use crate::pr_algorithms::{
     architecture_flow, business_logic, code_suggestions, counts, duplication, nfr_edge_cases,
-    tech_debt, tests_in_graph, value_customer, value_money, value_runtime, value_runtime_ux,
-    visual_summary,
+    pr_signals, tech_debt, tests_in_graph, value_customer, value_money, value_runtime,
+    value_runtime_ux, visual_summary,
 };
 use crate::progress::{NullProgress, Progress};
 use chrono::Utc;
@@ -46,7 +46,7 @@ fn finite_or_zero(x: f64) -> f64 {
     }
 }
 
-fn overall_drift(axes: &[ValueAxis]) -> OverallDrift {
+fn overall_drift(axes: &[ValueAxis], signals: &pr_signals::PrSignals) -> OverallDrift {
     if axes.is_empty() {
         return OverallDrift {
             percent: 0.0,
@@ -99,7 +99,7 @@ fn overall_drift(axes: &[ValueAxis]) -> OverallDrift {
             other => other,
         }
     }
-    let interpretation = if sorted_up.is_empty() {
+    let mut interpretation = if sorted_up.is_empty() {
         let downs_count = axes.iter().filter(|a| a.delta_percent < 0.0).count();
         if downs_count > 0 {
             format!("{downs_count} axis/axes negative — no positive signal")
@@ -114,6 +114,16 @@ fn overall_drift(axes: &[ValueAxis]) -> OverallDrift {
             .collect();
         format!("Avg. {} ▲", names.join(" + "))
     };
+    // Surface the signal-to-noise metric so reviewers can see how much of
+    // what we detected is high-signal (the literature's headline number).
+    if signals.total_candidates > 0 {
+        let n = signals.findings.len();
+        interpretation.push_str(&format!(
+            " · signal {:.0}% ({n} finding{})",
+            signals.signal_ratio * 100.0,
+            if n == 1 { "" } else { "s" },
+        ));
+    }
 
     OverallDrift {
         percent: (avg * 10.0).round() / 10.0,
@@ -316,6 +326,16 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         .affected_root_names
         .clone();
 
+    let changed_paths: Vec<String> = inputs.changed_files.iter().map(|f| f.path.clone()).collect();
+
+    // Single source of truth for "what did we detect in the changed code?".
+    // Computed once here and threaded into every consumer (value axes,
+    // visual_summary, tech_debt, duplication) so the walk + PR-scope filter +
+    // confidence floor + dedupe + impact ranking live in ONE place. The
+    // default QualityBar drops Minor-tier noise and caps volume; consumers
+    // that want the full picture pass their own bar.
+    let signals = pr_signals::collect(entries, &changed_paths, &pr_signals::QualityBar::default());
+
     p.phase("counts (Conventional Commits + GitHub keywords)");
     let pr_body_for_counts = inputs.pr_context.and_then(|c| {
         if c.body.is_empty() {
@@ -336,14 +356,15 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
 
     p.phase("value axes (money / customer / runtime / runtime UX)");
     let axes = vec![
-        value_money::compute(inputs.changed_files, inputs.commit_messages),
-        value_customer::compute(&counts_block),
+        value_money::compute(inputs.changed_files, inputs.commit_messages, &signals),
+        value_customer::compute(&counts_block, &signals),
         value_runtime::compute(
             inputs.commit_messages,
             inputs.changed_files,
             nfr_early.reliability_gaps.len(),
+            &signals,
         ),
-        value_runtime_ux::compute(&counts_block, inputs.commit_messages),
+        value_runtime_ux::compute(&counts_block, inputs.commit_messages, &signals),
     ];
     let bars: Vec<ValueAxisBar> = axes
         .iter()
@@ -358,8 +379,6 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         .as_ref()
         .map(|x| x.render())
         .unwrap_or_default();
-
-    let changed_paths: Vec<String> = inputs.changed_files.iter().map(|f| f.path.clone()).collect();
 
     p.phase("architecture flow (tree-sitter: data structures + after-state mermaid)");
     let architecture_flow = architecture_flow::compute(entries, &changed_paths);
@@ -407,6 +426,7 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         &inputs.outcome.outcome.report.summary.findings_top,
         &pr_languages,
         &changed_paths,
+        &signals,
     );
     p.phase("duplication (rapidfuzz ≥95 with bounded Levenshtein)");
     // D1: pass repo_root so body-similarity can be computed; without
@@ -417,6 +437,7 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         entries,
         repo_root: inputs.repo_root,
         changed_files: &changed_paths,
+        signals: Some(&signals),
         ..Default::default()
     });
     p.phase("tests-in-graph (multi-language test discovery)");
@@ -434,11 +455,12 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         uncovered_roots: &tig.uncovered_roots,
         reliability_gaps: &nfr.reliability_gaps,
         high_complexity_count: td.high_complexity.len(),
+        signals: Some(&signals),
     });
 
     let pr_review = PrReview {
         generated_at: Some(Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
-        overall_drift: overall_drift(&axes),
+        overall_drift: overall_drift(&axes, &signals),
         counts: counts_block,
         architecture_flow,
         business_logic,
