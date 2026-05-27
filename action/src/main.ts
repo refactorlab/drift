@@ -126,17 +126,18 @@ function describeError(err: unknown): string {
 }
 
 /**
- * Append a "🔊 Listen" link to the sticky comment when the action's audio
- * step uploaded a synthesized WAV (DRIFT_AUDIO_URL = the artifact URL).
- * Empty/unset env (audio disabled or synthesis failed) → body unchanged, so
- * this is fully fail-soft and a no-op in the common case.
+ * Append a "🔊 Listen" link to the sticky comment when the action uploaded a
+ * synthesized WAV (DRIFT_AUDIO_URL = the artifact URL of the non-zipped .wav,
+ * uploaded with upload-artifact@v7 `archive: false` so the link is the bare
+ * playable file, not a zip). Empty/unset env (audio disabled or synthesis
+ * failed) → body unchanged, so this is fully fail-soft and a no-op normally.
  */
 export function withAudioFooter(body: string): string {
   const url = process.env.DRIFT_AUDIO_URL?.trim();
   if (!url) return body;
   return (
     `${body}\n\n---\n` +
-    `🔊 **[Listen to this PR summary](${url})** — spoken business-logic summary ` +
-    `(Piper TTS · downloadable WAV artifact).`
+    `🔊 **[Listen to this PR summary](${url})** — spoken handover briefing ` +
+    `(Piper TTS · WAV).`
   );
 }
