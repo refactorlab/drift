@@ -1,6 +1,6 @@
 // Audio-summary footer: dist/index.js appends a "🔊 Listen" link to the
-// sticky comment when the action's Piper step uploaded a WAV (the artifact
-// URL arrives via DRIFT_AUDIO_URL). Fully fail-soft: no env → no-op.
+// sticky comment when the action uploaded a non-zipped WAV (the artifact URL
+// arrives via DRIFT_AUDIO_URL). Fully fail-soft: no env → no-op.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,11 +10,13 @@ const BODY = '## Drift review\n\nsome content';
 
 test('withAudioFooter: appends a Listen link when DRIFT_AUDIO_URL is set', () => {
   const prev = process.env.DRIFT_AUDIO_URL;
-  process.env.DRIFT_AUDIO_URL = 'https://github.com/acme/shop/actions/runs/1/artifacts/42';
+  const url = 'https://github.com/acme/shop/actions/runs/26514602459/artifacts/7241682155';
+  process.env.DRIFT_AUDIO_URL = url;
   try {
     const out = withAudioFooter(BODY);
     assert.ok(out.startsWith(BODY), 'original body is preserved at the top');
-    assert.match(out, /🔊 \*\*\[Listen to this PR summary\]\(https:\/\/github\.com\/acme\/shop\/actions\/runs\/1\/artifacts\/42\)\*\*/);
+    assert.match(out, /🔊 \*\*\[Listen to this PR summary\]\(https:\/\/github\.com\/acme\/shop\/actions\/runs\/26514602459\/artifacts\/7241682155\)\*\*/);
+    assert.match(out, /\(Piper TTS · WAV\)/, 'labels the link as a WAV');
   } finally {
     if (prev === undefined) delete process.env.DRIFT_AUDIO_URL;
     else process.env.DRIFT_AUDIO_URL = prev;

@@ -24879,7 +24879,7 @@ function withAudioFooter(body) {
   return `${body}
 
 ---
-\u{1F50A} **[Listen to this PR summary](${url})** \u2014 spoken business-logic summary (Piper TTS \xB7 downloadable WAV artifact).`;
+\u{1F50A} **[Listen to this PR summary](${url})** \u2014 spoken handover briefing (Piper TTS \xB7 WAV).`;
 }
 
 // src/index.ts
