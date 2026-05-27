@@ -150,7 +150,7 @@ export function buildAIContext(args: BuildContextArgs): BuildContextResult {
  * is delegated to jsdiff; on any parse error we fail safe to the raw
  * diff so the model still sees *something*.
  */
-function annotateDiff(diffText: string): string {
+export function annotateDiff(diffText: string): string {
   let files: ReturnType<typeof parsePatch>;
   try {
     files = parsePatch(diffText);
@@ -184,7 +184,7 @@ function annotateDiff(diffText: string): string {
   return out.join('\n');
 }
 
-function pickFocalSuggestions(
+export function pickFocalSuggestions(
   report: ScanPrOutput | null,
   max: number,
 ): CodeSuggestion[] {
@@ -199,7 +199,7 @@ function pickFocalSuggestions(
   return sorted.slice(0, Math.max(0, max));
 }
 
-function renderFocalPoint(
+export function renderFocalPoint(
   s: CodeSuggestion,
   ordinal: number,
   workspaceRoot: string,
@@ -277,7 +277,7 @@ function readCodeWindow(
   return out.join('\n');
 }
 
-function getPrDiff(
+export function getPrDiff(
   workspaceRoot: string,
   baseSha: string,
   headSha: string,
