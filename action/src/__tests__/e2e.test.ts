@@ -127,12 +127,14 @@ test('action warns (does NOT fail) on schema version mismatch', async () => {
   assert.match(result.stdout, /Unsupported schema_version/);
 });
 
-// The headline behaviour: a numeric fail-threshold is the ONLY path to a
-// non-zero exit. The kotlin-ktor fixture carries 1 product-correctness
-// (category B) issue that clears the quality bar. We point the GitHub API
-// at a dead port so the network tasks fail-soft (warnings) and we isolate
-// the threshold decision running on the real bundle.
-test('action fails ONLY when product-correctness count exceeds fail-threshold', async () => {
+// NEVER FAILS FOR NOW: with DRIFT_FAILS_PR=false the action exits 0 for ANY
+// fail-threshold — even '0' against the kotlin-ktor fixture, which carries 1
+// product-correctness (category B) issue that clears the quality bar. The
+// finding still surfaces as a ::warning::, just never as a non-zero exit. We
+// point the GitHub API at a dead port so network tasks fail-soft (warnings)
+// and isolate the (now disabled) threshold decision on the real bundle.
+// Flip DRIFT_FAILS_PR in report.ts to restore the opt-in path.
+test('action NEVER fails the PR for now — any fail-threshold exits 0', async () => {
   const kotlinFixture = join(import.meta.dirname, '../../.dev/scan-pr-output-kotlin-ktor.json');
 
   async function run(threshold: string | undefined): Promise<RunResult> {
@@ -145,16 +147,17 @@ test('action fails ONLY when product-correctness count exceeds fail-threshold', 
   }
 
   const unset = await run(undefined);
-  assert.equal(unset.code, 0, `unset → never fail\nstdout: ${unset.stdout}`);
+  assert.equal(unset.code, 0, `unset → exit 0\nstdout: ${unset.stdout}`);
 
   const zero = await run('0');
-  assert.notEqual(zero.code, 0, 'threshold 0 → fail on any (1 > 0)');
-  assert.match(zero.stdout, /exceeding the configured fail-threshold of 0/);
+  assert.equal(zero.code, 0, 'threshold 0 → STILL exit 0 (failing is disabled for now)');
+  assert.doesNotMatch(zero.stdout, /exceeding the configured fail-threshold/, 'setFailed must NOT fire');
+  assert.match(zero.stdout, /product-correctness issue/, 'finding still surfaced as a warning');
 
   const one = await run('1');
-  assert.equal(one.code, 0, 'threshold 1 → 1 is not > 1, stays green');
+  assert.equal(one.code, 0, 'threshold 1 → exit 0');
 
   const bad = await run('abc');
-  assert.equal(bad.code, 0, 'non-numeric → ignored, never fails');
+  assert.equal(bad.code, 0, 'non-numeric → ignored, exit 0');
   assert.match(bad.stdout, /Ignoring invalid fail-threshold/);
 });

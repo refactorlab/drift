@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
-import { loadReport, passesQualityBar } from './report.ts';
+import { loadReport, passesQualityBar, DRIFT_FAILS_PR } from './report.ts';
 import { renderOverview } from './render/overview.ts';
 import { upsertStickyComment } from './github/comment.ts';
 import { postReview } from './github/review.ts';
@@ -54,7 +54,7 @@ export async function main(): Promise<void> {
   const prNumber: number = pr.number;
 
   const tasks: Promise<unknown>[] = [
-    createCheckRun({ octokit, owner, repo, headSha, report }).catch((err) =>
+    createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch((err) =>
       core.warning(`check run failed: ${describeError(err)}`),
     ),
     postReview({
@@ -93,7 +93,10 @@ export async function main(): Promise<void> {
     );
   }
 
-  if (failThreshold !== null && correctness > failThreshold) {
+  // NEVER FAILS FOR NOW: DRIFT_FAILS_PR is false, so the job stays green
+  // regardless of findings / fail-threshold. Flip DRIFT_FAILS_PR (report.ts)
+  // to re-enable the opt-in. The threshold terms stay live for that flip.
+  if (DRIFT_FAILS_PR && failThreshold !== null && correctness > failThreshold) {
     core.setFailed(
       `Drift found ${correctness} product-correctness issue(s), exceeding the configured ` +
         `fail-threshold of ${failThreshold}.`,

@@ -291,6 +291,17 @@ function validate(r: Partial<ScanPrOutput>): void {
   }
 }
 
+// ─── PR-failure kill switch ───────────────────────────────────────────────
+/**
+ * Drift is advisory ONLY for now: it NEVER fails a PR. Both fail paths read
+ * this single flag — the "Drift / PR review" check run (check.ts) and the
+ * job-level core.setFailed (main.ts) — so neither can go red ✗ regardless of
+ * findings or `fail-threshold`. Flip to `true` to re-enable the
+ * fail-threshold opt-in. Typed `boolean` (not the literal `false`) so the
+ * opt-in branches stay live for that flip.
+ */
+export const DRIFT_FAILS_PR: boolean = false;
+
 // ─── suggestion quality bar (Spec rule: category in {A,B,C}, ≥1 ref, confidence ≥ 0.75) ─
 
 export const SUGGESTION_CONFIDENCE_THRESHOLD = 0.75;

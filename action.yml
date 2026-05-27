@@ -112,6 +112,11 @@ inputs:
     default: '3'
   fail-threshold:
     description: |
+      NOTE (current): failing is GLOBALLY DISABLED — Drift NEVER fails a PR
+      regardless of this value (DRIFT_FAILS_PR=false in the action bundle), so
+      this input is inert for now. The semantics below apply only once that
+      switch is flipped back on.
+
       Optional. The number of product-correctness (category B) issues —
       those that clear the quality bar — ABOVE WHICH the check fails (red ✗).
         <empty> — never fail the PR (default). Drift is advisory: issues
@@ -152,10 +157,10 @@ inputs:
   piper-voice:
     description: |
       Piper voice id from the HF `rhasspy/piper-voices` catalog, formatted
-      `<lang>-<name>-<quality>` (e.g. en_US-amy-medium, en_GB-alba-medium).
+      `<lang>-<name>-<quality>` (e.g. en_US-ryan-medium, en_GB-alba-medium).
       The download path is derived from the id.
     required: false
-    default: 'en_US-amy-medium'
+    default: 'en_US-ryan-medium'
   piper-version:
     description: |
       rhasspy/piper release TAG for the prebuilt Linux TTS binary (default
@@ -187,6 +192,7 @@ runs:
     # in profiler-repo whose tag matches drift-lab-v* or
     # drift-static-profiler-v* AND has the binary asset attached.
     - name: Resolve release tag
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: resolve
       shell: bash
       env:
@@ -261,6 +267,7 @@ runs:
     # Skip the cache layer entirely when tag=local (act dev path) or
     # tag=none (no release found — nothing to cache).
     - name: Restore drift-static-profiler from cache
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: cache
       if: steps.resolve.outputs.tag != 'local' && steps.resolve.outputs.tag != 'none'
       uses: actions/cache/restore@v4
@@ -270,6 +277,7 @@ runs:
 
     # ─── 5. Install (no-op on cache hit; downloads on miss) ──────────
     - name: Install drift-static-profiler
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: install
       shell: bash
       env:
@@ -297,6 +305,7 @@ runs:
 
     # ─── 6. Save to cache (cache MISS + verified install only) ───────
     - name: Save drift-static-profiler to cache
+      continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         steps.resolve.outputs.tag != 'local' &&
         steps.resolve.outputs.tag != 'none' &&
@@ -322,6 +331,7 @@ runs:
     # downstream comment/AI step is skipped, so such PRs get an EMPTY
     # result instead of a misleading negative-money "Drift ▼" verdict.
     - name: Compute PR diff
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: diff
       if: github.event.pull_request != null
       shell: bash
@@ -402,6 +412,7 @@ runs:
 
     # ─── 7. Run scan-pr (skips if binary missing OR no supported source) ─
     - name: Run scan-pr
+      continue-on-error: true   # advisory: a scanner crash must NOT fail the PR
       id: scan
       if: >-
         github.event.pull_request != null &&
@@ -448,6 +459,7 @@ runs:
 
     # ─── 8. Print scan summary (+ full debug dump when debug=true) ───
     - name: Print scan summary
+      continue-on-error: true   # advisory: never fail the PR on our own error
       if: steps.scan.outputs.scan_ran == 'true'
       shell: bash
       env:
@@ -511,6 +523,7 @@ runs:
     # present. actions/checkout with fetch-depth: 0 already has them; these
     # are a best-effort top-up for shallow consumer clones.
     - name: Prep AI diff
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: ai-prep
       if: >-
         (inputs.ai-suggestions == 'true' || inputs.audio-summary == 'true') &&
@@ -536,6 +549,7 @@ runs:
     # so we surface it and decode it here, BEFORE the opaque inference step
     # runs. See docs.github.com/en/rest/models/inference.
     - name: Resolve Models endpoint + preflight
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: ai-ep
       if: >-
         (inputs.ai-suggestions == 'true' || inputs.audio-summary == 'true') &&
@@ -614,6 +628,7 @@ runs:
     # only the first run on a given key pays the download. Installed under
     # RUNNER_TEMP (never the consumer's workspace) like the profiler.
     - name: Cache Piper binary
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: piper-bin-cache
       if: >-
         inputs.audio-summary == 'true' &&
@@ -625,6 +640,7 @@ runs:
         key: piper-${{ runner.arch }}-${{ inputs.piper-version }}-v1
 
     - name: Install Piper binary
+      continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
@@ -666,6 +682,7 @@ runs:
 
     # ─── 8c. Audio summary — cache + download the voice model ────────
     - name: Cache Piper voice
+      continue-on-error: true   # advisory: never fail the PR on our own error
       id: piper-voice-cache
       if: >-
         inputs.audio-summary == 'true' &&
@@ -677,6 +694,7 @@ runs:
         key: piper-voice-${{ inputs.piper-voice }}-v1
 
     - name: Download Piper voice
+      continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
@@ -688,10 +706,10 @@ runs:
         VOICE_DIR:   ${{ runner.temp }}/piper-voices
       run: |
         # Derive the HF path from the voice id `<lang>-<name>-<quality>`:
-        #   en_US-amy-medium → top=en lang=en_US name=amy quality=medium
+        #   en_US-ryan-medium → top=en lang=en_US name=ryan quality=medium
         lang="${PIPER_VOICE%%-*}"          # en_US
-        rest="${PIPER_VOICE#*-}"           # amy-medium
-        name="${rest%%-*}"                 # amy
+        rest="${PIPER_VOICE#*-}"           # ryan-medium
+        name="${rest%%-*}"                 # ryan
         quality="${rest#*-}"               # medium
         top="${lang%%_*}"                  # en
         # HF canonical ref is `main` (the rhasspy/piper-voices README links
@@ -886,6 +904,7 @@ runs:
     #   - create a check run summarising the report
     # Skips when there's no PR context (push events, manual dispatch).
     - name: Post Drift PR review
+      continue-on-error: true   # advisory: never fail the PR on our own error
       if: steps.scan.outputs.scan_ran == 'true' && github.event.pull_request != null
       shell: bash
       env:
@@ -1028,6 +1047,7 @@ runs:
     # tests in src/__tests__/ai-post.test.ts. Fail-soft: a non-fatal
     # error here will not break the deterministic review from step 9.
     - name: Post AI suggestions
+      continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&

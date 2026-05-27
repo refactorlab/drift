@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { loadReport } from '../report.ts';
+import { loadReport, type ScanPrOutput } from '../report.ts';
 import { upsertStickyComment } from '../github/comment.ts';
 import { postReview } from '../github/review.ts';
 import { createCheckRun } from '../github/check.ts';
@@ -203,6 +203,7 @@ test('createCheckRun: payload matches documented schema', async () => {
     repo: 'shop',
     headSha: 'deadbeefcafe1234567890abcdef0123456789ab',
     report,
+    failThreshold: null,
   });
 
   assert.equal(calls.length, 1);
@@ -224,6 +225,60 @@ test('createCheckRun: payload matches documented schema', async () => {
   assert.equal(typeof out.title, 'string');
   assert.equal(typeof out.summary, 'string', 'output.summary required when output is set');
   assert.ok((out.summary as string).length > 0);
+});
+
+// ── Drift is ADVISORY: the check run must never conclude 'failure' (red ✗)
+//    unless the consumer opted into failing via fail-threshold AND it's
+//    exceeded — the SAME gate main.ts uses for core.setFailed. Regression
+//    guard for the check-run-vs-job mismatch. ─────────────────────────────
+function reportWithCorrectnessIssues(n: number): ScanPrOutput {
+  return {
+    schema_version: '1.2',
+    mode: 'static',
+    generator: { tool: 'drift-static-profiler', version: '0.0.0' },
+    pr_scope: { changed_files: ['svc/pay.py'], affected_roots: [], unreachable_changes: [] },
+    pr_review: {
+      code_suggestions: Array.from({ length: n }, (_, i) => ({
+        category: 'B' as const,
+        file: 'svc/pay.py',
+        line: i + 1,
+        confidence: 0.9, // ≥ 0.75 → clears the quality bar
+        why_it_matters: 'swallows the gateway error',
+        references: [{ url: 'https://docs.python.org/3/tutorial/errors.html' }],
+      })),
+    },
+  };
+}
+
+async function conclusionFor(report: ScanPrOutput, failThreshold: number | null): Promise<string> {
+  const { octokit, calls } = makeSpyOctokit();
+  await createCheckRun({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    octokit: octokit as any,
+    owner: 'acme',
+    repo: 'shop',
+    headSha: 'deadbeefcafe1234567890abcdef0123456789ab',
+    report,
+    failThreshold,
+  });
+  return (calls[0].args as Record<string, unknown>).conclusion as string;
+}
+
+test('createCheckRun: ADVISORY by default — a correctness issue does NOT fail (neutral, not red ✗)', async () => {
+  const c = await conclusionFor(reportWithCorrectnessIssues(1), null);
+  assert.notEqual(c, 'failure', 'default (empty fail-threshold) must NEVER conclude failure');
+  assert.equal(c, 'neutral', 'the finding surfaces as a non-blocking neutral check');
+});
+
+test('createCheckRun: a clean PR concludes success', async () => {
+  assert.equal(await conclusionFor(reportWithCorrectnessIssues(0), null), 'success');
+});
+
+test('createCheckRun: NEVER fails for now — neutral even when a fail-threshold would trigger', async () => {
+  // DRIFT_FAILS_PR is false → no fail-threshold value can produce 'failure'.
+  assert.equal(await conclusionFor(reportWithCorrectnessIssues(1), 0), 'neutral');
+  assert.equal(await conclusionFor(reportWithCorrectnessIssues(5), 0), 'neutral');
+  assert.equal(await conclusionFor(reportWithCorrectnessIssues(2), 1), 'neutral');
 });
 
 // ── kotlin-ktor fixture sanity-check ────────────────────────────────────
