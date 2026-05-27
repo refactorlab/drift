@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   const outPath = process.env.AI_OUT ?? '';
   const reportPath = process.env.DRIFT_REPORT_PATH ?? '';
   const endpoint = process.env.AI_ENDPOINT ?? '';
-  const model = process.env.AI_MODEL || 'openai/gpt-5';
+  const model = process.env.AI_MODEL || 'openai/gpt-4o';
   const token = process.env.GITHUB_TOKEN ?? '';
   const workspaceRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
   const baseSha = process.env.AI_BASE_SHA ?? '';
