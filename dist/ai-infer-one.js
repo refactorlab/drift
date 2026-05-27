@@ -18700,6 +18700,9 @@ function issueCommand(command, properties, message) {
   const cmd = new Command(command, properties, message);
   process.stdout.write(cmd.toString() + os.EOL);
 }
+function issue(name, message = "") {
+  issueCommand(name, {}, message);
+}
 var CMD_STRING = "::";
 var Command = class {
   constructor(command, properties, message) {
@@ -19110,6 +19113,12 @@ function warning(message, properties = {}) {
 function info(message) {
   process.stdout.write(message + os3.EOL);
 }
+function startGroup(name) {
+  issue("group", name);
+}
+function endGroup() {
+  issue("endgroup");
+}
 
 // src/report.ts
 var import_node_fs = require("node:fs");
@@ -19514,11 +19523,19 @@ function annotateDiff(diffText) {
   }
   return out.join("\n");
 }
-function pickFocalSuggestions(report, max) {
+function pickFocalSuggestions(report, max, commentable) {
   if (!report || !report.pr_review || !report.pr_review.code_suggestions) {
     return [];
   }
-  const sorted = [...report.pr_review.code_suggestions].filter((s) => typeof s.line === "number" && s.file).sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  let candidates = report.pr_review.code_suggestions.filter(
+    (s) => typeof s.line === "number" && s.file
+  );
+  if (commentable) {
+    candidates = candidates.filter(
+      (s) => commentable.get(s.file)?.has(s.line) ?? false
+    );
+  }
+  const sorted = [...candidates].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   return sorted.slice(0, Math.max(0, max));
 }
 function renderFocalPoint(s, ordinal, workspaceRoot) {
@@ -19601,13 +19618,60 @@ function gitDiffNames(workspaceRoot, baseSha, headSha) {
       const raw = (0, import_node_child_process.execFileSync)(
         "git",
         ["diff", "--name-only", `${baseSha}${sep}${headSha}`],
-        { cwd: workspaceRoot, encoding: "utf8" }
+        // stderr → 'ignore': the three-dot attempt routinely fails on
+        // shallow clones with "fatal: …: no merge base". That failure is
+        // EXPECTED — we catch it and fall back to two-dot — so muting its
+        // stderr keeps the misleading "fatal" line out of the action log.
+        { cwd: workspaceRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
       );
       return { files: raw.split("\n").map((s) => s.trim()).filter(Boolean), strategy };
     } catch {
     }
   }
   return null;
+}
+function getFullDiff(workspaceRoot, baseSha, headSha) {
+  const names = gitDiffNames(workspaceRoot, baseSha, headSha);
+  if (!names) return "";
+  const range = names.strategy === "three-dot" ? `${baseSha}...${headSha}` : `${baseSha}..${headSha}`;
+  try {
+    return (0, import_node_child_process.execFileSync)("git", ["diff", "--unified=5", range], {
+      cwd: workspaceRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024
+      // large PRs: don't ENOBUFS, just fail-soft below
+    });
+  } catch {
+    return "";
+  }
+}
+function commentableLinesByFile(diffText) {
+  const map = /* @__PURE__ */ new Map();
+  if (!diffText) return map;
+  let files;
+  try {
+    files = parsePatch(diffText);
+  } catch {
+    return map;
+  }
+  for (const file of files) {
+    const name = (file.newFileName || file.oldFileName || "").replace(/^[ab]\//, "");
+    if (!name) continue;
+    const set = /* @__PURE__ */ new Set();
+    for (const hunk of file.hunks) {
+      let n = hunk.newStart;
+      for (const row of hunk.lines) {
+        const c = row[0];
+        if (c === "+" || c === " ") {
+          set.add(n);
+          n += 1;
+        }
+      }
+    }
+    map.set(name, set);
+  }
+  return map;
 }
 function oneLine(s) {
   return s.replace(/\s+/g, " ").trim();
@@ -19655,8 +19719,8 @@ var FOCAL_SYSTEM_PROMPT = [
   "",
   "Categories: A = optimization, B = product correctness, C = framework misuse."
 ].join("\n");
-function buildFocalUserPrompt(report, idx, ctx) {
-  const focal = pickFocalSuggestions(report, idx + 1)[idx];
+function buildFocalUserPrompt(report, idx, ctx, commentable) {
+  const focal = pickFocalSuggestions(report, idx + 1, commentable)[idx];
   if (!focal) return null;
   const parts = [];
   parts.push("=== Focal point (1 scanner-flagged location) ===");
@@ -19876,9 +19940,11 @@ async function main() {
     warning(`ai-infer-one: report unreadable: ${describe(e)}`);
     return;
   }
-  const user = buildFocalUserPrompt(report, idx, { workspaceRoot, baseSha, headSha });
+  const fullDiff = getFullDiff(workspaceRoot, baseSha, headSha);
+  const commentable = fullDiff ? commentableLinesByFile(fullDiff) : void 0;
+  const user = buildFocalUserPrompt(report, idx, { workspaceRoot, baseSha, headSha }, commentable);
   if (!user) {
-    info(`focal ${label}: no focal point at this index \u2014 skipping.`);
+    info(`focal ${label}: no anchorable focal point at this index \u2014 skipping.`);
     return;
   }
   let content;
@@ -19898,6 +19964,12 @@ async function main() {
   const parsed = parseAIOutput(content);
   if (!parsed.ok) {
     warning(`focal ${label}: output rejected \u2014 ${parsed.reason}`);
+    startGroup(`focal ${label}: model exchange (rejected)`);
+    info(`\u2500\u2500 INPUT (user prompt) \u2500\u2500
+${user}`);
+    info(`\u2500\u2500 OUTPUT (model reply, first 400 chars) \u2500\u2500
+${parsed.rawPreview}`);
+    endGroup();
     return;
   }
   const suggestion = parsed.suggestions[0];

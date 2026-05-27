@@ -3,6 +3,7 @@ import type { getOctokit } from '@actions/github';
 import type { CodeSuggestion } from '../report.ts';
 import { passesQualityBar } from '../report.ts';
 import { renderSuggestionBody } from '../render/suggestion.ts';
+import { fetchCommentableLines } from '../ai/post.ts';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -31,7 +32,7 @@ export async function postReview(args: PostReviewArgs): Promise<void> {
     return;
   }
 
-  const comments = passing
+  let comments = passing
     .filter((s) => typeof s.line === 'number')
     .map((s) => ({
       path: s.file,
@@ -42,6 +43,33 @@ export async function postReview(args: PostReviewArgs): Promise<void> {
 
   if (comments.length === 0) {
     core.info('Suggestions present but none have a line anchor; skipping review.');
+    return;
+  }
+
+  // Pre-filter to lines GitHub will actually accept. createReview is ATOMIC:
+  // ONE comment anchored outside the PR diff 422s the WHOLE review and drops
+  // every inline suggestion. The AI post path already filters this way
+  // (ai/post.ts → filterByDiff); the deterministic path must too, or a single
+  // off-diff anchor sinks all the good ones. Best-effort: if the diff fetch
+  // fails, fall through and let the atomic-422 catch below handle it.
+  try {
+    const commentable = await fetchCommentableLines(octokit, owner, repo, prNumber);
+    const before = comments.length;
+    comments = comments.filter((c) => commentable.get(c.path)?.has(c.line) ?? false);
+    const dropped = before - comments.length;
+    if (dropped > 0) {
+      core.info(
+        `Dropped ${dropped} inline suggestion(s) not on a PR-diff line; ` +
+          `${comments.length} anchor on-diff (all are still mirrored in the Drift PR comment).`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    core.info(`Could not fetch PR diff to pre-filter anchors (${msg}); posting unfiltered.`);
+  }
+
+  if (comments.length === 0) {
+    core.info('No suggestion anchors on a PR-diff line; skipping inline review (all shown in the Drift comment).');
     return;
   }
 

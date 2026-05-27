@@ -19594,11 +19594,19 @@ function annotateDiff(diffText) {
   }
   return out.join("\n");
 }
-function pickFocalSuggestions(report, max) {
+function pickFocalSuggestions(report, max, commentable) {
   if (!report || !report.pr_review || !report.pr_review.code_suggestions) {
     return [];
   }
-  const sorted = [...report.pr_review.code_suggestions].filter((s) => typeof s.line === "number" && s.file).sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  let candidates = report.pr_review.code_suggestions.filter(
+    (s) => typeof s.line === "number" && s.file
+  );
+  if (commentable) {
+    candidates = candidates.filter(
+      (s) => commentable.get(s.file)?.has(s.line) ?? false
+    );
+  }
+  const sorted = [...candidates].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   return sorted.slice(0, Math.max(0, max));
 }
 function renderFocalPoint(s, ordinal, workspaceRoot) {
@@ -19681,7 +19689,11 @@ function gitDiffNames(workspaceRoot, baseSha, headSha) {
       const raw = (0, import_node_child_process.execFileSync)(
         "git",
         ["diff", "--name-only", `${baseSha}${sep}${headSha}`],
-        { cwd: workspaceRoot, encoding: "utf8" }
+        // stderr → 'ignore': the three-dot attempt routinely fails on
+        // shallow clones with "fatal: …: no merge base". That failure is
+        // EXPECTED — we catch it and fall back to two-dot — so muting its
+        // stderr keeps the misleading "fatal" line out of the action log.
+        { cwd: workspaceRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
       );
       return { files: raw.split("\n").map((s) => s.trim()).filter(Boolean), strategy };
     } catch {

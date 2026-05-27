@@ -187,15 +187,28 @@ export function annotateDiff(diffText: string): string {
 export function pickFocalSuggestions(
   report: ScanPrOutput | null,
   max: number,
+  commentable?: Map<string, Set<number>>,
 ): CodeSuggestion[] {
   if (!report || !report.pr_review || !report.pr_review.code_suggestions) {
     return [];
   }
-  // Sort by descending confidence so the most-actionable items survive
-  // the cap.
-  const sorted = [...report.pr_review.code_suggestions]
-    .filter((s) => typeof s.line === 'number' && s.file)
-    .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  let candidates = report.pr_review.code_suggestions.filter(
+    (s) => typeof s.line === 'number' && s.file,
+  );
+  // When a commentable-line map is supplied, keep ONLY findings whose anchor
+  // line is on the PR diff. The AI pass produces INLINE suggestions: the model
+  // can only fill `after_code` for a line it sees as `+`/context, and GitHub
+  // only accepts an inline comment there. Filtering BEFORE the cap means the
+  // ≤ ai-max-suggestions inference calls land on anchorable findings instead of
+  // being spent on ones that can only ever come back empty. Non-anchorable
+  // findings still surface in the sticky Drift comment.
+  if (commentable) {
+    candidates = candidates.filter(
+      (s) => commentable.get(s.file)?.has(s.line as number) ?? false,
+    );
+  }
+  // Sort by descending confidence so the most-actionable items survive the cap.
+  const sorted = [...candidates].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   return sorted.slice(0, Math.max(0, max));
 }
 
@@ -326,7 +339,11 @@ function gitDiffNames(
       const raw = execFileSync(
         'git',
         ['diff', '--name-only', `${baseSha}${sep}${headSha}`],
-        { cwd: workspaceRoot, encoding: 'utf8' },
+        // stderr → 'ignore': the three-dot attempt routinely fails on
+        // shallow clones with "fatal: …: no merge base". That failure is
+        // EXPECTED — we catch it and fall back to two-dot — so muting its
+        // stderr keeps the misleading "fatal" line out of the action log.
+        { cwd: workspaceRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
       );
       return { files: raw.split('\n').map((s) => s.trim()).filter(Boolean), strategy };
     } catch {
@@ -334,6 +351,62 @@ function gitDiffNames(
     }
   }
   return null;
+}
+
+/**
+ * Full PR diff (all changed files) using the same three-dot→two-dot strategy
+ * as getPrDiff. Feeds commentableLinesByFile so focal-point selection can be
+ * filtered to anchorable lines in one pass over every candidate file.
+ */
+export function getFullDiff(workspaceRoot: string, baseSha: string, headSha: string): string {
+  const names = gitDiffNames(workspaceRoot, baseSha, headSha);
+  if (!names) return '';
+  const range = names.strategy === 'three-dot' ? `${baseSha}...${headSha}` : `${baseSha}..${headSha}`;
+  try {
+    return execFileSync('git', ['diff', '--unified=5', range], {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 64 * 1024 * 1024, // large PRs: don't ENOBUFS, just fail-soft below
+    });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Parse a unified diff into a map of file → commentable RIGHT-side line
+ * numbers (added `+` and context ` ` lines). Same policy as
+ * diff-lines.parseCommentableLines, but keyed per file so a multi-file
+ * candidate list filters in a single pass. Fail-safe: a malformed diff
+ * yields an empty map (everything treated as non-commentable).
+ */
+export function commentableLinesByFile(diffText: string): Map<string, Set<number>> {
+  const map = new Map<string, Set<number>>();
+  if (!diffText) return map;
+  let files: ReturnType<typeof parsePatch>;
+  try {
+    files = parsePatch(diffText);
+  } catch {
+    return map;
+  }
+  for (const file of files) {
+    const name = (file.newFileName || file.oldFileName || '').replace(/^[ab]\//, '');
+    if (!name) continue;
+    const set = new Set<number>();
+    for (const hunk of file.hunks) {
+      let n = hunk.newStart;
+      for (const row of hunk.lines) {
+        const c = row[0];
+        if (c === '+' || c === ' ') {
+          set.add(n);
+          n += 1;
+        }
+      }
+    }
+    map.set(name, set);
+  }
+  return map;
 }
 
 function oneLine(s: string): string {

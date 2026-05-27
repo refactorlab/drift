@@ -72,8 +72,9 @@ export function buildFocalUserPrompt(
   report: ScanPrOutput | null,
   idx: number,
   ctx: FocalPromptCtx,
+  commentable?: Map<string, Set<number>>,
 ): string | null {
-  const focal = pickFocalSuggestions(report, idx + 1)[idx];
+  const focal = pickFocalSuggestions(report, idx + 1, commentable)[idx];
   if (!focal) return null;
 
   const parts: string[] = [];

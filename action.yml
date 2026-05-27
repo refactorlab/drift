@@ -62,18 +62,19 @@ inputs:
   ai-model:
     description: |
       GitHub Models model ID for the AI suggestion pass. Defaults to
-      `openai/gpt-4o` — the most widely-served model on org inference
-      endpoints. The per-suggestion inference loop sends the correct
-      token field automatically — `max_completion_tokens` for reasoning
-      models (gpt-5, o-series), `max_tokens` for classic models
-      (gpt-4o). If your org's Models *inference* endpoint does not serve
+      `openai/gpt-4.1` — broadly served on org inference endpoints and
+      stronger at generating committable code than gpt-4o. The
+      per-suggestion inference loop sends the correct token field
+      automatically — `max_completion_tokens` for reasoning models
+      (gpt-5, o-series), `max_tokens` for classic models (gpt-4.1,
+      gpt-4o). If your org's Models *inference* endpoint does not serve
       the chosen model, the preflight below catches it and the AI pass
       skips fail-soft. `openai/gpt-5` is in the global catalog but is NOT
       served by every org endpoint until an org admin enables it under
       Settings → Copilot → Policies → Models — override to `openai/gpt-5`
       once that's done.
     required: false
-    default: 'openai/gpt-4o'
+    default: 'openai/gpt-4.1'
   ai-endpoint:
     description: |
       GitHub Models inference endpoint. Default `auto` resolves it from
@@ -296,9 +297,30 @@ runs:
         # default) already has them; these fetches are a best-effort top-up.
         git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
         git fetch --no-tags --depth=1 origin "$HEAD_SHA" 2>/dev/null || true
-        # True fork point. Fall back to BASE_SHA if the merge-base isn't
-        # reachable (e.g. a too-shallow clone).
-        base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || echo "$BASE_SHA")"
+        # GitHub's PR "Files changed" diff is THREE-DOT — computed from the
+        # merge-base of (base, head), NOT from the base-branch tip. A depth-1
+        # dual-SHA fetch shares no common ancestor, so `git merge-base` fails
+        # and we'd fall back to BASE_SHA (the tip). On any PR whose base branch
+        # advanced past the fork point, diffing from the tip flags lines that
+        # AREN'T in GitHub's PR diff — so every finding anchors off-diff (the
+        # inline review 422s + the AI pass has no `+` line to put after_code
+        # on). Deepen in bounded steps until the merge-base is reachable, so
+        # our diff range matches GitHub's exactly. Purely additive: if the
+        # clone is already full (fetch-depth: 0) the first check passes and we
+        # never deepen; if deepening can't reach it we keep the old fallback.
+        deepen=200
+        for _ in 1 2 3 4 5; do
+          git merge-base "$BASE_SHA" "$HEAD_SHA" >/dev/null 2>&1 && break
+          git fetch --no-tags --deepen="$deepen" origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || true
+          deepen=$((deepen * 2))
+        done
+        base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || echo "")"
+        if [ -n "$base" ]; then
+          echo "✅ merge-base resolved ($base) — diff range matches GitHub's PR view"
+        else
+          base="$BASE_SHA"
+          echo "⚠️  merge-base unreachable after deepening — diffing from base tip; anchors may fall off-diff"
+        fi
         echo "📐 diff base: ${base} → head: ${HEAD_SHA}"
         # --diff-filter=ACMRT: added/copied/modified/renamed/type-changed
         # (drops pure deletions — there's no HEAD content to analyze).

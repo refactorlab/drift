@@ -129,3 +129,24 @@ test('buildFocalUserPrompt: returns null for an out-of-range index', () => {
   });
   assert.equal(out, null);
 });
+
+test('buildFocalUserPrompt: a commentable map drops findings whose line is off-diff', () => {
+  const root = mkdtempSync(join(tmpdir(), 'drift-focal-'));
+  const ctx = { workspaceRoot: root, baseSha: 'a', headSha: 'b' };
+
+  // Finding on src/a.ts:10. With a map that marks line 10 commentable → kept.
+  const onDiff = new Map([['src/a.ts', new Set([10])]]);
+  assert.ok(
+    buildFocalUserPrompt(reportWith('src/a.ts', 10), 0, ctx, onDiff),
+    'finding on a commentable line should be selected',
+  );
+
+  // Same finding, but the map only has line 11 → line 10 is off-diff → dropped,
+  // so index 0 now resolves to nothing.
+  const offDiff = new Map([['src/a.ts', new Set([11])]]);
+  assert.equal(
+    buildFocalUserPrompt(reportWith('src/a.ts', 10), 0, ctx, offDiff),
+    null,
+    'finding off the PR diff should be filtered out before selection',
+  );
+});

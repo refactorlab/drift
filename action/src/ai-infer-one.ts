@@ -25,6 +25,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { loadReport } from './report.ts';
 import { buildFocalUserPrompt, FOCAL_SYSTEM_PROMPT } from './ai/focal-prompt.ts';
+import { getFullDiff, commentableLinesByFile } from './ai/build-context.ts';
 import { callModel } from './ai/models-client.ts';
 import { parseAIOutput } from './ai/parse.ts';
 import type { AISuggestionEnvelope } from './ai/schema.ts';
@@ -87,9 +88,17 @@ async function main(): Promise<void> {
     return;
   }
 
-  const user = buildFocalUserPrompt(report, idx, { workspaceRoot, baseSha, headSha });
+  // Restrict focal points to findings anchorable on the PR diff: the model can
+  // only produce a committable `after_code` on a `+`/context line it can see,
+  // and GitHub only accepts inline comments there. Computed from the same diff
+  // strategy the prompt uses. If the diff is unavailable we pass undefined →
+  // no filtering (fail-soft to the prior behaviour rather than dropping all).
+  const fullDiff = getFullDiff(workspaceRoot, baseSha, headSha);
+  const commentable = fullDiff ? commentableLinesByFile(fullDiff) : undefined;
+
+  const user = buildFocalUserPrompt(report, idx, { workspaceRoot, baseSha, headSha }, commentable);
   if (!user) {
-    core.info(`focal ${label}: no focal point at this index — skipping.`);
+    core.info(`focal ${label}: no anchorable focal point at this index — skipping.`);
     return;
   }
 
@@ -111,6 +120,15 @@ async function main(): Promise<void> {
   const parsed = parseAIOutput(content);
   if (!parsed.ok) {
     core.warning(`focal ${label}: output rejected — ${parsed.reason}`);
+    // Dump BOTH sides of the exchange so the rejection is fully
+    // explainable from the log: the exact INPUT (focal point + numbered
+    // diff) we sent, and the OUTPUT we got back. This is the only way to
+    // tell apart "model didn't write the fix" from "the focal line had no
+    // `+` line in the diff to anchor to" — both surface as empty after_code.
+    core.startGroup(`focal ${label}: model exchange (rejected)`);
+    core.info(`── INPUT (user prompt) ──\n${user}`);
+    core.info(`── OUTPUT (model reply, first 400 chars) ──\n${parsed.rawPreview}`);
+    core.endGroup();
     return;
   }
   const suggestion = parsed.suggestions[0];
