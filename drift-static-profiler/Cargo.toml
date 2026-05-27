@@ -93,7 +93,7 @@ jsonschema = { version = "0.46", default-features = false }
 # resolver hot paths. Used to set baseline numbers in BENCH_BASELINE.md
 # and to perf-gate the resolver/containment changes coming in Phases 1+.
 # `html_reports` lets us inspect distributions when a number moves.
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "scan_pipeline"
