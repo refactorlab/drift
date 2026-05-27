@@ -102,15 +102,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Only the targets the Drift Action actually runs on. Consumers
-          # run on `ubuntu-latest` (x86_64 — see README) so x86_64-linux is
-          # the only must-have; macOS is kept for native dev/`make` use. ARM
-          # Linux is dropped (pg_query/libclang won't cross-compile, and the
-          # action fail-soft skips the scan when no matching asset exists),
-          # and Windows isn't a supported runner for this action.
+          # ONLY the target the Drift Action actually runs on. The action
+          # resolves its binary from the consumer's runner, and consumers
+          # run on `ubuntu-latest` (x86_64 — see README), so x86_64-linux is
+          # the one and only asset that gets downloaded. macOS/Windows/ARM
+          # are intentionally NOT built: no consumer runs the action there,
+          # local dev compiles its own binary (profiler-local-bin), and the
+          # action fail-soft skips the scan on any arch without a matching
+          # asset — so dropping them costs nothing and keeps releases fast.
           - { target: x86_64-unknown-linux-gnu,  os: ubuntu-latest  }
-          - { target: x86_64-apple-darwin,       os: macos-latest   }
-          - { target: aarch64-apple-darwin,      os: macos-latest   }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -122,9 +122,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # All three remaining targets build natively on their runner
-      # (x86_64-linux on ubuntu, both macOS on macos-latest), so no
-      # cross-linker setup is needed.
+      # Single target, builds natively on ubuntu-latest — no cross-linker
+      # setup needed.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: drift-static-profiler
