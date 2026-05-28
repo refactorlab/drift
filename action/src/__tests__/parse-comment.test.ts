@@ -95,7 +95,10 @@ test('parse-comment: one-liner overrides fenced YAML', () => {
   assert.equal(r.outputs.debug, 'true', 'YAML-only keys still merge through');
 });
 
-test('parse-comment: malformed YAML → warning, no outputs from block', () => {
+test('parse-comment: junk fenced line → dropped as unknown key, no outputs', () => {
+  // The zero-dep parser reads flat `key: value` lines; a junk line still
+  // splits to a bogus key that isn't in the allowlist, so it's dropped with a
+  // warning and emits nothing — a crafted line can never smuggle an output.
   const body = [
     '/drift',
     '```yaml',
@@ -104,7 +107,7 @@ test('parse-comment: malformed YAML → warning, no outputs from block', () => {
   ].join('\n');
   const r = run(body);
   assert.deepEqual(r.outputs, {});
-  assert.match(r.stdout, /::warning::Could not parse fenced YAML/);
+  assert.match(r.stdout, /::warning::Ignoring unknown \/drift arg:/);
 });
 
 test('parse-comment: newline in value is sanitized', () => {

@@ -24,9 +24,13 @@
 // SECURITY: never echo or eval COMMENT_BODY in shell. Everything stays in
 // process memory; output values are line-sanitized before write so a
 // crafted comment can't smuggle extra $GITHUB_OUTPUT lines.
+//
+// ZERO DEPENDENCIES on purpose: the trigger workflow runs this with bare
+// `node` — no `npm ci`, no node_modules on the runner. Importing a YAML
+// package here would throw ERR_MODULE_NOT_FOUND at runtime. Every Drift
+// override is a flat scalar, so we parse `key: value` lines directly.
 
 import { appendFileSync } from 'node:fs';
-import { parse as parseYaml } from 'yaml';
 
 // Keys settable from a /drift comment. MUST be a subset of inputs in
 // action.yml — anything else is ignored with a warning.
@@ -48,19 +52,25 @@ const githubOutput = process.env.GITHUB_OUTPUT;
 
 const parsed = {};
 
-// Pass 1: fenced YAML block — first ```yaml / ```yml block in the comment.
+// Pass 1: fenced block — first ```yaml / ```yml block in the comment. We
+// accept ONLY flat `key: value` scalar lines (which is all any Drift override
+// ever is) and parse them by hand — no YAML library, so this stays runnable on
+// a bare runner. Unknown keys are dropped later with a ::warning::.
 const fenceRe = /```ya?ml\s*\n([\s\S]*?)\n```/m;
 const fence = body.match(fenceRe);
 if (fence) {
-  try {
-    const obj = parseYaml(fence[1]);
-    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-      for (const [k, v] of Object.entries(obj)) parsed[k] = v;
-    } else {
-      console.log('::warning::Fenced YAML block in /drift comment did not parse to a mapping; ignoring.');
+  for (const raw of fence[1].split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const ci = line.indexOf(':');
+    if (ci < 1) continue; // need a key before the colon
+    const k = line.slice(0, ci).trim();
+    let v = line.slice(ci + 1).trim();
+    // Strip one layer of matching surrounding quotes (e.g. ai-model: "x").
+    if (v.length >= 2 && ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))) {
+      v = v.slice(1, -1);
     }
-  } catch (e) {
-    console.log(`::warning::Could not parse fenced YAML in /drift comment: ${e.message}`);
+    parsed[k] = v;
   }
 }
 
