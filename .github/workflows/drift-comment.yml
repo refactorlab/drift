@@ -1,0 +1,165 @@
+# Dogfood: run Drift on THIS repo's own PRs from a comment, via the LOCAL
+# action (`uses: ./`) — the counterpart to drift-hello-test.yml (which dogfoods
+# the pull_request path). examples/drift-on-comment.yml is the consumer-facing
+# template; this file is what actually runs here.
+#
+# A maintainer comments on any Drift PR:
+#
+#     /drift                       # re-run the scan + refresh the sticky comment
+#     /drift debug=true
+#     /drift ai-model=openai/gpt-5
+#     /drift issue                 # ALSO open/refresh a tracking ISSUE for the PR
+#     /drift issue ai-model=openai/gpt-5
+#
+# Security: gated on (1) it's a PR comment, (2) author is OWNER/MEMBER/
+# COLLABORATOR, (3) not a bot. We check out the BASE repo (so the scanner can
+# diff against the base SHA) then the PR head by IMMUTABLE SHA (force-push
+# safe). The scanner only READS source, so fork PRs are safe.
+name: drift / on comment (dogfood)
+
+on:
+  issue_comment:
+    types: [created]
+
+# issues:write is the ONLY addition over drift-hello-test.yml — it's what lets
+# `/drift issue` open a tracking issue. A permissions block sets every unlisted
+# scope to none, so all five must be present.
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  models: read
+  issues: write
+
+# Collide on PR # only for real /drift commands; passive comments get a
+# per-run group so they can't cancel an in-flight Drift run.
+concurrency:
+  group: >-
+    drift-comment-${{ github.event.issue.number }}-${{
+      startsWith(github.event.comment.body, '/drift')
+      && 'cmd' || format('passive-{0}', github.run_id) }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+               github.event.comment.author_association) &&
+      startsWith(github.event.comment.body, '/drift') &&
+      github.event.comment.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: React 👀
+        env:
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO:  ${{ github.event.repository.name }}
+          CID:      ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+            -d '{"content":"eyes"}' >/dev/null || true
+
+      - name: Resolve PR
+        id: pr
+        env:
+          GH_OWNER:  ${{ github.repository_owner }}
+          GH_REPO:   ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          resp="$(curl -sS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/pulls/${PR_NUMBER}")"
+          {
+            echo "head_sha=$(printf '%s' "$resp" | jq -r '.head.sha')"
+            echo "base_sha=$(printf '%s' "$resp" | jq -r '.base.sha')"
+            echo "state=$(printf '%s' "$resp" | jq -r '.state')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Skip on closed PR
+        if: steps.pr.outputs.state != 'open'
+        env:
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO:  ${{ github.event.repository.name }}
+          CID:      ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE:    ${{ steps.pr.outputs.state }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+            -d '{"content":"confused"}' >/dev/null || true
+          echo "::notice::Drift skipped — PR state is ${STATE} (only 'open' PRs are eligible)."
+          exit 0
+
+      # Check out the BASE repo (origin carries the base SHA the scanner diffs
+      # against), then fetch + check out the PR head by IMMUTABLE SHA. This also
+      # puts action/scripts/parse-comment.mjs in the workspace, so the parse
+      # step below can run it directly with bare `node` (it's zero-dependency).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out PR head by SHA
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA:  ${{ steps.pr.outputs.head_sha }}
+        run: |
+          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+          git checkout --detach "$HEAD_SHA"
+
+      - name: Parse /drift args
+        id: args
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: node action/scripts/parse-comment.mjs
+
+      - uses: ./
+        with:
+          pr-number: ${{ github.event.issue.number }}
+          base-sha:  ${{ steps.pr.outputs.base_sha }}
+          head-sha:  ${{ steps.pr.outputs.head_sha }}
+          debug:              ${{ steps.args.outputs.debug              || 'false' }}
+          progress:           ${{ steps.args.outputs.progress           || 'true' }}
+          ai-suggestions:     ${{ steps.args.outputs.ai-suggestions     || 'true' }}
+          audio-summary:      ${{ steps.args.outputs.audio-summary      || 'true' }}
+          ai-model:           ${{ steps.args.outputs.ai-model           || 'openai/gpt-4.1' }}
+          fail-threshold:     ${{ steps.args.outputs.fail-threshold     || '' }}
+          ai-max-suggestions: ${{ steps.args.outputs.ai-max-suggestions || '3' }}
+          open-issue:         ${{ steps.args.outputs.open-issue         || 'false' }}
+
+      - name: React 🚀 on success
+        if: success()
+        env:
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO:  ${{ github.event.repository.name }}
+          CID:      ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+            -d '{"content":"rocket"}' >/dev/null || true
+
+      - name: React 👎 on failure
+        if: failure()
+        env:
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO:  ${{ github.event.repository.name }}
+          CID:      ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+            -d '{"content":"-1"}' >/dev/null || true
