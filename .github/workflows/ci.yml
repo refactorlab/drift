@@ -104,7 +104,7 @@ jobs:
       # action/package.json.
       - name: Verify committed dist/ bundles are tracked and in sync
         run: |
-          bundles="dist/index.js dist/ai-context.js dist/ai-suggest.js"
+          bundles="dist/index.js dist/ai-context.js dist/ai-suggest.js dist/ai-infer-one.js"
           fail=0
           for f in $bundles; do
             if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
