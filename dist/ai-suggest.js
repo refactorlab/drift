@@ -24334,6 +24334,44 @@ async function postAIReview(args) {
   return { posted: true, commentCount: comments.length, payload };
 }
 
+// src/pr-context.ts
+function resolvePrContext() {
+  const pr = context2.payload.pull_request;
+  if (pr && typeof pr.head?.sha === "string" && typeof pr.number === "number") {
+    return {
+      number: pr.number,
+      headSha: pr.head.sha,
+      baseSha: typeof pr.base?.sha === "string" ? pr.base.sha : void 0,
+      baseRef: typeof pr.base?.ref === "string" ? pr.base.ref : void 0,
+      headRef: typeof pr.head?.ref === "string" ? pr.head.ref : void 0,
+      title: typeof pr.title === "string" ? pr.title : void 0,
+      body: typeof pr.body === "string" ? pr.body : void 0,
+      htmlUrl: typeof pr.html_url === "string" ? pr.html_url : void 0,
+      author: typeof pr.user?.login === "string" ? pr.user.login : void 0
+    };
+  }
+  const envNumber = Number(process.env.DRIFT_PR_NUMBER ?? "");
+  const envHeadSha = (process.env.DRIFT_HEAD_SHA ?? "").trim();
+  if (!Number.isInteger(envNumber) || envNumber <= 0 || envHeadSha === "") {
+    return null;
+  }
+  return {
+    number: envNumber,
+    headSha: envHeadSha,
+    baseSha: optEnv("DRIFT_BASE_SHA"),
+    baseRef: optEnv("DRIFT_BASE_REF"),
+    headRef: optEnv("DRIFT_HEAD_REF"),
+    title: optEnv("DRIFT_PR_TITLE"),
+    body: optEnv("DRIFT_PR_BODY"),
+    htmlUrl: optEnv("DRIFT_PR_HTML_URL"),
+    author: optEnv("DRIFT_PR_AUTHOR")
+  };
+}
+function optEnv(name) {
+  const v = process.env[name];
+  return v && v.length > 0 ? v : void 0;
+}
+
 // src/ai-index.ts
 async function aiMain() {
   const aiPath = process.env.AI_SUGGESTIONS_PATH;
@@ -24368,9 +24406,9 @@ ${parsed.rawPreview}`);
     );
     return;
   }
-  const pr = context2.payload.pull_request;
+  const pr = resolvePrContext();
   if (!pr) {
-    info("No pull_request in context \u2014 skipping AI review post.");
+    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 skipping AI review post.");
     return;
   }
   const token = process.env.GITHUB_TOKEN ?? "";
@@ -24407,7 +24445,7 @@ ${parsed.rawPreview}`);
       owner,
       repo,
       prNumber: pr.number,
-      headSha: pr.head.sha,
+      headSha: pr.headSha,
       suggestions: toPost,
       model,
       dryRun
