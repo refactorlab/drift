@@ -1,66 +1,110 @@
-// Sticky overview comment — top-down per pr-review-spec.md:
-//   0. Banner             — overall_drift chip (GFM alert + shields.io badge)
-//   1. Architecture flow  — pr_review.architecture_flow (Image 1)
-//   2. Business logic     — pr_review.business_logic (Image 2)
-//   3. Affected roots     — pr_scope (factual — always present)
-//   4. Value card         — pr_review.value_card + counts (Image 3)
-//   5. Suggestions        — pr_review.code_suggestions (warnings, advisory)
-//   6. Visual summary     — pr_review.visual_summary (collapsible)
-//   7. Extended findings  — pr_review_ext
+// Sticky overview comment — assembled top-down in the reading order a senior
+// reviewer uses (verdict → numbers → fixes → risk → architecture → reference):
 //
-// Suggestions ALSO post as inline review comments (see github/review.ts)
-// for the "Apply suggestion" button — but they're mirrored here so the PR
-// author still sees them when GitHub rejects the inline review (a single
-// out-of-diff anchor makes the whole atomic createReview call fail).
+//   marker
+//   1. Header           — title · KPIs · advisory verdict · "Before you merge"
+//   2. Value card       — composite + per-axis dashboard
+//   3. Suggestions      — priority table + per-finding details
+//   4. Risks            — impact-ordered table + quadrant map
+//   5. Architecture     — reach table + flow/business/mindmap diagrams
+//   6. Extended findings + Legend & methodology
+//   7. Footer           — attribution + (optional) audio link
+//   state blob          — invisible snapshot, diffed on the next push
+//
+// Every section returns null when its data is absent, so the comment degrades
+// cleanly from a full value-model report down to a factual-only one.
 
-import type { Generator, ScanPrOutput } from '../report.ts';
-import { renderBanner } from './sections/banner.ts';
-import { renderArchitecture } from './sections/architecture.ts';
-import { renderBusinessLogic } from './sections/business_logic.ts';
-import { renderAffectedRoots } from './sections/affected_roots.ts';
+import type { ScanPrOutput } from '../report.ts';
+import type { PrContext } from './context.ts';
+import { type DriftState, stateFromReport, serializeState } from './state.ts';
+import { extractFacts } from './lib/facts.ts';
+
+import { renderHeader } from './sections/header.ts';
 import { renderValueCard } from './sections/value_card.ts';
 import { renderSuggestions } from './sections/suggestions.ts';
-import { renderVisualSummary } from './sections/visual_summary.ts';
+import { renderRisks } from './sections/risks.ts';
+import { renderArchitecture } from './sections/architecture.ts';
 import { renderExt } from './sections/ext.ts';
+import { renderLegend } from './sections/legend.ts';
+import { renderFooter } from './sections/footer.ts';
 
 export const STICKY_MARKER = '<!-- drift:sticky-comment -->';
 
 // GitHub caps comment bodies at 65 536 chars. We aim for 60 000 to leave
-// headroom for the marker + future small additions.
+// headroom for the markers; over budget, <details> contents are collapsed.
 const BODY_SIZE_BUDGET = 60_000;
+const HARD_CAP = 65_000;
 
-export function renderOverview(report: ScanPrOutput): string {
-  const header = `${STICKY_MARKER}\n## 🟣 Drift PR review`;
+export type RenderOptions = {
+  ctx?: PrContext;
+  /** Prior run's snapshot (from the previous sticky comment) for the delta line. */
+  priorState?: DriftState | null;
+  /** Artifact URL of the spoken-summary WAV, linked in the footer. */
+  audioUrl?: string;
+};
 
-  const sections: (string | null)[] = [
-    header,
-    renderBanner(report.pr_review?.overall_drift),
-    renderArchitecture(report.pr_review?.architecture_flow),
-    renderBusinessLogic(report.pr_review?.business_logic),
-    renderAffectedRoots(report.pr_scope.affected_roots, report.pr_scope.unreachable_changes),
-    renderValueCard(report.pr_review?.counts, report.pr_review?.value_card),
-    renderSuggestions(report.pr_review?.code_suggestions),
-    renderVisualSummary(report.pr_review?.visual_summary),
-    renderExt(report.pr_review_ext),
-    renderFooter(report.generator),
-  ];
+export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): string {
+  const { ctx, priorState, audioUrl } = opts;
+  const review = report.pr_review;
+  const facts = extractFacts(report);
+  const currentState = stateFromReport(report);
 
-  const body = sections.filter((s): s is string => !!s).join('\n\n---\n\n');
+  const header = renderHeader(report, ctx);
+  const valueCard = renderValueCard({
+    counts: review?.counts,
+    card: review?.value_card,
+    overallPercent: review?.overall_drift?.percent,
+    currentState,
+    priorState,
+  });
+  const suggestions = renderSuggestions(review?.code_suggestions, ctx);
+  const risks = renderRisks(review?.visual_summary?.risks);
+  const architecture = renderArchitecture({
+    prScope: report.pr_scope,
+    arch: review?.architecture_flow,
+    business: review?.business_logic,
+    keyFiles: review?.visual_summary?.key_files,
+    deadCodeCount: facts.deadCode.length,
+    ctx,
+  });
+  const ext = renderExt(report.pr_review_ext, ctx);
+
+  // The legend is reference detail — show it only when there's rich content to
+  // legend. A factual-only PR skips it.
+  const hasRich = [valueCard, suggestions, risks].some(Boolean);
+  const legend = hasRich ? renderLegend(report.pr_review_ext?.tech_debt) : null;
+
+  const major = [header, valueCard, suggestions, risks, architecture].filter((s): s is string => !!s);
+  const tail = [ext, legend].filter((s): s is string => !!s).join('\n\n');
+  const footer = renderFooter(report.generator, audioUrl);
+
+  let body = `${STICKY_MARKER}\n${major.join('\n\n---\n\n')}`;
+  if (tail) body += `\n\n---\n\n${tail}`;
+  body += `\n\n---\n\n${footer}`;
+  body += `\n\n${serializeState(currentState)}`;
+
   return guardSize(body);
 }
 
-function renderFooter(gen: Generator): string {
-  return `<sub>Posted by [Drift](https://drift.dev) · static-analysis report from \`${gen.tool}\` v${gen.version}</sub>`;
-}
-
-// If the body breaches the size budget, collapse <details>…</details> blocks
-// to their <summary> line only. Keeps the comment well under GitHub's 65 536
-// char cap while preserving the section headings + factual content.
+/**
+ * Keep the body under GitHub's cap. Collapses <details> bodies INNERMOST-first
+ * (so nested disclosures don't get mangled), then hard-truncates as a last
+ * resort. A no-op on the normal ~20–30 KB body.
+ */
 function guardSize(body: string): string {
   if (body.length <= BODY_SIZE_BUDGET) return body;
-  const stripped = body.replace(
-    /<details><summary>([\s\S]*?)<\/summary>[\s\S]*?<\/details>/g,
-    (_match, summary) => `<details><summary>${summary} — _collapsed (body size guard)_</summary></details>`,
-  );
-  return stripped;
+
+  // Innermost details = one whose body contains no further <details>.
+  const innermost = /<details>\s*<summary>([\s\S]*?)<\/summary>(?:(?!<details>)[\s\S])*?<\/details>/;
+  let out = body;
+  for (let i = 0; i < 1000 && out.length > BODY_SIZE_BUDGET; i++) {
+    const next = out.replace(innermost, (_m, summary: string) => `<details><summary>${summary.trim()} — _collapsed (size guard)_</summary></details>`);
+    if (next === out) break;
+    out = next;
+  }
+
+  if (out.length > HARD_CAP) {
+    out = `${out.slice(0, HARD_CAP - 80)}\n\n<sub>…report truncated (size guard).</sub>`;
+  }
+  return out;
 }

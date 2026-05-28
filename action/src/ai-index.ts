@@ -23,6 +23,7 @@ import { context, getOctokit } from '@actions/github';
 import { parseAIOutput } from './ai/parse.ts';
 import { postAIReview, fetchCommentableLines } from './ai/post.ts';
 import { filterByDiff } from './ai/diff-lines.ts';
+import { resolvePrContext } from './pr-context.ts';
 
 async function aiMain(): Promise<void> {
   const aiPath = process.env.AI_SUGGESTIONS_PATH;
@@ -60,9 +61,9 @@ async function aiMain(): Promise<void> {
     return;
   }
 
-  const pr = context.payload.pull_request;
+  const pr = resolvePrContext();
   if (!pr) {
-    core.info('No pull_request in context — skipping AI review post.');
+    core.info('No PR context (pull_request payload or DRIFT_PR_* env vars) — skipping AI review post.');
     return;
   }
 
@@ -111,7 +112,7 @@ async function aiMain(): Promise<void> {
       owner,
       repo,
       prNumber: pr.number,
-      headSha: pr.head.sha,
+      headSha: pr.headSha,
       suggestions: toPost,
       model,
       dryRun,

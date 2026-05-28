@@ -169,22 +169,171 @@ inputs:
       falls back to the older v1.2.0 piper_amd64 / piper_arm64 tarball.
     required: false
     default: '2023.11.14-2'
+  # ─── PR context overrides (event-agnostic invocation) ──────────────
+  # These are empty by default. On `pull_request` events the derivation
+  # step (see `Resolve PR context`) fills them from github.event.pull_request.
+  # On `issue_comment` events a consumer workflow can either pass these
+  # explicitly OR leave them empty — the derivation step then resolves
+  # everything via a single REST GET /pulls/{number} call.
+  #
+  # WHY 5 SEPARATE INPUTS, NOT ONE JSON BLOB: each maps 1:1 to the value
+  # callers already have on hand. Empty default is required because GitHub
+  # Actions evaluates an empty expression as "value present, empty" — NOT
+  # "use default" — so we cannot use `default: ${{ github.event.pull_request.number }}`
+  # (see github/docs#31513). The derivation step is the single point of fallback.
+  pr-number:
+    description: 'PR number. Empty → derived from the event payload (pull_request or issue_comment).'
+    required: false
+    default: ''
+  base-sha:
+    description: 'Base SHA of the PR diff. Empty → derived from the event payload (or a REST call on issue_comment).'
+    required: false
+    default: ''
+  head-sha:
+    description: 'Head SHA of the PR diff. Same fallback chain as base-sha.'
+    required: false
+    default: ''
+  pr-title:
+    description: 'PR title (used by the AI briefing + permalink line). Same fallback chain.'
+    required: false
+    default: ''
+  pr-body:
+    description: 'PR body (used by the AI briefing). Same fallback chain.'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
   steps:
+    # ─── 0. Resolve PR context (event-agnostic) ──────────────────────
+    # Single source of truth for PR metadata. Used by every later step + by
+    # dist/index.js and dist/ai-suggest.js (via the DRIFT_PR_* env vars we
+    # write to $GITHUB_ENV). Resolution priority:
+    #   1. Explicit inputs (pr-number, base-sha, head-sha, pr-title, pr-body).
+    #   2. github.event.pull_request.* (the canonical `pull_request` event).
+    #   3. github.event.issue.pull_request.url + REST GET /pulls/{number}
+    #      (the `issue_comment` flow — the issue payload has the PR number
+    #      but no base/head SHAs).
+    #   4. Empty → every later step's `if:` short-circuits and Drift skips.
+    #
+    # Why this layer exists: GitHub Actions evaluates an empty input
+    # expression as "value present, empty" (NOT "use default"), so we
+    # cannot make inputs default to event fields. This step is the single
+    # branch where that fallback happens — everywhere else just reads
+    # steps.pr-ctx.outputs.* or process.env.DRIFT_PR_*.
+    - name: Resolve PR context
+      id: pr-ctx
+      shell: bash
+      env:
+        INPUT_PR_NUMBER:    ${{ inputs.pr-number }}
+        INPUT_BASE_SHA:     ${{ inputs.base-sha }}
+        INPUT_HEAD_SHA:     ${{ inputs.head-sha }}
+        INPUT_PR_TITLE:     ${{ inputs.pr-title }}
+        INPUT_PR_BODY:      ${{ inputs.pr-body }}
+        EVENT_PR_NUMBER:    ${{ github.event.pull_request.number || github.event.issue.number }}
+        EVENT_BASE_SHA:     ${{ github.event.pull_request.base.sha }}
+        EVENT_HEAD_SHA:     ${{ github.event.pull_request.head.sha }}
+        EVENT_BASE_REF:     ${{ github.event.pull_request.base.ref }}
+        EVENT_HEAD_REF:     ${{ github.event.pull_request.head.ref }}
+        EVENT_PR_TITLE:     ${{ github.event.pull_request.title }}
+        EVENT_PR_BODY:      ${{ github.event.pull_request.body }}
+        EVENT_PR_HTML_URL:  ${{ github.event.pull_request.html_url }}
+        EVENT_PR_AUTHOR:    ${{ github.event.pull_request.user.login }}
+        EVENT_ISSUE_PR_URL: ${{ github.event.issue.pull_request.url }}
+        GITHUB_TOKEN:       ${{ inputs.github-token }}
+      run: |
+        # Priority chain: explicit input > pull_request event > REST fallback.
+        pr_number="${INPUT_PR_NUMBER:-${EVENT_PR_NUMBER:-}}"
+        base_sha="${INPUT_BASE_SHA:-${EVENT_BASE_SHA:-}}"
+        head_sha="${INPUT_HEAD_SHA:-${EVENT_HEAD_SHA:-}}"
+        base_ref="${EVENT_BASE_REF:-}"
+        head_ref="${EVENT_HEAD_REF:-}"
+        pr_title="${INPUT_PR_TITLE:-${EVENT_PR_TITLE:-}}"
+        pr_body="${INPUT_PR_BODY:-${EVENT_PR_BODY:-}}"
+        pr_html_url="${EVENT_PR_HTML_URL:-}"
+        pr_author="${EVENT_PR_AUTHOR:-}"
+
+        # issue_comment branch: the issue payload has the PR # but not the
+        # SHAs. One REST call fills them all in (and any title/body/refs
+        # the caller didn't pass explicitly).
+        if [ -n "$pr_number" ] && [ -z "${base_sha}${head_sha}" ] && [ -n "${EVENT_ISSUE_PR_URL:-}" ]; then
+          if command -v jq >/dev/null 2>&1; then
+            resp="$(curl -sS \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${EVENT_ISSUE_PR_URL}" 2>/dev/null || echo '{}')"
+            base_sha="${base_sha:-$(printf '%s' "$resp" | jq -r '.base.sha // empty')}"
+            head_sha="${head_sha:-$(printf '%s' "$resp" | jq -r '.head.sha // empty')}"
+            base_ref="${base_ref:-$(printf '%s' "$resp" | jq -r '.base.ref // empty')}"
+            head_ref="${head_ref:-$(printf '%s' "$resp" | jq -r '.head.ref // empty')}"
+            pr_title="${pr_title:-$(printf '%s' "$resp" | jq -r '.title // empty')}"
+            pr_body="${pr_body:-$(printf '%s' "$resp"  | jq -r '.body  // empty')}"
+            pr_html_url="${pr_html_url:-$(printf '%s' "$resp" | jq -r '.html_url // empty')}"
+            pr_author="${pr_author:-$(printf '%s' "$resp" | jq -r '.user.login // empty')}"
+            echo "🪝 Resolved PR context via REST: ${EVENT_ISSUE_PR_URL}"
+          else
+            echo "⚠️  issue_comment fallback needs jq — install it on the runner. Continuing without."
+          fi
+        fi
+
+        # Step outputs (single-line scalars).
+        {
+          echo "pr_number=$pr_number"
+          echo "base_sha=$base_sha"
+          echo "head_sha=$head_sha"
+          echo "base_ref=$base_ref"
+          echo "head_ref=$head_ref"
+          echo "pr_html_url=$pr_html_url"
+          echo "pr_author=$pr_author"
+        } >> "$GITHUB_OUTPUT"
+        # Multi-line outputs use the heredoc form — title and body can
+        # contain newlines and arbitrary punctuation. The delimiter is
+        # randomized so it can't collide with user content.
+        delim="DRIFT_EOF_$RANDOM$RANDOM"
+        {
+          printf 'pr_title<<%s\n%s\n%s\n' "$delim" "$pr_title" "$delim"
+          printf 'pr_body<<%s\n%s\n%s\n'  "$delim" "$pr_body"  "$delim"
+        } >> "$GITHUB_OUTPUT"
+
+        # Job-wide env vars for the bundled JS (dist/index.js, dist/ai-suggest.js).
+        # These let the TS code be event-agnostic: it reads context.payload.pull_request
+        # first and falls back to these. Empty values are tolerated (the TS
+        # helper short-circuits when head_sha is empty).
+        {
+          echo "DRIFT_PR_NUMBER=$pr_number"
+          echo "DRIFT_HEAD_SHA=$head_sha"
+          echo "DRIFT_BASE_SHA=$base_sha"
+          echo "DRIFT_BASE_REF=$base_ref"
+          echo "DRIFT_HEAD_REF=$head_ref"
+          echo "DRIFT_PR_HTML_URL=$pr_html_url"
+          echo "DRIFT_PR_AUTHOR=$pr_author"
+          printf 'DRIFT_PR_TITLE<<%s\n%s\n%s\n' "$delim" "$pr_title" "$delim"
+          printf 'DRIFT_PR_BODY<<%s\n%s\n%s\n'  "$delim" "$pr_body"  "$delim"
+        } >> "$GITHUB_ENV"
+
+        if [ -n "$head_sha" ] && [ -n "$base_sha" ]; then
+          echo "✅ PR #${pr_number}  base=${base_sha:0:12}  head=${head_sha:0:12}"
+        else
+          echo "⏭️  No PR context resolved — Drift will skip downstream steps."
+        fi
+
     # ─── 1. Say hello (always) ───────────────────────────────────────
     - name: Say hello
       shell: bash
       env:
-        GREETER: ${{ inputs.greeter }}
+        GREETER:     ${{ inputs.greeter }}
+        PR_NUMBER:   ${{ steps.pr-ctx.outputs.pr_number }}
+        PR_HEAD_REF: ${{ steps.pr-ctx.outputs.head_ref }}
+        PR_BASE_REF: ${{ steps.pr-ctx.outputs.base_ref }}
+        PR_HEAD_SHA: ${{ steps.pr-ctx.outputs.head_sha }}
       run: |
         echo "👋 hello world by ${GREETER}"
         echo "🛠️  runner: ${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}"
         echo "📂 repo:   ${GITHUB_REPOSITORY:-<unset>}"
         echo "🌿 event:  ${GITHUB_EVENT_NAME:-<unset>}"
-        echo "🔁 PR:     #${{ github.event.pull_request.number || 'n/a' }} (${{ github.event.pull_request.head.ref || 'n/a' }} → ${{ github.event.pull_request.base.ref || 'n/a' }})"
-        echo "🔖 sha:    ${{ github.event.pull_request.head.sha || github.sha }}"
+        echo "🔁 PR:     #${PR_NUMBER:-n/a} (${PR_HEAD_REF:-n/a} → ${PR_BASE_REF:-n/a})"
+        echo "🔖 sha:    ${PR_HEAD_SHA:-${GITHUB_SHA:-<unset>}}"
 
     # ─── 2. Resolve the release tag (auto-detect or pinned) ──────────
     # We resolve the tag HERE (before the cache step) because the cache
@@ -333,11 +482,11 @@ runs:
     - name: Compute PR diff
       continue-on-error: true   # advisory: never fail the PR on our own error
       id: diff
-      if: github.event.pull_request != null
+      if: steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
-        BASE_SHA:     ${{ github.event.pull_request.base.sha }}
-        HEAD_SHA:     ${{ github.event.pull_request.head.sha }}
+        BASE_SHA:     ${{ steps.pr-ctx.outputs.base_sha }}
+        HEAD_SHA:     ${{ steps.pr-ctx.outputs.head_sha }}
         CHANGED_PATH: ${{ runner.temp }}/drift-changed.txt
         STATS_PATH:   ${{ runner.temp }}/drift-diff-stats.tsv
         COMMITS_PATH: ${{ runner.temp }}/drift-commits.txt
@@ -415,19 +564,26 @@ runs:
       continue-on-error: true   # advisory: a scanner crash must NOT fail the PR
       id: scan
       if: >-
-        github.event.pull_request != null &&
+        steps.pr-ctx.outputs.head_sha != '' &&
         steps.diff.outputs.has_source == 'true'
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         DRIFT_LOG: ${{ inputs.debug == 'true' && 'info,drift_static_profiler=debug' || '' }}
         DRIFT_PROGRESS: ${{ inputs.progress == 'true' && '' || 'off' }}
+        # Raw input values, threaded as env vars (NOT `${{ }}`-interpolated into
+        # the bash body below). The `${{ }}` substitution happens BEFORE bash
+        # parses the script — a malicious caller passing
+        # `debug: 'true"; rm -rf $HOME #'` would otherwise inject arbitrary
+        # commands. Passing through env: makes them inert string data.
+        DEBUG_INPUT:    ${{ inputs.debug }}
+        PROGRESS_INPUT: ${{ inputs.progress }}
         CHANGED_PATH: ${{ steps.diff.outputs.changed_path }}
         STATS_PATH:   ${{ steps.diff.outputs.stats_path }}
         COMMITS_PATH: ${{ steps.diff.outputs.commits_path }}
         BASE_SHA:     ${{ steps.diff.outputs.base_sha }}
-        PR_TITLE:     ${{ github.event.pull_request.title }}
-        PR_BODY:      ${{ github.event.pull_request.body }}
+        PR_TITLE:     ${{ steps.pr-ctx.outputs.pr_title }}
+        PR_BODY:      ${{ steps.pr-ctx.outputs.pr_body }}
       run: |
         if ! command -v drift-static-profiler > /dev/null 2>&1; then
           echo "⚠️  drift-static-profiler not on PATH — skipping scan."
@@ -438,8 +594,8 @@ runs:
         echo "🔬 scan-pr over $(wc -l < "$CHANGED_PATH" | tr -d ' ') changed file(s):"
         sed 's/^/    /' "$CHANGED_PATH"
         echo ""
-        echo "🪵 debug mode:    ${{ inputs.debug }}     (DRIFT_LOG=${DRIFT_LOG:-<unset>})"
-        echo "📊 progress:      ${{ inputs.progress }}  (DRIFT_PROGRESS=${DRIFT_PROGRESS:-<default-on>})"
+        echo "🪵 debug mode:    ${DEBUG_INPUT}     (DRIFT_LOG=${DRIFT_LOG:-<unset>})"
+        echo "📊 progress:      ${PROGRESS_INPUT}  (DRIFT_PROGRESS=${DRIFT_PROGRESS:-<default-on>})"
         echo ""
         # NOTE: --pr-title / --pr-body use the `--flag=value` form on purpose.
         # PR titles/bodies are raw user text that routinely starts with `-`
@@ -528,11 +684,11 @@ runs:
       if: >-
         (inputs.ai-suggestions == 'true' || inputs.audio-summary == 'true') &&
         steps.scan.outputs.scan_ran == 'true' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
-        AI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        AI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        AI_BASE_SHA: ${{ steps.pr-ctx.outputs.base_sha }}
+        AI_HEAD_SHA: ${{ steps.pr-ctx.outputs.head_sha }}
       run: |
         git fetch --no-tags --depth=1 origin "$AI_BASE_SHA" 2>/dev/null || true
         git fetch --no-tags --depth=1 origin "$AI_HEAD_SHA" 2>/dev/null || true
@@ -555,7 +711,7 @@ runs:
         (inputs.ai-suggestions == 'true' || inputs.audio-summary == 'true') &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
         AI_ENDPOINT_INPUT: ${{ inputs.ai-endpoint }}
@@ -633,7 +789,7 @@ runs:
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/piper
@@ -644,7 +800,7 @@ runs:
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        github.event.pull_request != null &&
+        steps.pr-ctx.outputs.head_sha != '' &&
         steps.piper-bin-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
@@ -687,7 +843,7 @@ runs:
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/piper-voices
@@ -698,7 +854,7 @@ runs:
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        github.event.pull_request != null &&
+        steps.pr-ctx.outputs.head_sha != '' &&
         steps.piper-voice-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
@@ -738,7 +894,7 @@ runs:
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
         steps.ai-ep.outputs.preflight_status == '200' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
       env:
@@ -747,8 +903,8 @@ runs:
         AI_ENDPOINT:   ${{ steps.ai-ep.outputs.endpoint }}
         AI_MODEL:      ${{ inputs.ai-model }}
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
-        PR_TITLE:      ${{ github.event.pull_request.title }}
-        PR_BODY:       ${{ github.event.pull_request.body }}
+        PR_TITLE:      ${{ steps.pr-ctx.outputs.pr_title }}
+        PR_BODY:       ${{ steps.pr-ctx.outputs.pr_body }}
         GITHUB_TOKEN:  ${{ inputs.github-token }}
       run: |
         command -v jq >/dev/null 2>&1 || { echo "⚠️  jq unavailable — skipping AI briefing (audio falls back)."; exit 0; }
@@ -823,7 +979,7 @@ runs:
       if: >-
         inputs.audio-summary == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
       env:
@@ -832,9 +988,36 @@ runs:
         PIPER_DIR:   ${{ runner.temp }}/piper
         VOICE_DIR:   ${{ runner.temp }}/piper-voices
         PIPER_VOICE: ${{ inputs.piper-voice }}
-        WAV_PATH:    ${{ runner.temp }}/drift-pr-summary.wav
-        PR_TITLE:    ${{ github.event.pull_request.title }}
+        WAV_DIR:     ${{ runner.temp }}
+        REPO_NAME:   ${{ github.event.repository.name }}
+        PR_BRANCH:   ${{ steps.pr-ctx.outputs.head_ref }}
+        PR_TITLE:    ${{ steps.pr-ctx.outputs.pr_title }}
       run: |
+        # Artifact filename = "{repo}-{branch}.wav". upload-artifact@v7 with
+        # archive:false promotes the FILE BASENAME to the artifact NAME
+        # (action.yml: "The name of the file will be used as the artifact
+        # name (ignoring the `name` parameter)"), and artifact names are
+        # validated against a forbidden charset that includes ':', '/', '\',
+        # '*', '?', '<', '>', '|', '"' (see actions/toolkit
+        # path-and-artifact-name-validation). So we MUST avoid ':' in the
+        # basename — using it would 422 the upload, the step would
+        # continue-on-error swallow it, and the sticky comment would
+        # silently lose the 🔊 Listen footer. A plain '-' is in the
+        # allowed set, URL-safe, and CLI-friendly when downloaded.
+        # Branches can contain '/' (feature/foo) which would also create
+        # a subdir under RUNNER_TEMP; strip them, and replace anything
+        # outside [A-Za-z0-9._-] with '_' so the filename stays portable.
+        # GitHub repo names are already restricted to that charset, so
+        # REPO_NAME is used verbatim.
+        #
+        # The sanitised branch is capped at 120 bytes so the final basename
+        # (REPO_NAME[≤100] + '-' + branch + '.wav') stays under the 255-byte
+        # ext4/NAME_MAX ceiling even for pathological branch names (GitHub
+        # allows refs up to ~244 chars). branch_safe is pure ASCII after
+        # the tr, so bytes == chars and `head -c` can never split a
+        # multi-byte sequence.
+        branch_safe="$(printf '%s' "${PR_BRANCH:-pr}" | tr '/' '-' | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | head -c 120)"
+        WAV_PATH="${WAV_DIR}/${REPO_NAME}-${branch_safe}.wav"
         bin="${PIPER_DIR}/piper"
         model="${VOICE_DIR}/${PIPER_VOICE}.onnx"
         if [ ! -x "$bin" ] || [ ! -f "$model" ]; then
@@ -860,7 +1043,63 @@ runs:
           text="Drift pull request summary. ${summary}"
           echo "📄 using deterministic scanner summary (no AI briefing present)"
         fi
-        echo "🗣️  synthesizing $(printf '%s' "$text" | wc -c | tr -d ' ') chars → ${WAV_PATH}"
+        # ── Sanitize for TTS ───────────────────────────────────────────
+        # Piper synthesises raw text; non-prose symbols (arrows, em-dashes,
+        # emoji, smart quotes, code fragments, brackets) produce awkward
+        # verbalisations or silence. Strip the input to a spoken-prose
+        # alphabet: ASCII letters, digits, spaces, periods (sentence
+        # boundaries + numerals like 3.14 + abbreviations like Mr.), and
+        # newlines. Everything else becomes a space so word boundaries
+        # survive ("foo-bar" → "foo bar"), then runs of spaces collapse.
+        # LC_ALL=C makes `tr` byte-oriented: each byte of a multi-byte
+        # UTF-8 character (em-dash, arrow, emoji, smart quote) decomposes
+        # to a space and they squash down to one — the desired result for
+        # an en_US voice. Note: this also strips ASCII apostrophes by
+        # design ("don't" → "don t") to honour the strict spec; flip the
+        # tr keep-set to add `'` back if contraction prosody matters.
+        sanitized="$(printf '%s' "$text" \
+          | LC_ALL=C tr -c 'A-Za-z0-9. \n' ' ' \
+          | LC_ALL=C tr -s ' .' \
+          | LC_ALL=C sed -e 's/^ //' -e 's/ $//')"
+        before=$(printf '%s' "$text"      | wc -c | tr -d ' ')
+        after=$(printf '%s'  "$sanitized" | wc -c | tr -d ' ')
+        echo "🧹 TTS sanitize: ${before} → ${after} chars"
+        # Empty after sanitisation (all symbols / blank) → fall back to the
+        # PR title so Piper never receives an empty stdin. The fallback is
+        # itself sanitised so a symbol-only title can't sneak through.
+        if [ -z "$sanitized" ]; then
+          sanitized="$(printf '%s' "${PR_TITLE:-This pull request}" \
+            | LC_ALL=C tr -c 'A-Za-z0-9. \n' ' ' \
+            | LC_ALL=C tr -s ' .' \
+            | LC_ALL=C sed -e 's/^ //' -e 's/ $//')"
+          [ -z "$sanitized" ] && sanitized="See the Drift review for details."
+          echo "⚠️  sanitised text was empty; using PR title fallback (${sanitized})"
+          # Refresh `after` — it was 0 (from the empty primary sanitize)
+          # but the fallback replaced $sanitized, so without this the
+          # preview line below would mis-report "0 chars" and the
+          # ellipsis-vs-no-ellipsis decision would use the wrong length.
+          after=$(printf '%s' "$sanitized" | wc -c | tr -d ' ')
+        fi
+        text="$sanitized"
+        # ── Log the exact text Piper will speak ────────────────────────
+        # Diagnostic for "the audio sounded wrong" — without this you'd
+        # have to re-run with debug to see what was fed to TTS. We log
+        # POST-sanitisation only, because the PRE-sanitised string could
+        # contain GitHub Actions log-command sequences (`::error::`,
+        # `::add-mask::`, `::set-output::`) which the runner interprets
+        # when they appear at the start of a line — a log-injection vector
+        # from PR titles / commit bodies / AI prompt-injection. The
+        # sanitiser strips ':' so post-sanitisation '::' becomes '  ' and
+        # every injection pattern is broken. A 120-char single-line
+        # preview surfaces in the collapsed log; the full text sits in a
+        # ::group:: so long briefings don't dominate the step view.
+        preview="$(printf '%s' "$text" | tr '\n' ' ' | LC_ALL=C tr -s ' ' | head -c 120)"
+        [ "${after}" -gt 120 ] && preview="${preview}..."
+        echo "🎙️  Piper input (${after} chars): ${preview}"
+        echo "::group::🎙️  Piper input — full text"
+        printf '%s\n' "$text"
+        echo "::endgroup::"
+        echo "🗣️  synthesizing ${after} chars → ${WAV_PATH}"
         # Run from the Piper dir so it resolves its bundled espeak-ng-data
         # + shared libs ($ORIGIN rpath). Model + output use absolute paths.
         if ( cd "$PIPER_DIR" && printf '%s' "$text" | ./piper --model "$model" --output_file "$WAV_PATH" ) 2>/tmp/piper-synth.log; then
@@ -880,20 +1119,30 @@ runs:
     # link is the bare .wav (browsers that handle audio/wav play it in-tab;
     # others download just the .wav — no unzip). With archive:false the `name`
     # input is ignored and the artifact takes the file's own name
-    # (drift-pr-summary.wav). Needs no extra permissions. Fail-soft.
+    # ("{repo}-{branch}.wav", built in step 8d — see that step for why ':'
+    # in the basename would have 422-d the upload). Needs no extra
+    # permissions. Fail-soft.
     # See https://github.blog/changelog/2026-02-26-github-actions-now-supports-uploading-and-downloading-non-zipped-artifacts/
     - name: Upload audio summary artifact
       id: audio-upload
       if: >-
         inputs.audio-summary == 'true' &&
         steps.audio.outputs.synthesized == 'true' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       uses: actions/upload-artifact@v7
       with:
         path: ${{ steps.audio.outputs.wav_path }}
         archive: false          # serve the raw .wav at the artifact URL (no zip)
         retention-days: 14
+        # Required for workflow RE-RUNS. The artifact namespace is shared
+        # across attempts of the same workflow run, and v7 defaults
+        # `overwrite: false` → a re-run would 409 on the duplicate name,
+        # continue-on-error would swallow it, and the sticky comment
+        # would lose the 🔊 Listen footer silently. Different PRs / new
+        # pushes are already isolated by run-id, so this only affects
+        # the literal "Re-run jobs" button case.
+        overwrite: true
 
     # ─── 9. Post sticky PR comment + inline suggestions + check run ──
     # Runs the compiled bundle at dist/index.js. The bundle reads the
@@ -905,7 +1154,7 @@ runs:
     # Skips when there's no PR context (push events, manual dispatch).
     - name: Post Drift PR review
       continue-on-error: true   # advisory: never fail the PR on our own error
-      if: steps.scan.outputs.scan_ran == 'true' && github.event.pull_request != null
+      if: steps.scan.outputs.scan_ran == 'true' && steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
@@ -940,7 +1189,7 @@ runs:
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
         steps.ai-ep.outputs.preflight_status == '200' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
       env:
@@ -960,8 +1209,8 @@ runs:
         # suggestion's visible JSON is small. Lower it only if a classic
         # model (gpt-4o) rejects it against a smaller output cap.
         AI_MAX_OUTPUT_TOKENS: '8000'
-        AI_BASE_SHA:          ${{ github.event.pull_request.base.sha }}
-        AI_HEAD_SHA:          ${{ github.event.pull_request.head.sha }}
+        AI_BASE_SHA:          ${{ steps.pr-ctx.outputs.base_sha }}
+        AI_HEAD_SHA:          ${{ steps.pr-ctx.outputs.head_sha }}
         GITHUB_TOKEN:         ${{ inputs.github-token }}
       run: |
         # Fresh envelope; each iteration appends one suggestion (if any).
@@ -990,7 +1239,7 @@ runs:
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
-        github.event.pull_request != null &&
+        steps.pr-ctx.outputs.head_sha != '' &&
         (steps.ai-ep.outputs.preflight_status != '200' || steps.ai-loop.outcome == 'failure')
       shell: bash
       env:
@@ -1052,7 +1301,7 @@ runs:
         inputs.ai-suggestions == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-loop.outcome == 'success' &&
-        github.event.pull_request != null
+        steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
         # The per-suggestion loop wrote every passing suggestion into one
