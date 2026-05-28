@@ -3,6 +3,7 @@ import { context, getOctokit } from '@actions/github';
 import { loadReport, passesQualityBar, DRIFT_FAILS_PR } from './report.ts';
 import { renderOverview } from './render/overview.ts';
 import { upsertStickyComment, findSticky } from './github/comment.ts';
+import { upsertTrackingIssue, issueMarker } from './github/issue.ts';
 import { postReview } from './github/review.ts';
 import { createCheckRun } from './github/check.ts';
 import { parseState, type DriftState } from './render/state.ts';
@@ -28,6 +29,11 @@ export async function main(): Promise<void> {
   // N. Empty/unset/non-numeric → null → never fail (and never raises).
   const failThreshold = parseThreshold(process.env.DRIFT_FAIL_THRESHOLD);
   const wantComment = (process.env.DRIFT_COMMENT ?? 'true') === 'true';
+  // Opt-in: open/update one deduplicated tracking issue for this PR's findings.
+  // Driven by the `/drift issue` comment command (or open-issue: true). Needs
+  // the consumer to grant `issues: write` — otherwise the call 403s and is
+  // swallowed below, leaving the rest of the review intact.
+  const wantIssue = (process.env.DRIFT_OPEN_ISSUE ?? 'false') === 'true';
   const githubToken = process.env.GITHUB_TOKEN ?? '';
 
   core.info(`Loading Drift report from ${reportPath}`);
@@ -103,6 +109,23 @@ export async function main(): Promise<void> {
     tasks.push(
       upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch((err) =>
         core.warning(`sticky comment failed: ${describeError(err)}`),
+      ),
+    );
+  }
+
+  if (wantIssue) {
+    // Same rendered overview as the sticky comment, prefixed with the per-PR
+    // dedup marker and a backlink so the issue stands on its own. Reuses the
+    // tested renderer rather than maintaining a second issue-only layout.
+    const prLink = prCtx.htmlUrl ? `[#${prNumber}](${prCtx.htmlUrl})` : `#${prNumber}`;
+    const issueBody =
+      `${issueMarker(prNumber)}\n\n> Drift tracking issue for ${prLink}` +
+      ` — refreshed each time \`/drift issue\` runs.\n\n` +
+      renderOverview(report, { ctx: prCtx, audioUrl });
+    const issueTitle = `Drift findings — PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ''}`;
+    tasks.push(
+      upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch((err) =>
+        core.warning(`tracking issue failed: ${describeError(err)}`),
       ),
     );
   }

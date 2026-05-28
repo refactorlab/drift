@@ -33,7 +33,6 @@ on:
 # by ref so they never cancel each other.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -44,6 +43,13 @@ permissions:
 jobs:
   hello:
     runs-on: ubuntu-latest
+    # Backstop guardrail: the scanner is now memory-bounded (see scan-pr
+    # --max-affected / --max-nodes-per-tree / --max-total-nodes), so a
+    # healthy run finishes in seconds. This deterministic ceiling caps
+    # any future runaway (incl. the AI-inference step) instead of letting
+    # a hung job burn minutes or get killed mid-build with the opaque
+    # "The operation was canceled".
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

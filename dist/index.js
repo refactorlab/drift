@@ -24862,6 +24862,31 @@ async function findSticky(octokit, owner, repo, prNumber) {
   return found ? { id: found.id, body: found.body ?? "" } : null;
 }
 
+// src/github/issue.ts
+var TITLE_CAP = 256;
+function issueMarker(prNumber) {
+  return `<!-- drift:tracking-issue:pr-${prNumber} -->`;
+}
+async function upsertTrackingIssue(args) {
+  const { octokit, owner, repo, prNumber, body } = args;
+  const title = args.title.slice(0, TITLE_CAP);
+  const number = args.existingNumber !== void 0 ? args.existingNumber : (await findTrackingIssue(octokit, owner, repo, prNumber))?.number ?? null;
+  if (number) {
+    await octokit.rest.issues.update({ owner, repo, issue_number: number, title, body });
+    info(`Updated Drift tracking issue #${number}`);
+    return number;
+  }
+  const { data } = await octokit.rest.issues.create({ owner, repo, title, body });
+  info(`Created Drift tracking issue #${data.number}`);
+  return data.number;
+}
+async function findTrackingIssue(octokit, owner, repo, prNumber) {
+  const marker = issueMarker(prNumber);
+  const { data } = await octokit.rest.issues.listForRepo({ owner, repo, state: "open", per_page: 100 });
+  const found = data.find((i) => !i.pull_request && i.body?.includes(marker));
+  return found ? { number: found.number, body: found.body ?? "" } : null;
+}
+
 // src/suggestion-fence.ts
 function suggestionBlock(code) {
   const runs = code.match(/`+/g) ?? [];
@@ -25437,6 +25462,7 @@ async function main() {
   }
   const failThreshold = parseThreshold(process.env.DRIFT_FAIL_THRESHOLD);
   const wantComment = (process.env.DRIFT_COMMENT ?? "true") === "true";
+  const wantIssue = (process.env.DRIFT_OPEN_ISSUE ?? "false") === "true";
   const githubToken = process.env.GITHUB_TOKEN ?? "";
   info(`Loading Drift report from ${reportPath}`);
   const report = loadReport(reportPath);
@@ -25495,6 +25521,20 @@ async function main() {
     tasks.push(
       upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch(
         (err) => warning(`sticky comment failed: ${describeError(err)}`)
+      )
+    );
+  }
+  if (wantIssue) {
+    const prLink = prCtx.htmlUrl ? `[#${prNumber}](${prCtx.htmlUrl})` : `#${prNumber}`;
+    const issueBody = `${issueMarker(prNumber)}
+
+> Drift tracking issue for ${prLink} \u2014 refreshed each time \`/drift issue\` runs.
+
+` + renderOverview(report, { ctx: prCtx, audioUrl });
+    const issueTitle = `Drift findings \u2014 PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ""}`;
+    tasks.push(
+      upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch(
+        (err) => warning(`tracking issue failed: ${describeError(err)}`)
       )
     );
   }

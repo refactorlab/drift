@@ -9,6 +9,13 @@
 #     /drift ai-suggestions=false audio-summary=false
 #     /drift ai-model=openai/gpt-5
 #
+# Use `/drift issue` to ALSO open (or refresh) a GitHub Issue tracking this
+# PR's findings — one issue per PR, deduplicated by a hidden marker so it's
+# updated in place, not duplicated. Needs the issues:write permission below.
+#
+#     /drift issue
+#     /drift issue ai-model=openai/gpt-5
+#
 # A multi-line YAML form is also accepted, useful for richer reruns:
 #
 #     /drift
@@ -58,10 +65,7 @@ permissions:
 concurrency:
   group: >-
     drift-comment-${{ github.event.issue.number }}-${{
-      (startsWith(github.event.comment.body, '/drift ') ||
-       github.event.comment.body == '/drift' ||
-       startsWith(github.event.comment.body, '/drift
-'))
+      startsWith(github.event.comment.body, '/drift')
       && 'cmd' || format('passive-{0}', github.run_id) }}
   cancel-in-progress: true
 
@@ -71,10 +75,7 @@ jobs:
       github.event.issue.pull_request != null &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                github.event.comment.author_association) &&
-      (startsWith(github.event.comment.body, '/drift ') ||
-       github.event.comment.body == '/drift' ||
-       startsWith(github.event.comment.body, '/drift
-')) &&
+      startsWith(github.event.comment.body, '/drift') &&
       github.event.comment.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
@@ -112,8 +113,6 @@ jobs:
           {
             echo "head_sha=$(printf '%s' "$resp" | jq -r '.head.sha')"
             echo "base_sha=$(printf '%s' "$resp" | jq -r '.base.sha')"
-            echo "head_ref=$(printf '%s' "$resp" | jq -r '.head.ref')"
-            echo "head_repo=$(printf '%s' "$resp" | jq -r '.head.repo.full_name')"
             echo "state=$(printf '%s' "$resp" | jq -r '.state')"
           } >> "$GITHUB_OUTPUT"
 
@@ -145,12 +144,27 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: node "${{ github.action_path || github.workspace }}/action/scripts/parse-comment.mjs"
 
-      # 5. Check out PR HEAD by SHA (defeats force-push race) — fork-safe.
+      # 5. Check out the BASE repo (so `origin` carries the base SHA the
+      # scanner diffs against — a fork's clone would NOT have it, breaking
+      # `git merge-base` and the whole diff range). Then fetch the PR head
+      # via the base repo's own refs/pull/<n>/head — the one fork-safe source
+      # for a fork PR's head commit — and check it out by IMMUTABLE SHA.
+      #
+      # Why SHA, not the pull ref: it defeats a force-push race. If HEAD moved
+      # between our REST resolve above and this checkout, the SHA either still
+      # names the exact code we vetted, or `git checkout` fails (👎) — we never
+      # silently scan a swapped-in commit. The scanner only READS source
+      # (tree-sitter); it never executes fork code, so this is fork-safe.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          repository: ${{ steps.pr.outputs.head_repo }}
-          ref: ${{ steps.pr.outputs.head_sha }}
+      - name: Check out PR head by SHA (fork-safe)
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA:  ${{ steps.pr.outputs.head_sha }}
+        run: |
+          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+          git checkout --detach "$HEAD_SHA"
 
       # 6. Invoke Drift. The composite action's `Resolve PR context` step
       # uses these explicit inputs and writes DRIFT_PR_* env vars to
@@ -168,6 +182,8 @@ jobs:
           ai-model:           ${{ steps.args.outputs.ai-model           || 'openai/gpt-4.1' }}
           fail-threshold:     ${{ steps.args.outputs.fail-threshold     || '' }}
           ai-max-suggestions: ${{ steps.args.outputs.ai-max-suggestions || '3' }}
+          # `/drift issue` sets this; needs the issues:write permission above.
+          open-issue:         ${{ steps.args.outputs.open-issue         || 'false' }}
 
       # 7. Closing reaction. The 👀 from step 1 stays as the durable receipt.
       - name: React 🚀 on success

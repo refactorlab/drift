@@ -128,3 +128,24 @@ test('parse-comment: /drift not on first line still parsed', () => {
   const r = run(body);
   assert.equal(r.outputs.debug, 'true');
 });
+
+test('parse-comment: /drift issue → open-issue=true', () => {
+  const r = run('/drift issue');
+  assert.equal(r.outputs['open-issue'], 'true');
+});
+
+test('parse-comment: /drift issue with overrides → both', () => {
+  const r = run('/drift issue ai-model=openai/gpt-5');
+  assert.equal(r.outputs['open-issue'], 'true');
+  assert.equal(r.outputs['ai-model'], 'openai/gpt-5');
+});
+
+test('parse-comment: open-issue=true key=value form also works', () => {
+  const r = run('/drift open-issue=true');
+  assert.equal(r.outputs['open-issue'], 'true');
+});
+
+test('parse-comment: bare /drift does NOT set open-issue', () => {
+  const r = run('/drift debug=true');
+  assert.equal(r.outputs['open-issue'], undefined);
+});

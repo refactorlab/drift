@@ -79,6 +79,17 @@ pub struct TreeBuilder<'a> {
     pub root_dir: &'a Path,
     pub max_depth: usize,
     pub skip_accessors: bool,
+    /// Stop expanding a single tree once it has produced this many
+    /// nodes; the node where the cutoff lands is marked `node-budget`.
+    /// Defaults to `usize::MAX` (unbounded) so existing callers and the
+    /// non-PR scan paths keep today's behavior; `build_trees_from_ids`
+    /// lowers it for the PR pipeline.
+    pub max_nodes_per_tree: usize,
+    /// Retain at most this many detailed `CallerRef`s per node (the
+    /// `callers_count` metric still reflects the true total). Bounds the
+    /// dominant per-node allocation on high-fan-in symbols. Defaults to
+    /// `usize::MAX` (unbounded) so existing output is unchanged.
+    pub max_callers_per_node: usize,
 }
 
 impl<'a> TreeBuilder<'a> {
@@ -88,6 +99,8 @@ impl<'a> TreeBuilder<'a> {
             root_dir,
             max_depth: 12,
             skip_accessors: false,
+            max_nodes_per_tree: usize::MAX,
+            max_callers_per_node: usize::MAX,
         }
     }
 
@@ -111,7 +124,8 @@ impl<'a> TreeBuilder<'a> {
 
     pub fn build(&self, entry: &SymbolId) -> Option<CallTreeNode> {
         let mut seen: HashSet<SymbolId> = HashSet::new();
-        let mut node = self.build_inner(entry, 0, &mut seen)?;
+        let mut nodes: usize = 0;
+        let mut node = self.build_inner(entry, 0, &mut seen, &mut nodes)?;
         // Phase C: compute percent_total (vs. the entry's own subtree size)
         // and percent_parent (vs. parent's subtree size).
         let total = node.subtree_size as f64;
@@ -124,8 +138,10 @@ impl<'a> TreeBuilder<'a> {
         id: &SymbolId,
         depth: usize,
         seen: &mut HashSet<SymbolId>,
+        nodes: &mut usize,
     ) -> Option<CallTreeNode> {
         let sym = self.graph.symbols.get(id)?;
+        *nodes += 1;
         let is_cycle = seen.contains(id);
         seen.insert(id.clone());
 
@@ -147,29 +163,38 @@ impl<'a> TreeBuilder<'a> {
         let n_plus_one_risk = insights::has_kind(&findings, insights::FindingKind::NPlusOne);
         let blocking_in_async = insights::has_kind(&findings, insights::FindingKind::BlockingInAsync);
 
-        let callers = self
-            .graph
-            .callers_of(id)
-            .iter()
-            .filter_map(|cid| {
-                let s = self.graph.symbols.get(cid)?;
-                Some(CallerRef {
-                    id: cid.clone(),
-                    name: s.name.clone(),
-                    file: s
-                        .file
-                        .strip_prefix(self.root_dir)
-                        .unwrap_or(&s.file)
-                        .display()
-                        .to_string(),
-                    line: s.line,
-                    parent_class: s.parent.clone(),
-                })
-            })
-            .collect::<Vec<_>>();
+        // Collect a *bounded sample* of callers. This is the dominant
+        // per-node allocation: a high-fan-in symbol can have hundreds of
+        // callers, and the same popular symbol re-appears many times in a
+        // dense tree (once per path, as a cycle leaf), so an unbounded
+        // CallerRef vec per node is what actually OOM-kills the runner —
+        // not the node count itself. We count every (resolved) caller for
+        // the metric but retain at most `max_callers_per_node` detailed
+        // refs. Default is `usize::MAX` (unbounded), so non-PR scans and
+        // unit tests keep identical output; the PR pipeline lowers it.
+        let mut callers: Vec<CallerRef> = Vec::new();
+        let mut callers_count = 0usize;
+        for cid in self.graph.callers_of(id) {
+            if let Some(s) = self.graph.symbols.get(cid) {
+                callers_count += 1;
+                if callers.len() < self.max_callers_per_node {
+                    callers.push(CallerRef {
+                        id: cid.clone(),
+                        name: s.name.clone(),
+                        file: s
+                            .file
+                            .strip_prefix(self.root_dir)
+                            .unwrap_or(&s.file)
+                            .display()
+                            .to_string(),
+                        line: s.line,
+                        parent_class: s.parent.clone(),
+                    });
+                }
+            }
+        }
 
         let callees_count = self.graph.callees(id).len();
-        let callers_count = callers.len();
 
         let call_site_count = self
             .graph
@@ -225,6 +250,14 @@ impl<'a> TreeBuilder<'a> {
         }
 
         for callee in self.graph.callees(id) {
+            // Per-tree node budget. Checked before each child so a wide
+            // node can't append thousands of truncated leaves once the
+            // cap is reached; deeper recursion is bounded the same way
+            // on re-entry, so overshoot is at most the current DFS depth.
+            if *nodes >= self.max_nodes_per_tree {
+                node.truncated_reason = Some("node-budget".into());
+                break;
+            }
             if self.skip_accessors {
                 if let Some(target) = self.graph.symbols.get(callee) {
                     if Self::is_accessor(&target.name) {
@@ -232,7 +265,7 @@ impl<'a> TreeBuilder<'a> {
                     }
                 }
             }
-            if let Some(child) = self.build_inner(callee, depth + 1, seen) {
+            if let Some(child) = self.build_inner(callee, depth + 1, seen, nodes) {
                 node.children.push(child);
             }
         }

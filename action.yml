@@ -129,6 +129,22 @@ inputs:
       the action is fail-soft on its own errors too.
     required: false
     default: ''
+  open-issue:
+    description: |
+      When 'true', Drift opens — or updates — a single GitHub Issue
+      summarising THIS PR's findings, deduplicated per-PR via a hidden
+      marker so repeated runs refresh the same issue instead of spamming
+      new ones. Default 'false'.
+
+      Primarily driven by the `/drift issue` comment command (see
+      examples/drift-on-comment.yml), which sets this to 'true'.
+
+      REQUIRES the consumer workflow to grant `permissions: issues: write`.
+      Without it the issues.create/update call returns 403 ("Resource not
+      accessible by integration") — which Drift swallows fail-soft, so the
+      sticky comment, inline review, and check run still ship.
+    required: false
+    default: 'false'
   audio-summary:
     description: |
       When true (default), synthesize a spoken WAV summary of the PR with
@@ -253,10 +269,18 @@ runs:
         pr_html_url="${EVENT_PR_HTML_URL:-}"
         pr_author="${EVENT_PR_AUTHOR:-}"
 
-        # issue_comment branch: the issue payload has the PR # but not the
-        # SHAs. One REST call fills them all in (and any title/body/refs
-        # the caller didn't pass explicitly).
-        if [ -n "$pr_number" ] && [ -z "${base_sha}${head_sha}" ] && [ -n "${EVENT_ISSUE_PR_URL:-}" ]; then
+        # issue_comment branch: the issue payload has the PR # but NOT the
+        # SHAs, title, body, or refs. One REST call fills in whatever the
+        # caller didn't pass explicitly. We fire it whenever we're in
+        # issue_comment mode (EVENT_ISSUE_PR_URL set) AND something is still
+        # missing — the SHAs OR the title. The title check matters because a
+        # consumer that resolves the SHAs itself (needed for its own checkout)
+        # still leaves title/body empty; without this they'd never populate
+        # and the AI briefing + permalink line would silently lose them.
+        # On a pull_request event EVENT_ISSUE_PR_URL is empty, so this never
+        # fires there. The `${x:-$(...)}` guards below only fill empties, so
+        # explicitly-passed values always win.
+        if [ -n "$pr_number" ] && [ -n "${EVENT_ISSUE_PR_URL:-}" ] && { [ -z "${base_sha}${head_sha}" ] || [ -z "$pr_title" ]; }; then
           if command -v jq >/dev/null 2>&1; then
             resp="$(curl -sS \
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -603,15 +627,52 @@ runs:
         # (`--pr-title "$X"`), clap reads that leading `-` as an unknown flag
         # and aborts with `unexpected argument '- '` (exit 2) before scanning.
         # The `=` form is hyphen-immune and works with any released binary.
-        drift-static-profiler scan-pr . \
-          --changed-files "$CHANGED_PATH" \
-          --diff-stats    "$STATS_PATH" \
-          --commits       "$COMMITS_PATH" \
-          --base-sha      "$BASE_SHA" \
-          --pr-title="$PR_TITLE" \
-          --pr-body="$PR_BODY" \
-          --pretty \
-          --output "$DRIFT_REPORT_PATH"
+        #
+        # Pass the byte-aware memory backstop ONLY if this binary supports
+        # it. Consumers may pin an older release that predates --max-rss-mb,
+        # and an unknown flag aborts clap (exit 2) before scanning. Probe
+        # --help once and gate the flag on it so we never break old pins.
+        rss_guard=()
+        if drift-static-profiler scan-pr --help 2>/dev/null | grep -q -- '--max-rss-mb'; then
+          rss_guard=(--max-rss-mb "${DRIFT_MAX_RSS_MB:-5000}")
+          echo "🧠 memory backstop: --max-rss-mb ${DRIFT_MAX_RSS_MB:-5000}"
+        else
+          echo "🧠 memory backstop: not supported by this binary — relying on node budgets"
+        fi
+
+        # Defense-in-depth: `continue-on-error` only neutralizes a non-zero
+        # EXIT, never a signal/cancel. Two such modes can otherwise kill the
+        # whole job (including the PR-comment step):
+        #   • runaway memory → kernel OOM-killer SIGKILLs us, which GitHub
+        #     surfaces as the opaque "The operation was canceled." The
+        #     binary self-limits (--max-rss-mb above, with a WARN) and the
+        #     node budgets bound it; `timeout` is the final wall.
+        #   • a true hang → `timeout` SIGTERMs at the deadline, SIGKILLs 15s
+        #     later. A self-inflicted timeout exits 124 (catchable here).
+        # `set +e` so the exit-code switch runs under the default `-e` shell.
+        set +e
+        timeout --signal=TERM --kill-after=15s "${DRIFT_SCAN_TIMEOUT:-240}s" \
+          drift-static-profiler scan-pr . \
+            --changed-files "$CHANGED_PATH" \
+            --diff-stats    "$STATS_PATH" \
+            --commits       "$COMMITS_PATH" \
+            --base-sha      "$BASE_SHA" \
+            --pr-title="$PR_TITLE" \
+            --pr-body="$PR_BODY" \
+            "${rss_guard[@]}" \
+            --pretty \
+            --output "$DRIFT_REPORT_PATH"
+        scan_rc=$?
+        set -e
+        echo "scan_rc=${scan_rc}" >> "$GITHUB_OUTPUT"
+        # Name the failure mode in the log instead of leaving a bare cancel.
+        case "$scan_rc" in
+          0)   echo "✅ scan-pr completed (rc=0)";;
+          124) echo "::warning::scan-pr hit the ${DRIFT_SCAN_TIMEOUT:-240}s wall-clock timeout (rc=124). Serving whatever report exists; the PR is NOT failed. Tighten --max-affected / --max-nodes-per-tree if this recurs.";;
+          137) echo "::warning::scan-pr was SIGKILLed (rc=137) — almost always OOM. The --max-rss-mb backstop should pre-empt this; if you still see it, lower DRIFT_MAX_RSS_MB / the node budgets, or use a larger runner. The PR is NOT failed.";;
+          139) echo "::warning::scan-pr segfaulted (rc=139). The PR is NOT failed.";;
+          *)   echo "::warning::scan-pr exited rc=${scan_rc} — see the scanner log above. The PR is NOT failed.";;
+        esac
 
     # ─── 8. Print scan summary (+ full debug dump when debug=true) ───
     - name: Print scan summary
@@ -1159,6 +1220,7 @@ runs:
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         DRIFT_COMMENT:     'true'
+        DRIFT_OPEN_ISSUE:  ${{ inputs.open-issue }}
         DRIFT_FAIL_THRESHOLD: ${{ inputs.fail-threshold }}
         # Artifact URL of the non-zipped WAV (empty when audio is disabled or
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
