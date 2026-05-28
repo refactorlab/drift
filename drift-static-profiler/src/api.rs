@@ -53,6 +53,40 @@ pub struct AnalyzeOptions {
     /// When `Some(d)`, every `.sql` file uses `d`, ignoring inference.
     /// Driven by CLI `--sql-dialect <name>`.
     pub sql_dialect_override: Option<SqlDialect>,
+    /// PR-scope cap: maximum number of affected roots to build call
+    /// trees for. Reverse-reachability marks nearly every root
+    /// "affected" when a PR touches a foundational/high-fan-in file;
+    /// building a full depth-N tree for each then explodes memory.
+    /// Roots arrive reach-sorted, so the top `max_affected` (highest
+    /// reach = most impactful) are kept and the long tail dropped. Only
+    /// consulted by [`analyze_pr_with_progress`]. `usize::MAX` = no cap.
+    pub max_affected: usize,
+    /// Per-tree safety cap: stop expanding a single call tree once it
+    /// has produced this many nodes (cutoff marked `node-budget`).
+    /// Bounds one god-function tree, which a dense graph plus
+    /// cycles-as-leaves can blow up to tens of thousands of nodes.
+    /// `usize::MAX` = no cap.
+    pub max_nodes_per_tree: usize,
+    /// Global safety cap across ALL trees in one build pass: once the
+    /// cumulative node count crosses this, `build_trees_from_ids` stops
+    /// building further trees. Backstop for many individually-bounded
+    /// trees still summing to a memory blowup. `usize::MAX` = no cap.
+    pub max_total_nodes: usize,
+    /// Retain at most this many detailed callers per tree node (the
+    /// count metric stays exact). The dominant per-node allocation on
+    /// dense graphs; `usize::MAX` = no cap. Forwarded to
+    /// [`crate::tree::TreeBuilder::max_callers_per_node`].
+    pub max_callers_per_node: usize,
+    /// Soft memory ceiling (bytes) for the tree-build phase. After each
+    /// tree, [`build_trees_from_ids`] samples peak RSS via [`crate::mem`]
+    /// and stops building further trees once it crosses this, emitting a
+    /// WARN that names memory as the cause. The node budgets above are
+    /// byte-blind — one `CallTreeNode` on a dense graph runs ~150 KB once
+    /// its caller list is cloned — so a node count well under budget can
+    /// still OOM the runner. This converts an uncatchable kernel
+    /// OOM-kill (SIGKILL → "operation canceled" with no log) into a
+    /// graceful, logged partial report. `usize::MAX` = no ceiling.
+    pub max_rss_bytes: usize,
 }
 
 impl Default for AnalyzeOptions {
@@ -64,6 +98,14 @@ impl Default for AnalyzeOptions {
             exclude_static_assets: true,
             scan_sql_files: true,
             sql_dialect_override: None,
+            // Generic scans stay unbounded — these caps are a PR-scope
+            // safety valve. `run_scan_pr` overrides them with finite CLI
+            // defaults; every other path keeps today's behavior.
+            max_affected: usize::MAX,
+            max_nodes_per_tree: usize::MAX,
+            max_total_nodes: usize::MAX,
+            max_callers_per_node: usize::MAX,
+            max_rss_bytes: usize::MAX,
         }
     }
 }
@@ -266,16 +308,58 @@ fn build_trees_from_ids(
     let mut builder = TreeBuilder::new(&ctx.graph, root);
     builder.max_depth = opts.max_depth;
     builder.skip_accessors = opts.skip_accessors;
+    builder.max_nodes_per_tree = opts.max_nodes_per_tree;
+    builder.max_callers_per_node = opts.max_callers_per_node;
     let total = ids.len();
+    // 0 = unlimited, so the log stays readable instead of printing the
+    // usize::MAX sentinel as a 20-digit ceiling.
+    let max_rss_mb = if opts.max_rss_bytes == usize::MAX {
+        0
+    } else {
+        opts.max_rss_bytes / (1024 * 1024)
+    };
     tracing::info!(
         entries = total,
         max_depth = opts.max_depth,
         skip_accessors = opts.skip_accessors,
+        max_nodes_per_tree = opts.max_nodes_per_tree,
+        max_total_nodes = opts.max_total_nodes,
+        max_rss_mb,
+        rss_start_mb = crate::mem::peak_rss_mb().unwrap_or(0),
         "tree build start"
     );
     progress.step_start("building call trees", total);
     let mut out = Vec::with_capacity(ids.len());
+    // Global node budget across ALL trees. Each `CallTreeNode` is a
+    // heavyweight struct (callers/externals/findings vecs, a category
+    // map, several owned strings), so an unbounded sum of trees on a
+    // high-fan-in PR is what OOM-kills the runner. We tally each tree's
+    // `subtree_size` and stop once the cumulative count crosses the cap.
+    let mut total_nodes: usize = 0;
+    let mut budget_stopped_at: Option<usize> = None;
+    // Set when the memory soft-limit trips (distinct from the node
+    // budget) so the post-loop WARN can name memory as the cause.
+    let mut rss_stopped_mb: Option<u64> = None;
     for (i, id) in ids.iter().enumerate() {
+        if total_nodes >= opts.max_total_nodes {
+            budget_stopped_at = Some(i);
+            break;
+        }
+        // Memory soft-limit. The node budgets above are byte-blind: a
+        // single CallTreeNode on a dense graph runs ~150 KB once its
+        // caller list is cloned, so a node count well under budget can
+        // still walk the process into the kernel OOM-killer — which
+        // SIGKILLs us with no log line, surfacing on CI as the opaque
+        // "operation canceled". Sample our own peak RSS and stop here,
+        // *voluntarily*, leaving a WARN that names the cause.
+        if opts.max_rss_bytes != usize::MAX {
+            if let Some(rss) = crate::mem::peak_rss_bytes() {
+                if rss as usize >= opts.max_rss_bytes {
+                    rss_stopped_mb = Some(rss / (1024 * 1024));
+                    break;
+                }
+            }
+        }
         // "Current item" indicator — same role as the file-path
         // display during parse. Surfacing the entry symbol name
         // turns "building call trees: 12/179" into something the
@@ -285,20 +369,51 @@ fn build_trees_from_ids(
             progress.set_current(&sym.name);
         }
         if let Some(node) = builder.build(id) {
+            total_nodes += node.subtree_size;
             out.push(node);
         }
         // Trees can be expensive individually on highly-connected
         // entry points, so we update every 16 trees (not 64 like the
         // graph passes) to keep the bar lively even with few entries.
+        // The paired RSS+node trace is the breadcrumb whose absence made
+        // the original OOM undiagnosable: even if a later run dies, the
+        // last line printed shows how high memory had climbed and on
+        // which tree.
         if i & 0x0F == 0 {
             progress.step_progress(i, total);
+            tracing::debug!(
+                built = out.len(),
+                total_nodes,
+                rss_mb = crate::mem::peak_rss_mb().unwrap_or(0),
+                "tree build progress"
+            );
         }
     }
     progress.step_progress(total, total);
     progress.step_end();
+    if let Some(rss_mb) = rss_stopped_mb {
+        tracing::warn!(
+            built = out.len(),
+            skipped = total.saturating_sub(out.len()),
+            total_nodes,
+            rss_mb,
+            max_rss_mb,
+            "tree build halted: memory soft-limit reached — emitting partial report (raise --max-rss-mb, or tighten --max-affected / --max-nodes-per-tree)"
+        );
+    } else if let Some(stopped_at) = budget_stopped_at {
+        tracing::warn!(
+            built = out.len(),
+            skipped = total.saturating_sub(stopped_at),
+            total_nodes,
+            max_total_nodes = opts.max_total_nodes,
+            "tree build halted: global node budget reached"
+        );
+    }
     tracing::info!(
         entries = out.len(),
         skipped = total.saturating_sub(out.len()),
+        total_nodes,
+        rss_peak_mb = crate::mem::peak_rss_mb().unwrap_or(0),
         elapsed_ms = started_at.elapsed().as_millis() as u64,
         "tree build end"
     );
@@ -564,13 +679,35 @@ pub fn analyze_pr_with_progress(
 
     // Pure filter — no I/O, no per-language code (see pr_scope.rs).
     progress.phase("filtering roots by PR scope…");
-    let affected = crate::pr_scope::affected_roots(&ctx.graph, &all_discovered, changed_files);
+    let mut affected = crate::pr_scope::affected_roots(&ctx.graph, &all_discovered, changed_files);
+    let affected_total = affected.roots.len();
+    // Cap how many affected roots we build trees for. Roots are
+    // reach-sorted by discover_roots and affected_roots preserves that
+    // order, so truncating keeps the highest-reach (most impactful)
+    // roots and drops the long tail. Without this, a PR touching a
+    // foundational/high-fan-in file marks nearly every root affected
+    // (here 1637/1792) and the per-root depth-N tree build OOM-kills
+    // the runner — surfacing as "The operation was canceled".
+    if affected.roots.len() > opts.max_affected {
+        affected.roots.truncate(opts.max_affected);
+    }
     tracing::info!(
         all_roots = all_discovered.len(),
         affected = affected.roots.len(),
+        affected_total,
+        max_affected = opts.max_affected,
         unreachable = affected.unreachable_changes.len(),
+        rss_mb = crate::mem::peak_rss_mb().unwrap_or(0),
         "pr scope filtered"
     );
+    if affected_total > affected.roots.len() {
+        tracing::warn!(
+            kept = affected.roots.len(),
+            dropped = affected_total - affected.roots.len(),
+            max_affected = opts.max_affected,
+            "pr scope capped affected roots (highest-reach kept)"
+        );
+    }
 
     // Build trees only for the affected roots. Reusing
     // `build_trees_from_ids` keeps the focused report's per-entry
@@ -613,6 +750,7 @@ pub fn analyze_pr_with_progress(
     tracing::info!(
         entries = outcome.report.entries.len(),
         symbols = outcome.report.summary.symbols,
+        rss_peak_mb = crate::mem::peak_rss_mb().unwrap_or(0),
         elapsed_ms = started_at.elapsed().as_millis() as u64,
         "analyze-pr end"
     );

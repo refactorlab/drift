@@ -8,6 +8,7 @@ pub mod dot_export;
 pub mod sarif_export;
 pub mod graph;
 pub mod manifest;
+pub mod mem;
 pub mod insights;
 pub mod languages;
 pub mod linguist;

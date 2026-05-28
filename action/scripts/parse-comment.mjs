@@ -40,6 +40,7 @@ const ALLOWED = new Set([
   'ai-max-suggestions',
   'profiler-release-tag',
   'piper-voice',
+  'open-issue',
 ]);
 
 const body = process.env.COMMENT_BODY ?? '';
@@ -76,6 +77,13 @@ for (const line of lines) {
 const afterCmd = commandLine.replace(/^\/drift\s*/, '');
 if (afterCmd) {
   for (const tok of afterCmd.split(/\s+/).filter(Boolean)) {
+    // Bare `issue` subcommand → open a tracking issue. `/drift issue` (and
+    // `/drift issue ai-model=…`) both work; the explicit command beats any
+    // open-issue value in a fenced YAML block.
+    if (tok === 'issue') {
+      parsed['open-issue'] = 'true';
+      continue;
+    }
     const eq = tok.indexOf('=');
     if (eq < 1) continue;
     const k = tok.slice(0, eq);

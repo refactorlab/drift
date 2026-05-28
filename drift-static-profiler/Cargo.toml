@@ -1,6 +1,6 @@
 [package]
 name = "drift-static-profiler"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 description = "Language-agnostic static call-tree analyzer for drift-lab"
 license = "MIT"
@@ -52,6 +52,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+# POSIX getrusage(RUSAGE_SELF) for self-RSS sampling (src/mem.rs). The
+# memory soft-limit guard + per-phase RSS logging depend on it so an
+# OOM is logged *before* the kernel SIGKILLs us. Tiny, ubiquitous, no
+# system deps; only the `rusage` / `getrusage` surface is used.
+libc = "0.2"
 # Optional gzip for `--gzip` on `analyze-root` / `scan`. Uses
 # `rust_backend` to avoid the C zlib dep so the binary stays
 # self-contained + cross-compiles cleanly.

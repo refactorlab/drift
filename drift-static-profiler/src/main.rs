@@ -501,6 +501,43 @@ enum Cmd {
         /// Force SQL dialect.
         #[arg(long, value_name = "DIALECT")]
         sql_dialect: Option<String>,
+        /// PR-scope cap: max number of affected roots to build call
+        /// trees for. Reverse-reachability marks nearly every root
+        /// "affected" when a PR touches a foundational/high-fan-in file;
+        /// building a depth-N tree per root then OOM-kills the runner.
+        /// Roots are reach-sorted, so the top N (most impactful) are
+        /// kept and the long tail dropped. Default 150.
+        #[arg(long, default_value_t = 150)]
+        max_affected: usize,
+        /// Per-tree node cap: stop expanding a single call tree past
+        /// this many nodes (cutoff marked `node-budget`). Bounds one
+        /// god-function tree on a dense graph. Default 15000.
+        #[arg(long, default_value_t = 15_000)]
+        max_nodes_per_tree: usize,
+        /// Global node budget across ALL trees in the scan; tree
+        /// building stops once cumulative nodes cross it. This is the
+        /// primary memory guarantee — ~150k nodes peaks near 1.5 GB on
+        /// a dense graph, well within a hosted runner. Backstop against
+        /// many bounded trees still summing to an OOM. Default 150000.
+        #[arg(long, default_value_t = 150_000)]
+        max_total_nodes: usize,
+        /// Retain at most this many detailed callers per tree node
+        /// (the callers_count metric stays exact). The dominant
+        /// per-node allocation on dense graphs. Default 32.
+        #[arg(long, default_value_t = 32)]
+        max_callers_per_node: usize,
+        /// Hard memory backstop in MiB for the tree-build phase: after
+        /// each tree, sample peak RSS and stop building once it crosses
+        /// this, emitting a partial report plus a WARN that names memory
+        /// as the cause. Independent of the node budgets above (which
+        /// assume ~10 KB/node) — this is the one guard that holds
+        /// regardless of per-node weight, so it catches the
+        /// anomalous-input case the node-count proxy under-estimates,
+        /// turning an uncatchable kernel OOM-kill into a clean partial.
+        /// `0` = unlimited (rely on node budgets alone). Default 0; the
+        /// Drift action sets it to the runner's RAM minus headroom.
+        #[arg(long, default_value_t = 0)]
+        max_rss_mb: usize,
     },
 }
 
@@ -579,6 +616,11 @@ fn run_scan_pr(
     no_accessors: bool,
     no_sql_files: bool,
     sql_dialect: Option<&str>,
+    max_affected: usize,
+    max_nodes_per_tree: usize,
+    max_total_nodes: usize,
+    max_callers_per_node: usize,
+    max_rss_mb: usize,
 ) -> Result<()> {
     use drift_static_profiler::{
         analyze_pr_with_progress,
@@ -621,6 +663,18 @@ fn run_scan_pr(
         exclude_tests: no_tests,
         scan_sql_files: !no_sql_files,
         sql_dialect_override,
+        max_affected,
+        max_nodes_per_tree,
+        max_total_nodes,
+        max_callers_per_node,
+        // `0` = unlimited → keep the usize::MAX sentinel so the guard in
+        // `build_trees_from_ids` short-circuits. saturating_mul guards the
+        // (impossible on 64-bit, cheap to keep) overflow case.
+        max_rss_bytes: if max_rss_mb == 0 {
+            usize::MAX
+        } else {
+            max_rss_mb.saturating_mul(1024 * 1024)
+        },
         ..AnalyzeOptions::default()
     };
     let result = analyze_pr_with_progress(
@@ -642,6 +696,7 @@ fn run_scan_pr(
         changed = result.pr_scope.changed_files.len(),
         affected_roots = result.pr_scope.affected_root_names.len(),
         unreachable = result.pr_scope.unreachable_changes.len(),
+        rss_peak_mb = drift_static_profiler::mem::peak_rss_mb().unwrap_or(0),
         "scan-pr factual phase complete"
     );
 
@@ -1159,6 +1214,11 @@ fn main() -> Result<()> {
             no_accessors,
             no_sql_files,
             sql_dialect,
+            max_affected,
+            max_nodes_per_tree,
+            max_total_nodes,
+            max_callers_per_node,
+            max_rss_mb,
         } => run_scan_pr(
             &path,
             changed_files.as_deref(),
@@ -1179,6 +1239,11 @@ fn main() -> Result<()> {
             no_accessors,
             no_sql_files,
             sql_dialect.as_deref(),
+            max_affected,
+            max_nodes_per_tree,
+            max_total_nodes,
+            max_callers_per_node,
+            max_rss_mb,
         ),
         Cmd::AnalyzeRoot {
             path,
