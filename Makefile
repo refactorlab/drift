@@ -654,7 +654,7 @@ action-render-comment: ## Render tmp/scan-pr-output.json → tmp/pr-comment-pyth
 	  exit 1; }
 	@printf "$(BLUE)▶$(RESET) rendering PR-comment markdown ($(DRIFT_ACTION_OUTPUT) → $(DRIFT_ACTION_COMMENT))\n"
 	@node --experimental-strip-types --no-warnings \
-	  action/scripts/render-comment.ts $(DRIFT_ACTION_OUTPUT) $(DRIFT_ACTION_COMMENT) \
+	  action/scripts/render-comment.ts $(DRIFT_ACTION_OUTPUT) $(DRIFT_ACTION_COMMENT) action/.dev/event.json \
 	  | sed 's/^/    /'
 
 action-render-comment-kotlin: ## Render tmp/scan-pr-output-kotlin-ktor.json → tmp/pr-comment-kotlin-ktor.md
@@ -663,7 +663,7 @@ action-render-comment-kotlin: ## Render tmp/scan-pr-output-kotlin-ktor.json → 
 	  exit 1; }
 	@printf "$(BLUE)▶$(RESET) rendering PR-comment markdown ($(DRIFT_ACTION_KOTLIN_OUTPUT) → $(DRIFT_ACTION_COMMENT_KOTLIN))\n"
 	@node --experimental-strip-types --no-warnings \
-	  action/scripts/render-comment.ts $(DRIFT_ACTION_KOTLIN_OUTPUT) $(DRIFT_ACTION_COMMENT_KOTLIN) \
+	  action/scripts/render-comment.ts $(DRIFT_ACTION_KOTLIN_OUTPUT) $(DRIFT_ACTION_COMMENT_KOTLIN) action/.dev/event.json \
 	  | sed 's/^/    /'
 
 action-render-comments: action-render-comment action-render-comment-kotlin ## Render BOTH fixtures' PR-comment markdown

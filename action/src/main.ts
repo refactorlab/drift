@@ -2,14 +2,17 @@ import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import { loadReport, passesQualityBar, DRIFT_FAILS_PR } from './report.ts';
 import { renderOverview } from './render/overview.ts';
-import { upsertStickyComment } from './github/comment.ts';
+import { upsertStickyComment, findSticky } from './github/comment.ts';
 import { postReview } from './github/review.ts';
 import { createCheckRun } from './github/check.ts';
+import { parseState, type DriftState } from './render/state.ts';
+import type { PrContext } from './render/context.ts';
+import { resolvePrContext } from './pr-context.ts';
 
 export async function main(): Promise<void> {
-  const pr = context.payload.pull_request;
+  const pr = resolvePrContext();
   if (!pr) {
-    core.info('No pull_request payload — Drift only runs on pull_request events. Skipping.');
+    core.info('No PR context (pull_request payload or DRIFT_PR_* env vars) — Drift skipping.');
     return;
   }
 
@@ -50,8 +53,22 @@ export async function main(): Promise<void> {
 
   const octokit = getOctokit(githubToken);
   const { owner, repo } = context.repo;
-  const headSha: string = pr.head.sha;
+  const headSha: string = pr.headSha;
   const prNumber: number = pr.number;
+
+  // GitHub-side facts the scan JSON doesn't carry — used for the title line and
+  // to turn file:line references into SHA-pinned permalinks.
+  const prCtx: PrContext = {
+    owner,
+    repo,
+    sha: headSha,
+    prNumber,
+    prTitle: pr.title,
+    htmlUrl: pr.htmlUrl,
+    baseRef: pr.baseRef,
+    author: pr.author,
+  };
+  const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || undefined;
 
   const tasks: Promise<unknown>[] = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch((err) =>
@@ -68,14 +85,25 @@ export async function main(): Promise<void> {
   ];
 
   if (wantComment) {
+    // Read the prior sticky comment ONCE: we recover its embedded drift
+    // snapshot for the "since last review" delta, and reuse its id so the
+    // upsert doesn't list comments a second time. Best-effort — any failure
+    // just means a first-run delta line.
+    let priorState: DriftState | null = null;
+    let existingId: number | null = null;
+    try {
+      const prior = await findSticky(octokit, owner, repo, prNumber);
+      existingId = prior?.id ?? null;
+      priorState = parseState(prior?.body);
+    } catch (err) {
+      core.warning(`could not read prior sticky comment: ${describeError(err)}`);
+    }
+
+    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl });
     tasks.push(
-      upsertStickyComment({
-        octokit,
-        owner,
-        repo,
-        prNumber,
-        body: withAudioFooter(renderOverview(report)),
-      }).catch((err) => core.warning(`sticky comment failed: ${describeError(err)}`)),
+      upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch((err) =>
+        core.warning(`sticky comment failed: ${describeError(err)}`),
+      ),
     );
   }
 
@@ -126,21 +154,4 @@ function parseThreshold(raw: string | undefined): number | null {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/**
- * Append a "🔊 Listen" link to the sticky comment when the action uploaded a
- * synthesized WAV (DRIFT_AUDIO_URL = the artifact URL of the non-zipped .wav,
- * uploaded with upload-artifact@v7 `archive: false` so the link is the bare
- * playable file, not a zip). Empty/unset env (audio disabled or synthesis
- * failed) → body unchanged, so this is fully fail-soft and a no-op normally.
- */
-export function withAudioFooter(body: string): string {
-  const url = process.env.DRIFT_AUDIO_URL?.trim();
-  if (!url) return body;
-  return (
-    `${body}\n\n---\n` +
-    `🔊 **[Listen to this PR summary](${url})** — spoken handover briefing ` +
-    `(Piper TTS · WAV).`
-  );
 }

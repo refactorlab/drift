@@ -1,132 +1,209 @@
-// Image 3 — Business value report (4-axis card).
-//   - counts row (features / bugs / issues / new test files)
-//   - axes table (Δ% · direction · confidence)
-//   - bars chart (pre-rendered xychart-beta from the scanner)
-//   - bottom-line synthesis
-//   - collapsible "How these numbers were computed" (per-axis formula + sources + inputs)
+// 📊 Value card — the HTML-table dashboard (the heart of the comment).
+//
+//   row 1: composite verdict (mean of the axes) + magnitude bar + one-liner
+//   row 2: per-axis headers (💰 / 👥 / ⚙️ / 🎨)
+//   row 3: per-axis Δ% + direction word
+//   row 4: per-axis ⅛-block magnitude bar (relative to the largest |Δ|)
+//   row 5: per-axis model confidence
+// then: since-last-review delta · bottom line · highlights ·
+//       "how each axis was computed" (nested <details>) · bar-chart view.
+//
+// Built from a raw <table> (not a markdown table) so the multi-row dashboard
+// layout survives — GitHub renders the HTML, and we keep markdown OUT of the
+// cells (bars go in <code>, not backticks).
 
 import type { PrCounts, ValueCard, ValueAxis } from '../../report.ts';
+import type { DriftState } from '../state.ts';
+import { sinceLastReview } from '../state.ts';
+import { magnitudeBar } from '../lib/bars.ts';
+import { compositeStatus, maxAbsDelta, directionEmoji, directionWord } from '../lib/severity.ts';
+import { signedPercent, magnitudePercent, escapeHtml, fencedBlock } from '../lib/format.ts';
 
-const DIRECTION_EMOJI: Record<ValueAxis['direction'], string> = {
-  up: '🟢 ▲',
-  down: '🔴 ▼',
-  neutral: '— —',
+export type ValueCardInput = {
+  counts?: PrCounts;
+  card?: ValueCard;
+  /** overall_drift.percent — the composite. Falls back to the axis mean. */
+  overallPercent?: number;
+  /** This run's snapshot + the prior run's, for the since-last-review line. */
+  currentState: DriftState;
+  priorState?: DriftState | null;
 };
 
-export function renderValueCard(counts?: PrCounts, card?: ValueCard): string | null {
-  if (!counts && !card) return null;
+const AXIS_SHORT: Record<ValueAxis['name'], string> = {
+  money: 'money',
+  customer: 'customer',
+  runtime: 'runtime',
+  runtime_ux: 'runtime UX',
+};
+
+export function renderValueCard(input: ValueCardInput): string | null {
+  const { counts, card } = input;
+  const axes = card?.axes ?? [];
+  if (axes.length === 0 && !counts) return null;
 
   const lines: string[] = ['## 📊 Value card', ''];
 
-  // (a) Counts row
-  if (counts) {
-    const chips: string[] = [];
-    if (counts.features) chips.push(formatChip('✨', counts.features.value, counts.features.label, counts.features.detail));
-    if (counts.bug_fixes) chips.push(formatChip('🐛', counts.bug_fixes.value, counts.bug_fixes.label, counts.bug_fixes.detail));
-    if (counts.issues_resolved) chips.push(formatChip('📋', counts.issues_resolved.value, counts.issues_resolved.label, counts.issues_resolved.detail));
-    if (counts.new_test_files) chips.push(formatChip('🧪', counts.new_test_files.value, counts.new_test_files.label, counts.new_test_files.detail));
-    if (chips.length) {
-      lines.push(chips.join(' &nbsp;·&nbsp; '), '');
-    }
+  if (axes.length > 0) {
+    lines.push(dashboardTable(axes, input.overallPercent), '');
+    lines.push(barsCaption(axes), '');
+    lines.push(sinceLastReviewLine(input.priorState ?? null, input.currentState), '');
   }
 
-  // (b) Axes table
-  if (card?.axes?.length) {
-    lines.push('| Axis | Δ% | Direction | Confidence |');
-    lines.push('|---|---:|:---:|:---:|');
-    for (const a of card.axes) {
-      lines.push(
-        `| ${a.label} | ${formatPercent(a.delta_percent)} | ${DIRECTION_EMOJI[a.direction]} | ${a.confidence} |`,
-      );
-    }
-    lines.push('');
-  }
-
-  // (c) Bars chart (pre-rendered xychart-beta)
-  if (card?.bars_mermaid) {
-    lines.push('```mermaid', card.bars_mermaid, '```', '');
-  }
-
-  // (d) Bottom-line synthesis. Strip a leading "Bottom line —" if the
-  // scanner already prefixed one, so we don't render "Bottom line — Bottom line —".
   if (card?.bottom_line) {
     const text = card.bottom_line.replace(/^\s*Bottom\s+line\s*[—-]\s*/i, '');
-    lines.push(`> **Bottom line —** ${text}`);
+    lines.push(`> **Bottom line —** ${text}`, '');
   }
 
-  // (e) Per-axis "How computed" expander
-  if (card?.axes?.length) {
-    const details = renderAxisDetails(card.axes);
-    if (details) {
-      lines.push('', details);
-    }
+  const highlights = highlightsLine(counts);
+  if (highlights) lines.push(highlights, '');
+
+  if (axes.length > 0) {
+    lines.push(howComputed(axes));
   }
 
-  return lines.join('\n');
+  if (card?.bars_mermaid) {
+    lines.push(
+      '',
+      '<details>',
+      '<summary>📈 Bar-chart view</summary>',
+      '',
+      '```mermaid',
+      card.bars_mermaid,
+      '```',
+      '',
+      '</details>',
+    );
+  }
+
+  return lines.join('\n').trimEnd();
 }
 
-function formatChip(emoji: string, value: number, label: string, detail?: string): string {
-  const trail = detail ? ` <sub>(${escapeHtml(detail)})</sub>` : '';
-  return `${emoji} **${value}** ${label}${trail}`;
-}
+// ── the dashboard <table> ────────────────────────────────────────────────────
 
-function renderAxisDetails(axes: ValueAxis[]): string | null {
-  const blocks: string[] = [];
+function dashboardTable(axes: ValueAxis[], overallPercent?: number): string {
+  const max = maxAbsDelta(axes);
+  const composite = compositeStatus(axes);
+  const compositePct = typeof overallPercent === 'number' ? overallPercent : mean(axes.map((a) => a.delta_percent));
+  const width = Math.round(100 / axes.length);
 
-  for (const a of axes) {
-    const parts: string[] = [];
-    parts.push(`#### ${a.label} — \`${formatPercent(a.delta_percent)}\` · confidence \`${a.confidence}\``);
-    if (a.subtitle) parts.push(`*${a.subtitle}*`);
+  const headerCells = axes.map((a) => `<th align="center" width="${width}%" scope="col">${escapeHtml(a.label)}</th>`);
+  const valueCells = axes.map(
+    (a) => `<td align="center"><strong>${directionEmoji(a.direction)} ${signedPercent(a.delta_percent)}</strong><br><sub>${directionWord(a.direction)}</sub></td>`,
+  );
+  const barCells = axes.map((a) => `<td align="center"><code>${magnitudeBar(a.delta_percent, max)}</code></td>`);
+  const confCells = axes.map((a) => `<td align="center"><sub>confidence&nbsp;·&nbsp;<code>${a.confidence}</code></sub></td>`);
 
-    if (a.kv && a.kv.length) {
-      const kvLines = a.kv.map((kv) => `- ${kv.label}: \`${kv.value}\``);
-      parts.push(kvLines.join('\n'));
-    }
-
-    if (a.formula) parts.push(`**Formula:** ${a.formula}`);
-
-    if (a.source) {
-      const linked = a.source_link ? `[${a.source}](${a.source_link})` : a.source;
-      parts.push(`**Source:** ${linked}`);
-    }
-
-    if (a.inputs && Object.keys(a.inputs).length) {
-      const inputStr = Object.entries(a.inputs)
-        .map(([k, v]) => `\`${k}=${formatInput(v)}\``)
-        .join(' · ');
-      parts.push(`**Inputs:** ${inputStr}`);
-    }
-
-    if (a.additional_sources && a.additional_sources.length) {
-      const refs = a.additional_sources
-        .map((r) => `[${r.title ?? r.url}](${r.url})`)
-        .join(' · ');
-      parts.push(`**More:** ${refs}`);
-    }
-
-    blocks.push(parts.join('\n\n'));
-  }
-
-  if (blocks.length === 0) return null;
   return [
-    `<details><summary>How these numbers were computed (${axes.length} ax${axes.length === 1 ? 'is' : 'es'})</summary>`,
+    '<table>',
+    '<caption>PR value drift — composite &amp; per-axis (Δ% vs. base)</caption>',
+    '<tr>',
+    `<td colspan="${axes.length}" align="center"><strong>Composite&nbsp; ${composite.emoji} ${signedPercent(compositePct)}</strong> &nbsp;<code>${magnitudeBar(compositePct, max)}</code>&nbsp; <sub>${compositeNote(axes, composite.mixed, composite.label)}</sub></td>`,
+    '</tr>',
+    `<tr>${headerCells.join('')}</tr>`,
+    `<tr>${valueCells.join('')}</tr>`,
+    `<tr>${barCells.join('')}</tr>`,
+    `<tr>${confCells.join('')}</tr>`,
+    '</table>',
+  ].join('\n');
+}
+
+function compositeNote(axes: ValueAxis[], mixed: boolean, label: string): string {
+  const base = `mean of the ${axes.length === 1 ? 'axis' : `${axes.length} axes`}`;
+  if (mixed) {
+    const up = axes.filter((a) => a.direction === 'up').reduce(pickMaxAbs, undefined as ValueAxis | undefined);
+    const down = axes.filter((a) => a.direction === 'down').reduce(pickMaxAbs, undefined as ValueAxis | undefined);
+    if (up && down) {
+      return `${base} — <strong>mixed</strong>: a ${signedPercent(up.delta_percent)} ${AXIS_SHORT[up.name]} gain masks a ${signedPercent(down.delta_percent)} ${AXIS_SHORT[down.name]} regression`;
+    }
+    return `${base} — <strong>mixed</strong>`;
+  }
+  return `${base} — <strong>${label}</strong>`;
+}
+
+// ── captions / lines below the table ─────────────────────────────────────────
+
+function barsCaption(axes: ValueAxis[]): string {
+  const top = axes.reduce(pickMaxAbs, undefined as ValueAxis | undefined);
+  const ref = top ? ` (${AXIS_SHORT[top.name]}, ${magnitudePercent(top.delta_percent)})` : '';
+  return `<sub>Bars show |Δ| relative to the largest axis${ref}, ⅛-block precision. 🔴 regression · 🟢 improvement · ⚪ flat.</sub>`;
+}
+
+function sinceLastReviewLine(prior: DriftState | null, current: DriftState): string {
+  const deltas = sinceLastReview(prior, current);
+  if (deltas) {
+    return `> 🔁 **Since last review** &nbsp; ${deltas} <sub>(percentage points vs. the previous push)</sub>`;
+  }
+  return '> 🔁 **Since last review** &nbsp; _First run on this PR — no prior snapshot to diff. Each later push re-renders this sticky comment and fills this line with per-axis deltas (e.g. 💰 ▲ +2.1pp · ⚙️ ▼ −1.0pp)._';
+}
+
+function highlightsLine(counts?: PrCounts): string | null {
+  if (!counts) return null;
+  const f = counts.features?.value ?? 0;
+  const b = counts.bug_fixes?.value ?? 0;
+  const i = counts.issues_resolved?.value ?? 0;
+  const t = counts.new_test_files?.value ?? 0;
+  return `**Highlights:** ✨ **${f}** new features &nbsp;·&nbsp; 🐛 **${b}** bug fixes &nbsp;·&nbsp; 📋 **${i}** issues resolved &nbsp;·&nbsp; 🧪 **${t}** new test files`;
+}
+
+// ── "how each axis was computed" (nested <details>) ──────────────────────────
+
+function howComputed(axes: ValueAxis[]): string {
+  const inner = axes.map(renderAxisDetail).join('\n\n');
+  return [
+    '<details>',
+    '<summary>📐 How each axis was computed — expand an axis</summary>',
     '',
-    blocks.join('\n\n---\n\n'),
+    inner,
     '',
     '</details>',
   ].join('\n');
 }
 
-function formatPercent(n: number): string {
-  const sign = n > 0 ? '+' : '';
-  return `${sign}${Math.round(n * 10) / 10}%`;
+function renderAxisDetail(a: ValueAxis): string {
+  const parts: string[] = [
+    '<details>',
+    `<summary>${escapeHtml(a.label)} · <code>${signedPercent(a.delta_percent)}</code> · confidence <code>${a.confidence}</code></summary>`,
+    '',
+  ];
+  if (a.subtitle) parts.push(`*${a.subtitle}*`, '');
+  if (a.formula) parts.push(fencedBlock(a.formula), '');
+
+  if (a.kv && a.kv.length) {
+    parts.push(a.kv.map((kv) => `- ${kv.label}: **${kv.value}**`).join('\n'), '');
+  }
+
+  if (a.source) {
+    const linked = a.source_link ? `[${a.source}](${a.source_link})` : a.source;
+    parts.push(`**Source:** ${linked}`, '');
+  }
+
+  if (a.inputs && Object.keys(a.inputs).length) {
+    const inputStr = Object.entries(a.inputs)
+      .map(([k, v]) => `\`${k}=${formatInput(v)}\``)
+      .join(' · ');
+    parts.push(`**Key inputs:** ${inputStr}`, '');
+  }
+
+  if (a.additional_sources && a.additional_sources.length) {
+    const refs = a.additional_sources.map((r) => `[${r.title ?? r.url}](${r.url})`).join(' · ');
+    parts.push(`**More:** ${refs}`, '');
+  }
+
+  parts.push('</details>');
+  return parts.join('\n');
+}
+
+// ── small helpers ────────────────────────────────────────────────────────────
+
+function pickMaxAbs(best: ValueAxis | undefined, a: ValueAxis): ValueAxis {
+  return !best || Math.abs(a.delta_percent) > Math.abs(best.delta_percent) ? a : best;
+}
+
+function mean(ns: number[]): number {
+  return ns.length ? ns.reduce((s, n) => s + n, 0) / ns.length : 0;
 }
 
 function formatInput(v: number | string | boolean): string {
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
   return String(v);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

@@ -116,13 +116,25 @@ export type CodeDiff = {
 export type CodeSuggestion = {
   category: 'A' | 'B' | 'C';
   category_label?: string;
+  /** Stable finding kind, e.g. `dead_code_in_changed_file`, `raw_sql_concat`. */
+  kind?: string;
+  /** Rule identifier, e.g. `S2:dead-code`. */
+  rule_id?: string;
   file: string;
   function?: string;
   line?: number;
   confidence: number;
+  /** Finding severity tier — drives the suggestion's display priority. */
+  severity?: 'low' | 'medium' | 'high' | 'critical' | string;
   why_it_matters: string;
+  /** One-line remediation hint shown when there's no machine-applicable diff. */
+  remediation_hint?: string;
   references?: ReferenceLink[];
   diff?: CodeDiff;
+  /** Source language of the focal file, e.g. `python`, `kotlin`. */
+  language?: string;
+  /** Prompt hint handed to the AI pass; unused by the renderer. */
+  llm_prompt_hint?: string;
   notes?: string;
 };
 

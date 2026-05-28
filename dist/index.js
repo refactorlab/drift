@@ -3586,8 +3586,8 @@ var require_webidl = __commonJS({
       return new TypeError(`${message.header}: ${message.message}`);
     };
     webidl.errors.conversionFailed = function(context3) {
-      const plural = context3.types.length === 1 ? "" : " one of";
-      const message = `${context3.argument} could not be converted to${plural}: ${context3.types.join(", ")}.`;
+      const plural2 = context3.types.length === 1 ? "" : " one of";
+      const message = `${context3.argument} could not be converted to${plural2}: ${context3.types.join(", ")}.`;
       return webidl.errors.exception({
         header: context3.prefix,
         message
@@ -3730,10 +3730,10 @@ var require_webidl = __commonJS({
       }
     };
     webidl.sequenceConverter = function(converter) {
-      return (V, prefix, argument, Iterable) => {
+      return (V, prefix2, argument, Iterable) => {
         if (webidl.util.Type(V) !== "Object") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `${argument} (${webidl.util.Stringify(V)}) is not iterable.`
           });
         }
@@ -3742,7 +3742,7 @@ var require_webidl = __commonJS({
         let index = 0;
         if (method === void 0 || typeof method.next !== "function") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `${argument} is not iterable.`
           });
         }
@@ -3751,16 +3751,16 @@ var require_webidl = __commonJS({
           if (done) {
             break;
           }
-          seq.push(converter(value, prefix, `${argument}[${index++}]`));
+          seq.push(converter(value, prefix2, `${argument}[${index++}]`));
         }
         return seq;
       };
     };
     webidl.recordConverter = function(keyConverter, valueConverter) {
-      return (O, prefix, argument) => {
+      return (O, prefix2, argument) => {
         if (webidl.util.Type(O) !== "Object") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `${argument} ("${webidl.util.Type(O)}") is not an Object.`
           });
         }
@@ -3768,8 +3768,8 @@ var require_webidl = __commonJS({
         if (!types.isProxy(O)) {
           const keys2 = [...Object.getOwnPropertyNames(O), ...Object.getOwnPropertySymbols(O)];
           for (const key of keys2) {
-            const typedKey = keyConverter(key, prefix, argument);
-            const typedValue = valueConverter(O[key], prefix, argument);
+            const typedKey = keyConverter(key, prefix2, argument);
+            const typedValue = valueConverter(O[key], prefix2, argument);
             result[typedKey] = typedValue;
           }
           return result;
@@ -3778,8 +3778,8 @@ var require_webidl = __commonJS({
         for (const key of keys) {
           const desc = Reflect.getOwnPropertyDescriptor(O, key);
           if (desc?.enumerable) {
-            const typedKey = keyConverter(key, prefix, argument);
-            const typedValue = valueConverter(O[key], prefix, argument);
+            const typedKey = keyConverter(key, prefix2, argument);
+            const typedValue = valueConverter(O[key], prefix2, argument);
             result[typedKey] = typedValue;
           }
         }
@@ -3787,10 +3787,10 @@ var require_webidl = __commonJS({
       };
     };
     webidl.interfaceConverter = function(i) {
-      return (V, prefix, argument, opts) => {
+      return (V, prefix2, argument, opts) => {
         if (opts?.strict !== false && !(V instanceof i)) {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `Expected ${argument} ("${webidl.util.Stringify(V)}") to be an instance of ${i.name}.`
           });
         }
@@ -3798,14 +3798,14 @@ var require_webidl = __commonJS({
       };
     };
     webidl.dictionaryConverter = function(converters) {
-      return (dictionary, prefix, argument) => {
+      return (dictionary, prefix2, argument) => {
         const type = webidl.util.Type(dictionary);
         const dict = {};
         if (type === "Null" || type === "Undefined") {
           return dict;
         } else if (type !== "Object") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `Expected ${dictionary} to be one of: Null, Undefined, Object.`
           });
         }
@@ -3814,7 +3814,7 @@ var require_webidl = __commonJS({
           if (required === true) {
             if (!Object.hasOwn(dictionary, key)) {
               throw webidl.errors.exception({
-                header: prefix,
+                header: prefix2,
                 message: `Missing required key "${key}".`
               });
             }
@@ -3825,10 +3825,10 @@ var require_webidl = __commonJS({
             value ??= defaultValue();
           }
           if (required || hasDefault || value !== void 0) {
-            value = converter(value, prefix, `${argument}.${key}`);
+            value = converter(value, prefix2, `${argument}.${key}`);
             if (options.allowedValues && !options.allowedValues.includes(value)) {
               throw webidl.errors.exception({
-                header: prefix,
+                header: prefix2,
                 message: `${value} is not an accepted type. Expected one of ${options.allowedValues.join(", ")}.`
               });
             }
@@ -3839,27 +3839,27 @@ var require_webidl = __commonJS({
       };
     };
     webidl.nullableConverter = function(converter) {
-      return (V, prefix, argument) => {
+      return (V, prefix2, argument) => {
         if (V === null) {
           return V;
         }
-        return converter(V, prefix, argument);
+        return converter(V, prefix2, argument);
       };
     };
-    webidl.converters.DOMString = function(V, prefix, argument, opts) {
+    webidl.converters.DOMString = function(V, prefix2, argument, opts) {
       if (V === null && opts?.legacyNullToEmptyString) {
         return "";
       }
       if (typeof V === "symbol") {
         throw webidl.errors.exception({
-          header: prefix,
+          header: prefix2,
           message: `${argument} is a symbol, which cannot be converted to a DOMString.`
         });
       }
       return String(V);
     };
-    webidl.converters.ByteString = function(V, prefix, argument) {
-      const x = webidl.converters.DOMString(V, prefix, argument);
+    webidl.converters.ByteString = function(V, prefix2, argument) {
+      const x = webidl.converters.DOMString(V, prefix2, argument);
       for (let index = 0; index < x.length; index++) {
         if (x.charCodeAt(index) > 255) {
           throw new TypeError(
@@ -3877,26 +3877,26 @@ var require_webidl = __commonJS({
     webidl.converters.any = function(V) {
       return V;
     };
-    webidl.converters["long long"] = function(V, prefix, argument) {
-      const x = webidl.util.ConvertToInt(V, 64, "signed", void 0, prefix, argument);
+    webidl.converters["long long"] = function(V, prefix2, argument) {
+      const x = webidl.util.ConvertToInt(V, 64, "signed", void 0, prefix2, argument);
       return x;
     };
-    webidl.converters["unsigned long long"] = function(V, prefix, argument) {
-      const x = webidl.util.ConvertToInt(V, 64, "unsigned", void 0, prefix, argument);
+    webidl.converters["unsigned long long"] = function(V, prefix2, argument) {
+      const x = webidl.util.ConvertToInt(V, 64, "unsigned", void 0, prefix2, argument);
       return x;
     };
-    webidl.converters["unsigned long"] = function(V, prefix, argument) {
-      const x = webidl.util.ConvertToInt(V, 32, "unsigned", void 0, prefix, argument);
+    webidl.converters["unsigned long"] = function(V, prefix2, argument) {
+      const x = webidl.util.ConvertToInt(V, 32, "unsigned", void 0, prefix2, argument);
       return x;
     };
-    webidl.converters["unsigned short"] = function(V, prefix, argument, opts) {
-      const x = webidl.util.ConvertToInt(V, 16, "unsigned", opts, prefix, argument);
+    webidl.converters["unsigned short"] = function(V, prefix2, argument, opts) {
+      const x = webidl.util.ConvertToInt(V, 16, "unsigned", opts, prefix2, argument);
       return x;
     };
-    webidl.converters.ArrayBuffer = function(V, prefix, argument, opts) {
+    webidl.converters.ArrayBuffer = function(V, prefix2, argument, opts) {
       if (webidl.util.Type(V) !== "Object" || !types.isAnyArrayBuffer(V)) {
         throw webidl.errors.conversionFailed({
-          prefix,
+          prefix: prefix2,
           argument: `${argument} ("${webidl.util.Stringify(V)}")`,
           types: ["ArrayBuffer"]
         });
@@ -3915,10 +3915,10 @@ var require_webidl = __commonJS({
       }
       return V;
     };
-    webidl.converters.TypedArray = function(V, T, prefix, name, opts) {
+    webidl.converters.TypedArray = function(V, T, prefix2, name, opts) {
       if (webidl.util.Type(V) !== "Object" || !types.isTypedArray(V) || V.constructor.name !== T.name) {
         throw webidl.errors.conversionFailed({
-          prefix,
+          prefix: prefix2,
           argument: `${name} ("${webidl.util.Stringify(V)}")`,
           types: [T.name]
         });
@@ -3937,10 +3937,10 @@ var require_webidl = __commonJS({
       }
       return V;
     };
-    webidl.converters.DataView = function(V, prefix, name, opts) {
+    webidl.converters.DataView = function(V, prefix2, name, opts) {
       if (webidl.util.Type(V) !== "Object" || !types.isDataView(V)) {
         throw webidl.errors.exception({
-          header: prefix,
+          header: prefix2,
           message: `${name} is not a DataView.`
         });
       }
@@ -3958,18 +3958,18 @@ var require_webidl = __commonJS({
       }
       return V;
     };
-    webidl.converters.BufferSource = function(V, prefix, name, opts) {
+    webidl.converters.BufferSource = function(V, prefix2, name, opts) {
       if (types.isAnyArrayBuffer(V)) {
-        return webidl.converters.ArrayBuffer(V, prefix, name, { ...opts, allowShared: false });
+        return webidl.converters.ArrayBuffer(V, prefix2, name, { ...opts, allowShared: false });
       }
       if (types.isTypedArray(V)) {
-        return webidl.converters.TypedArray(V, V.constructor, prefix, name, { ...opts, allowShared: false });
+        return webidl.converters.TypedArray(V, V.constructor, prefix2, name, { ...opts, allowShared: false });
       }
       if (types.isDataView(V)) {
-        return webidl.converters.DataView(V, prefix, name, { ...opts, allowShared: false });
+        return webidl.converters.DataView(V, prefix2, name, { ...opts, allowShared: false });
       }
       throw webidl.errors.conversionFailed({
-        prefix,
+        prefix: prefix2,
         argument: `${name} ("${webidl.util.Stringify(V)}")`,
         types: ["BufferSource"]
       });
@@ -4963,31 +4963,31 @@ var require_formdata = __commonJS({
       }
       append(name, value, filename = void 0) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.append";
-        webidl.argumentLengthCheck(arguments, 2, prefix);
+        const prefix2 = "FormData.append";
+        webidl.argumentLengthCheck(arguments, 2, prefix2);
         if (arguments.length === 3 && !isBlobLike(value)) {
           throw new TypeError(
             "Failed to execute 'append' on 'FormData': parameter 2 is not of type 'Blob'"
           );
         }
-        name = webidl.converters.USVString(name, prefix, "name");
-        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix, "value", { strict: false }) : webidl.converters.USVString(value, prefix, "value");
-        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix, "filename") : void 0;
+        name = webidl.converters.USVString(name, prefix2, "name");
+        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix2, "value", { strict: false }) : webidl.converters.USVString(value, prefix2, "value");
+        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix2, "filename") : void 0;
         const entry = makeEntry(name, value, filename);
         this[kState].push(entry);
       }
       delete(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.delete";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.delete";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         this[kState] = this[kState].filter((entry) => entry.name !== name);
       }
       get(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.get";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.get";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         const idx = this[kState].findIndex((entry) => entry.name === name);
         if (idx === -1) {
           return null;
@@ -4996,30 +4996,30 @@ var require_formdata = __commonJS({
       }
       getAll(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.getAll";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.getAll";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         return this[kState].filter((entry) => entry.name === name).map((entry) => entry.value);
       }
       has(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.has";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.has";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         return this[kState].findIndex((entry) => entry.name === name) !== -1;
       }
       set(name, value, filename = void 0) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.set";
-        webidl.argumentLengthCheck(arguments, 2, prefix);
+        const prefix2 = "FormData.set";
+        webidl.argumentLengthCheck(arguments, 2, prefix2);
         if (arguments.length === 3 && !isBlobLike(value)) {
           throw new TypeError(
             "Failed to execute 'set' on 'FormData': parameter 2 is not of type 'Blob'"
           );
         }
-        name = webidl.converters.USVString(name, prefix, "name");
-        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix, "name", { strict: false }) : webidl.converters.USVString(value, prefix, "name");
-        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix, "name") : void 0;
+        name = webidl.converters.USVString(name, prefix2, "name");
+        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix2, "name", { strict: false }) : webidl.converters.USVString(value, prefix2, "name");
+        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix2, "name") : void 0;
         const entry = makeEntry(name, value, filename);
         const idx = this[kState].findIndex((entry2) => entry2.name === name);
         if (idx !== -1) {
@@ -5416,7 +5416,7 @@ var require_body = __commonJS({
         source = new Uint8Array(object.buffer.slice(object.byteOffset, object.byteOffset + object.byteLength));
       } else if (util.isFormDataLike(object)) {
         const boundary = `----formdata-undici-0${`${random(1e11)}`.padStart(11, "0")}`;
-        const prefix = `--${boundary}\r
+        const prefix2 = `--${boundary}\r
 Content-Disposition: form-data`;
         const escape = (str) => str.replace(/\n/g, "%0A").replace(/\r/g, "%0D").replace(/"/g, "%22");
         const normalizeLinefeeds = (value) => value.replace(/\r?\n|\r/g, "\r\n");
@@ -5426,14 +5426,14 @@ Content-Disposition: form-data`;
         let hasUnknownSizeValue = false;
         for (const [name, value] of object) {
           if (typeof value === "string") {
-            const chunk2 = textEncoder.encode(prefix + `; name="${escape(normalizeLinefeeds(name))}"\r
+            const chunk2 = textEncoder.encode(prefix2 + `; name="${escape(normalizeLinefeeds(name))}"\r
 \r
 ${normalizeLinefeeds(value)}\r
 `);
             blobParts.push(chunk2);
             length += chunk2.byteLength;
           } else {
-            const chunk2 = textEncoder.encode(`${prefix}; name="${escape(normalizeLinefeeds(name))}"` + (value.name ? `; filename="${escape(value.name)}"` : "") + `\r
+            const chunk2 = textEncoder.encode(`${prefix2}; name="${escape(normalizeLinefeeds(name))}"` + (value.name ? `; filename="${escape(value.name)}"` : "") + `\r
 Content-Type: ${value.type || "application/octet-stream"}\r
 \r
 `);
@@ -10990,9 +10990,9 @@ var require_pluralizer = __commonJS({
       this: "these"
     };
     module2.exports = class Pluralizer {
-      constructor(singular, plural) {
+      constructor(singular, plural2) {
         this.singular = singular;
-        this.plural = plural;
+        this.plural = plural2;
       }
       pluralize(count) {
         const one = count === 1;
@@ -11941,17 +11941,17 @@ var require_headers = __commonJS({
       append(name, value) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 2, "Headers.append");
-        const prefix = "Headers.append";
-        name = webidl.converters.ByteString(name, prefix, "name");
-        value = webidl.converters.ByteString(value, prefix, "value");
+        const prefix2 = "Headers.append";
+        name = webidl.converters.ByteString(name, prefix2, "name");
+        value = webidl.converters.ByteString(value, prefix2, "value");
         return appendHeader(this, name, value);
       }
       // https://fetch.spec.whatwg.org/#dom-headers-delete
       delete(name) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 1, "Headers.delete");
-        const prefix = "Headers.delete";
-        name = webidl.converters.ByteString(name, prefix, "name");
+        const prefix2 = "Headers.delete";
+        name = webidl.converters.ByteString(name, prefix2, "name");
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
             prefix: "Headers.delete",
@@ -11971,11 +11971,11 @@ var require_headers = __commonJS({
       get(name) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 1, "Headers.get");
-        const prefix = "Headers.get";
-        name = webidl.converters.ByteString(name, prefix, "name");
+        const prefix2 = "Headers.get";
+        name = webidl.converters.ByteString(name, prefix2, "name");
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value: name,
             type: "header name"
           });
@@ -11986,11 +11986,11 @@ var require_headers = __commonJS({
       has(name) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 1, "Headers.has");
-        const prefix = "Headers.has";
-        name = webidl.converters.ByteString(name, prefix, "name");
+        const prefix2 = "Headers.has";
+        name = webidl.converters.ByteString(name, prefix2, "name");
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value: name,
             type: "header name"
           });
@@ -12001,19 +12001,19 @@ var require_headers = __commonJS({
       set(name, value) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 2, "Headers.set");
-        const prefix = "Headers.set";
-        name = webidl.converters.ByteString(name, prefix, "name");
-        value = webidl.converters.ByteString(value, prefix, "value");
+        const prefix2 = "Headers.set";
+        name = webidl.converters.ByteString(name, prefix2, "name");
+        value = webidl.converters.ByteString(value, prefix2, "value");
         value = headerValueNormalize(value);
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value: name,
             type: "header name"
           });
         } else if (!isValidHeaderValue(value)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value,
             type: "header value"
           });
@@ -12093,7 +12093,7 @@ var require_headers = __commonJS({
         enumerable: false
       }
     });
-    webidl.converters.HeadersInit = function(V, prefix, argument) {
+    webidl.converters.HeadersInit = function(V, prefix2, argument) {
       if (webidl.util.Type(V) === "Object") {
         const iterator2 = Reflect.get(V, Symbol.iterator);
         if (!util.types.isProxy(V) && iterator2 === Headers2.prototype.entries) {
@@ -12103,9 +12103,9 @@ var require_headers = __commonJS({
           }
         }
         if (typeof iterator2 === "function") {
-          return webidl.converters["sequence<sequence<ByteString>>"](V, prefix, argument, iterator2.bind(V));
+          return webidl.converters["sequence<sequence<ByteString>>"](V, prefix2, argument, iterator2.bind(V));
         }
-        return webidl.converters["record<ByteString, ByteString>"](V, prefix, argument);
+        return webidl.converters["record<ByteString, ByteString>"](V, prefix2, argument);
       }
       throw webidl.errors.conversionFailed({
         prefix: "Headers constructor",
@@ -12470,32 +12470,32 @@ var require_response = __commonJS({
     webidl.converters.URLSearchParams = webidl.interfaceConverter(
       URLSearchParams
     );
-    webidl.converters.XMLHttpRequestBodyInit = function(V, prefix, name) {
+    webidl.converters.XMLHttpRequestBodyInit = function(V, prefix2, name) {
       if (typeof V === "string") {
-        return webidl.converters.USVString(V, prefix, name);
+        return webidl.converters.USVString(V, prefix2, name);
       }
       if (isBlobLike(V)) {
-        return webidl.converters.Blob(V, prefix, name, { strict: false });
+        return webidl.converters.Blob(V, prefix2, name, { strict: false });
       }
       if (ArrayBuffer.isView(V) || types.isArrayBuffer(V)) {
-        return webidl.converters.BufferSource(V, prefix, name);
+        return webidl.converters.BufferSource(V, prefix2, name);
       }
       if (util.isFormDataLike(V)) {
-        return webidl.converters.FormData(V, prefix, name, { strict: false });
+        return webidl.converters.FormData(V, prefix2, name, { strict: false });
       }
       if (V instanceof URLSearchParams) {
-        return webidl.converters.URLSearchParams(V, prefix, name);
+        return webidl.converters.URLSearchParams(V, prefix2, name);
       }
-      return webidl.converters.DOMString(V, prefix, name);
+      return webidl.converters.DOMString(V, prefix2, name);
     };
-    webidl.converters.BodyInit = function(V, prefix, argument) {
+    webidl.converters.BodyInit = function(V, prefix2, argument) {
       if (V instanceof ReadableStream) {
-        return webidl.converters.ReadableStream(V, prefix, argument);
+        return webidl.converters.ReadableStream(V, prefix2, argument);
       }
       if (V?.[Symbol.asyncIterator]) {
         return V;
       }
-      return webidl.converters.XMLHttpRequestBodyInit(V, prefix, argument);
+      return webidl.converters.XMLHttpRequestBodyInit(V, prefix2, argument);
     };
     webidl.converters.ResponseInit = webidl.dictionaryConverter([
       {
@@ -12636,10 +12636,10 @@ var require_request2 = __commonJS({
         if (input === kConstruct) {
           return;
         }
-        const prefix = "Request constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        input = webidl.converters.RequestInfo(input, prefix, "input");
-        init = webidl.converters.RequestInit(init, prefix, "init");
+        const prefix2 = "Request constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        input = webidl.converters.RequestInfo(input, prefix2, "input");
+        init = webidl.converters.RequestInit(init, prefix2, "init");
         let request2 = null;
         let fallbackMode = null;
         const baseUrl2 = environmentSettingsObject.settingsObject.baseUrl;
@@ -13164,14 +13164,14 @@ var require_request2 = __commonJS({
     webidl.converters.Request = webidl.interfaceConverter(
       Request
     );
-    webidl.converters.RequestInfo = function(V, prefix, argument) {
+    webidl.converters.RequestInfo = function(V, prefix2, argument) {
       if (typeof V === "string") {
-        return webidl.converters.USVString(V, prefix, argument);
+        return webidl.converters.USVString(V, prefix2, argument);
       }
       if (V instanceof Request) {
-        return webidl.converters.Request(V, prefix, argument);
+        return webidl.converters.Request(V, prefix2, argument);
       }
-      return webidl.converters.USVString(V, prefix, argument);
+      return webidl.converters.USVString(V, prefix2, argument);
     };
     webidl.converters.AbortSignal = webidl.interfaceConverter(
       AbortSignal
@@ -15212,10 +15212,10 @@ var require_cache = __commonJS({
       }
       async match(request2, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.match";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.match";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         const p = this.#internalMatchAll(request2, options, 1);
         if (p.length === 0) {
           return;
@@ -15224,30 +15224,30 @@ var require_cache = __commonJS({
       }
       async matchAll(request2 = void 0, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.matchAll";
-        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.matchAll";
+        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         return this.#internalMatchAll(request2, options);
       }
       async add(request2) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.add";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
+        const prefix2 = "Cache.add";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
         const requests = [request2];
         const responseArrayPromise = this.addAll(requests);
         return await responseArrayPromise;
       }
       async addAll(requests) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.addAll";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
+        const prefix2 = "Cache.addAll";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
         const responsePromises = [];
         const requestList = [];
         for (let request2 of requests) {
           if (request2 === void 0) {
             throw webidl.errors.conversionFailed({
-              prefix,
+              prefix: prefix2,
               argument: "Argument 1",
               types: ["undefined is not allowed"]
             });
@@ -15259,7 +15259,7 @@ var require_cache = __commonJS({
           const r = request2[kState];
           if (!urlIsHttpHttpsScheme(r.url) || r.method !== "GET") {
             throw webidl.errors.exception({
-              header: prefix,
+              header: prefix2,
               message: "Expected http/s scheme when method is not GET."
             });
           }
@@ -15269,7 +15269,7 @@ var require_cache = __commonJS({
           const r = new Request(request2)[kState];
           if (!urlIsHttpHttpsScheme(r.url)) {
             throw webidl.errors.exception({
-              header: prefix,
+              header: prefix2,
               message: "Expected http/s scheme."
             });
           }
@@ -15345,10 +15345,10 @@ var require_cache = __commonJS({
       }
       async put(request2, response) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.put";
-        webidl.argumentLengthCheck(arguments, 2, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        response = webidl.converters.Response(response, prefix, "response");
+        const prefix2 = "Cache.put";
+        webidl.argumentLengthCheck(arguments, 2, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        response = webidl.converters.Response(response, prefix2, "response");
         let innerRequest = null;
         if (request2 instanceof Request) {
           innerRequest = request2[kState];
@@ -15357,14 +15357,14 @@ var require_cache = __commonJS({
         }
         if (!urlIsHttpHttpsScheme(innerRequest.url) || innerRequest.method !== "GET") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: "Expected an http/s scheme when method is not GET"
           });
         }
         const innerResponse = response[kState];
         if (innerResponse.status === 206) {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: "Got 206 status"
           });
         }
@@ -15373,7 +15373,7 @@ var require_cache = __commonJS({
           for (const fieldValue of fieldValues) {
             if (fieldValue === "*") {
               throw webidl.errors.exception({
-                header: prefix,
+                header: prefix2,
                 message: "Got * vary field value"
               });
             }
@@ -15381,7 +15381,7 @@ var require_cache = __commonJS({
         }
         if (innerResponse.body && (isDisturbed(innerResponse.body.stream) || innerResponse.body.stream.locked)) {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: "Response body is locked or disturbed"
           });
         }
@@ -15426,10 +15426,10 @@ var require_cache = __commonJS({
       }
       async delete(request2, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.delete";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.delete";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         let r = null;
         if (request2 instanceof Request) {
           r = request2[kState];
@@ -15472,9 +15472,9 @@ var require_cache = __commonJS({
        */
       async keys(request2 = void 0, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.keys";
-        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.keys";
+        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         let r = null;
         if (request2 !== void 0) {
           if (request2 instanceof Request) {
@@ -15776,9 +15776,9 @@ var require_cachestorage = __commonJS({
        */
       async has(cacheName) {
         webidl.brandCheck(this, _CacheStorage);
-        const prefix = "CacheStorage.has";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
+        const prefix2 = "CacheStorage.has";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        cacheName = webidl.converters.DOMString(cacheName, prefix2, "cacheName");
         return this.#caches.has(cacheName);
       }
       /**
@@ -15788,9 +15788,9 @@ var require_cachestorage = __commonJS({
        */
       async open(cacheName) {
         webidl.brandCheck(this, _CacheStorage);
-        const prefix = "CacheStorage.open";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
+        const prefix2 = "CacheStorage.open";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        cacheName = webidl.converters.DOMString(cacheName, prefix2, "cacheName");
         if (this.#caches.has(cacheName)) {
           const cache2 = this.#caches.get(cacheName);
           return new Cache(kConstruct, cache2);
@@ -15806,9 +15806,9 @@ var require_cachestorage = __commonJS({
        */
       async delete(cacheName) {
         webidl.brandCheck(this, _CacheStorage);
-        const prefix = "CacheStorage.delete";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
+        const prefix2 = "CacheStorage.delete";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        cacheName = webidl.converters.DOMString(cacheName, prefix2, "cacheName");
         return this.#caches.delete(cacheName);
       }
       /**
@@ -16185,9 +16185,9 @@ var require_cookies = __commonJS({
     }
     function deleteCookie(headers, name, attributes) {
       webidl.brandCheck(headers, Headers2, { strict: false });
-      const prefix = "deleteCookie";
-      webidl.argumentLengthCheck(arguments, 2, prefix);
-      name = webidl.converters.DOMString(name, prefix, "name");
+      const prefix2 = "deleteCookie";
+      webidl.argumentLengthCheck(arguments, 2, prefix2);
+      name = webidl.converters.DOMString(name, prefix2, "name");
       attributes = webidl.converters.DeleteCookieAttributes(attributes);
       setCookie(headers, {
         name,
@@ -16306,10 +16306,10 @@ var require_events = __commonJS({
           webidl.util.markAsUncloneable(this);
           return;
         }
-        const prefix = "MessageEvent constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        type = webidl.converters.DOMString(type, prefix, "type");
-        eventInitDict = webidl.converters.MessageEventInit(eventInitDict, prefix, "eventInitDict");
+        const prefix2 = "MessageEvent constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        type = webidl.converters.DOMString(type, prefix2, "type");
+        eventInitDict = webidl.converters.MessageEventInit(eventInitDict, prefix2, "eventInitDict");
         super(type, eventInitDict);
         this.#eventInit = eventInitDict;
         webidl.util.markAsUncloneable(this);
@@ -16366,9 +16366,9 @@ var require_events = __commonJS({
     var CloseEvent = class _CloseEvent extends Event {
       #eventInit;
       constructor(type, eventInitDict = {}) {
-        const prefix = "CloseEvent constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        type = webidl.converters.DOMString(type, prefix, "type");
+        const prefix2 = "CloseEvent constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        type = webidl.converters.DOMString(type, prefix2, "type");
         eventInitDict = webidl.converters.CloseEventInit(eventInitDict);
         super(type, eventInitDict);
         this.#eventInit = eventInitDict;
@@ -16390,11 +16390,11 @@ var require_events = __commonJS({
     var ErrorEvent = class _ErrorEvent extends Event {
       #eventInit;
       constructor(type, eventInitDict) {
-        const prefix = "ErrorEvent constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
+        const prefix2 = "ErrorEvent constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
         super(type, eventInitDict);
         webidl.util.markAsUncloneable(this);
-        type = webidl.converters.DOMString(type, prefix, "type");
+        type = webidl.converters.DOMString(type, prefix2, "type");
         eventInitDict = webidl.converters.ErrorEventInit(eventInitDict ?? {});
         this.#eventInit = eventInitDict;
       }
@@ -17633,10 +17633,10 @@ var require_websocket = __commonJS({
       constructor(url, protocols = []) {
         super();
         webidl.util.markAsUncloneable(this);
-        const prefix = "WebSocket constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        const options = webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"](protocols, prefix, "options");
-        url = webidl.converters.USVString(url, prefix, "url");
+        const prefix2 = "WebSocket constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        const options = webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"](protocols, prefix2, "options");
+        url = webidl.converters.USVString(url, prefix2, "url");
         protocols = options.protocols;
         const baseURL = environmentSettingsObject.settingsObject.baseUrl;
         let urlRecord;
@@ -17689,12 +17689,12 @@ var require_websocket = __commonJS({
        */
       close(code = void 0, reason = void 0) {
         webidl.brandCheck(this, _WebSocket);
-        const prefix = "WebSocket.close";
+        const prefix2 = "WebSocket.close";
         if (code !== void 0) {
-          code = webidl.converters["unsigned short"](code, prefix, "code", { clamp: true });
+          code = webidl.converters["unsigned short"](code, prefix2, "code", { clamp: true });
         }
         if (reason !== void 0) {
-          reason = webidl.converters.USVString(reason, prefix, "reason");
+          reason = webidl.converters.USVString(reason, prefix2, "reason");
         }
         if (code !== void 0) {
           if (code !== 1e3 && (code < 3e3 || code > 4999)) {
@@ -17719,9 +17719,9 @@ var require_websocket = __commonJS({
        */
       send(data) {
         webidl.brandCheck(this, _WebSocket);
-        const prefix = "WebSocket.send";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        data = webidl.converters.WebSocketSendData(data, prefix, "data");
+        const prefix2 = "WebSocket.send";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        data = webidl.converters.WebSocketSendData(data, prefix2, "data");
         if (isConnecting(this)) {
           throw new DOMException("Sent before connected.", "InvalidStateError");
         }
@@ -17910,11 +17910,11 @@ var require_websocket = __commonJS({
     webidl.converters["sequence<DOMString>"] = webidl.sequenceConverter(
       webidl.converters.DOMString
     );
-    webidl.converters["DOMString or sequence<DOMString>"] = function(V, prefix, argument) {
+    webidl.converters["DOMString or sequence<DOMString>"] = function(V, prefix2, argument) {
       if (webidl.util.Type(V) === "Object" && Symbol.iterator in V) {
         return webidl.converters["sequence<DOMString>"](V);
       }
-      return webidl.converters.DOMString(V, prefix, argument);
+      return webidl.converters.DOMString(V, prefix2, argument);
     };
     webidl.converters.WebSocketInit = webidl.dictionaryConverter([
       {
@@ -18274,16 +18274,16 @@ var require_eventsource = __commonJS({
       constructor(url, eventSourceInitDict = {}) {
         super();
         webidl.util.markAsUncloneable(this);
-        const prefix = "EventSource constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
+        const prefix2 = "EventSource constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
         if (!experimentalWarned) {
           experimentalWarned = true;
           process.emitWarning("EventSource is experimental, expect them to change at any time.", {
             code: "UNDICI-ES"
           });
         }
-        url = webidl.converters.USVString(url, prefix, "url");
-        eventSourceInitDict = webidl.converters.EventSourceInitDict(eventSourceInitDict, prefix, "eventSourceInitDict");
+        url = webidl.converters.USVString(url, prefix2, "url");
+        eventSourceInitDict = webidl.converters.EventSourceInitDict(eventSourceInitDict, prefix2, "eventSourceInitDict");
         this.#dispatcher = eventSourceInitDict.dispatcher;
         this.#state = {
           lastEventId: "",
@@ -19909,11 +19909,11 @@ var Summary = class {
    */
   addTable(rows) {
     const tableBody = rows.map((row) => {
-      const cells = row.map((cell) => {
-        if (typeof cell === "string") {
-          return this.wrap("td", cell);
+      const cells = row.map((cell3) => {
+        if (typeof cell3 === "string") {
+          return this.wrap("td", cell3);
         }
-        const { header, data, colspan, rowspan } = cell;
+        const { header, data, colspan, rowspan } = cell3;
         const tag = header ? "th" : "td";
         const attrs = Object.assign(Object.assign({}, colspan && { colspan }), rowspan && { rowspan });
         return this.wrap(tag, data, attrs);
@@ -23833,207 +23833,1033 @@ function passesQualityBar(s) {
   return s.confidence >= SUGGESTION_CONFIDENCE_THRESHOLD && hasRef && validCategory;
 }
 
-// src/render/sections/banner.ts
-var DIRECTION = {
-  up: { alert: "TIP", arrow: "\u25B2", badgeColor: "2ea043" },
-  down: { alert: "WARNING", arrow: "\u25BC", badgeColor: "f85149" },
-  neutral: { alert: "NOTE", arrow: "\u2014", badgeColor: "6e7681" }
+// src/render/lib/format.ts
+function round(n, decimals = 1) {
+  const f = 10 ** decimals;
+  return Math.round(n * f) / f;
+}
+function signedPercent(n, decimals = 1) {
+  const r = round(n, decimals);
+  const mag = Math.abs(r).toFixed(decimals);
+  if (r > 0) return `+${mag}%`;
+  if (r < 0) return `\u2212${mag}%`;
+  return `${0 .toFixed(decimals)}%`;
+}
+function magnitudePercent(n, decimals = 1) {
+  return `${Math.abs(round(n, decimals)).toFixed(decimals)}%`;
+}
+function signedNumber(n, decimals = 1) {
+  const r = round(n, decimals);
+  const mag = Math.abs(r).toFixed(decimals);
+  if (r > 0) return `+${mag}`;
+  if (r < 0) return `\u2212${mag}`;
+  return 0 .toFixed(decimals);
+}
+function confidencePercent(conf01) {
+  return `${Math.round(clamp(conf01, 0, 1) * 100)}%`;
+}
+function signedInt(n) {
+  const r = Math.round(n);
+  const mag = Math.abs(r).toLocaleString("en-US");
+  if (r > 0) return `+${mag}`;
+  if (r < 0) return `\u2212${mag}`;
+  return "0";
+}
+function int(n) {
+  return Math.round(n).toLocaleString("en-US");
+}
+function clamp(n, lo, hi) {
+  return Math.min(hi, Math.max(lo, n));
+}
+function plural(n, singular, pluralForm) {
+  return n === 1 ? singular : pluralForm ?? `${singular}s`;
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function inlineList(items, max, code = true) {
+  const wrap = (s) => code ? `\`${s}\`` : s;
+  const shown = items.slice(0, max).map(wrap);
+  if (items.length > shown.length) shown.push(`*\u2026+${items.length - shown.length} more*`);
+  return shown.join(" \xB7 ");
+}
+function basename(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+function fencedBlock(content, info2 = "") {
+  const longest = (content.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}${info2}
+${content}
+${fence}`;
+}
+
+// src/render/state.ts
+var MARKER_RE = /<!--\s*drift:state\s+(\{[\s\S]*?\})\s*-->/;
+function stateFromReport(report) {
+  const state = { v: 1 };
+  const drift = report.pr_review?.overall_drift?.percent;
+  if (typeof drift === "number") state.overall = round2(drift);
+  const axes = report.pr_review?.value_card?.axes;
+  if (axes?.length) {
+    const map = {};
+    for (const a of axes) map[a.name] = round2(a.delta_percent);
+    state.axes = map;
+  }
+  return state;
+}
+function serializeState(state) {
+  return `<!-- drift:state ${JSON.stringify(state)} -->`;
+}
+function parseState(body) {
+  if (!body) return null;
+  const m = body.match(MARKER_RE);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[1]);
+    return parsed && parsed.v === 1 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+var AXIS_GLYPH = {
+  money: "\u{1F4B0}",
+  customer: "\u{1F465}",
+  runtime: "\u2699\uFE0F",
+  runtime_ux: "\u{1F3A8}"
 };
-function renderBanner(drift) {
-  if (!drift) return null;
-  const style = DIRECTION[drift.direction];
-  const signed = formatSignedPercent(drift.percent);
-  const interp = drift.interpretation ? ` \u2014 ${drift.interpretation}` : "";
-  const badge = buildBadge(signed, style.badgeColor);
-  return [
-    `> [!${style.alert}]`,
-    `> **Drift ${style.arrow} ${signed}**${interp} &nbsp;\xB7&nbsp; confidence \`${drift.confidence}\``,
-    `>`,
-    `> ![Drift score](${badge})`
-  ].join("\n");
+function sinceLastReview(prior, current) {
+  if (!prior?.axes || !current.axes) return null;
+  const order = ["money", "customer", "runtime", "runtime_ux"];
+  const parts = [];
+  for (const name of order) {
+    const before = prior.axes[name];
+    const now = current.axes[name];
+    if (typeof before !== "number" || typeof now !== "number") continue;
+    const delta = round2(now - before);
+    if (delta === 0) continue;
+    const arrow = delta > 0 ? "\u25B2" : "\u25BC";
+    parts.push(`${AXIS_GLYPH[name]} ${arrow} ${signedNumber(delta)}pp`);
+  }
+  return parts.length ? parts.join(" \xB7 ") : null;
 }
-function formatSignedPercent(n) {
-  const sign = n > 0 ? "+" : n < 0 ? "" : "";
-  return `${sign}${Math.round(n * 10) / 10}%`;
-}
-function buildBadge(signedPercent, color) {
-  const value = encodeURIComponent(signedPercent);
-  return `https://img.shields.io/badge/drift-${value}-${color}?style=flat-square`;
+function round2(n) {
+  return Math.round(n * 10) / 10;
 }
 
-// src/render/sections/architecture.ts
-function renderArchitecture(arch2) {
-  if (!arch2) return null;
-  const lines = ["## \u{1F3D7} Architecture flow", ""];
-  if (arch2.combined_mermaid) {
-    lines.push("```mermaid", arch2.combined_mermaid, "```");
-  } else {
-    if (arch2.before_mermaid) {
-      lines.push("### Before", "```mermaid", arch2.before_mermaid, "```");
-    }
-    if (arch2.after_mermaid) {
-      if (arch2.before_mermaid) lines.push("");
-      lines.push("### After", "```mermaid", arch2.after_mermaid, "```");
-    }
-  }
-  if (arch2.data_structures && arch2.data_structures.length) {
-    lines.push("", "### Data structures involved", "");
-    lines.push("| Name | Kind | Scope | Notes |");
-    lines.push("|---|:---:|---|---|");
-    for (const d of arch2.data_structures) {
-      lines.push(
-        `| \`${d.name}\`${d.version ? ` ${d.version}` : ""} | ${d.kind} | ${d.scope ?? "\u2014"} | ${d.description ?? ""} |`
-      );
-    }
-  }
-  if (arch2.reference_link?.url) {
-    lines.push(
-      "",
-      `\u21B3 Reference: [${arch2.reference_link.title ?? arch2.reference_link.url}](${arch2.reference_link.url})`
-    );
-  }
-  if (lines.length === 2) return null;
-  return lines.join("\n");
+// src/render/lib/facts.ts
+function extractFacts(report) {
+  const ps = report.pr_scope;
+  const review = report.pr_review;
+  const ext = report.pr_review_ext;
+  const axes = review?.value_card?.axes ?? [];
+  const regressedAxes = axes.filter((a) => a.direction === "down");
+  const improvedAxes = axes.filter((a) => a.direction === "up");
+  const topImprovement = improvedAxes.length > 0 ? improvedAxes.reduce((best, a) => a.delta_percent > best.delta_percent ? a : best) : null;
+  const moneyInputs = axes.find((a) => a.name === "money")?.inputs;
+  const locAdded = numInput(moneyInputs, "loc_added");
+  const locDeleted = numInput(moneyInputs, "loc_deleted");
+  const netLoc = locAdded === null && locDeleted === null ? null : (locAdded ?? 0) - (locDeleted ?? 0);
+  const counts = review?.counts;
+  const passing = (review?.code_suggestions ?? []).filter(passesQualityBar);
+  const risks = review?.visual_summary?.risks?.items ?? [];
+  return {
+    changedFiles: ps.changed_files.length,
+    affectedRoots: ps.affected_roots.length,
+    unreachable: ps.unreachable_changes.length,
+    overallPercent: review?.overall_drift?.percent ?? null,
+    overallDirection: review?.overall_drift?.direction ?? null,
+    axes,
+    regressedAxes,
+    improvedAxes,
+    topImprovement,
+    locAdded,
+    locDeleted,
+    netLoc,
+    newTestFiles: counts?.new_test_files ? counts.new_test_files.value : counts ? 0 : null,
+    features: counts?.features?.value ?? 0,
+    bugFixes: counts?.bug_fixes?.value ?? 0,
+    issuesResolved: counts?.issues_resolved?.value ?? 0,
+    passing,
+    correctness: passing.filter((s) => s.category === "B"),
+    deadCode: passing.filter((s) => s.category === "A" && isDeadCode(s)),
+    risksToAddress: risks.filter((r) => r.quadrant === "act_before_merge").length,
+    totalRisks: risks.length,
+    uncoveredRoots: ext?.tests_in_graph?.uncovered_roots ?? [],
+    reliabilityGaps: ext?.nfr_edge_cases?.reliability_gaps ?? [],
+    highComplexity: ext?.tech_debt?.high_complexity?.length ?? 0,
+    longFunctions: ext?.tech_debt?.long_functions?.length ?? 0,
+    duplicationClusters: ext?.duplication?.clusters?.length ?? 0
+  };
+}
+function isDeadCode(s) {
+  const hay = `${s.kind ?? ""} ${s.category_label ?? ""}`.toLowerCase();
+  return hay.includes("dead");
+}
+function numInput(inputs, key) {
+  if (!inputs || !(key in inputs)) return null;
+  const v = inputs[key];
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
 }
 
-// src/render/sections/business_logic.ts
-function renderBusinessLogic(bl) {
-  if (!bl || !bl.mermaid && !bl.summary) return null;
-  const lines = ["## \u{1F9ED} Business logic", ""];
-  if (bl.summary) {
-    lines.push(`> **Summary \u2014** ${bl.summary}`, "");
+// src/render/context.ts
+function repoSlug(ctx) {
+  return ctx?.owner && ctx?.repo ? `${ctx.owner}/${ctx.repo}` : null;
+}
+function canLink(ctx) {
+  return !!(ctx?.owner && ctx?.repo && ctx?.sha);
+}
+function permalinkUrl(ctx, path, line, endLine) {
+  if (!canLink(ctx)) return null;
+  const base = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.sha}/${encodePath(path)}`;
+  if (typeof line === "number" && typeof endLine === "number" && endLine !== line) {
+    return `${base}#L${line}-L${endLine}`;
   }
-  if (bl.mermaid) {
-    lines.push("```mermaid", bl.mermaid, "```");
-  }
-  return lines.join("\n");
+  if (typeof line === "number") return `${base}#L${line}`;
+  return base;
+}
+function fileLink(ctx, path, line, label) {
+  const text = label ?? (typeof line === "number" ? `${basename(path)}:${line}` : path);
+  const url = permalinkUrl(ctx, path, line);
+  return url ? `[\`${text}\`](${url})` : `\`${text}\``;
+}
+function symbolLink(ctx, symbol, path, line) {
+  const url = permalinkUrl(ctx, path, line);
+  return url ? `[\`${symbol}\`](${url})` : `\`${symbol}\``;
+}
+function snippetPermalink(ctx, path, startLine, endLine) {
+  return permalinkUrl(ctx, path, startLine, endLine);
+}
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
-// src/render/sections/affected_roots.ts
-var MAX_ROOTS_SHOWN = 10;
-var MAX_UNREACHABLE_SHOWN = 10;
-function renderAffectedRoots(affectedRoots, unreachable) {
-  if (affectedRoots.length === 0 && unreachable.length === 0) {
-    return "## \u{1F3AF} Affected entry points\n\n_No entry points reached by this PR. The change is internal or unreachable from any root._";
+// src/render/lib/severity.ts
+var COLOR = {
+  green: "2ea043",
+  // improvement / ship
+  amber: "d29922",
+  // mixed / monitor
+  red: "d1242f",
+  // regression / act
+  blue: "58a6ff",
+  // neutral-informational
+  grey: "8b949e"
+  // muted / flat
+};
+function directionEmoji(direction) {
+  return direction === "up" ? "\u{1F7E2}" : direction === "down" ? "\u{1F534}" : "\u26AA";
+}
+function directionWord(direction) {
+  return direction === "up" ? "improved" : direction === "down" ? "regressed" : "no change";
+}
+function compositeStatus(axes) {
+  const ups = (axes ?? []).filter((a) => a.direction === "up").length;
+  const downs = (axes ?? []).filter((a) => a.direction === "down").length;
+  if (ups > 0 && downs > 0) return { emoji: "\u{1F7E1}", label: "mixed", color: COLOR.amber, mixed: true };
+  if (downs > 0) return { emoji: "\u{1F534}", label: "regressed", color: COLOR.red, mixed: false };
+  if (ups > 0) return { emoji: "\u{1F7E2}", label: "improved", color: COLOR.green, mixed: false };
+  return { emoji: "\u26AA", label: "no change", color: COLOR.grey, mixed: false };
+}
+function maxAbsDelta(axes) {
+  return (axes ?? []).reduce((m, a) => Math.max(m, Math.abs(a.delta_percent)), 0);
+}
+
+// src/render/lib/checklist.ts
+var MAX_DEAD_EXPORTS_LINKED = 5;
+var MAX_CORRECTNESS_LINES = 3;
+function buildChecklist(facts, ctx) {
+  const items = [];
+  for (const s of facts.correctness.slice(0, MAX_CORRECTNESS_LINES)) {
+    const loc = fileLink(ctx, s.file, s.line);
+    const why = correctnessTag(s.category_label);
+    items.push(`Fix the product-correctness issue at ${loc}${why ? ` (${why})` : ""}`);
   }
-  const lines = ["## \u{1F3AF} Affected entry points", ""];
-  if (affectedRoots.length) {
-    lines.push(
-      `**${affectedRoots.length}** entry point${affectedRoots.length === 1 ? "" : "s"} reach changes from this PR.`,
-      ""
-    );
-    const shown = affectedRoots.slice(0, MAX_ROOTS_SHOWN);
-    for (const r of shown) lines.push(`- \`${r}\``);
-    if (affectedRoots.length > shown.length) {
-      lines.push(`- _\u2026+${affectedRoots.length - shown.length} more_`);
+  if (facts.correctness.length > MAX_CORRECTNESS_LINES) {
+    const extra = facts.correctness.length - MAX_CORRECTNESS_LINES;
+    items.push(`Resolve ${extra} more product-correctness ${plural(extra, "issue")} (see Suggestions)`);
+  }
+  if (facts.newTestFiles === 0) {
+    if (facts.locAdded !== null && facts.locAdded > 0) {
+      items.push(`Add tests \u2014 **${signedInt(facts.locAdded)}** LOC landed with **0** new test files`);
+    } else if (facts.changedFiles > 0) {
+      items.push("Add tests \u2014 this PR shipped **0** new test files");
     }
   }
-  if (unreachable.length) {
-    lines.push("", `### Unreachable changes (${unreachable.length})`, "");
-    lines.push(
-      "These files changed but no entry point reaches them \u2014 they're likely dead code, configuration, or tests.",
-      ""
-    );
-    for (const f of unreachable.slice(0, MAX_UNREACHABLE_SHOWN)) lines.push(`- \`${f}\``);
-    if (unreachable.length > MAX_UNREACHABLE_SHOWN) {
-      lines.push(`- _\u2026+${unreachable.length - MAX_UNREACHABLE_SHOWN} more_`);
-    }
+  if (facts.regressedAxes.length > 0) {
+    const list = facts.regressedAxes.map((a) => `**${a.label} ${signedPercent(a.delta_percent)}**`).join(" and ");
+    items.push(`Triage the ${list} ${plural(facts.regressedAxes.length, "regression")}, or confirm they're acceptable`);
   }
-  return lines.join("\n");
+  if (facts.deadCode.length > 0) {
+    const links = facts.deadCode.slice(0, MAX_DEAD_EXPORTS_LINKED).map((s) => symbolLink(ctx, deadSymbol(s), s.file, s.line)).join(", ");
+    const n = facts.deadCode.length;
+    const more = n > MAX_DEAD_EXPORTS_LINKED ? `, *\u2026+${n - MAX_DEAD_EXPORTS_LINKED} more*` : "";
+    items.push(`Remove or wire up ${n} dead ${plural(n, "export")}: ${links}${more}`);
+  }
+  const gaps = facts.reliabilityGaps.length || facts.uncoveredRoots.length;
+  if (gaps > 0) {
+    items.push(`Decide on retry / timeout / fallback for the ${int(gaps)} uncovered entry ${plural(gaps, "point")}`);
+  }
+  return items;
+}
+function correctnessTag(label) {
+  if (!label) return null;
+  const idx = label.indexOf("\u2014");
+  const suffix = (idx >= 0 ? label.slice(idx + 1) : label).trim();
+  if (!suffix || /product correctness/i.test(suffix)) return null;
+  return suffix.charAt(0).toLowerCase() + suffix.slice(1);
+}
+function deadSymbol(s) {
+  const fn = s.function;
+  return fn && fn !== "<module>" && !fn.startsWith("<") ? fn : basename(s.file);
+}
+
+// src/render/lib/bars.ts
+var EIGHTHS = ["", "\u258F", "\u258E", "\u258D", "\u258C", "\u258B", "\u258A", "\u2589"];
+var FULL = "\u2588";
+var EMPTY = "\u2591";
+function magnitudeBar(value, max, cells = 10) {
+  if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(value)) {
+    return EMPTY.repeat(cells);
+  }
+  const frac = clamp(Math.abs(value) / max, 0, 1);
+  const eighths = Math.round(frac * cells * 8);
+  const full = Math.floor(eighths / 8);
+  const rem = eighths % 8;
+  const head = FULL.repeat(full) + EIGHTHS[rem];
+  const used = full + (rem > 0 ? 1 : 0);
+  return head + EMPTY.repeat(Math.max(0, cells - used));
+}
+function progressBar(done, total, cells = 10) {
+  if (total <= 0) return EMPTY.repeat(cells);
+  const filled = clamp(Math.round(done / total * cells), 0, cells);
+  return FULL.repeat(filled) + EMPTY.repeat(cells - filled);
+}
+
+// src/render/sections/header.ts
+function renderHeader(report, ctx) {
+  const facts = extractFacts(report);
+  const composite = compositeStatus(facts.axes);
+  const verdict = decideVerdict(facts, composite);
+  const blocks = [
+    titleLine(facts, ctx),
+    subLine(ctx),
+    calloutBlock(verdict, facts, composite),
+    badgeRow(facts, verdict)
+  ];
+  const checklist = buildChecklist(facts, ctx);
+  blocks.push(checklistBlock(checklist));
+  return blocks.filter(Boolean).join("\n\n");
+}
+var TITLE_MAX_CHARS = 200;
+function sanitizeTitle(raw) {
+  let s = raw.replace(/[\r\n\u0085\u2028\u2029]+/g, " ").replace(/`/g, "'").replace(/[\x00-\x1F\x7F]/g, " ").replace(/\s+/g, " ").trim();
+  if ([...s].length > TITLE_MAX_CHARS) {
+    s = [...s].slice(0, TITLE_MAX_CHARS - 1).join("") + "\u2026";
+  }
+  return s;
+}
+function titleLine(facts, ctx) {
+  const arrow = facts.overallDirection === "up" ? "\u25B2 " : facts.overallDirection === "down" ? "\u25BC " : facts.overallDirection === "neutral" ? "\u2014 " : "";
+  const raw = ctx?.prTitle?.trim();
+  const title = raw ? sanitizeTitle(raw) : "";
+  const suffix = title ? ` \u2014 \`${title}\`` : "";
+  return `## ${arrow}Drift review${suffix}`;
+}
+function subLine(ctx) {
+  const slug = repoSlug(ctx);
+  const repo = slug ? `\u{1F4CD} [\`${slug}\`](https://github.com/${ctx.owner}/${ctx.repo}) &nbsp;\xB7&nbsp; ` : "";
+  return `<sub>${repo}sticky review comment \u2014 re-rendered on every push &nbsp;\xB7&nbsp; advisory check</sub>`;
+}
+function decideVerdict(facts, composite) {
+  const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
+  if (needsAttention) {
+    return {
+      alert: "WARNING",
+      headline: "**Recommend addressing before merge**",
+      statusMessage: "address before merge",
+      statusColor: COLOR.amber
+    };
+  }
+  if (facts.overallDirection === "up") {
+    return {
+      alert: "TIP",
+      headline: "**Looks good** \u2014 advisory review found nothing to gate on",
+      statusMessage: "looks good",
+      statusColor: COLOR.green
+    };
+  }
+  return {
+    alert: "NOTE",
+    headline: "**Advisory review**",
+    statusMessage: "advisory",
+    statusColor: COLOR.blue
+  };
+}
+function calloutBlock(verdict, facts, composite) {
+  const body = [`${verdict.headline} &nbsp;\xB7&nbsp; advisory, does not fail the check.`, ...narrative(facts, composite)];
+  return [`> [!${verdict.alert}]`, ...body.map((l) => `> ${l}`)].join("\n");
+}
+function narrative(facts, composite) {
+  const lines = [];
+  if (facts.overallPercent !== null) {
+    let lead = `Overall drift **${signedPercent(facts.overallPercent)}**`;
+    if (composite.mixed && facts.topImprovement) {
+      lead += ` is led by ${facts.topImprovement.label} (**${signedPercent(facts.topImprovement.delta_percent)}**)`;
+    } else if (facts.overallDirection === "up") {
+      lead += " \u2014 a net improvement";
+    } else if (facts.overallDirection === "down") {
+      lead += " \u2014 a net regression";
+    }
+    lines.push(`${lead}.`);
+  }
+  const subs = [];
+  if (facts.regressedAxes.length > 0) {
+    const list = facts.regressedAxes.map((a) => `**${a.label} ${signedPercent(a.delta_percent)}**`).join(" and ");
+    subs.push(`${list} regressed`);
+  }
+  if (facts.locAdded !== null && facts.locAdded > 0 && facts.newTestFiles === 0) {
+    subs.push(`**${signedInt(facts.locAdded)} LOC** shipped with **0** tests`);
+  }
+  if (facts.correctness.length > 0) {
+    const n = facts.correctness.length;
+    subs.push(`**${n} product-correctness ${plural(n, "issue")}** flagged`);
+  }
+  if (subs.length > 0) lines.push(`Underneath: ${joinClauses(subs)}.`);
+  if (lines.length === 0) {
+    lines.push(
+      `${int(facts.changedFiles)} changed ${plural(facts.changedFiles, "file")}, ${int(facts.affectedRoots)} entry ${plural(facts.affectedRoots, "point")} reached.`
+    );
+  }
+  return lines;
+}
+function badgeRow(facts, verdict) {
+  const badges = [];
+  badges.push(badge("Review status", "review", verdict.statusMessage, verdict.statusColor));
+  if (facts.overallPercent !== null) {
+    const color = facts.overallDirection === "up" ? COLOR.green : facts.overallDirection === "down" ? COLOR.red : COLOR.grey;
+    badges.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, "drift", signedPercent(facts.overallPercent), color));
+  }
+  badges.push(badge(`Files ${facts.changedFiles}`, "files", int(facts.changedFiles), COLOR.blue));
+  if (facts.netLoc !== null) {
+    badges.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, "net LOC", signedInt(facts.netLoc), COLOR.grey));
+  }
+  badges.push(badge(`Suggestions ${facts.passing.length}`, "suggestions", int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey));
+  if (facts.totalRisks > 0) {
+    const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
+    badges.push(badge(`Risks: ${facts.risksToAddress} to address`, "risks", `${facts.risksToAddress} to address`, color));
+  }
+  if (facts.newTestFiles !== null) {
+    const color = facts.newTestFiles > 0 ? COLOR.green : COLOR.red;
+    badges.push(badge(`New tests: ${facts.newTestFiles}`, "new tests", int(facts.newTestFiles), color));
+  }
+  return badges.join(" &nbsp;");
+}
+function badge(alt, label, message, color) {
+  return `![${alt}](https://img.shields.io/badge/${shields(label)}-${shields(message)}-${color}?style=flat-square)`;
+}
+function shields(s) {
+  return encodeURIComponent(s.replace(/_/g, "__").replace(/-/g, "--").replace(/ /g, "_"));
+}
+function checklistBlock(items) {
+  if (items.length === 0) {
+    return ["### \u2705 Before you merge", "", "_Nothing blocking \u2014 Drift found no gating issues. Advisory review only._"].join("\n");
+  }
+  const boxes = items.map((t) => `- [ ] ${t}`);
+  const readiness = `> **Merge readiness** &nbsp; \`${progressBar(0, items.length)}\` &nbsp; **0 / ${items.length}** \u2014 GitHub tallies the boxes above as you check them off.`;
+  return ["### \u2705 Before you merge", "", ...boxes, "", readiness].join("\n");
+}
+function joinClauses(parts) {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
 }
 
 // src/render/sections/value_card.ts
-var DIRECTION_EMOJI = {
-  up: "\u{1F7E2} \u25B2",
-  down: "\u{1F534} \u25BC",
-  neutral: "\u2014 \u2014"
+var AXIS_SHORT = {
+  money: "money",
+  customer: "customer",
+  runtime: "runtime",
+  runtime_ux: "runtime UX"
 };
-function renderValueCard(counts, card) {
-  if (!counts && !card) return null;
+function renderValueCard(input) {
+  const { counts, card } = input;
+  const axes = card?.axes ?? [];
+  if (axes.length === 0 && !counts) return null;
   const lines = ["## \u{1F4CA} Value card", ""];
-  if (counts) {
-    const chips = [];
-    if (counts.features) chips.push(formatChip("\u2728", counts.features.value, counts.features.label, counts.features.detail));
-    if (counts.bug_fixes) chips.push(formatChip("\u{1F41B}", counts.bug_fixes.value, counts.bug_fixes.label, counts.bug_fixes.detail));
-    if (counts.issues_resolved) chips.push(formatChip("\u{1F4CB}", counts.issues_resolved.value, counts.issues_resolved.label, counts.issues_resolved.detail));
-    if (counts.new_test_files) chips.push(formatChip("\u{1F9EA}", counts.new_test_files.value, counts.new_test_files.label, counts.new_test_files.detail));
-    if (chips.length) {
-      lines.push(chips.join(" &nbsp;\xB7&nbsp; "), "");
-    }
-  }
-  if (card?.axes?.length) {
-    lines.push("| Axis | \u0394% | Direction | Confidence |");
-    lines.push("|---|---:|:---:|:---:|");
-    for (const a of card.axes) {
-      lines.push(
-        `| ${a.label} | ${formatPercent(a.delta_percent)} | ${DIRECTION_EMOJI[a.direction]} | ${a.confidence} |`
-      );
-    }
-    lines.push("");
-  }
-  if (card?.bars_mermaid) {
-    lines.push("```mermaid", card.bars_mermaid, "```", "");
+  if (axes.length > 0) {
+    lines.push(dashboardTable(axes, input.overallPercent), "");
+    lines.push(barsCaption(axes), "");
+    lines.push(sinceLastReviewLine(input.priorState ?? null, input.currentState), "");
   }
   if (card?.bottom_line) {
     const text = card.bottom_line.replace(/^\s*Bottom\s+line\s*[—-]\s*/i, "");
-    lines.push(`> **Bottom line \u2014** ${text}`);
+    lines.push(`> **Bottom line \u2014** ${text}`, "");
   }
-  if (card?.axes?.length) {
-    const details = renderAxisDetails(card.axes);
-    if (details) {
-      lines.push("", details);
-    }
+  const highlights = highlightsLine(counts);
+  if (highlights) lines.push(highlights, "");
+  if (axes.length > 0) {
+    lines.push(howComputed(axes));
   }
-  return lines.join("\n");
+  if (card?.bars_mermaid) {
+    lines.push(
+      "",
+      "<details>",
+      "<summary>\u{1F4C8} Bar-chart view</summary>",
+      "",
+      "```mermaid",
+      card.bars_mermaid,
+      "```",
+      "",
+      "</details>"
+    );
+  }
+  return lines.join("\n").trimEnd();
 }
-function formatChip(emoji, value, label, detail) {
-  const trail = detail ? ` <sub>(${escapeHtml(detail)})</sub>` : "";
-  return `${emoji} **${value}** ${label}${trail}`;
-}
-function renderAxisDetails(axes) {
-  const blocks = [];
-  for (const a of axes) {
-    const parts = [];
-    parts.push(`#### ${a.label} \u2014 \`${formatPercent(a.delta_percent)}\` \xB7 confidence \`${a.confidence}\``);
-    if (a.subtitle) parts.push(`*${a.subtitle}*`);
-    if (a.kv && a.kv.length) {
-      const kvLines = a.kv.map((kv) => `- ${kv.label}: \`${kv.value}\``);
-      parts.push(kvLines.join("\n"));
-    }
-    if (a.formula) parts.push(`**Formula:** ${a.formula}`);
-    if (a.source) {
-      const linked = a.source_link ? `[${a.source}](${a.source_link})` : a.source;
-      parts.push(`**Source:** ${linked}`);
-    }
-    if (a.inputs && Object.keys(a.inputs).length) {
-      const inputStr = Object.entries(a.inputs).map(([k, v]) => `\`${k}=${formatInput(v)}\``).join(" \xB7 ");
-      parts.push(`**Inputs:** ${inputStr}`);
-    }
-    if (a.additional_sources && a.additional_sources.length) {
-      const refs = a.additional_sources.map((r) => `[${r.title ?? r.url}](${r.url})`).join(" \xB7 ");
-      parts.push(`**More:** ${refs}`);
-    }
-    blocks.push(parts.join("\n\n"));
-  }
-  if (blocks.length === 0) return null;
+function dashboardTable(axes, overallPercent) {
+  const max = maxAbsDelta(axes);
+  const composite = compositeStatus(axes);
+  const compositePct = typeof overallPercent === "number" ? overallPercent : mean(axes.map((a) => a.delta_percent));
+  const width = Math.round(100 / axes.length);
+  const headerCells = axes.map((a) => `<th align="center" width="${width}%" scope="col">${escapeHtml(a.label)}</th>`);
+  const valueCells = axes.map(
+    (a) => `<td align="center"><strong>${directionEmoji(a.direction)} ${signedPercent(a.delta_percent)}</strong><br><sub>${directionWord(a.direction)}</sub></td>`
+  );
+  const barCells = axes.map((a) => `<td align="center"><code>${magnitudeBar(a.delta_percent, max)}</code></td>`);
+  const confCells = axes.map((a) => `<td align="center"><sub>confidence&nbsp;\xB7&nbsp;<code>${a.confidence}</code></sub></td>`);
   return [
-    `<details><summary>How these numbers were computed (${axes.length} ax${axes.length === 1 ? "is" : "es"})</summary>`,
+    "<table>",
+    "<caption>PR value drift \u2014 composite &amp; per-axis (\u0394% vs. base)</caption>",
+    "<tr>",
+    `<td colspan="${axes.length}" align="center"><strong>Composite&nbsp; ${composite.emoji} ${signedPercent(compositePct)}</strong> &nbsp;<code>${magnitudeBar(compositePct, max)}</code>&nbsp; <sub>${compositeNote(axes, composite.mixed, composite.label)}</sub></td>`,
+    "</tr>",
+    `<tr>${headerCells.join("")}</tr>`,
+    `<tr>${valueCells.join("")}</tr>`,
+    `<tr>${barCells.join("")}</tr>`,
+    `<tr>${confCells.join("")}</tr>`,
+    "</table>"
+  ].join("\n");
+}
+function compositeNote(axes, mixed, label) {
+  const base = `mean of the ${axes.length === 1 ? "axis" : `${axes.length} axes`}`;
+  if (mixed) {
+    const up = axes.filter((a) => a.direction === "up").reduce(pickMaxAbs, void 0);
+    const down = axes.filter((a) => a.direction === "down").reduce(pickMaxAbs, void 0);
+    if (up && down) {
+      return `${base} \u2014 <strong>mixed</strong>: a ${signedPercent(up.delta_percent)} ${AXIS_SHORT[up.name]} gain masks a ${signedPercent(down.delta_percent)} ${AXIS_SHORT[down.name]} regression`;
+    }
+    return `${base} \u2014 <strong>mixed</strong>`;
+  }
+  return `${base} \u2014 <strong>${label}</strong>`;
+}
+function barsCaption(axes) {
+  const top = axes.reduce(pickMaxAbs, void 0);
+  const ref = top ? ` (${AXIS_SHORT[top.name]}, ${magnitudePercent(top.delta_percent)})` : "";
+  return `<sub>Bars show |\u0394| relative to the largest axis${ref}, \u215B-block precision. \u{1F534} regression \xB7 \u{1F7E2} improvement \xB7 \u26AA flat.</sub>`;
+}
+function sinceLastReviewLine(prior, current) {
+  const deltas = sinceLastReview(prior, current);
+  if (deltas) {
+    return `> \u{1F501} **Since last review** &nbsp; ${deltas} <sub>(percentage points vs. the previous push)</sub>`;
+  }
+  return "> \u{1F501} **Since last review** &nbsp; _First run on this PR \u2014 no prior snapshot to diff. Each later push re-renders this sticky comment and fills this line with per-axis deltas (e.g. \u{1F4B0} \u25B2 +2.1pp \xB7 \u2699\uFE0F \u25BC \u22121.0pp)._";
+}
+function highlightsLine(counts) {
+  if (!counts) return null;
+  const f = counts.features?.value ?? 0;
+  const b = counts.bug_fixes?.value ?? 0;
+  const i = counts.issues_resolved?.value ?? 0;
+  const t = counts.new_test_files?.value ?? 0;
+  return `**Highlights:** \u2728 **${f}** new features &nbsp;\xB7&nbsp; \u{1F41B} **${b}** bug fixes &nbsp;\xB7&nbsp; \u{1F4CB} **${i}** issues resolved &nbsp;\xB7&nbsp; \u{1F9EA} **${t}** new test files`;
+}
+function howComputed(axes) {
+  const inner = axes.map(renderAxisDetail).join("\n\n");
+  return [
+    "<details>",
+    "<summary>\u{1F4D0} How each axis was computed \u2014 expand an axis</summary>",
     "",
-    blocks.join("\n\n---\n\n"),
+    inner,
     "",
     "</details>"
   ].join("\n");
 }
-function formatPercent(n) {
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${Math.round(n * 10) / 10}%`;
+function renderAxisDetail(a) {
+  const parts = [
+    "<details>",
+    `<summary>${escapeHtml(a.label)} \xB7 <code>${signedPercent(a.delta_percent)}</code> \xB7 confidence <code>${a.confidence}</code></summary>`,
+    ""
+  ];
+  if (a.subtitle) parts.push(`*${a.subtitle}*`, "");
+  if (a.formula) parts.push(fencedBlock(a.formula), "");
+  if (a.kv && a.kv.length) {
+    parts.push(a.kv.map((kv) => `- ${kv.label}: **${kv.value}**`).join("\n"), "");
+  }
+  if (a.source) {
+    const linked = a.source_link ? `[${a.source}](${a.source_link})` : a.source;
+    parts.push(`**Source:** ${linked}`, "");
+  }
+  if (a.inputs && Object.keys(a.inputs).length) {
+    const inputStr = Object.entries(a.inputs).map(([k, v]) => `\`${k}=${formatInput(v)}\``).join(" \xB7 ");
+    parts.push(`**Key inputs:** ${inputStr}`, "");
+  }
+  if (a.additional_sources && a.additional_sources.length) {
+    const refs = a.additional_sources.map((r) => `[${r.title ?? r.url}](${r.url})`).join(" \xB7 ");
+    parts.push(`**More:** ${refs}`, "");
+  }
+  parts.push("</details>");
+  return parts.join("\n");
+}
+function pickMaxAbs(best, a) {
+  return !best || Math.abs(a.delta_percent) > Math.abs(best.delta_percent) ? a : best;
+}
+function mean(ns) {
+  return ns.length ? ns.reduce((s, n) => s + n, 0) / ns.length : 0;
 }
 function formatInput(v) {
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
   return String(v);
 }
-function escapeHtml(s) {
+
+// src/render/sections/suggestions.ts
+var CATEGORY = {
+  A: { badge: "\u{1F150}", name: "Optimization" },
+  B: { badge: "\u{1F151}", name: "Product correctness" },
+  C: { badge: "\u{1F152}", name: "Framework misuse" }
+};
+var MAX_SHOWN = 20;
+function renderSuggestions(suggestions, ctx) {
+  const passing = (suggestions ?? []).filter(passesQualityBar);
+  if (passing.length === 0) return null;
+  const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
+  const correctness = sorted.filter((s) => s.category === "B").length;
+  const lines = [`## \u26A0\uFE0F Suggestions (${sorted.length})`, ""];
+  if (correctness > 0) {
+    lines.push(
+      "> [!CAUTION]",
+      `> **${correctness} product-correctness ${plural(correctness, "issue")}** ${correctness === 1 ? "was" : "were"} flagged. ${correctness === 1 ? "It's" : "They're"} surfaced as ${plural(correctness, "a warning", "warnings")} and ${correctness === 1 ? "does" : "do"} **not** fail the check \u2014 but ${correctness === 1 ? "it" : "they"} should be resolved before merge.`,
+      ""
+    );
+  }
+  lines.push(
+    "<sub>**Priority reflects impact, not certainty** \u2014 a 100%-confident dead-code removal is still low-priority cleanup; a product-correctness finding matters more.</sub>",
+    ""
+  );
+  lines.push("| Priority | Finding | Location | Confidence |", "|:--:|---|---|---:|");
+  for (const s of sorted) {
+    const p = priority(s);
+    lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
+  }
+  lines.push("");
+  for (const s of sorted.slice(0, MAX_SHOWN)) lines.push(renderDetail(s, ctx), "");
+  if (sorted.length > MAX_SHOWN) {
+    lines.push(`_\u2026+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, "suggestion")} not shown._`);
+  }
+  return lines.join("\n").trimEnd();
+}
+function priority(s) {
+  const sev = (s.severity ?? "").toLowerCase();
+  if (sev === "critical" || sev === "high") return { emoji: "\u{1F534}", label: "High", rank: 0 };
+  if (s.category === "B" || s.category === "C") return { emoji: "\u{1F7E1}", label: "Medium", rank: 1 };
+  return { emoji: "\u26AA", label: "Low", rank: 2 };
+}
+function findingLabel(s) {
+  const cat = CATEGORY[s.category];
+  const suffix = labelSuffix(s.category_label);
+  return suffix ? `${cat.badge} ${suffix}` : `${cat.badge} ${cat.name}`;
+}
+function labelSuffix(label) {
+  if (!label) return null;
+  const idx = label.indexOf("\u2014");
+  const suffix = (idx >= 0 ? label.slice(idx + 1) : "").trim();
+  return suffix || null;
+}
+function renderDetail(s, ctx) {
+  const cat = CATEGORY[s.category];
+  const suffix = labelSuffix(s.category_label);
+  const title = suffix && suffix.toLowerCase() !== cat.name.toLowerCase() ? `${cat.name} \xB7 ${suffix.toLowerCase()}` : cat.name;
+  const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
+  const pct = confidencePercent(s.confidence);
+  const out = [
+    "<details>",
+    `<summary>${cat.badge} <strong>${title}</strong> \xB7 <code>${loc}</code> \xB7 ${pct}</summary>`,
+    "",
+    s.why_it_matters,
+    ""
+  ];
+  out.push(...codeContext(s, ctx));
+  if (s.remediation_hint && !s.diff?.after_lines?.length) {
+    out.push(`**Fix:** ${s.remediation_hint}`, "");
+  }
+  const ref = s.references?.[0];
+  if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, "");
+  out.push("</details>");
+  return out.join("\n");
+}
+function codeContext(s, ctx) {
+  const before = s.diff?.before_lines ?? [];
+  const after = s.diff?.after_lines ?? [];
+  if (after.length > 0) {
+    const body = [
+      ...before.filter((l) => l.kind !== "add").map(prefix),
+      ...after.map((l) => `+ ${l.code}`)
+    ].join("\n");
+    return ["**Suggested fix:**", "", fencedBlock(body, "diff"), ""];
+  }
+  if (before.length > 0) {
+    const range = lineRange(before);
+    const url = range ? snippetPermalink(ctx, s.file, range[0], range[1]) : null;
+    if (url) {
+      return [
+        "**Current code** \u2014 a bare commit-pinned permalink auto-expands into an inline, syntax-highlighted snippet in the PR (shown as a link until then):",
+        "",
+        url,
+        ""
+      ];
+    }
+    return ["**Current code:**", "", fencedBlock(before.map((l) => l.code).join("\n"), s.language ?? ""), ""];
+  }
+  return [];
+}
+function prefix(l) {
+  if (l.kind === "del") return `- ${l.code}`;
+  return `  ${l.code}`;
+}
+function lineRange(lines) {
+  const nums = lines.map((l) => l.line_number).filter((n) => typeof n === "number");
+  if (nums.length === 0) return null;
+  return [Math.min(...nums), Math.max(...nums)];
+}
+function cell(s) {
+  return s.replace(/\|/g, "\\|");
+}
+
+// src/render/sections/risks.ts
+var QUADRANT = {
+  act_before_merge: { emoji: "\u{1F534}", label: "Act before merge", rank: 0 },
+  monitor_closely: { emoji: "\u{1F7E1}", label: "Monitor closely", rank: 1 },
+  document_and_ship: { emoji: "\u{1F535}", label: "Document & ship", rank: 2 },
+  acceptable: { emoji: "\u{1F7E2}", label: "Acceptable", rank: 3 }
+};
+function renderRisks(risks) {
+  const items = risks?.items ?? [];
+  if (items.length === 0 && !risks?.mermaid) return null;
+  const lines = ["## \u{1F6F0} Risks", ""];
+  if (items.length > 0) {
+    const act = items.filter((r) => r.quadrant === "act_before_merge").length;
+    lines.push(intro(act, items.length), "");
+    lines.push("| Risk | Likelihood | Severity | Quadrant |", "|---|---:|---:|---|");
+    for (const r of sortByImpact(items)) {
+      lines.push(`| ${cell2(r.label)} | ${prob(r.likelihood)} | ${prob(r.severity)} | ${quadrant(r)} |`);
+    }
+    lines.push("");
+  }
+  if (risks?.mermaid) {
+    lines.push(
+      "<details>",
+      "<summary>\u{1F5FA} Risk quadrant map (severity \u2191 \xD7 likelihood \u2192)</summary>",
+      "",
+      "```mermaid",
+      risks.mermaid,
+      "```",
+      "",
+      "</details>"
+    );
+  }
+  return lines.join("\n").trimEnd();
+}
+function intro(act, total) {
+  if (act === 0) {
+    return `**0 of ${total}** ${plural(total, "risk")} land in *Act before merge* \u2014 none gate the merge. Lower-impact ${plural(total, "risk")} below:`;
+  }
+  return `**${act} of ${total}** ${plural(total, "risk")} land in *Act before merge*. Highest-priority first:`;
+}
+function sortByImpact(items) {
+  return [...items].sort(
+    (a, b) => rank(a) - rank(b) || b.severity - a.severity || b.likelihood - a.likelihood || a.label.localeCompare(b.label)
+  );
+}
+function rank(r) {
+  return r.quadrant ? QUADRANT[r.quadrant].rank : 99;
+}
+function quadrant(r) {
+  if (!r.quadrant) return "\u2014";
+  const q = QUADRANT[r.quadrant];
+  return `${q.emoji} ${q.label}`;
+}
+function prob(p) {
+  return p.toFixed(2);
+}
+function cell2(s) {
+  return s.replace(/\|/g, "\\|");
+}
+
+// src/render/sections/architecture.ts
+var MAX_REACH_ROWS = 12;
+var MAX_UNREACHABLE_LINKED = 8;
+var MAX_ROOTS_INLINE = 12;
+function renderArchitecture(input) {
+  const { prScope, arch: arch2, business, keyFiles, ctx } = input;
+  const roots = prScope.affected_roots;
+  const unreachable = prScope.unreachable_changes;
+  const dataStructures = arch2?.data_structures ?? [];
+  const keyFileRows = flattenKeyFiles(keyFiles);
+  const nothing = roots.length === 0 && unreachable.length === 0 && dataStructures.length === 0 && keyFileRows.length === 0 && !archMermaid(arch2) && !business?.mermaid;
+  if (nothing) return null;
+  const lines = ["## \u{1F3D7} Architecture & reach", ""];
+  if (roots.length > 0) {
+    const reaches = plural(roots.length, "reaches", "reach");
+    const intro2 = `**${int(roots.length)}** entry ${plural(roots.length, "point")} ${reaches} changes in this PR.`;
+    if (keyFileRows.length > 0) {
+      lines.push(`${intro2} The files most callers depend on:`, "");
+      lines.push("| File | Roots reaching it |", "|---|---:|");
+      for (const row of keyFileRows.slice(0, MAX_REACH_ROWS)) {
+        lines.push(`| ${fileLink(ctx, row.path, void 0, row.path)} | ${row.reach === null ? "\u2014" : int(row.reach)} |`);
+      }
+      lines.push("");
+    } else {
+      lines.push(intro2, "", inlineList(roots, MAX_ROOTS_INLINE), "");
+    }
+  } else {
+    lines.push("No entry point reaches this PR's changes \u2014 the change is internal, config, or unreachable.", "");
+  }
+  if (unreachable.length > 0) {
+    const links = unreachable.slice(0, MAX_UNREACHABLE_LINKED).map((f) => fileLink(ctx, f, void 0, basenameOf(f)));
+    const more = unreachable.length > MAX_UNREACHABLE_LINKED ? `, *\u2026+${unreachable.length - MAX_UNREACHABLE_LINKED} more*` : "";
+    const note = (input.deadCodeCount ?? 0) > 0 ? " (These match the dead-code suggestions above.)" : "";
+    lines.push(
+      `> **${int(unreachable.length)} changed ${plural(unreachable.length, "file")} ${unreachable.length === 1 ? "is" : "are"} unreachable** from any entry point \u2014 likely dead code, config, or tests: ${links.join(", ")}${more}.${note}`,
+      ""
+    );
+  }
+  const details = [];
+  const flow = archMermaid(arch2);
+  if (flow) {
+    details.push(
+      detailsBlock("\u{1F9ED} Architecture flow diagram \u2014 before \u2192 after", [
+        "> Nodes labelled `\u2039lambda@N\u203A` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.",
+        "",
+        "```mermaid",
+        flow,
+        "```",
+        "",
+        "[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)"
+      ])
+    );
+  }
+  if (business?.mermaid) {
+    const inner = [];
+    if (business.summary) inner.push(`> **Summary \u2014** ${business.summary}`, "");
+    inner.push("```mermaid", business.mermaid, "```");
+    details.push(detailsBlock("\u{1F9E0} Business-logic reach diagram", inner));
+  }
+  if (dataStructures.length > 0) {
+    details.push(detailsBlock(`\u{1F4E6} Data structures touched (${dataStructures.length})`, dataStructureTable(dataStructures)));
+  }
+  if (keyFiles?.mermaid) {
+    details.push(detailsBlock("\u{1F5C2} Key files \u2014 hot-touch mindmap", ["```mermaid", keyFiles.mermaid, "```"]));
+  }
+  if (details.length > 0) lines.push(details.join("\n\n"));
+  return lines.join("\n").trimEnd();
+}
+function flattenKeyFiles(kf) {
+  const rows = [];
+  for (const g of kf?.groups ?? []) {
+    for (const f of g.files) rows.push({ path: f.path, reach: reachCount(f.why) });
+  }
+  return rows.sort((a, b) => (b.reach ?? -1) - (a.reach ?? -1) || a.path.localeCompare(b.path));
+}
+function reachCount(why) {
+  const m = (why ?? "").match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function dataStructureTable(ds) {
+  const lines = ["| Name | Kind | Language | Methods in scope |", "|---|:--:|---|---:|"];
+  for (const d of ds) {
+    const methods = methodCount(d.description);
+    lines.push(`| \`${escapeHtml(d.name)}\` | ${d.kind} | ${d.scope ?? "\u2014"} | ${methods === null ? "\u2014" : int(methods)} |`);
+  }
+  return lines;
+}
+function methodCount(desc) {
+  const m = (desc ?? "").match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function archMermaid(arch2) {
+  return arch2?.combined_mermaid ?? arch2?.after_mermaid ?? arch2?.before_mermaid ?? null;
+}
+function detailsBlock(summary2, inner) {
+  return ["<details>", `<summary>${summary2}</summary>`, "", ...inner, "", "</details>"].join("\n");
+}
+function basenameOf(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+
+// src/render/sections/ext.ts
+var MAX_DUP = 8;
+var MAX_INLINE = 10;
+function renderExt(ext, ctx) {
+  if (!ext) return null;
+  const inner = [];
+  const clusters = ext.duplication?.clusters ?? [];
+  if (clusters.length > 0) {
+    const out = [`### \u{1F9EC} Duplication (${clusters.length} ${plural(clusters.length, "cluster")})`, ""];
+    for (const c of clusters.slice(0, MAX_DUP)) {
+      const members = c.members.map((m) => `\`${m.name}\` in ${fileLink(ctx, m.file, void 0, basename(m.file))}`).join(" \u2194 ");
+      out.push(`- ${members}`);
+    }
+    if (clusters.length > MAX_DUP) out.push(`- _\u2026+${clusters.length - MAX_DUP} more ${plural(clusters.length - MAX_DUP, "cluster")}_`);
+    inner.push(out.join("\n"));
+  }
+  const uncovered = ext.tests_in_graph?.uncovered_roots ?? [];
+  if (uncovered.length > 0) {
+    inner.push(
+      [`### \u{1F9EA} Uncovered entry points (${uncovered.length})`, "", "No test file reaches these in the call graph:", "", inlineList(uncovered, MAX_INLINE)].join("\n")
+    );
+  }
+  const gaps = ext.nfr_edge_cases?.reliability_gaps ?? [];
+  if (gaps.length > 0) {
+    inner.push(
+      [`### \u{1F6E1}\uFE0F Reliability gaps (${gaps.length})`, "", "These entry points lack retry / timeout / circuit / fallback markers:", "", inlineList(gaps, MAX_INLINE)].join("\n")
+    );
+  }
+  const hi = ext.tech_debt?.high_complexity?.length ?? 0;
+  const long = ext.tech_debt?.long_functions?.length ?? 0;
+  if (hi + long > 0) {
+    const out = ["### \u26A0\uFE0F Tech-debt findings", ""];
+    if (hi > 0) out.push(`- **${hi}** high-complexity ${plural(hi, "function")} (threshold ${ext.tech_debt?.thresholds?.complexity ?? 10})`);
+    if (long > 0) out.push(`- **${long}** long ${plural(long, "function")} (threshold ${ext.tech_debt?.thresholds?.loc ?? 80} LOC)`);
+    inner.push(out.join("\n"));
+  }
+  if (inner.length === 0) return null;
+  return [
+    "## \u{1F9EA} Extended findings",
+    "",
+    "<details>",
+    "<summary>Duplication, uncovered entry points, reliability gaps &amp; tech debt</summary>",
+    "",
+    inner.join("\n\n"),
+    "",
+    "</details>"
+  ].join("\n");
+}
+
+// src/render/sections/legend.ts
+function renderLegend(techDebt) {
+  const cx = techDebt?.thresholds?.complexity ?? 10;
+  const loc = techDebt?.thresholds?.loc ?? 80;
+  const table = [
+    "| Symbol | Meaning |",
+    "|:--:|---|",
+    "| \u{1F534} / \u{1F7E2} / \u26AA | Axis direction \u2014 regression / improvement / no change |",
+    "| `\u2588\u2588\u258B\u2591\u2591` | Magnitude bar \u2014 \\|\u0394\\| relative to the largest axis, \u215B-block precision |",
+    "| \u{1F150} / \u{1F151} / \u{1F152} | Finding class \u2014 \u{1F150} optimization \xB7 \u{1F151} product correctness \xB7 \u{1F152} framework misuse |",
+    "| \u{1F534} / \u{1F7E1} / \u26AA | **Priority** \u2014 high (act now) / medium / low (cleanup); reflects *impact*, **not** confidence |",
+    "| `low` / `medium` / `high` | Model **confidence** in the estimate (independent of priority) |",
+    "| \u{1F534} Act before merge / \u{1F7E2} Acceptable | Risk quadrant \u2014 severity \xD7 likelihood |"
+  ].join("\n");
+  const methodology = `**Methodology.** Each axis's \u0394% is computed against the merge base (formulas in the value card). Thresholds: complexity > ${cx}, long function > ${loc} LOC. A suggestion is surfaced only at confidence \u2265 75% with a supporting reference. Findings are **advisory** and never fail the check. Counts and reach come from a static call-graph; nodes the profiler can't name appear as \`\u2039lambda@N\u203A\`.`;
+  return ["<details>", "<summary>\u{1F516} Legend &amp; methodology</summary>", "", table, "", methodology, "", "</details>"].join("\n");
+}
+
+// src/render/sections/footer.ts
+function escapeAttr(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function escapeText(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderFooter(gen, audioUrl) {
+  const url = audioUrl?.trim();
+  const audio = url ? ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen to the spoken summary</a> (Piper TTS \xB7 WAV)` : "";
+  return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
+}
+
+// src/render/overview.ts
+var STICKY_MARKER = "<!-- drift:sticky-comment -->";
+var BODY_SIZE_BUDGET = 6e4;
+var HARD_CAP = 65e3;
+function renderOverview(report, opts = {}) {
+  const { ctx, priorState, audioUrl } = opts;
+  const review = report.pr_review;
+  const facts = extractFacts(report);
+  const currentState = stateFromReport(report);
+  const header = renderHeader(report, ctx);
+  const valueCard = renderValueCard({
+    counts: review?.counts,
+    card: review?.value_card,
+    overallPercent: review?.overall_drift?.percent,
+    currentState,
+    priorState
+  });
+  const suggestions = renderSuggestions(review?.code_suggestions, ctx);
+  const risks = renderRisks(review?.visual_summary?.risks);
+  const architecture = renderArchitecture({
+    prScope: report.pr_scope,
+    arch: review?.architecture_flow,
+    business: review?.business_logic,
+    keyFiles: review?.visual_summary?.key_files,
+    deadCodeCount: facts.deadCode.length,
+    ctx
+  });
+  const ext = renderExt(report.pr_review_ext, ctx);
+  const hasRich = [valueCard, suggestions, risks].some(Boolean);
+  const legend = hasRich ? renderLegend(report.pr_review_ext?.tech_debt) : null;
+  const major = [header, valueCard, suggestions, risks, architecture].filter((s) => !!s);
+  const tail = [ext, legend].filter((s) => !!s).join("\n\n");
+  const footer = renderFooter(report.generator, audioUrl);
+  let body = `${STICKY_MARKER}
+${major.join("\n\n---\n\n")}`;
+  if (tail) body += `
+
+---
+
+${tail}`;
+  body += `
+
+---
+
+${footer}`;
+  body += `
+
+${serializeState(currentState)}`;
+  return guardSize(body);
+}
+function guardSize(body) {
+  if (body.length <= BODY_SIZE_BUDGET) return body;
+  const innermost = /<details>\s*<summary>([\s\S]*?)<\/summary>(?:(?!<details>)[\s\S])*?<\/details>/;
+  let out = body;
+  for (let i = 0; i < 1e3 && out.length > BODY_SIZE_BUDGET; i++) {
+    const next = out.replace(innermost, (_m, summary2) => `<details><summary>${summary2.trim()} \u2014 _collapsed (size guard)_</summary></details>`);
+    if (next === out) break;
+    out = next;
+  }
+  if (out.length > HARD_CAP) {
+    out = `${out.slice(0, HARD_CAP - 80)}
+
+<sub>\u2026report truncated (size guard).</sub>`;
+  }
+  return out;
+}
+
+// src/github/comment.ts
+async function upsertStickyComment(args) {
+  const { octokit, owner, repo, prNumber, body } = args;
+  const id = args.existingId !== void 0 ? args.existingId : (await findSticky(octokit, owner, repo, prNumber))?.id ?? null;
+  if (id) {
+    await octokit.rest.issues.updateComment({ owner, repo, comment_id: id, body });
+    info(`Updated sticky comment ${id}`);
+  } else {
+    const { data } = await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+    info(`Created sticky comment ${data.id}`);
+  }
+}
+async function findSticky(octokit, owner, repo, prNumber) {
+  const { data } = await octokit.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+  const found = data.find((c) => c.body?.includes(STICKY_MARKER));
+  return found ? { id: found.id, body: found.body ?? "" } : null;
 }
 
 // src/suggestion-fence.ts
@@ -24088,236 +24914,6 @@ function shortenUrl(url) {
   } catch {
     return url;
   }
-}
-
-// src/render/sections/suggestions.ts
-var CATEGORY = {
-  A: { badge: "\u{1F150}", label: "Optimization" },
-  B: { badge: "\u{1F151}", label: "Product correctness" },
-  C: { badge: "\u{1F152}", label: "Framework misuse" }
-};
-var CATEGORY_ORDER = { B: 0, C: 1, A: 2 };
-var MAX_SHOWN = 20;
-function renderSuggestions(suggestions) {
-  const passing = (suggestions ?? []).filter(passesQualityBar);
-  if (passing.length === 0) return null;
-  const sorted = [...passing].sort(
-    (a, b) => CATEGORY_ORDER[a.category] - CATEGORY_ORDER[b.category] || b.confidence - a.confidence
-  );
-  const correctness = sorted.filter((s) => s.category === "B").length;
-  const lines = ["## \u26A0\uFE0F Suggestions & warnings", ""];
-  if (correctness > 0) {
-    lines.push(
-      "> [!WARNING]",
-      `> Drift flagged **${correctness}** product-correctness issue${correctness === 1 ? "" : "s"} in this PR. They are surfaced as warnings below \u2014 they do **not** fail the check.`,
-      ""
-    );
-  }
-  lines.push(
-    `**${sorted.length}** suggestion${sorted.length === 1 ? "" : "s"} cleared the quality bar (confidence \u2265 75%, has a reference).`,
-    ""
-  );
-  for (const s of sorted.slice(0, MAX_SHOWN)) lines.push(renderOne(s));
-  if (sorted.length > MAX_SHOWN) {
-    lines.push("", `_\u2026+${sorted.length - MAX_SHOWN} more suggestion(s) not shown._`);
-  }
-  return lines.join("\n");
-}
-function renderOne(s) {
-  const cat = CATEGORY[s.category];
-  const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
-  const pct = Math.round(s.confidence * 100);
-  const out = [
-    `<details><summary>${cat.badge} <strong>${cat.label}</strong> \xB7 <code>${loc}</code> \xB7 ${pct}% confidence</summary>`,
-    "",
-    s.why_it_matters
-  ];
-  const ref = s.references?.[0];
-  if (ref?.url) {
-    out.push("", `Reference: [${ref.title ?? ref.url}](${ref.url})`);
-  }
-  const after = extractAfterCode(s);
-  if (after) {
-    out.push("", "Suggested change:", "", "```", after, "```");
-  }
-  out.push("", "</details>");
-  return out.join("\n");
-}
-
-// src/render/sections/visual_summary.ts
-var QUADRANT_LABEL = {
-  act_before_merge: "Act before merge",
-  monitor_closely: "Monitor closely",
-  acceptable: "Acceptable",
-  document_and_ship: "Document & ship"
-};
-function renderVisualSummary(vs) {
-  if (!vs || !vs.risks && !vs.key_files) return null;
-  const inner = [];
-  if (vs.risks) {
-    inner.push("### \u26A0\uFE0F Risks \xB7 severity \u2191 \xD7 likelihood \u2192", "");
-    if (vs.risks.mermaid) {
-      inner.push("```mermaid", vs.risks.mermaid, "```", "");
-    }
-    if (vs.risks.items && vs.risks.items.length) {
-      inner.push(renderRiskTable(vs.risks.items), "");
-    }
-  }
-  if (vs.key_files) {
-    inner.push("### \u{1F5C2} Key files \xB7 hot-touch mindmap", "");
-    if (vs.key_files.mermaid) {
-      inner.push("```mermaid", vs.key_files.mermaid, "```", "");
-    }
-    if (vs.key_files.groups && vs.key_files.groups.length) {
-      inner.push(renderKeyFileGroups(vs.key_files.groups));
-    }
-  }
-  if (inner.length === 0) return null;
-  return [
-    "<details><summary>\u{1F6F0} Visual summary \u2014 risks &amp; key files</summary>",
-    "",
-    inner.join("\n"),
-    "",
-    "</details>"
-  ].join("\n");
-}
-function renderRiskTable(items) {
-  const lines = ["| Risk | Likelihood | Severity | Quadrant |", "|---|---:|---:|---|"];
-  for (const r of items) {
-    const q = r.quadrant ? QUADRANT_LABEL[r.quadrant] : "\u2014";
-    lines.push(`| ${r.label} | ${formatProb(r.likelihood)} | ${formatProb(r.severity)} | ${q} |`);
-  }
-  return lines.join("\n");
-}
-function renderKeyFileGroups(groups) {
-  const lines = [];
-  for (const g of groups) {
-    lines.push(`- **${g.name}**`);
-    for (const f of g.files) {
-      const why = f.why ? ` \u2014 ${f.why}` : "";
-      lines.push(`  - \`${f.path}\`${why}`);
-    }
-  }
-  return lines.join("\n");
-}
-function formatProb(p) {
-  return p.toFixed(2);
-}
-
-// src/render/sections/ext.ts
-function renderExt(ext) {
-  if (!ext) return null;
-  const blocks = [];
-  const dupCount = ext.duplication?.clusters?.length ?? 0;
-  if (dupCount > 0) {
-    const lines = [`### \u{1F9EC} Duplication (${dupCount} cluster${dupCount === 1 ? "" : "s"})`, ""];
-    for (const c of ext.duplication.clusters.slice(0, 5)) {
-      const members = c.members.map((m) => `\`${m.name}\` in \`${m.file}\``).join(" \xB7 ");
-      lines.push(`- ${members}`);
-    }
-    if (dupCount > 5) lines.push(`- _\u2026+${dupCount - 5} more cluster(s)_`);
-    blocks.push(lines.join("\n"));
-  }
-  const uncovered = ext.tests_in_graph?.uncovered_roots ?? [];
-  if (uncovered.length > 0) {
-    const lines = [`### \u{1F9EA} Uncovered entry points (${uncovered.length})`, ""];
-    lines.push("These entry points have no test file reaching them in the call graph:", "");
-    for (const u of uncovered.slice(0, 10)) lines.push(`- \`${u}\``);
-    if (uncovered.length > 10) lines.push(`- _\u2026+${uncovered.length - 10} more_`);
-    blocks.push(lines.join("\n"));
-  }
-  const gaps = ext.nfr_edge_cases?.reliability_gaps ?? [];
-  if (gaps.length > 0) {
-    const lines = [`### \u{1F6E1}\uFE0F Reliability gaps (${gaps.length})`, ""];
-    lines.push("These entry points lack retry / timeout / circuit / fallback markers:", "");
-    for (const g of gaps.slice(0, 10)) lines.push(`- \`${g}\``);
-    if (gaps.length > 10) lines.push(`- _\u2026+${gaps.length - 10} more_`);
-    blocks.push(lines.join("\n"));
-  }
-  const hi = ext.tech_debt?.high_complexity ?? [];
-  const long = ext.tech_debt?.long_functions ?? [];
-  if (hi.length + long.length > 0) {
-    const lines = ["### \u26A0\uFE0F Tech debt findings", ""];
-    if (hi.length) {
-      lines.push(
-        `- **${hi.length}** high-complexity function${hi.length === 1 ? "" : "s"} (threshold ${ext.tech_debt.thresholds?.complexity ?? 10})`
-      );
-    }
-    if (long.length) {
-      lines.push(
-        `- **${long.length}** long function${long.length === 1 ? "" : "s"} (threshold ${ext.tech_debt.thresholds?.loc ?? 80} LOC)`
-      );
-    }
-    blocks.push(lines.join("\n"));
-  }
-  if (blocks.length === 0) return null;
-  return ["## Extended findings", "", blocks.join("\n\n")].join("\n");
-}
-
-// src/render/overview.ts
-var STICKY_MARKER = "<!-- drift:sticky-comment -->";
-var BODY_SIZE_BUDGET = 6e4;
-function renderOverview(report) {
-  const header = `${STICKY_MARKER}
-## \u{1F7E3} Drift PR review`;
-  const sections = [
-    header,
-    renderBanner(report.pr_review?.overall_drift),
-    renderArchitecture(report.pr_review?.architecture_flow),
-    renderBusinessLogic(report.pr_review?.business_logic),
-    renderAffectedRoots(report.pr_scope.affected_roots, report.pr_scope.unreachable_changes),
-    renderValueCard(report.pr_review?.counts, report.pr_review?.value_card),
-    renderSuggestions(report.pr_review?.code_suggestions),
-    renderVisualSummary(report.pr_review?.visual_summary),
-    renderExt(report.pr_review_ext),
-    renderFooter(report.generator)
-  ];
-  const body = sections.filter((s) => !!s).join("\n\n---\n\n");
-  return guardSize(body);
-}
-function renderFooter(gen) {
-  return `<sub>Posted by [Drift](https://drift.dev) \xB7 static-analysis report from \`${gen.tool}\` v${gen.version}</sub>`;
-}
-function guardSize(body) {
-  if (body.length <= BODY_SIZE_BUDGET) return body;
-  const stripped = body.replace(
-    /<details><summary>([\s\S]*?)<\/summary>[\s\S]*?<\/details>/g,
-    (_match, summary2) => `<details><summary>${summary2} \u2014 _collapsed (body size guard)_</summary></details>`
-  );
-  return stripped;
-}
-
-// src/github/comment.ts
-async function upsertStickyComment(args) {
-  const { octokit, owner, repo, prNumber, body } = args;
-  const existing = await findStickyComment(octokit, owner, repo, prNumber);
-  if (existing) {
-    await octokit.rest.issues.updateComment({
-      owner,
-      repo,
-      comment_id: existing,
-      body
-    });
-    info(`Updated sticky comment ${existing}`);
-  } else {
-    const { data } = await octokit.rest.issues.createComment({
-      owner,
-      repo,
-      issue_number: prNumber,
-      body
-    });
-    info(`Created sticky comment ${data.id}`);
-  }
-}
-async function findStickyComment(octokit, owner, repo, prNumber) {
-  const { data } = await octokit.rest.issues.listComments({
-    owner,
-    repo,
-    issue_number: prNumber,
-    per_page: 100
-  });
-  const found = data.find((c) => c.body?.includes(STICKY_MARKER));
-  return found?.id ?? null;
 }
 
 // node_modules/diff/libesm/patch/parse.js
@@ -24583,14 +25179,14 @@ function parsePatch(uniDiff) {
   function parseFileHeader(index) {
     const fileHeaderMatch = /^(---|\+\+\+)\s+/.exec(diffstr[i]);
     if (fileHeaderMatch) {
-      const prefix = fileHeaderMatch[1], data = diffstr[i].substring(3).trim().split("	", 2), header = (data[1] || "").trim();
+      const prefix2 = fileHeaderMatch[1], data = diffstr[i].substring(3).trim().split("	", 2), header = (data[1] || "").trim();
       let fileName = data[0];
       if (fileName.startsWith('"')) {
         fileName = unquoteIfQuoted(fileName);
       } else {
         fileName = fileName.replace(/\\\\/g, "\\");
       }
-      if (prefix === "---") {
+      if (prefix2 === "---") {
         index.oldFileName = fileName;
         index.oldHeader = header;
       } else {
@@ -24823,6 +25419,17 @@ async function main() {
   const { owner, repo } = context2.repo;
   const headSha = pr.head.sha;
   const prNumber = pr.number;
+  const prCtx = {
+    owner,
+    repo,
+    sha: headSha,
+    prNumber,
+    prTitle: typeof pr.title === "string" ? pr.title : void 0,
+    htmlUrl: typeof pr.html_url === "string" ? pr.html_url : void 0,
+    baseRef: pr.base?.ref,
+    author: pr.user?.login
+  };
+  const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
   const tasks = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch(
       (err) => warning(`check run failed: ${describeError(err)}`)
@@ -24837,14 +25444,20 @@ async function main() {
     }).catch((err) => warning(`review failed: ${describeError(err)}`))
   ];
   if (wantComment) {
+    let priorState = null;
+    let existingId = null;
+    try {
+      const prior = await findSticky(octokit, owner, repo, prNumber);
+      existingId = prior?.id ?? null;
+      priorState = parseState(prior?.body);
+    } catch (err) {
+      warning(`could not read prior sticky comment: ${describeError(err)}`);
+    }
+    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl });
     tasks.push(
-      upsertStickyComment({
-        octokit,
-        owner,
-        repo,
-        prNumber,
-        body: withAudioFooter(renderOverview(report))
-      }).catch((err) => warning(`sticky comment failed: ${describeError(err)}`))
+      upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch(
+        (err) => warning(`sticky comment failed: ${describeError(err)}`)
+      )
     );
   }
   await Promise.all(tasks);
@@ -24874,14 +25487,6 @@ function parseThreshold(raw) {
 }
 function describeError(err) {
   return err instanceof Error ? err.message : String(err);
-}
-function withAudioFooter(body) {
-  const url = process.env.DRIFT_AUDIO_URL?.trim();
-  if (!url) return body;
-  return `${body}
-
----
-\u{1F50A} **[Listen to this PR summary](${url})** \u2014 spoken handover briefing (Piper TTS \xB7 WAV).`;
 }
 
 // src/index.ts
