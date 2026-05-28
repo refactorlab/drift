@@ -134,17 +134,7 @@ jobs:
           echo "::notice::Drift skipped — PR state is ${STATE} (only 'open' PRs are eligible)."
           exit 0
 
-      # 4. Parse the comment body for /drift overrides. The script reads
-      # COMMENT_BODY from env (NEVER inlined into shell) and writes one
-      # $GITHUB_OUTPUT line per allowed key (action.yml input names).
-      # Unknown keys log a ::warning:: and are dropped.
-      - name: Parse /drift args
-        id: args
-        env:
-          COMMENT_BODY: ${{ github.event.comment.body }}
-        run: node "${{ github.action_path || github.workspace }}/action/scripts/parse-comment.mjs"
-
-      # 5. Check out the BASE repo (so `origin` carries the base SHA the
+      # 4. Check out the BASE repo (so `origin` carries the base SHA the
       # scanner diffs against — a fork's clone would NOT have it, breaking
       # `git merge-base` and the whole diff range). Then fetch the PR head
       # via the base repo's own refs/pull/<n>/head — the one fork-safe source
@@ -166,7 +156,32 @@ jobs:
           git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
           git checkout --detach "$HEAD_SHA"
 
-      # 6. Invoke Drift. The composite action's `Resolve PR context` step
+      # 5. Fetch JUST the Drift comment parser. It lives in the Drift action
+      # repo (not yours), so we sparse-checkout the single file into a subdir
+      # AFTER the checkout above — a fresh checkout's `git clean` would wipe it
+      # otherwise. The parser is dependency-free, so bare `node` runs it (no
+      # npm install). Pin `ref` to the SAME release tag as the action below so
+      # the accepted keys can't drift.
+      - name: Fetch the Drift comment parser
+        uses: actions/checkout@v4
+        with:
+          repository: refactorlab/drift
+          ref: main
+          path: .drift-action
+          sparse-checkout: action/scripts/parse-comment.mjs
+          sparse-checkout-cone-mode: false
+
+      # 6. Parse the comment body for /drift overrides. The script reads
+      # COMMENT_BODY from env (NEVER inlined into shell) and writes one
+      # $GITHUB_OUTPUT line per allowed key (action.yml input names). Unknown
+      # keys log a ::warning:: and are dropped.
+      - name: Parse /drift args
+        id: args
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: node .drift-action/action/scripts/parse-comment.mjs
+
+      # 7. Invoke Drift. The composite action's `Resolve PR context` step
       # uses these explicit inputs and writes DRIFT_PR_* env vars to
       # $GITHUB_ENV so the bundled JS (dist/index.js, dist/ai-suggest.js)
       # sees the same PR identity as it does on a pull_request run.
@@ -185,7 +200,7 @@ jobs:
           # `/drift issue` sets this; needs the issues:write permission above.
           open-issue:         ${{ steps.args.outputs.open-issue         || 'false' }}
 
-      # 7. Closing reaction. The 👀 from step 1 stays as the durable receipt.
+      # 8. Closing reaction. The 👀 from step 1 stays as the durable receipt.
       - name: React 🚀 on success
         if: success()
         env:
