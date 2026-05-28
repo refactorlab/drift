@@ -25386,11 +25386,49 @@ function pickSummary(report, passingCount, correctnessCount) {
   ].join("\n\n");
 }
 
+// src/pr-context.ts
+function resolvePrContext() {
+  const pr = context2.payload.pull_request;
+  if (pr && typeof pr.head?.sha === "string" && typeof pr.number === "number") {
+    return {
+      number: pr.number,
+      headSha: pr.head.sha,
+      baseSha: typeof pr.base?.sha === "string" ? pr.base.sha : void 0,
+      baseRef: typeof pr.base?.ref === "string" ? pr.base.ref : void 0,
+      headRef: typeof pr.head?.ref === "string" ? pr.head.ref : void 0,
+      title: typeof pr.title === "string" ? pr.title : void 0,
+      body: typeof pr.body === "string" ? pr.body : void 0,
+      htmlUrl: typeof pr.html_url === "string" ? pr.html_url : void 0,
+      author: typeof pr.user?.login === "string" ? pr.user.login : void 0
+    };
+  }
+  const envNumber = Number(process.env.DRIFT_PR_NUMBER ?? "");
+  const envHeadSha = (process.env.DRIFT_HEAD_SHA ?? "").trim();
+  if (!Number.isInteger(envNumber) || envNumber <= 0 || envHeadSha === "") {
+    return null;
+  }
+  return {
+    number: envNumber,
+    headSha: envHeadSha,
+    baseSha: optEnv("DRIFT_BASE_SHA"),
+    baseRef: optEnv("DRIFT_BASE_REF"),
+    headRef: optEnv("DRIFT_HEAD_REF"),
+    title: optEnv("DRIFT_PR_TITLE"),
+    body: optEnv("DRIFT_PR_BODY"),
+    htmlUrl: optEnv("DRIFT_PR_HTML_URL"),
+    author: optEnv("DRIFT_PR_AUTHOR")
+  };
+}
+function optEnv(name) {
+  const v = process.env[name];
+  return v && v.length > 0 ? v : void 0;
+}
+
 // src/main.ts
 async function main() {
-  const pr = context2.payload.pull_request;
+  const pr = resolvePrContext();
   if (!pr) {
-    info("No pull_request payload \u2014 Drift only runs on pull_request events. Skipping.");
+    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 Drift skipping.");
     return;
   }
   const reportPath = process.env.DRIFT_REPORT_PATH;
@@ -25417,17 +25455,17 @@ async function main() {
   }
   const octokit = getOctokit(githubToken);
   const { owner, repo } = context2.repo;
-  const headSha = pr.head.sha;
+  const headSha = pr.headSha;
   const prNumber = pr.number;
   const prCtx = {
     owner,
     repo,
     sha: headSha,
     prNumber,
-    prTitle: typeof pr.title === "string" ? pr.title : void 0,
-    htmlUrl: typeof pr.html_url === "string" ? pr.html_url : void 0,
-    baseRef: pr.base?.ref,
-    author: pr.user?.login
+    prTitle: pr.title,
+    htmlUrl: pr.htmlUrl,
+    baseRef: pr.baseRef,
+    author: pr.author
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
   const tasks = [

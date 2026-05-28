@@ -27,6 +27,14 @@ on:
 # repos: an org owner must also enable GitHub Models under
 # Settings → Copilot → Models, and the chosen model must actually be
 # served by the inference endpoint (gpt-4o is; gpt-5 currently is not).
+
+# Cancel any in-progress run for the same PR or branch so stale runs
+# don't pile up when commits land quickly. push-to-main runs are isolated
+# by ref so they never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write

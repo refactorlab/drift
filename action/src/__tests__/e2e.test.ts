@@ -99,7 +99,7 @@ test('action skips silently when event has no pull_request', async () => {
   });
   const result = await runAction(env);
   assert.equal(result.code, 0);
-  assert.match(result.stdout, /Drift only runs on pull_request/);
+  assert.match(result.stdout, /No PR context/);
 });
 
 // Fail-soft contract: Drift is advisory, so its OWN errors (missing report,
