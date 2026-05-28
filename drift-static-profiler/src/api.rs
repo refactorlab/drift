@@ -709,12 +709,41 @@ pub fn analyze_pr_with_progress(
         );
     }
 
+    // Fair-share the global node budget across the affected roots.
+    //
+    // A flat per-tree cap spends the budget badly: a foundational change
+    // marks ~all roots affected, the first dozen build huge trees, the
+    // global budget trips, and the remaining ~140 roots get NO tree at
+    // all (measured here: 12 of 150 reviewed at peak ~1.4 GB). Conversely
+    // a flat *small* cap would needlessly truncate a tiny PR that has
+    // budget to spare. So each affected root gets an equal slice of the
+    // global budget — min(configured cap, budget / roots) — floored so a
+    // tree never collapses to a stub. Small PR (few roots) → each gets a
+    // deep tree; foundational PR (hundreds) → each gets a shallower but
+    // still-substantial one and ALL of them get reviewed. Peak memory is
+    // unchanged (the global budget is the real governor; same ~1.4 GB),
+    // but coverage scales with the budget instead of with tree girth.
+    const PR_MIN_NODES_PER_TREE: usize = 300;
+    let n_affected = affected.roots.len().max(1);
+    let fair_share = (opts.max_total_nodes / n_affected).max(PR_MIN_NODES_PER_TREE);
+    let mut tree_opts = opts.clone();
+    tree_opts.max_nodes_per_tree = opts.max_nodes_per_tree.min(fair_share);
+    if tree_opts.max_nodes_per_tree != opts.max_nodes_per_tree {
+        tracing::info!(
+            roots = n_affected,
+            per_tree_budget = tree_opts.max_nodes_per_tree,
+            configured_cap = opts.max_nodes_per_tree,
+            total_budget = opts.max_total_nodes,
+            "fair-shared node budget across affected roots"
+        );
+    }
+
     // Build trees only for the affected roots. Reusing
     // `build_trees_from_ids` keeps the focused report's per-entry
     // structure identical to a normal scan — same docker labelling,
     // same tree-builder limits, same progress reporting.
     let ids: Vec<_> = affected.roots.iter().map(|r| r.id.clone()).collect();
-    let mut roots_trees = build_trees_from_ids(&ctx, root, &ids, opts, progress);
+    let mut roots_trees = build_trees_from_ids(&ctx, root, &ids, &tree_opts, progress);
     docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots_trees);
 
     let sql_opts = sql_file_opts_from(opts);
