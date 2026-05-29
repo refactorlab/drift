@@ -81,15 +81,19 @@ async function aiMain(): Promise<void> {
   // Anchor to the diff: drop suggestions whose lines GitHub would reject
   // (422). Best-effort — if the diff fetch fails (e.g. dry-run stub
   // token), proceed unfiltered and let the fail-soft POST handle it.
+  // The per-suggestion `reasons[]` names WHY each one got dropped (path
+  // miss vs. line miss vs. range partial), so a 0-post run is fully
+  // diagnosable from the log instead of leaving the user to guess.
   let candidates = parsed.suggestions;
   try {
     const commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
-    const { kept, dropped } = filterByDiff(candidates, commentable);
+    const { kept, dropped, reasons } = filterByDiff(candidates, commentable);
     if (dropped.length) {
-      core.info(
-        `🤖 dropped ${dropped.length} suggestion(s) not on a diff line: ` +
-          dropped.map((s) => `${s.file}:${s.line}`).join(', '),
-      );
+      core.info(`🤖 dropped ${dropped.length} suggestion(s) — per-finding reasons:`);
+      for (let i = 0; i < dropped.length; i += 1) {
+        const s = dropped[i];
+        core.info(`  • ${s.file}:${s.line} — ${reasons[i] ?? 'unknown'}`);
+      }
     }
     candidates = kept;
   } catch (e) {

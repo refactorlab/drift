@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "drift-static-profiler"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1329,6 +1329,7 @@ dependencies = [
  "flate2",
  "ignore",
  "indicatif",
+ "libc",
  "petgraph 0.8.3",
  "pg_query",
  "rayon",

@@ -24263,19 +24263,51 @@ function parseCommentableLines(patch) {
   }
   return lines;
 }
+function lookupCommentable(map, file) {
+  if (map.has(file)) return map.get(file);
+  let best;
+  for (const k of map.keys()) {
+    if (file.endsWith(k) || k.endsWith(file)) {
+      if (!best || k.length > best.length) best = k;
+    }
+  }
+  return best ? map.get(best) : void 0;
+}
 function filterByDiff(suggestions, commentableByFile) {
   const kept = [];
   const dropped = [];
+  const reasons = [];
   for (const s of suggestions) {
-    const set = commentableByFile.get(s.file);
+    const set = lookupCommentable(commentableByFile, s.file);
     const start = typeof s.start_line === "number" ? s.start_line : s.line;
-    let ok = set !== void 0 && start <= s.line;
-    for (let l = start; ok && l <= s.line; l += 1) {
-      if (!set.has(l)) ok = false;
+    if (set === void 0) {
+      dropped.push(s);
+      const sample = [...commentableByFile.keys()].slice(0, 3).join(", ");
+      const more = commentableByFile.size > 3 ? ` (+${commentableByFile.size - 3} more)` : "";
+      reasons.push(
+        `file not in PR diff (no exact or suffix match; diff has ${commentableByFile.size} file(s): ${sample || "(empty)"}${more})`
+      );
+      continue;
     }
-    (ok ? kept : dropped).push(s);
+    if (start > s.line) {
+      dropped.push(s);
+      reasons.push(`start_line ${start} > line ${s.line} (invalid range)`);
+      continue;
+    }
+    const missing = [];
+    for (let l = start; l <= s.line; l += 1) {
+      if (!set.has(l)) missing.push(l);
+    }
+    if (missing.length === 0) {
+      kept.push(s);
+    } else {
+      dropped.push(s);
+      const preview = missing.slice(0, 4).join(", ");
+      const tail = missing.length > 4 ? ` (+${missing.length - 4} more)` : "";
+      reasons.push(`line(s) ${preview}${tail} not on diff (file has ${set.size} commentable line(s))`);
+    }
   }
-  return { kept, dropped };
+  return { kept, dropped, reasons };
 }
 
 // src/ai/post.ts
@@ -24421,11 +24453,13 @@ ${parsed.rawPreview}`);
   let candidates = parsed.suggestions;
   try {
     const commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
-    const { kept, dropped } = filterByDiff(candidates, commentable);
+    const { kept, dropped, reasons } = filterByDiff(candidates, commentable);
     if (dropped.length) {
-      info(
-        `\u{1F916} dropped ${dropped.length} suggestion(s) not on a diff line: ` + dropped.map((s) => `${s.file}:${s.line}`).join(", ")
-      );
+      info(`\u{1F916} dropped ${dropped.length} suggestion(s) \u2014 per-finding reasons:`);
+      for (let i = 0; i < dropped.length; i += 1) {
+        const s = dropped[i];
+        info(`  \u2022 ${s.file}:${s.line} \u2014 ${reasons[i] ?? "unknown"}`);
+      }
     }
     candidates = kept;
   } catch (e) {

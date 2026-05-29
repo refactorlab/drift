@@ -18,6 +18,13 @@ import { join, resolve } from 'node:path';
 import { parsePatch, type StructuredPatchHunk } from 'diff';
 import type { CodeSuggestion, ScanPrOutput } from '../report.ts';
 import { loadReport } from '../report.ts';
+import { lookupCommentable as lookupCommentableShared } from './diff-lines.ts';
+
+// Re-export the suffix-match helper so existing imports from this
+// module keep working. The implementation now lives in `diff-lines.ts`
+// (single source of truth used by BOTH filter layers — the pre-call
+// focal filter HERE and the post-call review filter in `diff-lines`).
+export const lookupCommentable = lookupCommentableShared;
 
 export type BuildContextArgs = {
   reportPath: string;        // scanner's JSON output
@@ -298,20 +305,42 @@ export function pickFocalSuggestions(
   if (!report || !report.pr_review || !report.pr_review.code_suggestions) {
     return [];
   }
+  // Defensive filter: a finding must carry a USABLE anchor. Reject
+  //   • non-number `line` (older scanner schemas before .line was required)
+  //   • `line < 1` (corrupt — line numbers are 1-based; `line: 0` is the
+  //     "did not anchor" sentinel some Rust paths emit)
+  //   • empty `file` (no anchor possible)
+  //   • non-integer `line` (the GitHub review API rejects fractional lines)
+  // Saves a wasted inference call AND keeps the cohort log honest.
   let candidates = report.pr_review.code_suggestions.filter(
-    (s) => typeof s.line === 'number' && s.file,
+    (s) =>
+      typeof s.line === 'number' &&
+      Number.isInteger(s.line) &&
+      s.line >= 1 &&
+      typeof s.file === 'string' &&
+      s.file.length > 0,
   );
-  // When a commentable-line map is supplied, keep ONLY findings whose anchor
-  // line is on the PR diff. The AI pass produces INLINE suggestions: the model
-  // can only fill `after_code` for a line it sees as `+`/context, and GitHub
-  // only accepts an inline comment there. Filtering BEFORE the cap means the
-  // ≤ ai-max-suggestions inference calls land on anchorable findings instead of
-  // being spent on ones that can only ever come back empty. Non-anchorable
-  // findings still surface in the sticky Drift comment.
+  // File-level commentable filter. We keep a finding when its FILE has at
+  // least one `+`/context line on the PR diff — NOT when its exact line is
+  // commentable. The scanner anchors at the SYMBOL declaration (e.g.
+  // `dead_code_in_changed_file` points at the function `def`, `S1` at the
+  // function's start line), but the PR's `+` lines are usually inside the
+  // function body. Requiring an exact-line match dropped every such
+  // finding silently — the failure mode that produced "0 suggestions
+  // cleared the bar" even when the scanner had 3 valid findings. The
+  // model is still constrained by the system prompt to anchor only to a
+  // `+` line it sees in the numbered diff, so the file-level filter
+  // preserves the architectural intent ("don't waste an inference call on
+  // a file with zero `+` lines") without dropping the symbol-declaration
+  // findings whose anchor lives a few lines away. Suffix matching bridges
+  // path-base mismatches between `s.file` (whatever the scanner emitted)
+  // and the keys produced by `git diff --name-only` — same convention the
+  // Rust side uses (see `dead_code_suggestions`).
   if (commentable) {
-    candidates = candidates.filter(
-      (s) => commentable.get(s.file)?.has(s.line as number) ?? false,
-    );
+    candidates = candidates.filter((s) => {
+      const set = lookupCommentable(commentable, s.file);
+      return !!set && set.size > 0;
+    });
   }
   // Sort by descending confidence so the most-actionable items survive the cap.
   const sorted = [...candidates].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
@@ -352,20 +381,98 @@ export function renderFocalPoint(
     }
   }
 
-  // Code window read from the checked-out workspace (HEAD).
-  const codeWindow = readCodeWindow(
-    workspaceRoot,
-    s.file,
-    s.line,
-    CODE_WINDOW_BEFORE,
-    CODE_WINDOW_AFTER,
-  );
+  // Code window. Prefer the scanner's pre-baked ±3-line window from
+  // `diff.before_lines`: it's already in the JSON envelope (zero disk
+  // I/O), uses the SAME line numbers the diff annotator uses, and
+  // carries an explicit focal-line marker (`kind: 'del'`) the scanner
+  // chose at scan time — so the prompt is grounded in the scanner's
+  // intent rather than a re-read of HEAD that might disagree if the
+  // workspace was edited between scan and inference. Fall back to a
+  // disk read when before_lines is empty (older binaries, or scans
+  // where the binary couldn't resolve repo_root) so we degrade
+  // gracefully instead of going contextless.
+  const scannerWindow = renderScannerCodeWindow(s);
+  const codeWindow =
+    scannerWindow ??
+    readCodeWindow(workspaceRoot, s.file, s.line, CODE_WINDOW_BEFORE, CODE_WINDOW_AFTER);
   if (codeWindow) {
-    lines.push('    code window (HEAD):');
+    const label = scannerWindow
+      ? 'code window (scanner ±3, focal marked ←):'
+      : 'code window (HEAD ±8/±6):';
+    lines.push(`    ${label}`);
     lines.push(indent(codeWindow, '      '));
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Render the focal file's code window from the scanner's pre-baked
+ * `diff.before_lines` instead of re-reading HEAD. Returns null when
+ * the scanner emitted no window (older binaries, or a scan where the
+ * binary had no repo_root to read from) so the caller can fall back.
+ *
+ * Why this exists: the scanner already walks the file at scan time and
+ * marks the focal row with `kind: 'del'` (the "line to replace" — same
+ * convention GitHub uses for a suggestion's anchor row). Re-reading
+ * from disk in the Action duplicates that work AND loses the focal
+ * marker — disk-side has to GUESS which line is focal from `s.line`,
+ * which goes wrong if the line number was stale or if the file was
+ * touched between scan and inference. Using the scanner's window
+ * keeps the prompt's "←" marker aligned with what the scanner
+ * actually flagged.
+ *
+ * Defensive against partially-populated rows: missing `line_number`
+ * renders as a blank prefix; missing `kind` is treated as `ctx`;
+ * absence of any `del` row falls back to matching by `s.line` and,
+ * finally, to the middle row so the marker is never lost. Output
+ * format matches `readCodeWindow` exactly: `${lineNo}│${marker} ${code}`.
+ */
+export function renderScannerCodeWindow(s: CodeSuggestion): string | null {
+  const rows = s.diff?.before_lines;
+  if (!rows || rows.length === 0) return null;
+
+  // Pad width = widest positive line_number in the window. Negative /
+  // zero / NaN line numbers are corrupt input — ignore them for the pad
+  // computation and render their column as blank. Min width 1 so an
+  // all-sparse window still has a non-empty column.
+  const maxLineNo = rows.reduce((m, r) => {
+    const n = r.line_number;
+    return typeof n === 'number' && Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  const pad = String(Math.max(maxLineNo, 1)).length;
+
+  // Pick the focal row. Priority chain, in order:
+  //   1. The FIRST `del` row — scanner's authoritative marker (single
+  //      `del` is the contract today, but defending against future
+  //      multi-`del` rows by anchoring at the first deterministically).
+  //   2. The row whose `line_number` matches `s.line` — used when an
+  //      older binary didn't mark a `del` row (all-ctx window).
+  //   3. The MIDDLE row — last-ditch so the prompt always carries a
+  //      `←` and the model is never left guessing the focal line.
+  let focalIdx = rows.findIndex((r) => r.kind === 'del');
+  if (focalIdx < 0 && typeof s.line === 'number' && Number.isFinite(s.line)) {
+    focalIdx = rows.findIndex((r) => r.line_number === s.line);
+  }
+  if (focalIdx < 0) focalIdx = Math.floor(rows.length / 2);
+
+  const out: string[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i];
+    const n = r.line_number;
+    const showNum = typeof n === 'number' && Number.isFinite(n) && n > 0;
+    const num = showNum ? String(n).padStart(pad) : ' '.repeat(pad);
+    const marker = i === focalIdx ? '←' : ' ';
+    // Strip embedded newlines from `code`. Source code lines should not
+    // carry a `\n` (the scanner reads with `lines()` which already
+    // splits), but a malformed report could include one and would shift
+    // every subsequent row's column alignment in the prompt. Replace
+    // with a visible glyph so the row stays single-line + the corruption
+    // remains diagnosable from the log.
+    const code = (r.code ?? '').replace(/[\r\n]+/g, '⏎');
+    out.push(`${num}│${marker} ${code}`);
+  }
+  return out.join('\n');
 }
 
 function readCodeWindow(

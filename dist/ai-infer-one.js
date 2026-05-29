@@ -18670,9 +18670,6 @@ var require_undici = __commonJS({
   }
 });
 
-// src/ai-infer-one.ts
-var import_node_fs3 = require("node:fs");
-
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
 
@@ -19124,6 +19121,9 @@ function endGroup() {
   issue("endgroup");
 }
 
+// src/ai/infer-one-core.ts
+var import_node_fs3 = require("node:fs");
+
 // src/report.ts
 var import_node_fs = require("node:fs");
 function loadReport(path) {
@@ -19492,7 +19492,20 @@ function parsePatch(uniDiff) {
   return list;
 }
 
+// src/ai/diff-lines.ts
+function lookupCommentable(map, file) {
+  if (map.has(file)) return map.get(file);
+  let best;
+  for (const k of map.keys()) {
+    if (file.endsWith(k) || k.endsWith(file)) {
+      if (!best || k.length > best.length) best = k;
+    }
+  }
+  return best ? map.get(best) : void 0;
+}
+
 // src/ai/build-context.ts
+var lookupCommentable2 = lookupCommentable;
 var CODE_WINDOW_BEFORE = 8;
 var CODE_WINDOW_AFTER = 6;
 function annotateDiff(diffText) {
@@ -19596,12 +19609,13 @@ function pickFocalSuggestions(report, max, commentable) {
     return [];
   }
   let candidates = report.pr_review.code_suggestions.filter(
-    (s) => typeof s.line === "number" && s.file
+    (s) => typeof s.line === "number" && Number.isInteger(s.line) && s.line >= 1 && typeof s.file === "string" && s.file.length > 0
   );
   if (commentable) {
-    candidates = candidates.filter(
-      (s) => commentable.get(s.file)?.has(s.line) ?? false
-    );
+    candidates = candidates.filter((s) => {
+      const set = lookupCommentable2(commentable, s.file);
+      return !!set && set.size > 0;
+    });
   }
   const sorted = [...candidates].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   return sorted.slice(0, Math.max(0, max));
@@ -19627,18 +19641,39 @@ function renderFocalPoint(s, ordinal, workspaceRoot) {
       lines.push(`      - ${r.title ?? r.url} <${r.url}>`);
     }
   }
-  const codeWindow = readCodeWindow(
-    workspaceRoot,
-    s.file,
-    s.line,
-    CODE_WINDOW_BEFORE,
-    CODE_WINDOW_AFTER
-  );
+  const scannerWindow = renderScannerCodeWindow(s);
+  const codeWindow = scannerWindow ?? readCodeWindow(workspaceRoot, s.file, s.line, CODE_WINDOW_BEFORE, CODE_WINDOW_AFTER);
   if (codeWindow) {
-    lines.push("    code window (HEAD):");
+    const label = scannerWindow ? "code window (scanner \xB13, focal marked \u2190):" : "code window (HEAD \xB18/\xB16):";
+    lines.push(`    ${label}`);
     lines.push(indent(codeWindow, "      "));
   }
   return lines.join("\n");
+}
+function renderScannerCodeWindow(s) {
+  const rows = s.diff?.before_lines;
+  if (!rows || rows.length === 0) return null;
+  const maxLineNo = rows.reduce((m, r) => {
+    const n = r.line_number;
+    return typeof n === "number" && Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  const pad = String(Math.max(maxLineNo, 1)).length;
+  let focalIdx = rows.findIndex((r) => r.kind === "del");
+  if (focalIdx < 0 && typeof s.line === "number" && Number.isFinite(s.line)) {
+    focalIdx = rows.findIndex((r) => r.line_number === s.line);
+  }
+  if (focalIdx < 0) focalIdx = Math.floor(rows.length / 2);
+  const out = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i];
+    const n = r.line_number;
+    const showNum = typeof n === "number" && Number.isFinite(n) && n > 0;
+    const num = showNum ? String(n).padStart(pad) : " ".repeat(pad);
+    const marker = i === focalIdx ? "\u2190" : " ";
+    const code = (r.code ?? "").replace(/[\r\n]+/g, "\u23CE");
+    out.push(`${num}\u2502${marker} ${code}`);
+  }
+  return out.join("\n");
 }
 function readCodeWindow(workspaceRoot, file, line, before, after) {
   if (typeof line !== "number") return null;
@@ -21261,13 +21296,13 @@ function parseAIOutput(raw) {
   };
 }
 
-// src/ai-infer-one.ts
-function intEnv(name, fallback) {
-  const v = process.env[name];
-  if (!v) return fallback;
-  const n = Number.parseInt(v, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+// src/ai/infer-one-core.ts
+var defaultLogger = {
+  info: (m) => info(m),
+  warning: (m) => warning(m),
+  startGroup: (n) => startGroup(n),
+  endGroup: () => endGroup()
+};
 function readEnvelope(path) {
   try {
     if ((0, import_node_fs3.existsSync)(path)) {
@@ -21281,47 +21316,98 @@ function readEnvelope(path) {
 function describe(e) {
   return e instanceof Error ? e.message : String(e);
 }
-async function main() {
-  const idx = Number.parseInt(process.argv[2] ?? "", 10);
-  const outPath = process.env.AI_OUT ?? "";
-  const reportPath = process.env.DRIFT_REPORT_PATH ?? "";
-  const endpoint = process.env.AI_ENDPOINT ?? "";
-  const model = process.env.AI_MODEL || "openai/gpt-4o";
-  const token = process.env.GITHUB_TOKEN ?? "";
-  const workspaceRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
-  const baseSha = process.env.AI_BASE_SHA ?? "";
-  const headSha = process.env.AI_HEAD_SHA ?? "";
-  const maxOutputTokens = intEnv("AI_MAX_OUTPUT_TOKENS", 4e3);
+async function inferOne(deps) {
+  const {
+    idx,
+    outPath,
+    reportPath,
+    endpoint,
+    model,
+    token,
+    workspaceRoot,
+    baseSha,
+    headSha,
+    maxOutputTokens,
+    callModel: callModel2 = callModel,
+    logger = defaultLogger
+  } = deps;
+  const log = logger;
   const label = Number.isInteger(idx) ? `#${idx + 1}` : "?";
   if (!Number.isInteger(idx) || idx < 0) {
-    warning(`ai-infer-one: bad focal index "${process.argv[2]}".`);
+    log.warning(`ai-infer-one: bad focal index "${idx}".`);
     return;
   }
   if (!outPath || !endpoint || !token) {
-    warning("ai-infer-one: missing AI_OUT / AI_ENDPOINT / GITHUB_TOKEN.");
+    log.warning("ai-infer-one: missing AI_OUT / AI_ENDPOINT / GITHUB_TOKEN.");
     return;
   }
   if (!(0, import_node_fs3.existsSync)(reportPath)) {
-    warning(`ai-infer-one: no report at ${reportPath}.`);
+    log.warning(`ai-infer-one: no report at ${reportPath}.`);
     return;
   }
   let report;
   try {
     report = loadReport(reportPath);
   } catch (e) {
-    warning(`ai-infer-one: report unreadable: ${describe(e)}`);
+    log.warning(`ai-infer-one: report unreadable: ${describe(e)}`);
     return;
   }
   const fullDiff = getFullDiff(workspaceRoot, baseSha, headSha);
   const commentable = fullDiff ? commentableLinesByFile(fullDiff) : void 0;
-  const user = buildFocalUserPrompt(report, idx, { workspaceRoot, baseSha, headSha }, commentable);
+  const allFindings = pickFocalSuggestions(report, Number.MAX_SAFE_INTEGER);
+  const anchorable = commentable ? pickFocalSuggestions(report, Number.MAX_SAFE_INTEGER, commentable).length : allFindings.length;
+  const focal = allFindings[idx];
+  if (focal) {
+    const fnTag = focal.function ? ` ${focal.function}` : "";
+    const ruleTag = focal.rule_id ? ` [${focal.rule_id}]` : "";
+    log.info(
+      `focal ${label}: ${focal.file}:${focal.line ?? "?"}${fnTag}${ruleTag} \xB7 cohort ${anchorable}/${allFindings.length} anchorable \xB7 diff covers ${commentable ? commentable.size : 0} file(s)`
+    );
+  }
+  const user = buildFocalUserPrompt(
+    report,
+    idx,
+    { workspaceRoot, baseSha, headSha },
+    commentable
+  );
   if (!user) {
-    info(`focal ${label}: no anchorable focal point at this index \u2014 skipping.`);
+    if (idx >= allFindings.length) {
+      log.info(
+        `focal ${label}: only ${allFindings.length} scanner finding(s) \u2014 index out of range.`
+      );
+    } else {
+      const f = allFindings[idx];
+      const where = `${f.file}:${f.line ?? "?"}`;
+      if (!commentable) {
+        log.info(`focal ${label}: ${where} \u2014 PR diff unavailable, cannot anchor.`);
+      } else {
+        const set = lookupCommentable2(commentable, f.file);
+        if (!set) {
+          const sample = [...commentable.keys()].slice(0, 5).join(", ");
+          const more = commentable.size > 5 ? ` (+${commentable.size - 5} more)` : "";
+          log.info(
+            `focal ${label}: ${where} \u2014 file not present on the PR diff (path-base mismatch?). Diff has ${commentable.size} file(s): ${sample}${more}.`
+          );
+        } else if (set.size === 0) {
+          log.info(
+            `focal ${label}: ${where} \u2014 file is on the diff but has zero commentable lines.`
+          );
+        } else {
+          log.info(
+            `focal ${label}: ${where} \u2014 skipped (unknown reason; ${set.size} commentable line(s) in file).`
+          );
+        }
+      }
+    }
     return;
   }
+  const windowSource = user.includes("code window (scanner") ? "scanner" : "HEAD";
+  log.info(
+    `focal ${label}: prompt built (${user.length} chars, window=${windowSource}) \u2192 calling model\u2026`
+  );
   let content;
   try {
-    content = await callModel({
+    content = await callModel2({
       endpoint,
       token,
       model,
@@ -21330,32 +21416,57 @@ async function main() {
       maxOutputTokens
     });
   } catch (e) {
-    warning(`focal ${label}: inference failed (${describe(e)}).`);
+    log.warning(`focal ${label}: inference failed (${describe(e)}).`);
     return;
   }
   const parsed = parseAIOutput(content);
   if (!parsed.ok) {
-    warning(`focal ${label}: output rejected \u2014 ${parsed.reason}`);
-    startGroup(`focal ${label}: model exchange (rejected)`);
-    info(`\u2500\u2500 INPUT (user prompt) \u2500\u2500
+    log.warning(`focal ${label}: output rejected \u2014 ${parsed.reason}`);
+    log.startGroup(`focal ${label}: model exchange (rejected)`);
+    log.info(`\u2500\u2500 INPUT (user prompt) \u2500\u2500
 ${user}`);
-    info(`\u2500\u2500 OUTPUT (model reply, first 400 chars) \u2500\u2500
+    log.info(`\u2500\u2500 OUTPUT (model reply, first 400 chars) \u2500\u2500
 ${parsed.rawPreview}`);
-    endGroup();
+    log.endGroup();
     return;
   }
   const suggestion = parsed.suggestions[0];
   if (!suggestion) {
-    info(`focal ${label}: ${parsed.total} candidate(s) \u2192 0 cleared the bar.`);
+    log.info(`focal ${label}: ${parsed.total} candidate(s) \u2192 0 cleared the bar.`);
     return;
   }
   const envelope = readEnvelope(outPath);
   envelope.suggestions.push(suggestion);
   (0, import_node_fs3.writeFileSync)(outPath, JSON.stringify(envelope));
-  info(`focal ${label}: +1 suggestion \u2192 ${suggestion.file}:${suggestion.line}`);
+  log.info(`focal ${label}: +1 suggestion \u2192 ${suggestion.file}:${suggestion.line}`);
+}
+
+// src/ai-infer-one.ts
+function intEnv(name, fallback) {
+  const v = process.env[name];
+  if (!v) return fallback;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+function describe2(e) {
+  return e instanceof Error ? e.message : String(e);
+}
+async function main() {
+  await inferOne({
+    idx: Number.parseInt(process.argv[2] ?? "", 10),
+    outPath: process.env.AI_OUT ?? "",
+    reportPath: process.env.DRIFT_REPORT_PATH ?? "",
+    endpoint: process.env.AI_ENDPOINT ?? "",
+    model: process.env.AI_MODEL || "openai/gpt-4o",
+    token: process.env.GITHUB_TOKEN ?? "",
+    workspaceRoot: process.env.GITHUB_WORKSPACE ?? process.cwd(),
+    baseSha: process.env.AI_BASE_SHA ?? "",
+    headSha: process.env.AI_HEAD_SHA ?? "",
+    maxOutputTokens: intEnv("AI_MAX_OUTPUT_TOKENS", 4e3)
+  });
 }
 main().catch((err) => {
-  warning(`ai-infer-one fatal (non-fatal to the action): ${describe(err)}`);
+  warning(`ai-infer-one fatal (non-fatal to the action): ${describe2(err)}`);
 });
 /*! Bundled license information:
 

@@ -217,10 +217,116 @@ inputs:
     description: 'PR body (used by the AI briefing). Same fallback chain.'
     required: false
     default: ''
+  # ─── /drift comment-trigger mode ───────────────────────────────────
+  start-on-pr-comment:
+    description: |
+      When 'true', ENABLES the `/drift` PR-comment trigger ON TOP OF the
+      normal pull_request flow. The flag is ADDITIVE — turning it on does
+      NOT disable scans on push / PR opened / synchronize / reopened. On a
+      `/drift` comment the action also:
+        • Reacts 👀 to acknowledge the command.
+        • Parses /drift overrides from the comment body (debug, ai-model, …).
+        • Resolves PR SHAs via REST; reacts 😕 and exits on closed/merged PRs.
+        • Checks out the PR head by IMMUTABLE SHA (fork-safe).
+        • Runs the scan + posts the review.
+        • Reacts 🚀 on success / 👎 on failure.
+      Recommended wiring: a SINGLE workflow file with both `on: pull_request`
+      and `on: issue_comment`, setting `start-on-pr-comment: true`. The
+      action handles each event correctly (comment-only steps stay gated
+      behind the /drift gate; pull_request events skip them and scan
+      directly). When 'false' (default) the action runs only on
+      pull_request events as it always has.
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
   steps:
+    # ─── /drift gate ────────────────────────────────────────────────
+    # Single source of truth for "is the comment-trigger flow ACTIVE?".
+    # Active iff: start-on-pr-comment=true AND we're on an issue_comment
+    # event attached to a PR AND the comment body begins with /drift AND
+    # the commenter isn't a bot. Every step that exists only for comment
+    # mode (react 👀, parse args, checkout, react 🚀/👎) keys off this
+    # output, so the rest of the action remains untouched for
+    # pull_request consumers.
+    - name: /drift comment trigger gate
+      id: comment-gate
+      shell: bash
+      env:
+        START_ON_PR_COMMENT: ${{ inputs.start-on-pr-comment }}
+        EVENT_NAME:          ${{ github.event_name }}
+        IS_PR_COMMENT:       ${{ github.event.issue.pull_request != null }}
+        COMMENT_BODY:        ${{ github.event.comment.body }}
+        COMMENTER_TYPE:      ${{ github.event.comment.user.type }}
+      run: |
+        # Match the workflow-level gate's startsWith() semantics EXACTLY:
+        # the comment body must literally begin with /drift. Parse-comment
+        # is more lenient (it finds /drift anywhere) — but that's parsing,
+        # not gating. Identical gate logic at both layers means a comment
+        # that passes the workflow `if:` will reliably activate this step,
+        # with no surprise mismatches. Glob match in `case` is exact, has
+        # no expansion of $COMMENT_BODY against the pattern, and avoids
+        # the heredoc/read-loop dance entirely.
+        active="false"
+        # Strip a leading CR — Windows webhook bodies occasionally carry
+        # one and would defeat both the workflow startsWith and this case.
+        body="${COMMENT_BODY#$'\r'}"
+        if [ "$START_ON_PR_COMMENT" = "true" ] \
+           && [ "$EVENT_NAME" = "issue_comment" ] \
+           && [ "$IS_PR_COMMENT" = "true" ] \
+           && [ "${COMMENTER_TYPE:-User}" != "Bot" ]; then
+          case "$body" in /drift*) active="true" ;; esac
+        fi
+        echo "active=${active}" >> "$GITHUB_OUTPUT"
+        if [ "$active" = "true" ]; then
+          echo "👁  /drift comment-trigger ACTIVE"
+        else
+          echo "⏭️  /drift comment-trigger inactive (start-on-pr-comment=${START_ON_PR_COMMENT}, event=${EVENT_NAME})"
+        fi
+
+    # ─── React 👀 ─────────────────────────────────────────────────
+    # Immediate ack so the user knows we picked the command up. Fail-soft:
+    # if the reactions endpoint hiccups, the scan still ships. The 👀
+    # is the durable receipt — 🚀 / 👎 below add the terminal status.
+    - name: React 👀 on /drift
+      if: steps.comment-gate.outputs.active == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_OWNER: ${{ github.repository_owner }}
+        GH_REPO:  ${{ github.event.repository.name }}
+        CID:      ${{ github.event.comment.id }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        curl -sS -X POST \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+          -d '{"content":"eyes"}' >/dev/null || true
+
+    # ─── Parse /drift args ────────────────────────────────────────
+    # Reuses action/scripts/parse-comment.mjs (zero deps, runnable with
+    # bare `node`). We read it straight off the action's own filesystem
+    # via $GITHUB_ACTION_PATH — no sparse-checkout dance needed because
+    # we ARE the action repo on disk. COMMENT_BODY flows via env (NEVER
+    # inlined into shell) so a crafted comment can't escape. Unknown
+    # keys log ::warning:: and are dropped. Outputs are line-sanitized.
+    - name: Parse /drift args
+      id: args
+      if: steps.comment-gate.outputs.active == 'true'
+      # Fail-soft: a parser crash on a pathological comment should NOT
+      # take down the whole run with 👎. If parse exits non-zero,
+      # steps.args.outputs.* stay empty and every downstream
+      # `steps.args.outputs.X || inputs.X` fallback resolves to inputs.X.
+      # The scan still ships with the workflow's defaults.
+      continue-on-error: true
+      shell: bash
+      env:
+        COMMENT_BODY: ${{ github.event.comment.body }}
+      run: node "${{ github.action_path }}/action/scripts/parse-comment.mjs"
+
     # ─── 0. Resolve PR context (event-agnostic) ──────────────────────
     # Single source of truth for PR metadata. Used by every later step + by
     # dist/index.js and dist/ai-suggest.js (via the DRIFT_PR_* env vars we
@@ -256,7 +362,15 @@ runs:
         EVENT_PR_HTML_URL:  ${{ github.event.pull_request.html_url }}
         EVENT_PR_AUTHOR:    ${{ github.event.pull_request.user.login }}
         EVENT_ISSUE_PR_URL: ${{ github.event.issue.pull_request.url }}
-        GITHUB_TOKEN:       ${{ inputs.github-token }}
+        # Comment-mode extra: used to react 😕 on a closed PR before any
+        # downstream step (scan, AI, post review) wastes time. start-on-pr-comment
+        # itself is NOT consulted here — the flag is additive, so a
+        # pull_request event with the flag set scans exactly like a flag-off run.
+        COMMENT_MODE_ACTIVE:       ${{ steps.comment-gate.outputs.active }}
+        GH_OWNER:                  ${{ github.repository_owner }}
+        GH_REPO:                   ${{ github.event.repository.name }}
+        CID:                       ${{ github.event.comment.id }}
+        GITHUB_TOKEN:              ${{ inputs.github-token }}
       run: |
         # Priority chain: explicit input > pull_request event > REST fallback.
         pr_number="${INPUT_PR_NUMBER:-${EVENT_PR_NUMBER:-}}"
@@ -280,6 +394,7 @@ runs:
         # On a pull_request event EVENT_ISSUE_PR_URL is empty, so this never
         # fires there. The `${x:-$(...)}` guards below only fill empties, so
         # explicitly-passed values always win.
+        pr_state=""
         if [ -n "$pr_number" ] && [ -n "${EVENT_ISSUE_PR_URL:-}" ] && { [ -z "${base_sha}${head_sha}" ] || [ -z "$pr_title" ]; }; then
           if command -v jq >/dev/null 2>&1; then
             resp="$(curl -sS \
@@ -295,10 +410,44 @@ runs:
             pr_body="${pr_body:-$(printf '%s' "$resp"  | jq -r '.body  // empty')}"
             pr_html_url="${pr_html_url:-$(printf '%s' "$resp" | jq -r '.html_url // empty')}"
             pr_author="${pr_author:-$(printf '%s' "$resp" | jq -r '.user.login // empty')}"
-            echo "🪝 Resolved PR context via REST: ${EVENT_ISSUE_PR_URL}"
+            pr_state="$(printf '%s' "$resp" | jq -r '.state // empty')"
+            echo "🪝 Resolved PR context via REST: ${EVENT_ISSUE_PR_URL} (state=${pr_state:-?})"
           else
             echo "⚠️  issue_comment fallback needs jq — install it on the runner. Continuing without."
           fi
+        fi
+
+        # start-on-pr-comment is ADDITIVE, not exclusive: setting it true
+        # ENABLES the /drift comment trigger, but does NOT disable the
+        # normal pull_request flow. A single workflow file that listens to
+        # both `pull_request` and `issue_comment` can therefore set
+        # `start-on-pr-comment: true` and get auto-scans on push AND
+        # manual re-runs via /drift, with no duplicate jobs and no
+        # silently-skipped events. Comment-mode-only steps (👀, parse-args,
+        # fork-safe head checkout, 🚀/👎 terminal reactions) remain gated
+        # on the comment-gate `active` flag below, so a pull_request event
+        # never trips them.
+
+        # Comment-trigger mode: short-circuit on a closed/merged PR by
+        # CLEARING the SHAs so every downstream `head_sha != ''` gate
+        # naturally skips. We also drop a 😕 reaction so the commenter
+        # sees we noticed and chose not to scan. The closed-PR check is
+        # ONLY done in comment mode — a pull_request event firing on a
+        # closed PR (rare but legal: synchronize after close) still gets
+        # scanned as today.
+        if [ "${COMMENT_MODE_ACTIVE:-false}" = "true" ] \
+           && [ -n "$pr_state" ] && [ "$pr_state" != "open" ]; then
+          if [ -n "${CID:-}" ]; then
+            curl -sS -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+              -d '{"content":"confused"}' >/dev/null || true
+          fi
+          echo "::notice::Drift skipped — PR state is ${pr_state} (only 'open' PRs are eligible)."
+          pr_number=""; head_sha=""; base_sha=""; base_ref=""; head_ref=""
+          pr_title=""; pr_body=""; pr_html_url=""; pr_author=""
         fi
 
         # Step outputs (single-line scalars).
@@ -310,6 +459,7 @@ runs:
           echo "head_ref=$head_ref"
           echo "pr_html_url=$pr_html_url"
           echo "pr_author=$pr_author"
+          echo "pr_state=$pr_state"
         } >> "$GITHUB_OUTPUT"
         # Multi-line outputs use the heredoc form — title and body can
         # contain newlines and arbitrary punctuation. The delimiter is
@@ -342,6 +492,39 @@ runs:
           echo "⏭️  No PR context resolved — Drift will skip downstream steps."
         fi
 
+    # ─── /drift checkout (BASE repo) ────────────────────────────────
+    # In `pull_request` mode the consumer's workflow already did the
+    # checkout BEFORE invoking the action. In comment-trigger mode we're
+    # mid-step on a `issue_comment` event with a bare workspace, so we
+    # do the checkout ourselves — fetch-depth: 0 because pr-ctx already
+    # resolved the SHAs and the diff step deepens until merge-base.
+    - name: Checkout base repo (comment mode)
+      if: >-
+        steps.comment-gate.outputs.active == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # ─── /drift checkout (PR HEAD by IMMUTABLE SHA) ─────────────────
+    # Fork-safe: refs/pull/<n>/head is the ONLY ref the BASE repo can
+    # use to reach a fork PR's head commit. Checking out by SHA (not by
+    # ref) defeats the force-push race between our 👀 ack and this
+    # checkout — if HEAD moved, the SHA either still names the exact
+    # code we vetted, or `git checkout` fails (👎). Drift only READS
+    # source (tree-sitter), never executes fork code, so this is safe.
+    - name: Check out PR head by SHA (comment mode, fork-safe)
+      if: >-
+        steps.comment-gate.outputs.active == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      shell: bash
+      env:
+        PR_NUMBER: ${{ steps.pr-ctx.outputs.pr_number }}
+        HEAD_SHA:  ${{ steps.pr-ctx.outputs.head_sha }}
+      run: |
+        git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+        git checkout --detach "$HEAD_SHA"
+
     # ─── 1. Say hello (always) ───────────────────────────────────────
     - name: Say hello
       shell: bash
@@ -370,7 +553,7 @@ runs:
       shell: bash
       env:
         DRIFT_PROFILER_REPO:         ${{ inputs.profiler-repo }}
-        DRIFT_PROFILER_RELEASE_TAG:  ${{ inputs.profiler-release-tag }}
+        DRIFT_PROFILER_RELEASE_TAG:  ${{ (steps.args.outputs.profiler-release-tag || inputs.profiler-release-tag) }}
         DRIFT_PROFILER_LOCAL_BIN:    ${{ inputs.profiler-local-bin }}
         GITHUB_TOKEN:                ${{ inputs.github-token }}
       run: |
@@ -593,15 +776,15 @@ runs:
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
-        DRIFT_LOG: ${{ inputs.debug == 'true' && 'info,drift_static_profiler=debug' || '' }}
-        DRIFT_PROGRESS: ${{ inputs.progress == 'true' && '' || 'off' }}
+        DRIFT_LOG: ${{ (steps.args.outputs.debug || inputs.debug) == 'true' && 'info,drift_static_profiler=debug' || '' }}
+        DRIFT_PROGRESS: ${{ (steps.args.outputs.progress || inputs.progress) == 'true' && '' || 'off' }}
         # Raw input values, threaded as env vars (NOT `${{ }}`-interpolated into
         # the bash body below). The `${{ }}` substitution happens BEFORE bash
         # parses the script — a malicious caller passing
         # `debug: 'true"; rm -rf $HOME #'` would otherwise inject arbitrary
         # commands. Passing through env: makes them inert string data.
-        DEBUG_INPUT:    ${{ inputs.debug }}
-        PROGRESS_INPUT: ${{ inputs.progress }}
+        DEBUG_INPUT:    ${{ (steps.args.outputs.debug || inputs.debug) }}
+        PROGRESS_INPUT: ${{ (steps.args.outputs.progress || inputs.progress) }}
         CHANGED_PATH: ${{ steps.diff.outputs.changed_path }}
         STATS_PATH:   ${{ steps.diff.outputs.stats_path }}
         COMMITS_PATH: ${{ steps.diff.outputs.commits_path }}
@@ -681,7 +864,7 @@ runs:
       shell: bash
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
-        DEBUG:             ${{ inputs.debug }}
+        DEBUG:             ${{ (steps.args.outputs.debug || inputs.debug) }}
       run: |
         if [ ! -s "$DRIFT_REPORT_PATH" ]; then
           echo "⚠️  no report at $DRIFT_REPORT_PATH"
@@ -743,7 +926,7 @@ runs:
       continue-on-error: true   # advisory: never fail the PR on our own error
       id: ai-prep
       if: >-
-        (inputs.ai-suggestions == 'true' || inputs.audio-summary == 'true') &&
+        ((steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' || (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true') &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.pr-ctx.outputs.head_sha != ''
       shell: bash
@@ -769,7 +952,7 @@ runs:
       continue-on-error: true   # advisory: never fail the PR on our own error
       id: ai-ep
       if: >-
-        (inputs.ai-suggestions == 'true' || inputs.audio-summary == 'true') &&
+        ((steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' || (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true') &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
         steps.pr-ctx.outputs.head_sha != ''
@@ -778,7 +961,7 @@ runs:
         AI_ENDPOINT_INPUT: ${{ inputs.ai-endpoint }}
         OWNER:             ${{ github.repository_owner }}
         OWNER_TYPE:        ${{ github.event.repository.owner.type }}
-        AI_MODEL:          ${{ inputs.ai-model }}
+        AI_MODEL:          ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
         GITHUB_TOKEN:      ${{ inputs.github-token }}
       run: |
         if [ -n "${AI_ENDPOINT_INPUT}" ] && [ "${AI_ENDPOINT_INPUT}" != "auto" ]; then
@@ -848,7 +1031,7 @@ runs:
       continue-on-error: true   # advisory: never fail the PR on our own error
       id: piper-bin-cache
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
@@ -859,7 +1042,7 @@ runs:
     - name: Install Piper binary
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.pr-ctx.outputs.head_sha != '' &&
         steps.piper-bin-cache.outputs.cache-hit != 'true'
@@ -902,24 +1085,24 @@ runs:
       continue-on-error: true   # advisory: never fail the PR on our own error
       id: piper-voice-cache
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/piper-voices
-        key: piper-voice-${{ inputs.piper-voice }}-v1
+        key: piper-voice-${{ (steps.args.outputs.piper-voice || inputs.piper-voice) }}-v1
 
     - name: Download Piper voice
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.pr-ctx.outputs.head_sha != '' &&
         steps.piper-voice-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        PIPER_VOICE: ${{ inputs.piper-voice }}
+        PIPER_VOICE: ${{ (steps.args.outputs.piper-voice || inputs.piper-voice) }}
         VOICE_DIR:   ${{ runner.temp }}/piper-voices
       run: |
         # Derive the HF path from the voice id `<lang>-<name>-<quality>`:
@@ -951,7 +1134,7 @@ runs:
     - name: Generate spoken PR briefing (AI)
       id: briefing
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
         steps.ai-ep.outputs.preflight_status == '200' &&
@@ -962,7 +1145,7 @@ runs:
         BRIEFING_PATH: ${{ runner.temp }}/drift-pr-briefing.txt
         COMMITS_PATH:  ${{ steps.diff.outputs.commits_path }}
         AI_ENDPOINT:   ${{ steps.ai-ep.outputs.endpoint }}
-        AI_MODEL:      ${{ inputs.ai-model }}
+        AI_MODEL:      ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         PR_TITLE:      ${{ steps.pr-ctx.outputs.pr_title }}
         PR_BODY:       ${{ steps.pr-ctx.outputs.pr_body }}
@@ -1038,7 +1221,7 @@ runs:
     - name: Synthesize audio summary
       id: audio
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
@@ -1048,7 +1231,7 @@ runs:
         BRIEFING_PATH: ${{ runner.temp }}/drift-pr-briefing.txt
         PIPER_DIR:   ${{ runner.temp }}/piper
         VOICE_DIR:   ${{ runner.temp }}/piper-voices
-        PIPER_VOICE: ${{ inputs.piper-voice }}
+        PIPER_VOICE: ${{ (steps.args.outputs.piper-voice || inputs.piper-voice) }}
         WAV_DIR:     ${{ runner.temp }}
         REPO_NAME:   ${{ github.event.repository.name }}
         PR_BRANCH:   ${{ steps.pr-ctx.outputs.head_ref }}
@@ -1187,7 +1370,7 @@ runs:
     - name: Upload audio summary artifact
       id: audio-upload
       if: >-
-        inputs.audio-summary == 'true' &&
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.audio.outputs.synthesized == 'true' &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
@@ -1220,8 +1403,8 @@ runs:
       env:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         DRIFT_COMMENT:     'true'
-        DRIFT_OPEN_ISSUE:  ${{ inputs.open-issue }}
-        DRIFT_FAIL_THRESHOLD: ${{ inputs.fail-threshold }}
+        DRIFT_OPEN_ISSUE:  ${{ (steps.args.outputs.open-issue || inputs.open-issue) }}
+        DRIFT_FAIL_THRESHOLD: ${{ (steps.args.outputs.fail-threshold || inputs.fail-threshold) }}
         # Artifact URL of the non-zipped WAV (empty when audio is disabled or
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
         # archive:false this URL serves the raw .wav, not a zip.
@@ -1247,7 +1430,7 @@ runs:
     - name: AI inference (per-suggestion loop)
       id: ai-loop
       if: >-
-        inputs.ai-suggestions == 'true' &&
+        (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
         steps.ai-ep.outputs.preflight_status == '200' &&
@@ -1258,8 +1441,8 @@ runs:
         AI_OUT:               ${{ runner.temp }}/ai-suggestions.json
         DRIFT_REPORT_PATH:    ${{ runner.temp }}/drift-report.json
         AI_ENDPOINT:          ${{ steps.ai-ep.outputs.endpoint }}
-        AI_MODEL:             ${{ inputs.ai-model }}
-        AI_MAX:               ${{ inputs.ai-max-suggestions }}
+        AI_MODEL:             ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
+        AI_MAX:               ${{ (steps.args.outputs.ai-max-suggestions || inputs.ai-max-suggestions) }}
         # Per-call INPUT budget (system + user, in tokens). The diff for the
         # focal file is trimmed to fit under this BEFORE the POST, so a large
         # or newly-added file can't 413 the request. Set below the 8000-token
@@ -1298,14 +1481,14 @@ runs:
       # Fires when the preflight blocked us (inference was skipped) OR
       # when inference itself failed despite a green preflight.
       if: >-
-        inputs.ai-suggestions == 'true' &&
+        (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-prep.outcome == 'success' &&
         steps.pr-ctx.outputs.head_sha != '' &&
         (steps.ai-ep.outputs.preflight_status != '200' || steps.ai-loop.outcome == 'failure')
       shell: bash
       env:
-        AI_MODEL:    ${{ inputs.ai-model }}
+        AI_MODEL:    ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
         AI_ENDPOINT: ${{ steps.ai-ep.outputs.endpoint }}
         OWNER:       ${{ github.repository_owner }}
         OWNER_TYPE:  ${{ github.event.repository.owner.type }}
@@ -1360,7 +1543,7 @@ runs:
     - name: Post AI suggestions
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
-        inputs.ai-suggestions == 'true' &&
+        (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
         steps.ai-loop.outcome == 'success' &&
         steps.pr-ctx.outputs.head_sha != ''
@@ -1371,7 +1554,48 @@ runs:
         # against the schema, re-applies the quality bar + diff anchoring,
         # caps at DRIFT_MAX_AI_SUGGESTIONS, and POSTs one createReview.
         AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
-        DRIFT_MAX_AI_SUGGESTIONS: ${{ inputs.ai-max-suggestions }}
-        DRIFT_AI_MODEL:           ${{ inputs.ai-model }}
+        DRIFT_MAX_AI_SUGGESTIONS: ${{ (steps.args.outputs.ai-max-suggestions || inputs.ai-max-suggestions) }}
+        DRIFT_AI_MODEL:           ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
         GITHUB_TOKEN:             ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/ai-suggest.js"
+
+    # ─── /drift terminal reactions ──────────────────────────────────
+    # 👀 from the start stays as the durable receipt. 🚀 or 👎 add the
+    # terminal status. Most Drift steps use continue-on-error: true, so
+    # `failure()` only fires on early-stage explosions (the bare checkout
+    # / head-checkout, the pr-ctx step itself, the parse-comment script,
+    # or a hard cancel). In every other case the run ends 🚀 — the
+    # sticky PR-overview comment is the authoritative outcome surface.
+    - name: React 🚀 on /drift success
+      if: steps.comment-gate.outputs.active == 'true' && success()
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_OWNER: ${{ github.repository_owner }}
+        GH_REPO:  ${{ github.event.repository.name }}
+        CID:      ${{ github.event.comment.id }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        curl -sS -X POST \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+          -d '{"content":"rocket"}' >/dev/null || true
+
+    - name: React 👎 on /drift failure
+      if: steps.comment-gate.outputs.active == 'true' && failure()
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_OWNER: ${{ github.repository_owner }}
+        GH_REPO:  ${{ github.event.repository.name }}
+        CID:      ${{ github.event.comment.id }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        curl -sS -X POST \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
+          -d '{"content":"-1"}' >/dev/null || true

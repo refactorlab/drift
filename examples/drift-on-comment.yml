@@ -1,22 +1,45 @@
 # Drop this file at .github/workflows/drift-on-comment.yml — it's the
 # manual-re-run companion to examples/drift.yml.
 #
-# Once installed, any repo OWNER / MEMBER / COLLABORATOR can re-run Drift on
-# a PR by posting a `/drift` comment, optionally with overrides:
+# `start-on-pr-comment` is ADDITIVE: it ENABLES /drift comments without
+# disabling the normal pull_request flow. This file keeps the two
+# concerns isolated for clarity, but you can also collapse them into
+# ONE workflow by listing both triggers and passing the flag — the
+# action handles each event correctly:
+#
+#     # .github/workflows/drift.yml (single-file additive setup)
+#     on:
+#       pull_request: { types: [opened, synchronize, reopened] }
+#       issue_comment: { types: [created] }
+#     permissions: { contents: read, pull-requests: write, checks: write,
+#                    models: read, issues: write }
+#     jobs.drift:
+#       if: github.event_name != 'issue_comment' || (… security gate …)
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: refactorlab/drift@main
+#           with: { start-on-pr-comment: true }
+#
+# The split here is the safe default: an `if:` mistake in the unified
+# form could let drive-by commenters trigger Drift, while the
+# split-file form puts the security gate at the workflow boundary where
+# it can't be bypassed.
+#
+# Once installed, any repo OWNER / MEMBER / COLLABORATOR can re-run Drift
+# on a PR by posting a `/drift` comment, optionally with overrides:
 #
 #     /drift
 #     /drift debug=true
 #     /drift ai-suggestions=false audio-summary=false
 #     /drift ai-model=openai/gpt-5
 #
-# Use `/drift issue` to ALSO open (or refresh) a GitHub Issue tracking this
-# PR's findings — one issue per PR, deduplicated by a hidden marker so it's
-# updated in place, not duplicated. Needs the issues:write permission below.
+# Use `/drift issue` to ALSO open (or refresh) a GitHub Issue tracking
+# this PR's findings — one issue per PR, deduplicated by a hidden marker.
 #
 #     /drift issue
 #     /drift issue ai-model=openai/gpt-5
 #
-# A multi-line YAML form is also accepted, useful for richer reruns:
+# A multi-line YAML form is also accepted:
 #
 #     /drift
 #     ```yaml
@@ -25,9 +48,16 @@
 #     fail-threshold: 0
 #     ```
 #
-# UX: 👀 reaction within ~2s acknowledges the command, 🚀 on success, 👎
-# on failure. The sticky PR-overview comment is UPDATED in place (no
-# duplicates) — Drift uses the same STICKY_MARKER as the auto run.
+# UX: the action drops a 👀 reaction as its first step once the runner
+# starts (typically 10-30 s after the comment), then 🚀 on success, 👎
+# on failure, or 😕 on a closed/merged PR. The sticky PR-overview comment
+# is UPDATED in place (no duplicates) — same STICKY_MARKER as the auto
+# run.
+#
+# EVERYTHING ELSE — the parser, REST PR resolution, fork-safe
+# checkout-by-SHA, the reactions — is handled by the action itself when
+# `start-on-pr-comment: true`. This workflow is just the trigger surface
+# + security gate.
 #
 # Security model — gated on three things in concert:
 #   1. github.event.issue.pull_request != null   → ignore plain issue comments
@@ -35,14 +65,6 @@
 #                                                → drive-by commenters get nothing
 #   3. comment.user.type != 'Bot'                → defends against Drift
 #                                                  ever triggering itself
-#
-# The workflow runs on the BASE-repo's default branch (issue_comment's normal
-# behaviour). The PR HEAD is then checked out by SHA — not branch — so a
-# force-push between the 👀 reaction and the checkout cannot swap the code
-# we scan. Fork PRs are supported; Drift reads source statically (no
-# scripts execute), so the usual fork-PR-with-secrets attack does not apply.
-# See github/docs#31513 for why action.yml uses a derivation step instead of
-# input defaults.
 
 name: Drift / on comment
 
@@ -58,10 +80,9 @@ permissions:
   models: read
   issues: write
 
-# Only collide on PR # when the comment is the command. Passive (non-/drift)
-# comments fall into a per-run group so an unrelated comment can never
-# cancel a real Drift run mid-flight. (See github/gh-aw#21975 for the
-# canonical self-cancellation footgun this avoids.)
+# Only collide on PR # when the comment is the command. Passive
+# (non-/drift) comments fall into a per-run group so an unrelated comment
+# can never cancel a real Drift run mid-flight.
 concurrency:
   group: >-
     drift-comment-${{ github.event.issue.number }}-${{
@@ -79,152 +100,6 @@ jobs:
       github.event.comment.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
-      # 1. React 👀 immediately so the user knows we picked up the command.
-      - name: React 👀
-        if: always()
-        env:
-          GH_OWNER: ${{ github.repository_owner }}
-          GH_REPO:  ${{ github.event.repository.name }}
-          CID:      ${{ github.event.comment.id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -sS -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
-            -d '{"content":"eyes"}' >/dev/null || true
-
-      # 2. Resolve PR head/base SHAs via REST (issue_comment payload has the
-      # PR # but not the SHAs). Also captures state so we can skip closed PRs.
-      - name: Resolve PR
-        id: pr
-        env:
-          GH_OWNER:  ${{ github.repository_owner }}
-          GH_REPO:   ${{ github.event.repository.name }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          resp="$(curl -sS \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/pulls/${PR_NUMBER}")"
-          {
-            echo "head_sha=$(printf '%s' "$resp" | jq -r '.head.sha')"
-            echo "base_sha=$(printf '%s' "$resp" | jq -r '.base.sha')"
-            echo "state=$(printf '%s' "$resp" | jq -r '.state')"
-          } >> "$GITHUB_OUTPUT"
-
-      # 3. Bail out (with a 😕 reaction) if the PR is closed/merged.
-      - name: Skip on closed PR
-        if: steps.pr.outputs.state != 'open'
-        env:
-          GH_OWNER: ${{ github.repository_owner }}
-          GH_REPO:  ${{ github.event.repository.name }}
-          CID:      ${{ github.event.comment.id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          STATE:    ${{ steps.pr.outputs.state }}
-        run: |
-          curl -sS -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
-            -d '{"content":"confused"}' >/dev/null || true
-          echo "::notice::Drift skipped — PR state is ${STATE} (only 'open' PRs are eligible)."
-          exit 0
-
-      # 4. Check out the BASE repo (so `origin` carries the base SHA the
-      # scanner diffs against — a fork's clone would NOT have it, breaking
-      # `git merge-base` and the whole diff range). Then fetch the PR head
-      # via the base repo's own refs/pull/<n>/head — the one fork-safe source
-      # for a fork PR's head commit — and check it out by IMMUTABLE SHA.
-      #
-      # Why SHA, not the pull ref: it defeats a force-push race. If HEAD moved
-      # between our REST resolve above and this checkout, the SHA either still
-      # names the exact code we vetted, or `git checkout` fails (👎) — we never
-      # silently scan a swapped-in commit. The scanner only READS source
-      # (tree-sitter); it never executes fork code, so this is fork-safe.
-      - uses: actions/checkout@v4
+      - uses: refactorlab/drift@main   # pin to a release tag in real use
         with:
-          fetch-depth: 0
-      - name: Check out PR head by SHA (fork-safe)
-        env:
-          PR_NUMBER: ${{ github.event.issue.number }}
-          HEAD_SHA:  ${{ steps.pr.outputs.head_sha }}
-        run: |
-          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
-          git checkout --detach "$HEAD_SHA"
-
-      # 5. Fetch JUST the Drift comment parser. It lives in the Drift action
-      # repo (not yours), so we sparse-checkout the single file into a subdir
-      # AFTER the checkout above — a fresh checkout's `git clean` would wipe it
-      # otherwise. The parser is dependency-free, so bare `node` runs it (no
-      # npm install). Pin `ref` to the SAME release tag as the action below so
-      # the accepted keys can't drift.
-      - name: Fetch the Drift comment parser
-        uses: actions/checkout@v4
-        with:
-          repository: refactorlab/drift
-          ref: main
-          path: .drift-action
-          sparse-checkout: action/scripts/parse-comment.mjs
-          sparse-checkout-cone-mode: false
-
-      # 6. Parse the comment body for /drift overrides. The script reads
-      # COMMENT_BODY from env (NEVER inlined into shell) and writes one
-      # $GITHUB_OUTPUT line per allowed key (action.yml input names). Unknown
-      # keys log a ::warning:: and are dropped.
-      - name: Parse /drift args
-        id: args
-        env:
-          COMMENT_BODY: ${{ github.event.comment.body }}
-        run: node .drift-action/action/scripts/parse-comment.mjs
-
-      # 7. Invoke Drift. The composite action's `Resolve PR context` step
-      # uses these explicit inputs and writes DRIFT_PR_* env vars to
-      # $GITHUB_ENV so the bundled JS (dist/index.js, dist/ai-suggest.js)
-      # sees the same PR identity as it does on a pull_request run.
-      - uses: refactorlab/drift@main    # pin to a release tag in real use
-        with:
-          pr-number: ${{ github.event.issue.number }}
-          base-sha:  ${{ steps.pr.outputs.base_sha }}
-          head-sha:  ${{ steps.pr.outputs.head_sha }}
-          debug:              ${{ steps.args.outputs.debug              || 'false' }}
-          progress:           ${{ steps.args.outputs.progress           || 'true' }}
-          ai-suggestions:     ${{ steps.args.outputs.ai-suggestions     || 'true' }}
-          audio-summary:      ${{ steps.args.outputs.audio-summary      || 'true' }}
-          ai-model:           ${{ steps.args.outputs.ai-model           || 'openai/gpt-4.1' }}
-          fail-threshold:     ${{ steps.args.outputs.fail-threshold     || '' }}
-          ai-max-suggestions: ${{ steps.args.outputs.ai-max-suggestions || '3' }}
-          # `/drift issue` sets this; needs the issues:write permission above.
-          open-issue:         ${{ steps.args.outputs.open-issue         || 'false' }}
-
-      # 8. Closing reaction. The 👀 from step 1 stays as the durable receipt.
-      - name: React 🚀 on success
-        if: success()
-        env:
-          GH_OWNER: ${{ github.repository_owner }}
-          GH_REPO:  ${{ github.event.repository.name }}
-          CID:      ${{ github.event.comment.id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -sS -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
-            -d '{"content":"rocket"}' >/dev/null || true
-
-      - name: React 👎 on failure
-        if: failure()
-        env:
-          GH_OWNER: ${{ github.repository_owner }}
-          GH_REPO:  ${{ github.event.repository.name }}
-          CID:      ${{ github.event.comment.id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -sS -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/comments/${CID}/reactions" \
-            -d '{"content":"-1"}' >/dev/null || true
+          start-on-pr-comment: true

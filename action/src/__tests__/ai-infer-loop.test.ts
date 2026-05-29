@@ -130,23 +130,37 @@ test('buildFocalUserPrompt: returns null for an out-of-range index', () => {
   assert.equal(out, null);
 });
 
-test('buildFocalUserPrompt: a commentable map drops findings whose line is off-diff', () => {
+test('buildFocalUserPrompt: file-level commentable filter (exact line need not match)', () => {
   const root = mkdtempSync(join(tmpdir(), 'drift-focal-'));
   const ctx = { workspaceRoot: root, baseSha: 'a', headSha: 'b' };
 
-  // Finding on src/a.ts:10. With a map that marks line 10 commentable → kept.
-  const onDiff = new Map([['src/a.ts', new Set([10])]]);
+  // Finding on src/a.ts:10. The PR diff only marks line 11 (the scanner
+  // points at a declaration but the actual `+` line is one below). Under
+  // file-level filtering we KEEP the finding — the model will anchor to a
+  // `+` line it sees in the numbered diff, so it doesn't need the
+  // scanner's exact line to be commentable.
+  const fileHasHunks = new Map([['src/a.ts', new Set([11])]]);
   assert.ok(
-    buildFocalUserPrompt(reportWith('src/a.ts', 10), 0, ctx, onDiff),
-    'finding on a commentable line should be selected',
+    buildFocalUserPrompt(reportWith('src/a.ts', 10), 0, ctx, fileHasHunks),
+    'file-level filter must keep a finding when its file has ANY commentable line',
   );
 
-  // Same finding, but the map only has line 11 → line 10 is off-diff → dropped,
-  // so index 0 now resolves to nothing.
-  const offDiff = new Map([['src/a.ts', new Set([11])]]);
+  // The file isn't on the PR diff at all → drop (no `+` line for the model
+  // to anchor to anywhere in the file).
+  const otherFile = new Map([['src/b.ts', new Set([11])]]);
   assert.equal(
-    buildFocalUserPrompt(reportWith('src/a.ts', 10), 0, ctx, offDiff),
+    buildFocalUserPrompt(reportWith('src/a.ts', 10), 0, ctx, otherFile),
     null,
-    'finding off the PR diff should be filtered out before selection',
+    'finding whose file has zero commentable lines must be dropped',
+  );
+
+  // Suffix-match bridge: scanner emits a deeper prefix than git diff. The
+  // filter must still resolve the file (same convention the Rust side
+  // uses for changed_files).
+  const deeperScannerPath = 'crate/src/a.ts';
+  const gitDiffShallow = new Map([['src/a.ts', new Set([11])]]);
+  assert.ok(
+    buildFocalUserPrompt(reportWith(deeperScannerPath, 10), 0, ctx, gitDiffShallow),
+    'suffix-match must bridge scanner path "crate/src/a.ts" → diff path "src/a.ts"',
   );
 });
