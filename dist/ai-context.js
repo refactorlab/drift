@@ -19479,7 +19479,20 @@ function validate(r) {
   }
 }
 
+// src/ai/diff-lines.ts
+function lookupCommentable(map, file) {
+  if (map.has(file)) return map.get(file);
+  let best;
+  for (const k of map.keys()) {
+    if (file.endsWith(k) || k.endsWith(file)) {
+      if (!best || k.length > best.length) best = k;
+    }
+  }
+  return best ? map.get(best) : void 0;
+}
+
 // src/ai/build-context.ts
+var lookupCommentable2 = lookupCommentable;
 var CODE_WINDOW_BEFORE = 8;
 var CODE_WINDOW_AFTER = 6;
 function buildAIContext(args) {
@@ -19599,12 +19612,13 @@ function pickFocalSuggestions(report, max, commentable) {
     return [];
   }
   let candidates = report.pr_review.code_suggestions.filter(
-    (s) => typeof s.line === "number" && s.file
+    (s) => typeof s.line === "number" && Number.isInteger(s.line) && s.line >= 1 && typeof s.file === "string" && s.file.length > 0
   );
   if (commentable) {
-    candidates = candidates.filter(
-      (s) => commentable.get(s.file)?.has(s.line) ?? false
-    );
+    candidates = candidates.filter((s) => {
+      const set = lookupCommentable2(commentable, s.file);
+      return !!set && set.size > 0;
+    });
   }
   const sorted = [...candidates].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   return sorted.slice(0, Math.max(0, max));
@@ -19630,18 +19644,39 @@ function renderFocalPoint(s, ordinal, workspaceRoot) {
       lines.push(`      - ${r.title ?? r.url} <${r.url}>`);
     }
   }
-  const codeWindow = readCodeWindow(
-    workspaceRoot,
-    s.file,
-    s.line,
-    CODE_WINDOW_BEFORE,
-    CODE_WINDOW_AFTER
-  );
+  const scannerWindow = renderScannerCodeWindow(s);
+  const codeWindow = scannerWindow ?? readCodeWindow(workspaceRoot, s.file, s.line, CODE_WINDOW_BEFORE, CODE_WINDOW_AFTER);
   if (codeWindow) {
-    lines.push("    code window (HEAD):");
+    const label = scannerWindow ? "code window (scanner \xB13, focal marked \u2190):" : "code window (HEAD \xB18/\xB16):";
+    lines.push(`    ${label}`);
     lines.push(indent(codeWindow, "      "));
   }
   return lines.join("\n");
+}
+function renderScannerCodeWindow(s) {
+  const rows = s.diff?.before_lines;
+  if (!rows || rows.length === 0) return null;
+  const maxLineNo = rows.reduce((m, r) => {
+    const n = r.line_number;
+    return typeof n === "number" && Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  const pad = String(Math.max(maxLineNo, 1)).length;
+  let focalIdx = rows.findIndex((r) => r.kind === "del");
+  if (focalIdx < 0 && typeof s.line === "number" && Number.isFinite(s.line)) {
+    focalIdx = rows.findIndex((r) => r.line_number === s.line);
+  }
+  if (focalIdx < 0) focalIdx = Math.floor(rows.length / 2);
+  const out = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i];
+    const n = r.line_number;
+    const showNum = typeof n === "number" && Number.isFinite(n) && n > 0;
+    const num = showNum ? String(n).padStart(pad) : " ".repeat(pad);
+    const marker = i === focalIdx ? "\u2190" : " ";
+    const code = (r.code ?? "").replace(/[\r\n]+/g, "\u23CE");
+    out.push(`${num}\u2502${marker} ${code}`);
+  }
+  return out.join("\n");
 }
 function readCodeWindow(workspaceRoot, file, line, before, after) {
   if (typeof line !== "number") return null;

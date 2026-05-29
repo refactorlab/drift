@@ -50,12 +50,57 @@ export function parseCommentableLines(patch: string): Set<number> {
 export type FilterResult = {
   kept: AISuggestion[];
   dropped: AISuggestion[];
+  /**
+   * Per-dropped diagnostic: why this suggestion got dropped. Surfaced
+   * by the caller into the log so a path-base mismatch (the OTHER
+   * common failure mode) is named explicitly instead of leaving the
+   * user with a silent "0 posted". 1:1 with `dropped`.
+   */
+  reasons: string[];
 };
+
+/**
+ * Look up the commentable-lines set for a file, with a suffix-match
+ * fallback. The model emits `file` taken VERBATIM from the focal
+ * point (the scanner's path), but GitHub's pulls.listFiles returns
+ * the repo-root-relative path — which may diverge in a monorepo or
+ * any other setup where the scanner was rooted differently. Without
+ * suffix matching, the WHOLE review silently 0-posts even when every
+ * suggestion was on a real `+` line. Mirrors the `lookupCommentable`
+ * in build-context.ts (kept identical so the two filter layers can't
+ * drift) — same Rust convention as `sym.file.ends_with(p)` in
+ * `dead_code_suggestions`.
+ *
+ * Algorithm: exact key first; else the LONGEST key for which either
+ * direction's suffix match holds (longest wins so the more-specific
+ * path is preferred when several files share a tail). Returns
+ * `undefined` when nothing matches — caller distinguishes "file not
+ * in diff at all" from "file in diff but line out of range".
+ */
+export function lookupCommentable(
+  map: Map<string, Set<number>>,
+  file: string,
+): Set<number> | undefined {
+  if (map.has(file)) return map.get(file);
+  let best: string | undefined;
+  for (const k of map.keys()) {
+    if (file.endsWith(k) || k.endsWith(file)) {
+      if (!best || k.length > best.length) best = k;
+    }
+  }
+  return best ? map.get(best) : undefined;
+}
 
 /**
  * Keep only suggestions whose anchor lines are all commentable in the
  * diff. For a multi-line suggestion (start_line..line) every line in
  * the range must be commentable, or GitHub 422s the whole review.
+ *
+ * File lookup uses `lookupCommentable` (suffix-match), NOT exact key
+ * equality — see that function's doc for why. Each dropped suggestion
+ * carries a diagnostic reason so the caller can log WHY each one was
+ * rejected (path miss vs. line miss vs. range partial) instead of just
+ * naming the count.
  */
 export function filterByDiff(
   suggestions: AISuggestion[],
@@ -63,14 +108,36 @@ export function filterByDiff(
 ): FilterResult {
   const kept: AISuggestion[] = [];
   const dropped: AISuggestion[] = [];
+  const reasons: string[] = [];
   for (const s of suggestions) {
-    const set = commentableByFile.get(s.file);
+    const set = lookupCommentable(commentableByFile, s.file);
     const start = typeof s.start_line === 'number' ? s.start_line : s.line;
-    let ok = set !== undefined && start <= s.line;
-    for (let l = start; ok && l <= s.line; l += 1) {
-      if (!set!.has(l)) ok = false;
+    if (set === undefined) {
+      dropped.push(s);
+      const sample = [...commentableByFile.keys()].slice(0, 3).join(', ');
+      const more = commentableByFile.size > 3 ? ` (+${commentableByFile.size - 3} more)` : '';
+      reasons.push(
+        `file not in PR diff (no exact or suffix match; diff has ${commentableByFile.size} file(s): ${sample || '(empty)'}${more})`,
+      );
+      continue;
     }
-    (ok ? kept : dropped).push(s);
+    if (start > s.line) {
+      dropped.push(s);
+      reasons.push(`start_line ${start} > line ${s.line} (invalid range)`);
+      continue;
+    }
+    const missing: number[] = [];
+    for (let l = start; l <= s.line; l += 1) {
+      if (!set.has(l)) missing.push(l);
+    }
+    if (missing.length === 0) {
+      kept.push(s);
+    } else {
+      dropped.push(s);
+      const preview = missing.slice(0, 4).join(', ');
+      const tail = missing.length > 4 ? ` (+${missing.length - 4} more)` : '';
+      reasons.push(`line(s) ${preview}${tail} not on diff (file has ${set.size} commentable line(s))`);
+    }
   }
-  return { kept, dropped };
+  return { kept, dropped, reasons };
 }
