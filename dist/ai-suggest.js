@@ -8,6 +8,10 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -24,6 +28,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/tunnel/lib/tunnel.js
 var require_tunnel = __commonJS({
@@ -19570,7 +19575,12 @@ var require_dist = __commonJS({
 });
 
 // src/ai-index.ts
-var import_node_fs = require("node:fs");
+var ai_index_exports = {};
+__export(ai_index_exports, {
+  mergeAndDedupe: () => mergeAndDedupe
+});
+module.exports = __toCommonJS(ai_index_exports);
+var import_node_fs2 = require("node:fs");
 
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
@@ -23759,6 +23769,98 @@ function getOctokit(token, options, ...additionalPlugins) {
   return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 
+// src/report.ts
+var import_node_fs = require("node:fs");
+function loadReport(path) {
+  const raw = (0, import_node_fs.readFileSync)(path, "utf8");
+  const parsed = JSON.parse(raw);
+  validate(parsed);
+  return parsed;
+}
+function validate(r) {
+  if (r.schema_version !== "1.0" && r.schema_version !== "1.1" && r.schema_version !== "1.2") {
+    throw new Error(
+      `Unsupported schema_version: ${JSON.stringify(r.schema_version)} (action understands 1.0, 1.1, 1.2)`
+    );
+  }
+  for (const key of ["mode", "generator", "pr_scope"]) {
+    if (r[key] === void 0) {
+      throw new Error(`scan-pr report missing required field "${key}"`);
+    }
+  }
+  const ps = r.pr_scope;
+  for (const k of ["changed_files", "affected_roots", "unreachable_changes"]) {
+    if (!Array.isArray(ps[k])) {
+      throw new Error(`pr_scope.${k} must be an array`);
+    }
+  }
+}
+var SUGGESTION_CONFIDENCE_THRESHOLD = 0.75;
+function passesQualityBar(s) {
+  const hasRef = Array.isArray(s.references) && s.references.length > 0 && !!s.references[0].url;
+  const validCategory = s.category === "A" || s.category === "B" || s.category === "C";
+  return s.confidence >= SUGGESTION_CONFIDENCE_THRESHOLD && hasRef && validCategory;
+}
+
+// src/suggestion-fence.ts
+function suggestionBlock(code) {
+  const runs = code.match(/`+/g) ?? [];
+  const longest = runs.reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}suggestion
+${code}
+${fence}`;
+}
+function unwrapFence(raw) {
+  const s = raw.replace(/\r\n/g, "\n");
+  const m = s.match(/^\s*`{3,}[^\n]*\n([\s\S]*?)\n`{3,}\s*$/);
+  return m ? m[1] : raw;
+}
+
+// src/render/suggestion.ts
+var CATEGORY_BADGE = {
+  A: "\u{1F150} Optimization",
+  B: "\u{1F151} Product correctness",
+  C: "\u{1F152} Framework misuse"
+};
+function renderSuggestionBody(s) {
+  const confidencePct = Math.round(s.confidence * 100);
+  const lines = [
+    `**${CATEGORY_BADGE[s.category]}${s.category_label ? ` \u2014 ${s.category_label}` : ""}** \xB7 confidence ${confidencePct}%`,
+    "",
+    s.why_it_matters
+  ];
+  if (s.references && s.references.length) {
+    const ref = s.references[0];
+    lines.push("", `Reference: [${ref.title ?? shortenUrl(ref.url)}](${ref.url})`);
+  }
+  const after = extractAfterCode(s);
+  if (after) {
+    lines.push("", suggestionBlock(after));
+  }
+  if (s.notes) {
+    lines.push("", `> ${s.notes}`);
+  }
+  return lines.join("\n");
+}
+function extractAfterCode(s) {
+  if (s.diff?.after_lines && s.diff.after_lines.length) {
+    return s.diff.after_lines.map((l) => l.code).join("\n");
+  }
+  if (s.diff?.unified) {
+    return s.diff.unified.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+  }
+  return null;
+}
+function shortenUrl(url) {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname}`.replace(/\/$/, "");
+  } catch {
+    return url;
+  }
+}
+
 // src/ai/schema.ts
 var AI_QUALITY_BAR = {
   minConfidence: 0.75,
@@ -23858,23 +23960,8 @@ function parseAIOutput(raw) {
   };
 }
 
-// src/suggestion-fence.ts
-function suggestionBlock(code) {
-  const runs = code.match(/`+/g) ?? [];
-  const longest = runs.reduce((m, r) => Math.max(m, r.length), 0);
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}suggestion
-${code}
-${fence}`;
-}
-function unwrapFence(raw) {
-  const s = raw.replace(/\r\n/g, "\n");
-  const m = s.match(/^\s*`{3,}[^\n]*\n([\s\S]*?)\n`{3,}\s*$/);
-  return m ? m[1] : raw;
-}
-
 // src/ai/render.ts
-var CATEGORY_BADGE = {
+var CATEGORY_BADGE2 = {
   A: "\u{1F150} Optimization",
   B: "\u{1F151} Product correctness",
   C: "\u{1F152} Framework misuse"
@@ -23882,9 +23969,9 @@ var CATEGORY_BADGE = {
 function renderAISuggestionBody(s, model) {
   const confidencePct = Math.floor(s.confidence * 100);
   const ref = s.references[0];
-  const refLabel = ref.title ?? shortenUrl(ref.url);
+  const refLabel = ref.title ?? shortenUrl2(ref.url);
   return [
-    `${CATEGORY_BADGE[s.category]} \xB7 \u{1F916} \`${model}\` \xB7 confidence ${confidencePct}%`,
+    `${CATEGORY_BADGE2[s.category]} \xB7 \u{1F916} \`${model}\` \xB7 confidence ${confidencePct}%`,
     "",
     s.why_it_matters,
     "",
@@ -23895,7 +23982,7 @@ function renderAISuggestionBody(s, model) {
     suggestionBlock(unwrapFence(s.after_code))
   ].join("\n");
 }
-function shortenUrl(url) {
+function shortenUrl2(url) {
   try {
     const u = new URL(url);
     return `${u.hostname}${u.pathname}`.replace(/\/$/, "");
@@ -24340,31 +24427,6 @@ function buildReviewComments(suggestions, model) {
     return comment;
   });
 }
-async function postAIReview(args) {
-  const { octokit, owner, repo, prNumber, headSha, suggestions, model, dryRun } = args;
-  const comments = buildReviewComments(suggestions, model);
-  const payload = {
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: "COMMENT",
-    body: `\u{1F916} **${model}** has ${comments.length} suggestion${comments.length === 1 ? "" : "s"} to apply.`,
-    comments
-  };
-  if (comments.length === 0) {
-    info("No AI suggestions to post \u2014 skipping review.");
-    return { posted: false, commentCount: 0, payload };
-  }
-  if (dryRun) {
-    info(`[dry-run] Would POST pulls.createReview with ${comments.length} comment(s).`);
-    info(JSON.stringify(payload, null, 2));
-    return { posted: false, commentCount: comments.length, payload };
-  }
-  await octokit.rest.pulls.createReview(payload);
-  info(`Posted AI review with ${comments.length} inline suggestion(s).`);
-  return { posted: true, commentCount: comments.length, payload };
-}
 
 // src/pr-context.ts
 function resolvePrContext() {
@@ -24406,86 +24468,192 @@ function optEnv(name) {
 
 // src/ai-index.ts
 async function aiMain() {
-  const aiPath = process.env.AI_SUGGESTIONS_PATH;
-  if (!aiPath) {
-    info("AI_SUGGESTIONS_PATH not set \u2014 skipping AI suggestion post.");
+  const model = process.env.DRIFT_AI_MODEL || "openai/gpt-4o";
+  const dryRun = process.env.DRIFT_DRY_RUN === "true";
+  const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
+  const detSuggestions = readDeterministicSuggestions();
+  const { suggestions: aiSuggestions, funnel: aiFunnel } = readAISuggestions();
+  if (detSuggestions.length === 0 && aiSuggestions.length === 0) {
+    info("No deterministic or AI suggestions to post \u2014 skipping combined review.");
     return;
+  }
+  const pr = resolvePrContext();
+  if (!pr) {
+    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 skipping combined review.");
+    return;
+  }
+  const token = process.env.GITHUB_TOKEN ?? "";
+  if (!token && !dryRun) {
+    warning("No GITHUB_TOKEN \u2014 skipping combined review post.");
+    return;
+  }
+  const octokit = getOctokit(token || "dry-run-stub-token");
+  const { owner, repo } = context2.repo;
+  let commentable = null;
+  try {
+    commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+  } catch (e) {
+    warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
+  }
+  const detComments = buildDeterministicComments(detSuggestions, commentable);
+  const aiOnDiff = filterAIByDiff(aiSuggestions, commentable);
+  const aiPostable = aiOnDiff.slice(0, maxAi);
+  const aiComments = aiPostable.length > 0 ? buildReviewComments(aiPostable, model) : [];
+  const merged = mergeAndDedupe(detComments, aiComments);
+  if (aiFunnel.total > 0) {
+    info(
+      `\u{1F916} ${model}: ${aiFunnel.total} candidate(s) \u2192 ${aiFunnel.passing} pass quality bar \u2192 ${aiOnDiff.length} on-diff \u2192 ${aiPostable.length} posted (cap=${maxAi})`
+    );
+  }
+  info(
+    `\u{1F7E3} combined review: ${detComments.length} deterministic + ${aiComments.length} AI \u2192 ${merged.length} comment(s) after dedupe`
+  );
+  if (merged.length === 0) {
+    if (aiFunnel.total > 0 && detComments.length === 0) {
+      info("No AI suggestion landed on a diff line \u2014 nothing to post.");
+    } else {
+      info("No on-diff anchors \u2014 skipping combined review (suggestions still in the sticky comment).");
+    }
+    return;
+  }
+  await postCombinedReview({
+    octokit,
+    owner,
+    repo,
+    prNumber: pr.number,
+    headSha: pr.headSha,
+    comments: merged,
+    detCount: detComments.length,
+    aiCount: aiComments.length,
+    model,
+    dryRun
+  });
+}
+function filterAIByDiff(suggestions, commentable) {
+  if (suggestions.length === 0) return [];
+  if (!commentable) return suggestions;
+  const { kept, dropped, reasons } = filterByDiff(suggestions, commentable);
+  if (dropped.length) {
+    info(`\u{1F916} dropped ${dropped.length} suggestion(s) \u2014 per-finding reasons:`);
+    for (let i = 0; i < dropped.length; i += 1) {
+      const s = dropped[i];
+      info(`  \u2022 ${s.file}:${s.line} \u2014 ${reasons[i] ?? "unknown"}`);
+    }
+  }
+  return kept;
+}
+function readDeterministicSuggestions() {
+  const path = process.env.DRIFT_REPORT_PATH;
+  if (!path) return [];
+  let report;
+  try {
+    report = loadReport(path);
+  } catch (e) {
+    info(`Drift report unreadable at ${path}: ${describe(e)} \u2014 combined review will skip deterministic`);
+    return [];
+  }
+  const suggestions = report.pr_review?.code_suggestions ?? [];
+  return suggestions.filter(passesQualityBar);
+}
+function readAISuggestions() {
+  const empty = { total: 0, passing: 0 };
+  const path = process.env.AI_SUGGESTIONS_PATH;
+  if (!path) {
+    info("AI_SUGGESTIONS_PATH not set \u2014 combined review will skip AI.");
+    return { suggestions: [], funnel: empty };
   }
   let raw;
   try {
-    raw = (0, import_node_fs.readFileSync)(aiPath, "utf8");
+    raw = (0, import_node_fs2.readFileSync)(path, "utf8");
   } catch (e) {
-    warning(`AI suggestions file unreadable at ${aiPath}: ${describe(e)}`);
-    return;
+    info(`AI envelope unreadable at ${path}: ${describe(e)} \u2014 combined review will skip AI`);
+    return { suggestions: [], funnel: empty };
   }
   if (raw.trim().length === 0) {
-    info("AI suggestions file is empty \u2014 skipping.");
-    return;
+    info("AI suggestions file is empty \u2014 skipping AI half of combined review.");
+    return { suggestions: [], funnel: empty };
   }
-  const maxSuggestions = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
-  const model = process.env.DRIFT_AI_MODEL || "openai/gpt-4o";
-  const dryRun = process.env.DRIFT_DRY_RUN === "true";
   const parsed = parseAIOutput(raw);
   if (!parsed.ok) {
     warning(`AI output rejected: ${parsed.reason}`);
     info(`first 400 chars:
 ${parsed.rawPreview}`);
-    return;
+    return { suggestions: [], funnel: empty };
   }
   if (parsed.suggestions.length === 0) {
     info(
-      `\u{1F916} ${model}: ${parsed.total} candidate(s) \u2192 0 cleared the quality bar \u2014 silence > noise.`
+      `\u{1F916} ${parsed.total} candidate(s) \u2192 0 cleared the quality bar \u2014 silence > noise.`
     );
-    return;
+    return {
+      suggestions: [],
+      funnel: { total: parsed.total, passing: parsed.passing }
+    };
   }
-  const pr = resolvePrContext();
-  if (!pr) {
-    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 skipping AI review post.");
-    return;
-  }
-  const token = process.env.GITHUB_TOKEN ?? "";
-  if (!token && !dryRun) {
-    warning("No GITHUB_TOKEN \u2014 skipping AI review post.");
-    return;
-  }
-  const octokit = getOctokit(token || "dry-run-stub-token");
-  const { owner, repo } = context2.repo;
-  let candidates = parsed.suggestions;
-  try {
-    const commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
-    const { kept, dropped, reasons } = filterByDiff(candidates, commentable);
-    if (dropped.length) {
-      info(`\u{1F916} dropped ${dropped.length} suggestion(s) \u2014 per-finding reasons:`);
-      for (let i = 0; i < dropped.length; i += 1) {
-        const s = dropped[i];
-        info(`  \u2022 ${s.file}:${s.line} \u2014 ${reasons[i] ?? "unknown"}`);
-      }
-    }
-    candidates = kept;
-  } catch (e) {
-    warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
-  }
-  const toPost = candidates.slice(0, maxSuggestions);
-  info(
-    `\u{1F916} ${model}: ${parsed.total} candidate(s) \u2192 ${parsed.passing} pass quality bar \u2192 ${candidates.length} on-diff \u2192 ${toPost.length} posted (cap=${maxSuggestions})`
+  return {
+    suggestions: parsed.suggestions,
+    funnel: { total: parsed.total, passing: parsed.passing }
+  };
+}
+function buildDeterministicComments(suggestions, commentable) {
+  const comments = suggestions.filter((s) => typeof s.line === "number").map((s) => ({
+    path: s.file,
+    line: s.line,
+    side: "RIGHT",
+    body: renderSuggestionBody(s)
+  }));
+  if (!commentable) return comments;
+  const before = comments.length;
+  const kept = comments.filter(
+    (c) => typeof c.line === "number" && (commentable.get(c.path)?.has(c.line) ?? false)
   );
-  if (toPost.length === 0) {
-    info("No AI suggestion landed on a diff line \u2014 nothing to post.");
+  const dropped = before - kept.length;
+  if (dropped > 0) {
+    info(
+      `Dropped ${dropped} deterministic suggestion(s) not on a PR-diff line (still mirrored in the Drift sticky comment).`
+    );
+  }
+  return kept;
+}
+function mergeAndDedupe(det, ai) {
+  const key = (c) => `${c.path}:${c.line}`;
+  const aiKeys = new Set(ai.map(key));
+  const detKept = det.filter((c) => !aiKeys.has(key(c)));
+  return [...detKept, ...ai];
+}
+async function postCombinedReview(args) {
+  const { octokit, owner, repo, prNumber, headSha, comments, detCount, aiCount, model, dryRun } = args;
+  const total = comments.length;
+  let body;
+  if (detCount > 0 && aiCount > 0) {
+    body = `\u{1F7E3} **Drift** has ${detCount} + \u{1F916} **${model}** added ${aiCount} suggestion${total === 1 ? "" : "s"} to apply.`;
+  } else if (aiCount > 0) {
+    body = `\u{1F916} **${model}** has ${aiCount} suggestion${aiCount === 1 ? "" : "s"} to apply.`;
+  } else {
+    body = `\u{1F7E3} **Drift** has ${detCount} suggestion${detCount === 1 ? "" : "s"} to apply.`;
+  }
+  const payload = {
+    owner,
+    repo,
+    pull_number: prNumber,
+    commit_id: headSha,
+    event: "COMMENT",
+    body,
+    comments
+  };
+  if (dryRun) {
+    info(`[dry-run] Would POST pulls.createReview with ${total} comment(s).`);
+    info(JSON.stringify(payload, null, 2));
     return;
   }
   try {
-    await postAIReview({
-      octokit,
-      owner,
-      repo,
-      prNumber: pr.number,
-      headSha: pr.headSha,
-      suggestions: toPost,
-      model,
-      dryRun
-    });
+    await octokit.rest.pulls.createReview(payload);
+    let kind;
+    if (detCount > 0 && aiCount > 0) kind = "combined PR review";
+    else if (aiCount > 0) kind = "AI review";
+    else kind = "PR review";
+    info(`Posted ${kind} with ${total} inline suggestion(s).`);
   } catch (e) {
-    warning(`AI review POST failed (non-fatal): ${describe(e)}`);
+    warning(`Combined review POST failed (non-fatal): ${describe(e)}`);
   }
 }
 function parseMax(v, fallback) {
@@ -24498,7 +24666,11 @@ function describe(e) {
   return e instanceof Error ? e.message : String(e);
 }
 aiMain().catch((err) => {
-  warning(`Unhandled AI-post error: ${describe(err)}`);
+  warning(`Unhandled combined-review error: ${describe(err)}`);
+});
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  mergeAndDedupe
 });
 /*! Bundled license information:
 

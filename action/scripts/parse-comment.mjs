@@ -42,6 +42,7 @@ const ALLOWED = new Set([
   'ai-model',
   'fail-threshold',
   'ai-max-suggestions',
+  'max-code-suggestions',
   'profiler-release-tag',
   'piper-voice',
   'open-issue',
