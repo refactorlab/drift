@@ -49,6 +49,7 @@
 - [A peek at the output](#a-peek-at-the-output)
 - [On a real PR](#on-a-real-pr)
 - [How it works](#how-it-works)
+- [Re-run on demand with `/drift` comments](#re-run-on-demand-with-drift-comments)
 - [Configuration](#configuration)
 - [What Andy doesn't do](#what-andy-doesnt-do)
 - [The landing page is part of the action](#the-landing-page-is-part-of-the-action)
@@ -225,6 +226,114 @@ This is exactly what reviewers see when Andy lands on a real pull request (`refa
 
 ---
 
+## Re-run on demand with `/drift` comments
+
+Andy auto-runs on every push. Sometimes you want to **re-run with different flags** — bump the AI model, enable debug logs, or open a tracking issue. PR comments make that one click:
+
+```text
+/drift
+/drift debug=true
+/drift ai-suggestions=false audio-summary=false
+/drift ai-model=openai/gpt-5
+/drift issue          ← also open / refresh a tracking issue for this PR
+```
+
+A fenced-YAML form is also accepted, useful for richer reruns:
+
+````text
+/drift
+```yaml
+debug: true
+ai-model: openai/gpt-5
+fail-threshold: 0
+```
+````
+
+**UX:** 👀 acknowledges the command once the runner picks it up (~10–30 s), then 🚀 on success, 👎 on failure, or 😕 on a closed/merged PR. The sticky PR comment is updated in place — no duplicates.
+
+### Enable it
+
+`start-on-pr-comment: true` is **additive** — turning it on enables `/drift` comments **without disabling** the auto-run on pushes. One workflow file does both:
+
+```yaml
+name: Drift
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  models: read
+  issues: write          # /drift issue + 👀 / 🚀 / 👎 / 😕 reactions
+
+jobs:
+  drift:
+    # Auto-run every pull_request event; for issue_comment, gate on
+    # author_association + /drift prefix + not-a-Bot.
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request != null &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                github.event.comment.author_association) &&
+       startsWith(github.event.comment.body, '/drift') &&
+       github.event.comment.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: refactorlab/drift@main
+        with:
+          start-on-pr-comment: true
+```
+
+That's everything. No separate parser shell, no REST resolve step, no fork-safe checkout dance — the action handles it.
+
+<details>
+<summary>👉 <strong>Prefer two workflow files?</strong></summary>
+
+If you'd rather keep the comment trigger isolated (e.g. to grant `issues:write` only to that flow, or to enforce the security gate at the workflow boundary where an `if:` typo can't bypass it), copy [`examples/drift-on-comment.yml`](./examples/drift-on-comment.yml) alongside the auto-run `drift.yml`. Both forms invoke the same action.
+
+</details>
+
+<details>
+<summary>🔧 <strong>What you can override per <code>/drift</code></strong></summary>
+
+| Key | Default | Example |
+|---|---|---|
+| `debug` | `false` | `/drift debug=true` |
+| `progress` | `true` | `/drift progress=false` |
+| `ai-suggestions` | `true` | `/drift ai-suggestions=false` |
+| `audio-summary` | `true` | `/drift audio-summary=false` |
+| `ai-model` | `openai/gpt-4.1` | `/drift ai-model=openai/gpt-5` |
+| `ai-max-suggestions` | `3` | `/drift ai-max-suggestions=5` |
+| `fail-threshold` | _(empty)_ | `/drift fail-threshold=0` |
+| `profiler-release-tag` | _(latest)_ | `/drift profiler-release-tag=drift-static-profiler-v0.6.0` |
+| `piper-voice` | `en_US-ryan-medium` | `/drift piper-voice=en_GB-alba-medium` |
+| `open-issue` | `false` | `/drift issue` _(also `/drift open-issue=true`)_ |
+
+Unknown keys log a `::warning::` and are dropped — forward-compatible against future inputs.
+
+</details>
+
+<details>
+<summary>🛡️ <strong>Security model</strong></summary>
+
+The `if:` above is **three gates in concert**, all evaluated by GitHub _before_ the job spins up:
+
+1. **`github.event.issue.pull_request != null`** — only PR comments, never plain issue comments.
+2. **`author_association ∈ {OWNER, MEMBER, COLLABORATOR}`** — drive-by commenters can't trigger.
+3. **`comment.user.type != 'Bot'`** — defends against Andy ever triggering itself.
+
+The action re-checks #1 and #3 inside its `comment-gate` step as defense-in-depth. For fork PRs, the head is checked out by **immutable SHA** via `refs/pull/<n>/head` — a force-push between the 👀 ack and the checkout cannot swap in different code. Drift only _reads_ source (tree-sitter); it never executes fork code, so the usual fork-PR-with-secrets attack does not apply.
+
+</details>
+
+---
+
 ## Configuration
 
 Andy works with **zero configuration** — just paste the YAML above.
@@ -267,91 +376,6 @@ Andy works with **zero configuration** — just paste the YAML above.
 
 </details>
 
----
-
-## The landing page is part of the action
-
-The page at **<https://refactorlab.github.io/andy/>** is shipped from this repo, and it's *also* a deliberate showcase of modern frontend craft — the kind of thing the action's reviewers care about. A few highlights from the implementation:
-
-- **OKLCH color** for perceptually-uniform gradients, with an sRGB fallback
-- A **bento layout** with CSS Grid + **container queries**, so the featured cell adapts to its own width
-- A **fluid `clamp()` type & space scale** — no breakpoint jumps between mobile and desktop
-- Native `<dialog>` + `@starting-style` + `transition-behavior: allow-discrete` for the command palette's entry/exit
-- A **WebGL2 shader** background (OKLCH FBM mesh), a **self-drawing SVG architecture diagram**, **CSS Motion Path** data-flow particles, a **self-typing syntax-highlighted YAML**, **kinetic variable-font** typography, a **spring-physics cursor** — all `prefers-reduced-motion`-aware
-- An **adaptive `perf-lite` mode** that drops the heaviest layers on weak devices (Save-Data, ≤2 GB RAM, ≤2 cores)
-- **React.lazy code-splitting** moves decorative components off the critical path
-- **JSON-LD structured data**, an installable **web app manifest**, **Speculation Rules** prefetch, a **skip link**, an **`sr-only`** utility, and **CSS logical properties** for RTL readiness
-
-Press **⌘K / Ctrl+K** anywhere on the page to open the command palette — fuzzy filter, full keyboard control, with theme/perf/section commands:
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots/palette-dark.png" />
-    <img src="https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots/palette-light.png" alt="The ⌘K command palette open over the landing page — Jump To (Problem, What you get, Install, Example) and Actions (Install from Marketplace, See an example review, View source on GitHub, Toggle theme, Toggle performance HUD)" width="900" />
-  </picture>
-</p>
-
-<sub>There's also a hidden treat — try the Konami code: <kbd>↑</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd><kbd>←</kbd><kbd>→</kbd><kbd>B</kbd><kbd>A</kbd>.</sub>
-
----
-
-## Local development & reproducible screenshots
-
-Requires [Bun](https://bun.com) ≥ 1.3.
-
-```sh
-bun install
-bun run dev          # local dev server at http://localhost:5173/andy/
-bun run typecheck    # tsc -b --noEmit
-bun run test         # bun:test — pure-logic suite (yaml tokenizer, scramble, konami, perf)
-bun run build        # production build into dist/
-bun run preview      # preview the production build
-```
-
-Every screenshot in this README is generated by [`scripts/screenshots.ts`](./scripts/screenshots.ts) — a small Chrome DevTools Protocol driver. To regenerate them:
-
-```sh
-# 1) Start the dev server
-bun run dev
-# 2) In another shell, launch headless Chrome on a debug port
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless=new --disable-gpu --remote-debugging-port=9333 \
-  --user-data-dir=/tmp/andy-chrome about:blank &
-# 3) Capture every shot in docs/screenshots/  (light + dark + close-ups)
-bun scripts/screenshots.ts 5174 9333
-```
-
-The script writes the theme into `localStorage` before navigation so the page's no-FOUC bootstrap picks it up, emulates `prefers-reduced-motion: reduce` for deterministic captures, and uses CDP's `captureScreenshot` `clip` parameter to crop close-ups precisely to an element's bounding box.
-
----
-
-## Repository layout
-
-```
-public/pr36-github-ui_2.html       # the full example review the landing page links to
-public/manifest.webmanifest        # PWA manifest (theme-color, icons, installable)
-src/components/                    # React components (Hero, Bento, palette, …)
-src/lib/                           # pure logic (yaml tokenizer, scramble, perf, theme store)
-src/lib/*.test.ts                  # bun:test unit suite (20 tests, 41 expects)
-scripts/screenshots.ts             # CDP-driven screenshot generator
-docs/banner.svg                    # the SVG banner at the top of this README
-docs/screenshots/                  # 15 PNGs — light, dark, and component close-ups
-.github/workflows/ci.yml           # type-check + tests + build on every PR
-.github/workflows/deploy.yml       # GitHub Pages deploy pipeline
-.github/workflows/drift.yml        # Andy PR review (dogfoods the action on this repo)
-```
-
----
-
-## CI / CD
-
-Three workflows in [`.github/workflows/`](./.github/workflows):
-
-- **`ci.yml`** — type-checks (`tsc -b --noEmit`), runs the `bun test` suite, and builds the landing page on every PR.
-- **`drift.yml`** — runs Andy on this repo's own PRs. The action **dogfoods itself**.
-- **`deploy.yml`** — on push to `main`, builds (`vite build`, base `/andy/`) and deploys `dist/` to GitHub Pages.
-
-The first time you deploy, enable Pages under **Settings → Pages → Source → GitHub Actions**.
 
 ---
 

@@ -25494,19 +25494,28 @@ async function main() {
     author: pr.author
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
+  const deferInlineReview = process.env.DRIFT_DEFER_INLINE_REVIEW === "true";
   const tasks = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch(
       (err) => warning(`check run failed: ${describeError(err)}`)
-    ),
-    postReview({
-      octokit,
-      owner,
-      repo,
-      prNumber,
-      headSha,
-      suggestions
-    }).catch((err) => warning(`review failed: ${describeError(err)}`))
+    )
   ];
+  if (deferInlineReview) {
+    info(
+      "DRIFT_DEFER_INLINE_REVIEW=true \u2014 skipping deterministic inline review; the AI-post step will publish a single combined review (deterministic + AI)."
+    );
+  } else {
+    tasks.push(
+      postReview({
+        octokit,
+        owner,
+        repo,
+        prNumber,
+        headSha,
+        suggestions
+      }).catch((err) => warning(`review failed: ${describeError(err)}`))
+    );
+  }
   if (wantComment) {
     let priorState = null;
     let existingId = null;

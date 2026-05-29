@@ -76,19 +76,36 @@ export async function main(): Promise<void> {
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || undefined;
 
+  // When AI suggestions are enabled, the AI-post step (dist/ai-suggest.js)
+  // posts a SINGLE combined PR review — deterministic + AI — so reviewers see
+  // ONE review thread in the PR conversation, not two. Setting
+  // `DRIFT_DEFER_INLINE_REVIEW=true` here tells main.ts to skip its own
+  // postReview so the combined poster owns the surface. When AI is disabled
+  // the flag stays empty and main.ts posts the deterministic review as before.
+  const deferInlineReview = process.env.DRIFT_DEFER_INLINE_REVIEW === 'true';
+
   const tasks: Promise<unknown>[] = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch((err) =>
       core.warning(`check run failed: ${describeError(err)}`),
     ),
-    postReview({
-      octokit,
-      owner,
-      repo,
-      prNumber,
-      headSha,
-      suggestions,
-    }).catch((err) => core.warning(`review failed: ${describeError(err)}`)),
   ];
+  if (deferInlineReview) {
+    core.info(
+      'DRIFT_DEFER_INLINE_REVIEW=true — skipping deterministic inline review; ' +
+        'the AI-post step will publish a single combined review (deterministic + AI).',
+    );
+  } else {
+    tasks.push(
+      postReview({
+        octokit,
+        owner,
+        repo,
+        prNumber,
+        headSha,
+        suggestions,
+      }).catch((err) => core.warning(`review failed: ${describeError(err)}`)),
+    );
+  }
 
   if (wantComment) {
     // Read the prior sticky comment ONCE: we recover its embedded drift

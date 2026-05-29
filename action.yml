@@ -110,6 +110,24 @@ inputs:
       Defaults to 3 — small + noticeable beats large + ignored.
     required: false
     default: '3'
+  max-code-suggestions:
+    description: |
+      Hard cap on the number of SCANNER code suggestions kept in the
+      report BEFORE any consumer (sticky PR comment, inline review, AI
+      focal-point picker) reads it. The scanner itself emits suggestions
+      uncapped (severity_rank DESC + confidence DESC), and 500-entry
+      reports are common on large refactors. Without this cap the sticky
+      PR comment overflows GitHub's 65 536-byte limit and the size guard
+      collapses sections / hard-cuts the body with a "report truncated"
+      footer — losing information silently.
+      Defaults to '10' — the top-10 highest-priority suggestions fit
+      under the sticky comment's 60 KB budget with room for the value
+      card, risks, architecture, and the call-graph diagram. Applied via
+      `jq` in a dedicated cap step right after the scan, so every
+      downstream consumer (sticky comment, deterministic + AI inline
+      review, AI focal-point picker) reads the SAME capped list.
+    required: false
+    default: '10'
   fail-threshold:
     description: |
       NOTE (current): failing is GLOBALLY DISABLED — Drift NEVER fails a PR
@@ -857,6 +875,64 @@ runs:
           *)   echo "::warning::scan-pr exited rc=${scan_rc} — see the scanner log above. The PR is NOT failed.";;
         esac
 
+    # ─── 7b. Cap code_suggestions in the scan report ────────────────
+    # The scanner emits suggestions UNCAPPED — a single PR can produce
+    # 500+ entries on a large refactor. The sticky PR comment renderer
+    # has a 60 KB body budget (GitHub's hard cap is 65 536 bytes); past
+    # that, guardSize collapses <details> blocks and finally hard-cuts
+    # with "…report truncated" — losing information silently. The
+    # deterministic inline review would also try to anchor 500 inline
+    # comments. So we cap the report's code_suggestions array right
+    # here, BEFORE any consumer reads it. The scanner's ordering
+    # (severity_rank DESC, confidence DESC) is already canonical
+    # priority order — taking the first N preserves the most
+    # important findings. Fail-soft: if jq is missing or the report
+    # isn't valid JSON, leave the file untouched and let downstream
+    # steps handle it (the size guard is still a safety net).
+    - name: Cap code suggestions
+      continue-on-error: true
+      id: cap-suggestions
+      if: steps.scan.outputs.scan_ran == 'true'
+      shell: bash
+      env:
+        DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
+        MAX_CODE_SUGGESTIONS: ${{ (steps.args.outputs.max-code-suggestions || inputs.max-code-suggestions) }}
+      run: |
+        if [ ! -s "$DRIFT_REPORT_PATH" ]; then
+          echo "⏭️  no report at $DRIFT_REPORT_PATH — nothing to cap"
+          exit 0
+        fi
+        if ! command -v jq >/dev/null 2>&1; then
+          echo "⚠️  jq unavailable — leaving report uncapped (size guard is the final fallback)"
+          exit 0
+        fi
+        # Coerce to a positive integer; on garbage fall back to 10.
+        case "${MAX_CODE_SUGGESTIONS}" in
+          ''|*[!0-9]*) max=10 ;;
+          0)           max=10 ;;
+          *)           max="${MAX_CODE_SUGGESTIONS}" ;;
+        esac
+        before="$(jq -r '(.pr_review.code_suggestions // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0)"
+        if ! [ "$before" -gt "$max" ] 2>/dev/null; then
+          echo "✅ ${before} suggestion(s) — already ≤ cap (${max}); no change"
+          echo "before=${before}" >> "$GITHUB_OUTPUT"
+          echo "after=${before}"  >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        tmp="$(mktemp)"
+        if jq --argjson max "$max" \
+             '.pr_review.code_suggestions = ((.pr_review.code_suggestions // [])[0:$max])' \
+             "$DRIFT_REPORT_PATH" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+          mv "$tmp" "$DRIFT_REPORT_PATH"
+          after="$(jq -r '(.pr_review.code_suggestions // []) | length' "$DRIFT_REPORT_PATH" 2>/dev/null || echo 0)"
+          echo "✂️  capped ${before} → ${after} suggestion(s) (max=${max}); kept the highest-priority entries (scanner order)"
+          echo "before=${before}" >> "$GITHUB_OUTPUT"
+          echo "after=${after}"   >> "$GITHUB_OUTPUT"
+        else
+          rm -f "$tmp"
+          echo "⚠️  jq edit failed — leaving report uncapped"
+        fi
+
     # ─── 8. Print scan summary (+ full debug dump when debug=true) ───
     - name: Print scan summary
       continue-on-error: true   # advisory: never fail the PR on our own error
@@ -1388,13 +1464,19 @@ runs:
         # the literal "Re-run jobs" button case.
         overwrite: true
 
-    # ─── 9. Post sticky PR comment + inline suggestions + check run ──
+    # ─── 9. Post sticky PR comment + check run (+ inline review when AI off) ─
     # Runs the compiled bundle at dist/index.js. The bundle reads the
     # JSON report at DRIFT_REPORT_PATH and uses GITHUB_TOKEN to:
     #   - upsert a sticky overview comment (idempotent via marker)
+    #   - create a check run summarising the report
     #   - post inline review comments for code suggestions above the
     #     quality bar (confidence ≥ 0.75, category A/B/C, has ref link)
-    #   - create a check run summarising the report
+    # When ai-suggestions is enabled, the inline-review surface is HANDED
+    # OFF to the combined poster (step 12: dist/ai-suggest.js) so the PR
+    # conversation shows ONE review thread with both deterministic and AI
+    # suggestions, not two. DRIFT_DEFER_INLINE_REVIEW=true tells main.ts
+    # to skip its own postReview in that case; the sticky comment and
+    # check run still ship from this step.
     # Skips when there's no PR context (push events, manual dispatch).
     - name: Post Drift PR review
       continue-on-error: true   # advisory: never fail the PR on our own error
@@ -1405,6 +1487,11 @@ runs:
         DRIFT_COMMENT:     'true'
         DRIFT_OPEN_ISSUE:  ${{ (steps.args.outputs.open-issue || inputs.open-issue) }}
         DRIFT_FAIL_THRESHOLD: ${{ (steps.args.outputs.fail-threshold || inputs.fail-threshold) }}
+        # Defer the inline review to step 12 (combined poster) when AI is on,
+        # so reviewers see one review thread instead of two. When AI is off
+        # we leave this empty and main.ts posts the deterministic inline
+        # review here as before.
+        DRIFT_DEFER_INLINE_REVIEW: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
         # Artifact URL of the non-zipped WAV (empty when audio is disabled or
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
         # archive:false this URL serves the raw .wav, not a zip.
@@ -1532,27 +1619,40 @@ runs:
         ────────────────────────────────────────────────────────────
         EOF
 
-    # ─── 12. Post AI suggestions as a PR review (Octokit) ────────────
-    # Runs the compiled bundle at dist/ai-suggest.js. It reads the
-    # GPT-5 response file at AI_SUGGESTIONS_PATH, validates against
-    # the AI envelope schema (src/ai/schema.ts), applies the quality
-    # bar, caps at DRIFT_MAX_AI_SUGGESTIONS, and POSTs ONE
-    # pulls.createReview via Octokit. Call shape is covered by the
-    # tests in src/__tests__/ai-post.test.ts. Fail-soft: a non-fatal
-    # error here will not break the deterministic review from step 9.
-    - name: Post AI suggestions
+    # ─── 12. Post combined inline review (deterministic + AI) ────────
+    # Runs the compiled bundle at dist/ai-suggest.js. The bundle reads
+    # BOTH the deterministic scan report (DRIFT_REPORT_PATH) AND the AI
+    # envelope (AI_SUGGESTIONS_PATH), filters each set against the PR's
+    # diff lines, dedupes any path:line collisions (AI wins on overlap),
+    # and POSTs ONE pulls.createReview via Octokit — so the PR
+    # conversation shows a SINGLE review thread instead of two.
+    #
+    # Gate: runs whenever the scan produced a report AND we have PR
+    # context. NOT gated on ai-loop succeeding — when the AI loop fails
+    # (no models permission, model unavailable, …) the envelope is
+    # empty/missing and we still post the deterministic review, so the
+    # reviewer is never left without inline comments.
+    #
+    # Fail-soft: a non-fatal error here doesn't break the sticky
+    # overview comment or check run from step 9.
+    - name: Post combined inline review
       continue-on-error: true   # advisory: never fail the PR on our own error
+      # Runs when AI is ENABLED: main.ts has already deferred to us, so we
+      # own the inline-review surface. NOT gated on ai-loop succeeding —
+      # a failed AI loop just leaves an empty envelope and we post
+      # deterministic only. When AI is disabled, main.ts already posted
+      # the deterministic review and we'd otherwise create a duplicate.
       if: >-
         (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
-        steps.ai-loop.outcome == 'success' &&
         steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
-        # The per-suggestion loop wrote every passing suggestion into one
-        # envelope at this fixed path. The post bundle validates it
-        # against the schema, re-applies the quality bar + diff anchoring,
-        # caps at DRIFT_MAX_AI_SUGGESTIONS, and POSTs one createReview.
+        # The deterministic source: the cap step already capped this to
+        # max-code-suggestions (default 10) so the worst-case is bounded.
+        DRIFT_REPORT_PATH:        ${{ runner.temp }}/drift-report.json
+        # The AI envelope: optional. Missing/empty when ai-suggestions is
+        # off or the AI loop failed; the bundle then posts deterministic-only.
         AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
         DRIFT_MAX_AI_SUGGESTIONS: ${{ (steps.args.outputs.ai-max-suggestions || inputs.ai-max-suggestions) }}
         DRIFT_AI_MODEL:           ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
