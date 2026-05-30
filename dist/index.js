@@ -24004,6 +24004,32 @@ function numInput(inputs, key) {
   return Number.isFinite(n) ? n : null;
 }
 
+// src/render/lib/section.ts
+function splitHeading(md) {
+  const lines = md.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  const m = lines[i]?.match(/^#{1,6}\s+(.+?)\s*$/);
+  if (!m) return { title: null, body: md };
+  const body = lines.slice(i + 1).join("\n").replace(/^\n+/, "");
+  return { title: m[1].trim(), body };
+}
+function collapsibleSection(opts) {
+  const openAttr = opts.open ? " open" : "";
+  const tldr = opts.tldr?.trim() ? ` \u2014 ${escapeHtml(opts.tldr.trim())}` : "";
+  const summary2 = `<summary><strong>${escapeHtml(opts.title)}</strong>${tldr}</summary>`;
+  return [`<details${openAttr}>`, summary2, "", opts.body.trim(), "", "</details>"].join("\n");
+}
+function wrapSection(md, opts) {
+  const { title, body } = splitHeading(md);
+  return collapsibleSection({
+    title: title ?? opts.fallbackTitle ?? "Details",
+    tldr: opts.tldr,
+    body: title ? body : md,
+    open: opts.open
+  });
+}
+
 // src/render/context.ts
 function repoSlug(ctx) {
   return ctx?.owner && ctx?.repo ? `${ctx.owner}/${ctx.repo}` : null;
@@ -24483,7 +24509,13 @@ function renderDetail(s, ctx) {
   const pct = confidencePercent(s.confidence);
   const out = [
     "<details>",
-    `<summary>${cat.badge} <strong>${title}</strong> \xB7 <code>${loc}</code> \xB7 ${pct}</summary>`,
+    // `title` (from category_label) and `loc` (file:line) are PR-controlled —
+    // file paths can legally contain `<`/`>` on Linux/macOS, so a path like
+    // `src/</summary><details>evil.ts` would otherwise close the <summary>
+    // early and inject a phantom <details>, breaking the disclosure and
+    // unbalancing the comment's tags. Escape both before embedding in the
+    // structural <summary>/<code>. (`cat.badge` and `pct` are static/computed.)
+    `<summary>${cat.badge} <strong>${escapeHtml(title)}</strong> \xB7 <code>${escapeHtml(loc)}</code> \xB7 ${pct}</summary>`,
     "",
     s.why_it_matters,
     ""
@@ -24634,19 +24666,32 @@ function renderArchitecture(input) {
     );
   }
   const details = [];
-  const flow = archMermaid(arch2);
-  if (flow) {
-    details.push(
-      detailsBlock("\u{1F9ED} Architecture flow diagram \u2014 before \u2192 after", [
-        "> Nodes labelled `\u2039lambda@N\u203A` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.",
+  const pair = beforeAfterPair(arch2);
+  if (pair) {
+    const anonNote = "> Nodes labelled `\u2039anonymous@N\u203A` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.";
+    const inner = [];
+    if ("combined" in pair) {
+      inner.push(anonNote, "", "```mermaid", pair.combined, "```");
+    } else {
+      inner.push(
+        "> **\u{1F534} BEFORE** reconstructs the call graph as it existed pre-PR (`status=added` files skipped, `status=removed` files appear as red placeholder cards). **\u{1F7E2} AFTER** shows the current call graph with file-status colouring (\u{1F7E9} added, \u{1F7E7} modified/renamed).",
+        anonNote,
+        "",
+        "**\u{1F534} BEFORE \u2014 what the code was:**",
         "",
         "```mermaid",
-        flow,
+        pair.before,
         "```",
         "",
-        "[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)"
-      ])
-    );
+        "**\u{1F7E2} AFTER \u2014 what the code is now:**",
+        "",
+        "```mermaid",
+        pair.after,
+        "```"
+      );
+    }
+    inner.push("", "[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)");
+    details.push(detailsBlock("\u{1F9ED} Architecture flow diagram \u2014 before vs after", inner));
   }
   if (business?.mermaid) {
     const inner = [];
@@ -24688,6 +24733,14 @@ function methodCount(desc) {
 }
 function archMermaid(arch2) {
   return arch2?.combined_mermaid ?? arch2?.after_mermaid ?? arch2?.before_mermaid ?? null;
+}
+function beforeAfterPair(arch2) {
+  const before = arch2?.before_mermaid?.trim();
+  const after = arch2?.after_mermaid?.trim();
+  if (before && after) return { before, after };
+  const combined = arch2?.combined_mermaid?.trim() ?? after ?? before;
+  if (combined) return { combined };
+  return null;
 }
 function detailsBlock(summary2, inner) {
   return ["<details>", `<summary>${summary2}</summary>`, "", ...inner, "", "</details>"].join("\n");
@@ -24760,8 +24813,18 @@ function renderLegend(techDebt) {
     "| `low` / `medium` / `high` | Model **confidence** in the estimate (independent of priority) |",
     "| \u{1F534} Act before merge / \u{1F7E2} Acceptable | Risk quadrant \u2014 severity \xD7 likelihood |"
   ].join("\n");
-  const methodology = `**Methodology.** Each axis's \u0394% is computed against the merge base (formulas in the value card). Thresholds: complexity > ${cx}, long function > ${loc} LOC. A suggestion is surfaced only at confidence \u2265 75% with a supporting reference. Findings are **advisory** and never fail the check. Counts and reach come from a static call-graph; nodes the profiler can't name appear as \`\u2039lambda@N\u203A\`.`;
-  return ["<details>", "<summary>\u{1F516} Legend &amp; methodology</summary>", "", table, "", methodology, "", "</details>"].join("\n");
+  const archFlow = [
+    "**Architecture flow \u2014 two charts.** The flow diagram shows **\u{1F534} BEFORE** (the code as it *was* before this PR) and **\u{1F7E2} AFTER** (the code *now*) as two separate graphs. Node colours encode each file's diff status:",
+    "",
+    "| Colour | Status | Where |",
+    "|:--:|---|---|",
+    "| \u{1F7E9} green | **added** (new file) \u2014 also copies | AFTER only |",
+    "| \u{1F7E7} amber | **modified / renamed** | AFTER (BEFORE shows renamed files under their *old* name) |",
+    "| \u{1F5D1} red | **removed** (deleted file) | BEFORE only \u2014 a placeholder card |",
+    "| \u26AA grey | unchanged callee, or any node in the BEFORE-state graph | BEFORE / AFTER |"
+  ].join("\n");
+  const methodology = `**Methodology.** Each axis's \u0394% is computed against the merge base (formulas in the value card). Thresholds: complexity > ${cx}, long function > ${loc} LOC. A suggestion is surfaced only at confidence \u2265 75% with a supporting reference. Findings are **advisory** and never fail the check. Counts and reach come from a static call-graph; nodes the profiler can't name appear as \`\u2039anonymous@N\u203A\`.`;
+  return ["<details>", "<summary>\u{1F516} Legend &amp; methodology</summary>", "", table, "", archFlow, "", methodology, "", "</details>"].join("\n");
 }
 
 // src/render/sections/footer.ts
@@ -24807,16 +24870,16 @@ function renderOverview(report, opts = {}) {
   const ext = renderExt(report.pr_review_ext, ctx);
   const hasRich = [valueCard, suggestions, risks].some(Boolean);
   const legend = hasRich ? renderLegend(report.pr_review_ext?.tech_debt) : null;
-  const major = [header, valueCard, suggestions, risks, architecture].filter((s) => !!s);
-  const tail = [ext, legend].filter((s) => !!s).join("\n\n");
+  const sections = [header];
+  if (valueCard) sections.push(wrapSection(valueCard, { tldr: tldrValue(facts), open: true }));
+  if (suggestions) sections.push(wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true }));
+  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts), open: facts.risksToAddress > 0 }));
+  if (architecture) sections.push(wrapSection(architecture, { tldr: tldrArchitecture(facts) }));
+  if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
+  if (legend) sections.push(legend);
   const footer = renderFooter(report.generator, audioUrl);
   let body = `${STICKY_MARKER}
-${major.join("\n\n---\n\n")}`;
-  if (tail) body += `
-
----
-
-${tail}`;
+${sections.join("\n\n---\n\n")}`;
   body += `
 
 ---
@@ -24827,12 +24890,51 @@ ${footer}`;
 ${serializeState(currentState)}`;
   return guardSize(body);
 }
+function tldrValue(f) {
+  if (f.overallPercent === null) return "Per-axis value dashboard";
+  const arrow = f.overallDirection === "up" ? "\u25B2" : f.overallDirection === "down" ? "\u25BC" : "\u2014";
+  let s = `Overall drift ${signedPercent(f.overallPercent)} ${arrow}`;
+  if (f.regressedAxes.length > 0) {
+    s += ` \xB7 ${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`;
+  } else if (f.topImprovement) {
+    s += ` \xB7 ${f.topImprovement.label} leads`;
+  }
+  return s;
+}
+function tldrSuggestions(f) {
+  const n = f.passing.length;
+  const parts = [`${int(n)} ${plural(n, "suggestion")}`];
+  if (f.correctness.length > 0) {
+    parts.push(`${f.correctness.length} product-correctness`);
+  }
+  return parts.join(" \xB7 ");
+}
+function tldrRisks(f) {
+  if (f.totalRisks === 0) return "Risk quadrant map";
+  if (f.risksToAddress > 0) return `${f.risksToAddress} to address \xB7 ${f.totalRisks} total`;
+  return `${f.totalRisks} ${plural(f.totalRisks, "risk")} \xB7 none gating`;
+}
+function tldrArchitecture(f) {
+  const n = f.affectedRoots;
+  const reach = n === 0 ? "no entry point reaches it" : `${int(n)} entry ${plural(n, "point")} ${n === 1 ? "reaches" : "reach"} it`;
+  const dead = f.unreachable > 0 ? ` \xB7 ${f.unreachable} unreachable` : "";
+  return `Before vs after \xB7 ${reach}${dead}`;
+}
+function tldrExt(f) {
+  const bits = [];
+  if (f.duplicationClusters > 0) bits.push(`${f.duplicationClusters} dup ${plural(f.duplicationClusters, "cluster")}`);
+  if (f.uncoveredRoots.length > 0) bits.push(`${f.uncoveredRoots.length} uncovered`);
+  if (f.reliabilityGaps.length > 0) bits.push(`${f.reliabilityGaps.length} reliability ${plural(f.reliabilityGaps.length, "gap")}`);
+  const debt = f.highComplexity + f.longFunctions;
+  if (debt > 0) bits.push(`${debt} tech-debt`);
+  return bits.length > 0 ? bits.join(" \xB7 ") : "Duplication \xB7 uncovered roots \xB7 reliability gaps \xB7 tech debt";
+}
 function guardSize(body) {
   if (body.length <= BODY_SIZE_BUDGET) return body;
-  const innermost = /<details>\s*<summary>([\s\S]*?)<\/summary>(?:(?!<details>)[\s\S])*?<\/details>/;
+  const innermost = /<details(?: open)?>\s*<summary>((?:(?!<\/summary>)[\s\S])*?)<\/summary>(?:(?!<details(?: open)?>)[\s\S])*?<\/details>/;
   let out = body;
   for (let i = 0; i < 1e3 && out.length > BODY_SIZE_BUDGET; i++) {
-    const next = out.replace(innermost, (_m, summary2) => `<details><summary>${summary2.trim()} \u2014 _collapsed (size guard)_</summary></details>`);
+    const next = out.replace(innermost, (_m, summary2) => `<sub>${summary2.trim()} \u2014 _collapsed (size guard)_</sub>`);
     if (next === out) break;
     out = next;
   }

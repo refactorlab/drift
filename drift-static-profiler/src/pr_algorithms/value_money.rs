@@ -298,6 +298,7 @@ mod tests {
             status: Some(status.into()),
             additions: add,
             deletions: del,
+            ..Default::default()
         }
     }
 

@@ -35,15 +35,17 @@ for (const fix of fixtures) {
     assert.match(body, /img\.shields\.io\/badge\/review-/, 'review-status KPI badge');
     assert.match(body, /### ✅ Before you merge/, 'merge checklist');
     assert.match(body, /> \*\*Merge readiness\*\*/, 'merge-readiness bar');
-    assert.match(body, /## 📊 Value card/, 'value card');
+    // Sections are now collapsible: the title lives in a <details><summary>
+    // with a one-line TLDR appended ("— …").
+    assert.match(body, /<summary><strong>📊 Value card<\/strong> — /, 'value card collapsible + TLDR');
     assert.match(body, /<table>[\s\S]*<caption>PR value drift/, 'HTML dashboard table');
     assert.match(body, /Composite&nbsp;/, 'composite row');
     assert.match(body, /🔁 \*\*Since last review\*\*/, 'since-last-review line');
-    assert.match(body, /## ⚠️ Suggestions \(\d+\)/, 'suggestions section');
+    assert.match(body, /<summary><strong>⚠️ Suggestions \(\d+\)<\/strong> — /, 'suggestions collapsible + TLDR');
     assert.match(body, /\| Priority \| Finding \| Location \| Confidence \|/, 'priority table');
-    assert.match(body, /## 🛰 Risks/, 'risks section');
-    assert.match(body, /## 🏗 Architecture & reach/, 'architecture section');
-    assert.match(body, /## 🧪 Extended findings/, 'extended findings');
+    assert.match(body, /<summary><strong>🛰 Risks<\/strong> — /, 'risks collapsible + TLDR');
+    assert.match(body, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /, 'architecture collapsible + TLDR');
+    assert.match(body, /<summary><strong>🧪 Extended findings<\/strong> — /, 'extended findings collapsible + TLDR');
     assert.match(body, /Legend &amp; methodology/, 'legend');
     assert.match(body, /Posted by <a href="https:\/\/drift\.dev">Drift<\/a>/, 'footer');
   });
@@ -88,8 +90,8 @@ test('render(no suggestions): suggestions section omitted, checklist still sane'
     pr_scope: { changed_files: ['a.py'], affected_roots: ['main'], unreachable_changes: [] },
     pr_review: { code_suggestions: [] },
   });
-  assert.doesNotMatch(body, /## ⚠️ Suggestions/, 'no section without passing suggestions');
-  assert.match(body, /## 🏗 Architecture & reach/, 'architecture still renders');
+  assert.doesNotMatch(body, /⚠️ Suggestions/, 'no section without passing suggestions');
+  assert.match(body, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /, 'architecture still renders (collapsible)');
 });
 
 test('render(no pr_review): factual-only output', () => {
@@ -101,8 +103,8 @@ test('render(no pr_review): factual-only output', () => {
   });
   assert.match(body, /## [▲▼—]? ?Drift review/, 'title present');
   assert.match(body, /\[!NOTE\]/, 'NOTE verdict without a value model');
-  assert.match(body, /## 🏗 Architecture & reach/, 'factual architecture section');
-  assert.doesNotMatch(body, /## 📊 Value card/, 'no value card without a value model');
+  assert.match(body, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /, 'factual architecture section (collapsible)');
+  assert.doesNotMatch(body, /📊 Value card/, 'no value card without a value model');
   assert.doesNotMatch(body, /img\.shields\.io\/badge\/drift-/, 'no drift badge without a value model');
   assert.doesNotMatch(body, /Legend &amp; methodology/, 'legend skipped on factual-only');
 });
@@ -122,4 +124,33 @@ test('render: guardSize collapses <details> innermost-first when over budget', (
   });
   assert.ok(body.length < 65_536, `guarded body too large: ${body.length}`);
   assert.match(body, /collapsed \(size guard\)/);
+});
+
+test('render: guardSize can collapse a <details open> section and preserves its TLDR summary', () => {
+  // The Value card is rendered as `<details open>`. A huge `bottom_line` lands
+  // DIRECTLY in its body (not in a nested <details>), so the only way under
+  // budget is to collapse the OUTER `<details open>` itself. This is the exact
+  // case the pre-fix guardSize regex (which only matched `<details>`) could
+  // never collapse — the body would blow past the cap. Also asserts the
+  // section TLDR survives the collapse (the summary is preserved).
+  const huge = 'y'.repeat(70_000);
+  const body = renderOverview({
+    schema_version: '1.2',
+    mode: 'static',
+    generator: { tool: 'drift-static-profiler', version: '0.0.0-test' },
+    pr_scope: { changed_files: ['a.ts'], affected_roots: ['main'], unreachable_changes: [] },
+    pr_review: {
+      overall_drift: { percent: 5, direction: 'up', confidence: 'low' },
+      value_card: {
+        axes: [{ name: 'money', label: '💰 Money', delta_percent: 5, direction: 'up', confidence: 'low' }],
+        bottom_line: huge,
+      },
+    },
+  });
+  assert.ok(body.length < 65_536, `guarded body too large: ${body.length}`);
+  // The open Value-card section collapsed to a tagless marker — its TLDR text
+  // (carried in the summary) must survive in that marker.
+  assert.match(body, /📊 Value card<\/strong> — Overall drift \+5\.0% ▲[\s\S]*?collapsed \(size guard\)/, 'value-card TLDR survives the collapse marker');
+  // The 70 KB blob must be gone (the open section's body was dropped).
+  assert.doesNotMatch(body, /y{1000}/, 'huge body content was dropped');
 });

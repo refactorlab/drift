@@ -344,7 +344,19 @@ impl Flowchart {
         // reserved-word class name (`classDef end fill:…`) aborts the parse.
         // Sanitize via `safe_id` so the class line and any `class … name`
         // reference below resolve to the same identifier.
-        for cd in &self.class_defs {
+        //
+        // Skip classDefs no node actually references. An orphan classDef is
+        // legal mermaid but it's dead output that bloats diff noise and leaks
+        // the builder's intent (the broken architecture-flow output emitted
+        // a `changed` classDef no node used because zero roots matched
+        // `changed_files`). Keeping only the referenced classDefs makes the
+        // wire format match exactly what the diagram needs.
+        let used_classes: std::collections::HashSet<&str> = self
+            .nodes
+            .iter()
+            .filter_map(|n| n.class.as_deref())
+            .collect();
+        for cd in self.class_defs.iter().filter(|cd| used_classes.contains(cd.name.as_str())) {
             // Each field value is sanitized via `safe_class_value` so a hostile
             // upstream can't inject extra keys (comma) or terminate the line
             // early (newline) or use `rgb(…)`/`hsl(…)` syntax mermaid rejects.

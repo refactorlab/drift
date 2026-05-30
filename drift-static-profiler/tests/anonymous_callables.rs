@@ -1,12 +1,12 @@
 //! Stage D end-to-end test: every supported language captures its
 //! anonymous-callable shape (lambda / arrow / closure / function
-//! literal) as a synthetic `<lambda@<line>>` Function symbol.
+//! literal) as a synthetic `<anonymous@<line>>` Function symbol.
 //!
 //! Per-language source snippet exercises ONE lambda. The test asserts:
 //!   1. The tags query for that language compiles (a node-name typo
 //!      in the query is a runtime error from tree-sitter — this test
 //!      fails loudly when that happens).
-//!   2. At least one symbol with a `<lambda@` synthetic-name prefix
+//!   2. At least one symbol with a `<anonymous@` synthetic-name prefix
 //!      is produced.
 
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ fn snippet(lang: Language) -> (PathBuf, &'static str) {
 #[test]
 fn every_language_captures_at_least_one_anonymous_callable() {
     // The snippets all bind the lambda to a variable named `f`, so
-    // the binding-name rename in `tags.rs` promotes the `<lambda@N>`
+    // the binding-name rename in `tags.rs` promotes the `<anonymous@N>`
     // symbol to `f`. Either form is acceptable evidence that the
     // language's `@def.anonymous` capture is wired up — both shapes
     // arise from a captured anonymous node.
@@ -72,7 +72,7 @@ fn every_language_captures_at_least_one_anonymous_callable() {
             .iter()
             .filter(|s| {
                 matches!(s.kind, SymbolKind::Function | SymbolKind::Method)
-                    && (s.name.starts_with("<lambda@") || s.name == "f")
+                    && (s.name.starts_with("<anonymous@") || s.name == "f")
             })
             .count();
         report.push((lang, anon_count));

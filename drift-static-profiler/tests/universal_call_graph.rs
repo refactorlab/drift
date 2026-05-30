@@ -415,7 +415,7 @@ fn end_to_end_at_least_one_entry_discovered_for_every_language() {
 fn end_to_end_no_spurious_lambda_symbols_in_class_only_fixtures() {
     // **Invariant H** — none of the bench fixtures contain arrow
     // functions / lambdas. The lambda-reach fix must NOT fire here.
-    // If a `<lambda@N>` symbol appears, either the tags query has a
+    // If an `<anonymous@N>` symbol appears, either the tags query has a
     // spurious match OR my fix is over-eager.
     for lang in Language::all() {
         let Some(outcome) = run_analyze(*lang) else { continue };
@@ -429,7 +429,7 @@ fn end_to_end_no_spurious_lambda_symbols_in_class_only_fixtures() {
                     n: &drift_static_profiler::tree::CallTreeNode,
                     acc: &mut Vec<String>,
                 ) {
-                    if n.name.starts_with("<lambda@") {
+                    if n.name.starts_with("<anonymous@") {
                         acc.push(n.name.clone());
                     }
                     for c in &n.children {

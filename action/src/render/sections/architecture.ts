@@ -80,19 +80,40 @@ export function renderArchitecture(input: ArchitectureInput): string | null {
 
   // collapsible diagrams + tables (blank line between siblings so each renders)
   const details: string[] = [];
-  const flow = archMermaid(arch);
-  if (flow) {
-    details.push(
-      detailsBlock('🧭 Architecture flow diagram — before → after', [
-        '> Nodes labelled `‹lambda@N›` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.',
+  const pair = beforeAfterPair(arch);
+  if (pair) {
+    // Two separate mermaid blocks (BEFORE + AFTER) is the post-fix layout:
+    // each diagram is a small, self-contained graph instead of one combined
+    // chart with cross-subgraph edges that GitHub's mermaid frequently
+    // fails to lay out. The legacy `combined_mermaid` is still accepted as
+    // a single-block fallback for older scanner builds.
+    const anonNote =
+      '> Nodes labelled `‹anonymous@N›` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.';
+    const inner: string[] = [];
+    if ('combined' in pair) {
+      // Legacy single-chart shape — no "two charts" preamble (that would
+      // be a lie). Just the anonymous-callable note and the diagram.
+      inner.push(anonNote, '', '```mermaid', pair.combined, '```');
+    } else {
+      inner.push(
+        '> **🔴 BEFORE** reconstructs the call graph as it existed pre-PR (`status=added` files skipped, `status=removed` files appear as red placeholder cards). **🟢 AFTER** shows the current call graph with file-status colouring (🟩 added, 🟧 modified/renamed).',
+        anonNote,
+        '',
+        '**🔴 BEFORE — what the code was:**',
         '',
         '```mermaid',
-        flow,
+        pair.before,
         '```',
         '',
-        '[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)',
-      ]),
-    );
+        '**🟢 AFTER — what the code is now:**',
+        '',
+        '```mermaid',
+        pair.after,
+        '```',
+      );
+    }
+    inner.push('', '[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)');
+    details.push(detailsBlock('🧭 Architecture flow diagram — before vs after', inner));
   }
 
   if (business?.mermaid) {
@@ -154,6 +175,31 @@ function methodCount(desc?: string): number | null {
 
 function archMermaid(arch?: ArchitectureFlow): string | null {
   return arch?.combined_mermaid ?? arch?.after_mermaid ?? arch?.before_mermaid ?? null;
+}
+
+/**
+ * Pick how to render the architecture flow:
+ *   • If BOTH `before_mermaid` AND `after_mermaid` are non-empty
+ *     (post-fix scanner output), return them as a {before, after}
+ *     pair → renderer emits TWO mermaid blocks.
+ *   • Otherwise fall back to whatever single diagram is available
+ *     (`combined_mermaid` first, then either standalone) →
+ *     renderer emits ONE block. The discriminator (`'combined' in pair`)
+ *     keeps the rendering logic branch-free.
+ *
+ * Trimming guards against the scanner emitting a literal "" (no
+ * diagram) which would otherwise pass the existence check and emit
+ * an empty mermaid fence.
+ */
+function beforeAfterPair(
+  arch?: ArchitectureFlow,
+): { before: string; after: string } | { combined: string } | null {
+  const before = arch?.before_mermaid?.trim();
+  const after = arch?.after_mermaid?.trim();
+  if (before && after) return { before, after };
+  const combined = arch?.combined_mermaid?.trim() ?? after ?? before;
+  if (combined) return { combined };
+  return null;
 }
 
 function detailsBlock(summary: string, inner: string[]): string {

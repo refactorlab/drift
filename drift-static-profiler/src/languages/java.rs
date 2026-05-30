@@ -89,7 +89,7 @@ pub const TAGS_QUERY: &str = r#"
   body: (_) @def.body) @def.method
 
 ; Java 8+ lambdas — `(x, y) -> x + y`. Anonymous callable; tags.rs
-; synthesizes `<lambda@<line>>` for it.
+; synthesizes `<anonymous@<line>>` for it.
 (lambda_expression) @def.anonymous
 
 (class_declaration

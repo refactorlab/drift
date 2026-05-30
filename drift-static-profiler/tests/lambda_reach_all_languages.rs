@@ -2,10 +2,10 @@
 //!
 //! The `synthesize_lambda_parent_refs` function in `tags.rs` is
 //! language-agnostic — it walks the symbol list looking for the
-//! `<lambda@N>` prefix the per-language tags queries produce on a
+//! `<anonymous@N>` prefix the per-language tags queries produce on a
 //! `@def.anonymous` capture. So the test surface is: feed a small
 //! snippet for each language, verify a synthetic `<enclosing> →
-//! <lambda@N>` reference shows up where it should.
+//! <anonymous@N>` reference shows up where it should.
 //!
 //! Two scoping shapes per language where possible:
 //!   1. **Top-level lambda** → reached from `<module>` (the synthetic
@@ -28,14 +28,14 @@ use drift_static_profiler::Language;
 
 /// Locate the lambda's symbol name in the extracted tags. Two
 /// shapes to handle since the binding-name rename feature in
-/// `tags.rs` renames `<lambda@N>` to its binding variable when one
+/// `tags.rs` renames `<anonymous@N>` to its binding variable when one
 /// exists (`const handler = (x) => ...` → symbol named `handler`):
 ///
 ///   1. **Renamed (bound)**: snippet uses `const f = (x) => ...` →
 ///      symbol is named `f`. Use the `expected_bound_name` hint.
 ///   2. **Anonymous (inline)**: snippet has no binding (e.g. passed
-///      inline to a function call) → symbol still named `<lambda@N>`.
-///      Fall back to the prefix scan.
+///      inline to a function call) → symbol still named
+///      `<anonymous@N>`. Fall back to the prefix scan.
 fn find_lambda_name(
     file: &str,
     lang: Language,
@@ -51,12 +51,12 @@ fn find_lambda_name(
     }
     tags.symbols
         .iter()
-        .find(|s| s.name.starts_with("<lambda@"))
+        .find(|s| s.name.starts_with("<anonymous@"))
         .map(|s| s.name.clone())
         .unwrap_or_else(|| {
             panic!(
-                "no lambda symbol found (looked for {expected_bound_name:?} \
-                 or `<lambda@…>`); symbols = {:?}",
+                "no anonymous-callable symbol found (looked for {expected_bound_name:?} \
+                 or `<anonymous@…>`); symbols = {:?}",
                 tags.symbols.iter().map(|s| &s.name).collect::<Vec<_>>(),
             )
         })
@@ -256,11 +256,11 @@ object M {
 }
 
 // =========================================================================
-// Inline / anonymous lambdas (no binding) — keep their `<lambda@N>` name.
+// Inline / anonymous lambdas (no binding) — keep their `<anonymous@N>` name.
 //
 // The rename only fires when a binding pattern is detected. Inline
 // arrows passed to a function (`fn(x => ...)`) get no binding and
-// must still produce a `<lambda@N>` symbol so the synthesizer can
+// must still produce an `<anonymous@N>` symbol so the synthesizer can
 // reach them from `<module>`.
 // =========================================================================
 
@@ -268,18 +268,18 @@ object M {
 fn typescript_inline_arrow_keeps_lambda_name() {
     // No `const X =` binding — passed straight to `route(...)`. The
     // rename must NOT fire, and the synthesizer must still wire
-    // `<module> → <lambda@N>` so the route's body is reachable.
+    // `<module> → <anonymous@N>` so the route's body is reachable.
     let src = "route({}, (req) => helper(req));\n";
     let tags = extract_tags_from_source(&PathBuf::from("inline.ts"), Language::TypeScript, src)
         .unwrap();
-    let has_lambda_symbol = tags.symbols.iter().any(|s| s.name.starts_with("<lambda@"));
+    let has_lambda_symbol = tags.symbols.iter().any(|s| s.name.starts_with("<anonymous@"));
     assert!(
         has_lambda_symbol,
-        "inline arrow must retain `<lambda@N>` symbol; symbols = {:?}",
+        "inline arrow must retain `<anonymous@N>` symbol; symbols = {:?}",
         tags.symbols.iter().map(|s| &s.name).collect::<Vec<_>>(),
     );
     let module_reaches = tags.references.iter().any(|r| {
-        r.in_symbol.as_deref() == Some("<module>") && r.name.starts_with("<lambda@")
+        r.in_symbol.as_deref() == Some("<module>") && r.name.starts_with("<anonymous@")
     });
     assert!(
         module_reaches,

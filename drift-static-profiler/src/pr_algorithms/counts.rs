@@ -21,6 +21,14 @@ pub struct ChangedFile {
     pub status: Option<String>,
     pub additions: usize,
     pub deletions: usize,
+    /// For `status = "renamed"` (and "copied"), the file's PRE-PR path —
+    /// i.e. what the file was called BEFORE this PR. git's
+    /// `--name-status` emits `R<sim>\told\tnew`; `read_diff_status`
+    /// keeps `new` as `path` and stashes `old` here. The architecture
+    /// flow's BEFORE chart uses it to render a renamed file under its
+    /// OLD name ("what the code was") instead of its HEAD name.
+    /// `None` for every other status.
+    pub old_path: Option<String>,
 }
 
 fn re_conventional() -> &'static Regex {
@@ -304,6 +312,7 @@ mod tests {
             status: status.map(String::from),
             additions: 0,
             deletions: 0,
+            ..Default::default()
         }
     }
 

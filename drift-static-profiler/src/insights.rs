@@ -840,7 +840,8 @@ pub fn collect_node_findings(
 /// True for profiler-internal synthetic symbol names. The leading `<`
 /// can't appear in any identifier in any of the seven supported
 /// languages, so a single-character check is sufficient and future-proof
-/// for new synthetics like `<class-body>` or `<lambda-N>` if we add them.
+/// for new synthetics like `<class-body>` or `<anonymous@N>` (see
+/// `tags::ANONYMOUS_SYMBOL_PREFIX`) if we add them.
 pub fn is_synthetic_symbol(name: &str) -> bool {
     name.starts_with('<')
 }
