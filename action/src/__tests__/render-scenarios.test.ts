@@ -58,8 +58,8 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     report: base({ pr_scope: { changed_files: [], affected_roots: [], unreachable_changes: [] } }),
     expect: (b) => {
       assert.match(b, /Drift review/);
-      assert.doesNotMatch(b, /## 📊 Value card/);
-      assert.doesNotMatch(b, /## 🏗 Architecture & reach/);
+      assert.doesNotMatch(b, /📊 Value card/);
+      assert.doesNotMatch(b, /🏗 Architecture/);
       assert.match(b, /Posted by/);
     },
   },
@@ -69,8 +69,8 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     ctx: CTX,
     expect: (b) => {
       assert.match(b, /\[!NOTE\]/);
-      assert.match(b, /## 🏗 Architecture & reach/);
-      assert.doesNotMatch(b, /## 📊 Value card/);
+      assert.match(b, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /);
+      assert.doesNotMatch(b, /📊 Value card/);
     },
   },
   {
@@ -96,7 +96,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
       assert.match(b, /<strong>mixed<\/strong>: a \+60\.0% customer gain masks a −15\.9% money regression/);
       assert.match(b, /Triage the .*💰 Money −15\.9%.* and .*⚙️ Runtime −3\.0%.* regressions/);
       assert.match(b, /Remove or wire up 1 dead export: \[`Example`\]/);
-      assert.match(b, /## 🛰 Risks/);
+      assert.match(b, /<summary><strong>🛰 Risks<\/strong> — /);
       assert.match(b, /Legend &amp; methodology/);
     },
   },
@@ -155,7 +155,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /## ⚠️ Suggestions \(1\)/);
+      assert.match(b, /<summary><strong>⚠️ Suggestions \(1\)<\/strong> — /);
       assert.match(b, /🟡 Medium \| 🅒/);
       assert.doesNotMatch(b, /\[!CAUTION\]/, 'cat-C is not a product-correctness CAUTION');
     },
@@ -164,7 +164,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     name: 'risks mermaid-only, no items',
     report: base({ pr_review: { visual_summary: { risks: { mermaid: 'quadrantChart\n title Risk Map' } } } }),
     ctx: CTX,
-    expect: (b) => assert.match(b, /## 🛰 Risks/),
+    expect: (b) => assert.match(b, /<summary><strong>🛰 Risks<\/strong> — /),
   },
   {
     // Cross-language symbol/path stressor: Rust generics + a function name that
@@ -235,7 +235,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /## ⚠️ Suggestions \(25\)/, 'header shows full count');
+      assert.match(b, /<summary><strong>⚠️ Suggestions \(25\)<\/strong> — /, 'header shows full count');
       // Checklist truncates at MAX_DEAD_EXPORTS_LINKED = 5 with a more-tail.
       assert.match(b, /\*…\+20 more\*/, 'checklist truncation note');
       // Priority-table cap = MAX_SHOWN = 20 → details "5 more not shown".
@@ -330,7 +330,7 @@ test('scenario: identical render with and without context (only links differ)', 
   assert.match(withCtx, /\]\(https:\/\/github\.com\/refactorlab\/andy\/blob\/sha123\//, 'ctx → permalinks');
   assert.doesNotMatch(noCtx, /\]\(https:\/\/github\.com/, 'no ctx → no permalinks');
   // both must contain the same section headings
-  for (const h of ['## 📊 Value card', '## ⚠️ Suggestions', '## 🏗 Architecture & reach']) {
+  for (const h of ['📊 Value card', '⚠️ Suggestions', '🏗 Architecture &amp; reach']) {
     assert.ok(withCtx.includes(h) && noCtx.includes(h), `both render ${h}`);
   }
 });

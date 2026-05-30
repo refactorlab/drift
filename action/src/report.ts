@@ -54,10 +54,36 @@ export type DataStructureEntry = {
   direction?: 'in' | 'out' | 'internal';
 };
 
+// Typed mermaid flowchart — the `*_structured` companion to each
+// `*_mermaid` string. The scanner emits both so a future SVG/PNG or
+// re-themed renderer doesn't have to re-parse mermaid syntax. The action's
+// markdown renderer reads ONLY the `*_mermaid` strings today; this type
+// exists so the structured fields are documented and don't silently drift
+// from the Rust schema (drift-static-profiler::pr_algorithms::mermaid).
+export type MermaidFlowchart = {
+  direction: 'LR' | 'RL' | 'TB' | 'BT';
+  title?: string;
+  subgraphs?: unknown[];
+  nodes: { id: string; label: string; shape?: string; class?: string }[];
+  edges: { from: string; to: string; label?: string; style?: 'solid' | 'dashed' }[];
+  class_defs: { name: string; fill: string; stroke: string; color: string }[];
+};
+
 export type ArchitectureFlow = {
+  // Two separate charts — 🔴 BEFORE (the call graph pre-PR) and 🟢 AFTER
+  // (at HEAD). The renderer prefers these when both are present, falling
+  // back to `combined_mermaid` only for legacy/older-scanner reports.
   before_mermaid?: string;
   after_mermaid?: string;
+  // Legacy single combined chart (BEFORE+AFTER+DS in one graph). Retained
+  // for back-compat with older scanner builds; superseded by the
+  // before/after pair above.
   combined_mermaid?: string;
+  // Structured companions (see MermaidFlowchart). Populated alongside the
+  // matching `*_mermaid` string; not consumed by the markdown renderer.
+  before_structured?: MermaidFlowchart;
+  after_structured?: MermaidFlowchart;
+  combined_structured?: MermaidFlowchart;
   data_structures?: DataStructureEntry[];
   reference_link?: ReferenceLink;
 };

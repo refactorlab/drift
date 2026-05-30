@@ -275,12 +275,12 @@ quadrantChart
     quadrant-3 Acceptable
     quadrant-4 Document & ship
     "PR size (28 files)": [0.28, 0.44]
-    "Wide blast radius (22 roots)": [0.84, 1.00]
+    "Wide blast radius (22 roots)": [0.84, 0.99]
     "Untested code (+2263 LOC)": [0.60, 0.70]
     "Code duplication (2 clusters)": [0.40, 0.45]
-    "Uncovered roots (22)": [1.00, 0.85]
-    "Reliability gaps (22 roots)": [1.00, 0.90]
-    "High-complexity fns (6)": [1.00, 0.55]
+    "Uncovered roots (22)": [0.99, 0.85]
+    "Reliability gaps (22 roots)": [0.99, 0.90]
+    "High-complexity fns (6)": [0.99, 0.55]
 ```
 
 </details>
@@ -305,40 +305,43 @@ quadrantChart
 > **2 changed files are unreachable** from any entry point — likely dead code, config, or tests: [`Example.tsx`](https://github.com/refactorlab/andy/blob/main/src/components/Example.tsx), [`Hero.tsx`](https://github.com/refactorlab/andy/blob/main/src/components/Hero.tsx). (These match the dead-code suggestions above.)
 
 <details>
-<summary>🧭 Architecture flow diagram — before → after</summary>
+<summary>🧭 Architecture flow diagram — before vs after</summary>
 
-> Nodes labelled `‹lambda@N›` are anonymous functions/arrow callbacks the profiler couldn't name; treat them as call sites within the labelled module.
+> **🔴 BEFORE** reconstructs the call graph as it existed pre-PR (`status=added`/`copied` files skipped, `status=removed` files appear as red `🗑 removed` placeholder cards, renamed files shown under their **old** name). **🟢 AFTER** shows the current call graph with file-status colouring (🟩 added · 🟧 modified/renamed · ⚪ unchanged).
+> Nodes labelled `‹anonymous@N›` are anonymous functions/arrow callbacks the profiler couldn't name; treat them as call sites within the labelled module.
+
+**🔴 BEFORE — what the code was:**
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, monospace','fontSize':'13px','lineColor':'#8b949e'}}}%%
-flowchart TB
-    subgraph BEFORE["🔴 BEFORE"]
-        direction LR
-        before_note["needs --base-sha"]
-    end
-    subgraph AFTER["🟢 AFTER"]
-        direction LR
-        a_n0["App"]
-        a_n1["useScrollReveal"]
-        a_n2["useMagnetic"]
-        a_n16["ShaderBackground"]
-        a_n17["HeroCanvas"]
-        a_n18["SectionRail"]
-        a_n19["Cursor"]
-        a_n20["Marquee"]
-        a_n21["useScroll"]
-    end
-    a_n0 --> a_n1 & a_n2 & a_n16 & a_n17 & a_n18 & a_n19 & a_n20
-    a_n1 --> a_n21
-    before_note -.->|evolves to| a_n0
-    classDef entry fill:#12233a,stroke:#58a6ff,color:#e6edf3,stroke-width:2px
-    classDef hook fill:#14301f,stroke:#3fb950,color:#e6edf3
-    classDef comp fill:#21262d,stroke:#8b949e,color:#e6edf3
-    classDef muted fill:#161b22,stroke:#6e7681,color:#8b949e
-    class a_n0 entry
-    class a_n1,a_n2,a_n21 hook
-    class a_n16,a_n17,a_n18,a_n19,a_n20 comp
-    class before_note muted
+flowchart LR
+    n0["App"]
+    n1["useScrollReveal"]
+    n2["useMagnetic"]
+    n3["ShaderBackground"]
+    rm_0["🗑 removed — legacy_hero.tsx"]
+    n0 --> n1 & n2 & n3
+    classDef muted fill:#6e7681,stroke:#6e7681,color:#fff
+    classDef removed fill:#da3633,stroke:#f85149,color:#fff,stroke-width:2px,stroke-dasharray:4 3
+    class n0,n1,n2,n3 muted
+    class rm_0 removed
+```
+
+**🟢 AFTER — what the code is now:**
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, monospace','fontSize':'13px','lineColor':'#8b949e'}}}%%
+flowchart LR
+    n0["App"]
+    n1["useScrollReveal"]
+    n2["useMagnetic"]
+    n3["ShaderBackground"]
+    n4["HeroCanvas"]
+    n0 --> n1 & n2 & n3 & n4
+    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px
+    classDef added fill:#238636,stroke:#3fb950,color:#fff,stroke-width:2px
+    class n0,n1 changed
+    class n4 added
 ```
 
 [Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)
@@ -373,18 +376,18 @@ flowchart TB
 
 | Name | Kind | Language | Methods in scope |
 |---|:--:|---|---:|
-| `<lambda@17>` | modified | typescript | 34 |
-| `<lambda@94>` | modified | typescript | 31 |
-| `<lambda@11>` | modified | typescript | 15 |
-| `<lambda@18>` | modified | typescript | 13 |
-| `<lambda@13>` | modified | typescript | 12 |
-| `<lambda@17>` | modified | typescript | 12 |
-| `<lambda@20>` | modified | typescript | 12 |
-| `<lambda@11>` | modified | typescript | 11 |
-| `<lambda@20>` | modified | typescript | 6 |
-| `<lambda@21>` | modified | typescript | 6 |
-| `<lambda@23>` | modified | typescript | 6 |
-| `<lambda@12>` | modified | typescript | 5 |
+| `<anonymous@17>` | modified | typescript | 34 |
+| `<anonymous@94>` | modified | typescript | 31 |
+| `<anonymous@11>` | modified | typescript | 15 |
+| `<anonymous@18>` | modified | typescript | 13 |
+| `<anonymous@13>` | modified | typescript | 12 |
+| `<anonymous@17>` | modified | typescript | 12 |
+| `<anonymous@20>` | modified | typescript | 12 |
+| `<anonymous@11>` | modified | typescript | 11 |
+| `<anonymous@20>` | modified | typescript | 6 |
+| `<anonymous@21>` | modified | typescript | 6 |
+| `<anonymous@23>` | modified | typescript | 6 |
+| `<anonymous@12>` | modified | typescript | 5 |
 
 </details>
 
@@ -450,7 +453,7 @@ These entry points lack retry / timeout / circuit / fallback markers:
 | `low` / `medium` / `high` | Model **confidence** in the estimate (independent of priority) |
 | 🔴 Act before merge / 🟢 Acceptable | Risk quadrant — severity × likelihood |
 
-**Methodology.** Each axis's Δ% is computed against the merge base (formulas above). Thresholds: complexity > 10, long function > 80 LOC. A suggestion is surfaced only at confidence ≥ 75% with a supporting reference. Findings are **advisory** and never fail the check. Counts and reach come from a static call-graph; nodes the profiler can't name appear as `‹lambda@N›`.
+**Methodology.** Each axis's Δ% is computed against the merge base (formulas above). Thresholds: complexity > 10, long function > 80 LOC. A suggestion is surfaced only at confidence ≥ 75% with a supporting reference. Findings are **advisory** and never fail the check. Counts and reach come from a static call-graph; nodes the profiler can't name appear as `‹anonymous@N›`.
 
 </details>
 

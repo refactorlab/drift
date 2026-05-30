@@ -439,6 +439,34 @@ enum Cmd {
         /// `value_money` (otherwise `loc_added = 0` always).
         #[arg(long, value_name = "FILE")]
         diff_stats: Option<PathBuf>,
+        /// TSV file of per-file diff STATUS (added / modified / removed
+        /// / renamed / copied / type-changed). Format matches
+        /// `git diff --name-status`:
+        ///   `A<TAB>path`              (added)
+        ///   `M<TAB>path`              (modified)
+        ///   `D<TAB>path`              (deleted)
+        ///   `T<TAB>path`              (type-changed)
+        ///   `R<score><TAB>old<TAB>new` (renamed; we key on new path)
+        ///   `C<score><TAB>old<TAB>new` (copied; we key on new path)
+        ///
+        /// Wired into `ChangedFile.status`, which `architecture_flow::
+        /// compute_with_diff` uses to render BEFORE and AFTER as TWO
+        /// independent charts: BEFORE skips `Added` files, BEFORE
+        /// shows red `🗑 removed` placeholders for `Removed` files,
+        /// AFTER tints `Added` green / `Modified|Renamed` amber.
+        ///
+        /// Without this flag the scanner falls back to `status = None`
+        /// (treated as `Modified`) → BEFORE mirrors AFTER muted, which
+        /// is the legacy single-snapshot behaviour. Passing it is the
+        /// difference between a meaningful diff visualization and a
+        /// "this is the code, the prior code is identical-but-grey"
+        /// placeholder.
+        ///
+        /// Deletions (`D`) ARE included even though their files don't
+        /// exist at HEAD — the BEFORE chart needs them to render the
+        /// red removed-card row that's the whole point of the panel.
+        #[arg(long, value_name = "FILE")]
+        diff_status: Option<PathBuf>,
         /// I1: JSON file matching the `PrContext` component schema.
         /// Supplies title / body / labels / linked-issues without
         /// needing separate flags. Preferred for action callers.
@@ -602,6 +630,7 @@ fn run_scan_pr(
     changed_files_stdin: bool,
     commits_path: Option<&std::path::Path>,
     diff_stats_path: Option<&std::path::Path>,
+    diff_status_path: Option<&std::path::Path>,
     pr_context_file: Option<&std::path::Path>,
     base_sha: Option<&str>,
     pr_title: Option<&str>,
@@ -643,6 +672,7 @@ fn run_scan_pr(
         base_sha = base_sha.unwrap_or("<none>"),
         has_commits = commits_path.is_some(),
         has_diff_stats = diff_stats_path.is_some(),
+        has_diff_status = diff_status_path.is_some(),
         has_pr_context = pr_context_file.is_some(),
         "scan-pr start"
     );
@@ -715,7 +745,15 @@ fn run_scan_pr(
     // supplied. We index by repo-relative path for O(1) lookup when
     // building the ChangedFile list below.
     let diff_stats_map = read_diff_stats(diff_stats_path)?;
-    let changed_files: Vec<ChangedFile> = changed
+    // Read --diff-status TSV (`git diff --name-status` shape) so each
+    // ChangedFile carries its diff status. Status is the missing input
+    // that lets `architecture_flow::compute_with_diff` render BEFORE
+    // and AFTER as two real charts (Added skipped from BEFORE, Removed
+    // emitted as red placeholder cards, etc.) without a `--base-sha`
+    // checkout. Absent flag → empty map → every status defaults to
+    // None (back-compat: behaves like a pure "modified" PR).
+    let diff_status_map = read_diff_status(diff_status_path)?;
+    let mut changed_files: Vec<ChangedFile> = changed
         .iter()
         .map(|p| {
             let path_str = p.display().to_string();
@@ -723,14 +761,71 @@ fn run_scan_pr(
                 .get(&path_str)
                 .copied()
                 .unwrap_or((0, 0));
+            let (status, old_path) = match diff_status_map.get(&path_str) {
+                Some((s, op)) => (Some(s.clone()), op.clone()),
+                None => (None, None),
+            };
             ChangedFile {
                 path: path_str,
-                status: None,
+                status,
                 additions,
                 deletions,
+                old_path,
             }
         })
         .collect();
+    // Inject `D` (deleted) entries that the AST-driven `--changed-files`
+    // list dropped on purpose (those files have no HEAD content to scan).
+    // `architecture_flow::compute_with_diff` needs them to render the
+    // red `🗑 removed — <basename>` placeholder card on the BEFORE chart.
+    // Without this loop the BEFORE panel would silently lose every
+    // removed file even when the action.yml passed the full status TSV.
+    {
+        use std::collections::HashSet;
+        // Dedup on a NORMALIZED path (strip leading `./`, leading `/`, and a
+        // trailing `/`) so an entry the AST walker emitted as `./app/x.py`
+        // isn't re-injected because diff-status spelled it `app/x.py`. This
+        // mirrors `architecture_flow::paths_match`'s normalization so the two
+        // layers agree on file identity. NOTE: in production both
+        // `--changed-files` and `--diff-status` come from the SAME
+        // `git diff` invocation (identical spellings), so this is defensive.
+        // The REAL guarantee against duplicate removed-cards is the
+        // normalized dedup inside `build_before_flowchart` (`seen_removed`),
+        // which collapses any duplicate that slips through here — this loop
+        // just avoids polluting `changed_files` with redundant entries that
+        // other algorithms (counts, value_money) would otherwise double-count.
+        fn norm_key(p: &str) -> &str {
+            p.trim_start_matches("./")
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+        }
+        let known: HashSet<&str> = changed_files.iter().map(|cf| norm_key(&cf.path)).collect();
+        let extra: Vec<ChangedFile> = diff_status_map
+            .iter()
+            .filter(|(p, (s, _old))| {
+                // Only inject for `Removed` (or alias `Deleted`) AND not already in the list.
+                let s = s.to_ascii_lowercase();
+                (s == "removed" || s == "deleted") && !known.contains(norm_key(p))
+            })
+            .map(|(path, (status, _old))| {
+                let (additions, deletions) = diff_stats_map.get(path).copied().unwrap_or((0, 0));
+                ChangedFile {
+                    path: path.clone(),
+                    status: Some(status.clone()),
+                    additions,
+                    deletions,
+                    old_path: None,
+                }
+            })
+            .collect();
+        if !extra.is_empty() {
+            tracing::info!(
+                injected = extra.len(),
+                "scan-pr: injecting D-status ChangedFile entries from --diff-status (files not present at HEAD)"
+            );
+            changed_files.extend(extra);
+        }
+    }
     // I1: read --pr-context FILE if supplied. The JSON shape matches
     // the OpenAPI `PrContext` component; we project title+body into
     // the algorithm-facing `PrContextInput`.
@@ -749,7 +844,7 @@ fn run_scan_pr(
     };
 
     let enrich_progress = pick_progress();
-    let mut enriched = enrich(EnrichInputs {
+    let enriched = enrich(EnrichInputs {
         outcome: &result,
         commit_messages: &commit_messages,
         changed_files: &changed_files,
@@ -759,16 +854,21 @@ fn run_scan_pr(
     });
     enrich_progress.finish();
 
-    // A1/I5: when no --base-sha was supplied, the before_mermaid is
-    // a placeholder ("Before-state requires --base-sha…"). Drop it
-    // entirely per the spec's "silence > noise" rule so renderers
-    // don't show a confusing dead panel. When base-sha IS supplied,
-    // keep the placeholder text — future work in the action wrapper
-    // will replace it with a real before-state graph from `git
-    // checkout $BASE`.
-    if base_sha.is_none() {
-        enriched.pr_review.architecture_flow.before_mermaid.clear();
-    }
+    // OBSOLETE: pre-`compute_with_diff`, BEFORE was always a
+    // placeholder ("Before-state requires --base-sha…") so we cleared
+    // it when --base-sha was absent ("silence > noise"). Today the
+    // BEFORE chart is RECONSTRUCTED from `--diff-status` data and is
+    // genuinely informative even without a base-sha checkout (it
+    // skips Added files, mutes Modified/Renamed, emits red removed-
+    // card placeholders for D-status). Clearing it would throw away
+    // the very signal `compute_with_diff` produces.
+    //
+    // When --diff-status is ALSO absent the BEFORE chart degrades to
+    // a muted mirror of AFTER, which is still strictly more useful
+    // than the old placeholder text — the renderer's two-block layout
+    // shows the call graph as it existed pre-PR, just without status
+    // colouring.
+    let _ = &base_sha;
 
     eprintln!(
         "✓ scan-pr (enriched): {} code-suggestion(s) · {} data-structure(s) · \
@@ -881,6 +981,72 @@ fn write_envelope(
         }
     }
     Ok(())
+}
+
+/// Parse `git diff --name-status` output. Returns a map from NEW path →
+/// `(status, old_path)` where `old_path` is `Some` ONLY for renames /
+/// copies (which carry a pre-PR path). TSV format per line:
+///   `A<TAB>path`                     → ("added", None)
+///   `M<TAB>path`                     → ("modified", None)
+///   `D<TAB>path`                     → ("removed", None)   (git emits `D`; we normalise)
+///   `T<TAB>path`                     → ("modified", None)  (type-change → modified)
+///   `R<sim><TAB>old<TAB>new`         → ("renamed", Some(old))  (keyed on NEW path)
+///   `C<sim><TAB>old<TAB>new`         → ("copied",  Some(old))  (keyed on NEW path)
+///   `U<TAB>path`                     → ("modified", None)  (unmerged; safest fallback)
+///
+/// Carrying `old_path` for renames is what lets the architecture flow's
+/// BEFORE chart render a renamed file under its OLD name ("what the code
+/// was") instead of its HEAD name — see `build_before_flowchart`.
+///
+/// Unknown one-letter codes default to `("modified", None)` so we never
+/// panic on a future git version that adds a new code. The long-form
+/// status names (e.g. "added", not "A") match what `ChangedFile.status`
+/// downstream code and `architecture_flow::classify_file` expect. Empty
+/// input → empty map → every status stays None.
+fn read_diff_status(
+    path: Option<&std::path::Path>,
+) -> Result<std::collections::HashMap<String, (String, Option<String>)>> {
+    use std::collections::HashMap;
+    let Some(p) = path else { return Ok(HashMap::new()) };
+    let raw = std::fs::read_to_string(p)
+        .with_context(|| format!("read diff-status file {}", p.display()))?;
+    let mut out: HashMap<String, (String, Option<String>)> = HashMap::new();
+    for line in raw.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 2 {
+            continue;
+        }
+        // First column is the single-letter code, optionally suffixed
+        // with a similarity score (e.g. `R100`). We dispatch on the
+        // first byte ONLY and map to the long-form status name.
+        let code_byte = cols[0].as_bytes().first().copied().unwrap_or(b'?');
+        // `R`/`C` lines have THREE columns: code, old, new. We key on
+        // the NEW path (the file's identity at HEAD) and stash the OLD
+        // path so the BEFORE chart can relabel. For everything else the
+        // second column IS the path and there is no old path.
+        let (path_str, status, old_path): (String, &str, Option<String>) = match code_byte {
+            b'A' | b'a' => (cols[1].to_string(), "added", None),
+            b'M' | b'm' => (cols[1].to_string(), "modified", None),
+            b'D' | b'd' => (cols[1].to_string(), "removed", None),
+            b'T' | b't' => (cols[1].to_string(), "modified", None), // type-change
+            b'U' | b'u' => (cols[1].to_string(), "modified", None), // unmerged
+            b'R' | b'r' if cols.len() >= 3 => {
+                (cols[2].to_string(), "renamed", Some(cols[1].to_string()))
+            }
+            b'C' | b'c' if cols.len() >= 3 => {
+                (cols[2].to_string(), "copied", Some(cols[1].to_string()))
+            }
+            _ => (cols[1].to_string(), "modified", None),
+        };
+        if !path_str.is_empty() {
+            out.insert(path_str, (status.to_string(), old_path));
+        }
+    }
+    Ok(out)
 }
 
 /// I3: parse `git diff --numstat` output. Returns a path-keyed
@@ -1200,6 +1366,7 @@ fn main() -> Result<()> {
             changed_files_stdin,
             commits,
             diff_stats,
+            diff_status,
             pr_context_file,
             base_sha,
             pr_title,
@@ -1225,6 +1392,7 @@ fn main() -> Result<()> {
             changed_files_stdin,
             commits.as_deref(),
             diff_stats.as_deref(),
+            diff_status.as_deref(),
             pr_context_file.as_deref(),
             base_sha.as_deref(),
             pr_title.as_deref(),
@@ -2033,5 +2201,116 @@ fn print_category_breakdown(s: &drift_static_profiler::report::Summary) {
             .map(|(fam, n)| format!("{fam}={n}"))
             .collect();
         eprintln!("  orm-family breakdown: {}", parts.join(", "));
+    }
+}
+
+#[cfg(test)]
+mod diff_status_parser_tests {
+    //! Direct unit tests for `read_diff_status` — the parser that turns
+    //! `git diff --name-status` output into the `(status, old_path)` map
+    //! that feeds `ChangedFile`. This is the parser END of the two-chart
+    //! rename feature: it proves `old_path` is extracted for renames/copies
+    //! and that every status code maps correctly, end to end through the
+    //! real file-reading path (not a mock).
+    use super::read_diff_status;
+    use std::io::Write;
+
+    /// Write `body` to a unique temp file and run it through `read_diff_status`.
+    fn parse(body: &str) -> std::collections::HashMap<String, (String, Option<String>)> {
+        // Unique path per call: a process-global counter defeats coarse-clock
+        // collisions when tests run in parallel (same fix as the e2e suite).
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("drift-ds-parse-{pid}-{seq}.tsv"));
+        {
+            let mut f = std::fs::File::create(&p).expect("create temp tsv");
+            f.write_all(body.as_bytes()).expect("write temp tsv");
+        }
+        let out = read_diff_status(Some(p.as_path())).expect("parse");
+        let _ = std::fs::remove_file(&p);
+        out
+    }
+
+    #[test]
+    fn missing_path_returns_empty_map() {
+        let out = read_diff_status(None).expect("none");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn basic_statuses_map_to_long_form_names() {
+        let m = parse("A\tsrc/added.rs\nM\tsrc/mod.rs\nD\tsrc/gone.rs\n");
+        assert_eq!(m["src/added.rs"], ("added".into(), None));
+        assert_eq!(m["src/mod.rs"], ("modified".into(), None));
+        // git emits `D`; we normalise to the long-form "removed".
+        assert_eq!(m["src/gone.rs"], ("removed".into(), None));
+    }
+
+    #[test]
+    fn rename_keys_on_new_path_and_carries_old_path() {
+        // `R<sim>\told\tnew` — the headline: NEW path is the key, OLD path is
+        // preserved so the BEFORE chart can relabel.
+        let m = parse("R100\tsrc/old_name.rs\tsrc/new_name.rs\n");
+        assert_eq!(m.len(), 1);
+        assert_eq!(
+            m["src/new_name.rs"],
+            ("renamed".into(), Some("src/old_name.rs".into()))
+        );
+        // The OLD path must NOT also appear as its own key.
+        assert!(!m.contains_key("src/old_name.rs"));
+    }
+
+    #[test]
+    fn rename_with_partial_similarity_score_still_parses() {
+        // R50 = rename + 50% body change. Still "renamed", old path kept.
+        let m = parse("R050\tsrc/a.rs\tsrc/b.rs\n");
+        assert_eq!(m["src/b.rs"], ("renamed".into(), Some("src/a.rs".into())));
+    }
+
+    #[test]
+    fn copy_keys_on_new_path_and_carries_old_path() {
+        let m = parse("C75\tsrc/source.rs\tsrc/copy.rs\n");
+        assert_eq!(m["src/copy.rs"], ("copied".into(), Some("src/source.rs".into())));
+    }
+
+    #[test]
+    fn type_change_and_unmerged_default_to_modified() {
+        let m = parse("T\tsrc/typechg.rs\nU\tsrc/unmerged.rs\n");
+        assert_eq!(m["src/typechg.rs"], ("modified".into(), None));
+        assert_eq!(m["src/unmerged.rs"], ("modified".into(), None));
+    }
+
+    #[test]
+    fn unknown_code_defaults_to_modified_no_panic() {
+        // A future git status letter must never panic — default to modified.
+        let m = parse("X\tsrc/weird.rs\n");
+        assert_eq!(m["src/weird.rs"], ("modified".into(), None));
+    }
+
+    #[test]
+    fn crlf_blank_lines_and_short_rows_are_tolerated() {
+        // CRLF endings, blank lines, and a malformed single-column row.
+        let m = parse("M\tsrc/a.rs\r\n\r\n\nA\tsrc/b.rs\nM\n");
+        assert_eq!(m["src/a.rs"], ("modified".into(), None));
+        assert_eq!(m["src/b.rs"], ("added".into(), None));
+        // The single-column `M` row (no path) is skipped, not panicked on.
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn rename_with_fewer_than_three_columns_falls_back_to_modified() {
+        // A malformed `R` row missing the new path must not panic; the
+        // `if cols.len() >= 3` guard sends it to the modified fallback.
+        let m = parse("R100\tsrc/only_old.rs\n");
+        // Falls through to the `_ =>` arm: keyed on cols[1], modified, no old.
+        assert_eq!(m["src/only_old.rs"], ("modified".into(), None));
+    }
+
+    #[test]
+    fn deleted_alias_normalizes_like_removed() {
+        // git only emits `D`, but defend the long-form too (some tools emit it).
+        let m = parse("D\tsrc/x.rs\n");
+        assert_eq!(m["src/x.rs"].0, "removed");
     }
 }

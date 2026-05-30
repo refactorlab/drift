@@ -105,6 +105,28 @@ test('suggestions: table cell escapes pipe in the finding label', () => {
   assert.match(out, /🅐 a \\\| b/);
 });
 
+test('suggestions: detail <summary> HTML-escapes PR-controlled file path + label (no tag injection)', () => {
+  // File paths can legally contain `<`/`>` on Linux/macOS. A hostile path must
+  // NOT be able to close the <summary> early or inject a phantom <details> in
+  // the per-finding disclosure (the summary is a STRUCTURAL HTML context, not
+  // a markdown code span).
+  const evil = sug({
+    category: 'B',
+    category_label: 'Raw SQL',
+    file: 'src/</summary><details>evil.ts',
+    line: 1,
+    confidence: 0.9,
+  });
+  const out = renderSuggestions([evil], CTX)!;
+  const summaryLine = out.split('\n').find((l) => l.startsWith('<summary>') && l.includes('evil'))!;
+  // The hostile chars are escaped inside the <code> element of the summary.
+  assert.match(summaryLine, /&lt;\/summary&gt;&lt;details&gt;evil\.ts/, 'path is HTML-escaped in the summary');
+  // No RAW </summary> or <details> leaked into the summary line beyond its own
+  // single closing tag.
+  assert.equal((summaryLine.match(/<\/summary>/g) ?? []).length, 1, 'exactly one real </summary>');
+  assert.doesNotMatch(summaryLine, /<details>/, 'no raw <details> injected into the summary');
+});
+
 test('suggestions: null when nothing clears the quality bar', () => {
   assert.equal(renderSuggestions(undefined), null);
   assert.equal(renderSuggestions([]), null);

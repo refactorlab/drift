@@ -21,6 +21,7 @@
 //! and the rendered HTML mockup both use, so the choice also matches
 //! the contract.
 
+use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::mermaid::{
     colors, ClassDef, EdgeStyle, FlowDirection, FlowEdge, FlowNode, Flowchart, NodeShape,
 };
@@ -28,6 +29,92 @@ use crate::pr_algorithms::types::*;
 use crate::tree::CallTreeNode;
 use crate::SymbolKind;
 use std::collections::BTreeMap;
+
+/// What a file's diff says about its existence ACROSS the PR boundary.
+///
+/// This is the missing signal that lets us render BEFORE and AFTER as
+/// independent diagrams instead of one combined-with-placeholder. The
+/// rule of thumb every renderer follows below:
+///
+/// | status      | appears in BEFORE | appears in AFTER | AFTER color |
+/// |-------------|:-:|:-:|-------|
+/// | Added       | ❌ (didn't exist) | ✅ | green  |
+/// | Copied      | ❌ (new identity at new path → treated as Added) | ✅ | green |
+/// | Modified    | ✅ | ✅ | amber  |
+/// | Renamed     | ✅ (shown under OLD name — see `ChangedFile.old_path`) | ✅ | amber |
+/// | Removed     | placeholder ✅ (`🗑 removed — <name>`) | ❌ (no AST at HEAD) | (n/a) |
+/// | Unchanged   | ✅ | ✅ | none   |
+///
+/// Copied files map to `Added` (not a distinct variant): a copy is a NEW
+/// file identity at a NEW path that did not exist pre-PR, so it's skipped
+/// in BEFORE and painted green in AFTER — exactly like an addition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Renamed,
+    Removed,
+    Unchanged,
+}
+
+/// Two repo-relative paths match iff they're equal after normalization,
+/// or one is the suffix of the other AT A `/` BOUNDARY. The boundary
+/// rule is critical — without it, `web/users.ts` would falsely match
+/// `admin/users.ts` (both end in `users.ts`) which is a genuine bug
+/// when a PR touches files with shared basenames in different dirs.
+///
+/// Normalization strips leading `./` and `/` so paths from different
+/// upstream sources (git's `app/file.py` vs the AST walker's
+/// `./app/file.py`) compare equal.
+fn paths_match(file_path: &str, cf_path: &str) -> bool {
+    fn norm(p: &str) -> &str {
+        p.trim_start_matches("./").trim_start_matches('/')
+    }
+    let a = norm(file_path);
+    let b = norm(cf_path);
+    if a == b {
+        return true;
+    }
+    // `a` is the longer/qualified path — does it end with `/b`?
+    if a.len() > b.len() + 1
+        && a.ends_with(b)
+        && a.as_bytes().get(a.len() - b.len() - 1).copied() == Some(b'/')
+    {
+        return true;
+    }
+    // Reverse: `b` is qualified, `a` is the bare basename suffix.
+    if b.len() > a.len() + 1
+        && b.ends_with(a)
+        && b.as_bytes().get(b.len() - a.len() - 1).copied() == Some(b'/')
+    {
+        return true;
+    }
+    false
+}
+
+/// Resolve a node's file to its diff status. Falls back to `Unchanged`
+/// when the file isn't in the diff at all (e.g. unchanged transitive
+/// callee), and to `Modified` when it IS in the diff but with an unknown
+/// status string (defensive — the scanner has emitted unrecognized
+/// statuses in the past). See `paths_match` for the matching predicate.
+fn classify_file(path: &str, changed: &[ChangedFile]) -> FileStatus {
+    for cf in changed {
+        if !paths_match(path, &cf.path) {
+            continue;
+        }
+        return match cf.status.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            // `copied` ⇒ Added: a copy is a NEW file identity at a NEW
+            // path that did not exist pre-PR (skip in BEFORE, green in
+            // AFTER) — semantically an addition, not a modification.
+            Some("added") | Some("copied") => FileStatus::Added,
+            Some("removed") | Some("deleted") => FileStatus::Removed,
+            Some("renamed") => FileStatus::Renamed,
+            Some("modified") | Some("changed") | None => FileStatus::Modified,
+            _ => FileStatus::Modified,
+        };
+    }
+    FileStatus::Unchanged
+}
 
 /// Detect the source-language scope label from a file extension.
 /// Used as `DataStructureEntry.scope` so renderers can show "Python class",
@@ -166,6 +253,33 @@ fn changed_class_def() -> ClassDef {
     }
 }
 
+/// Green highlight for nodes whose file was ADDED in this PR — visible
+/// only in the AFTER chart (BEFORE skips them entirely).
+fn added_class_def() -> ClassDef {
+    ClassDef {
+        name: "added".into(),
+        fill: colors::ADDED_FILL.into(),
+        stroke: colors::ADDED_STROKE.into(),
+        color: colors::FG_ON_FILL.into(),
+        stroke_width: Some("2px".into()),
+        stroke_dasharray: None,
+    }
+}
+
+/// Red highlight for the "🗑 removed — <file>" placeholder cards that
+/// the BEFORE chart emits one-per-removed-file. AFTER never carries this
+/// class because removed files have no AST under the current sha.
+fn removed_class_def() -> ClassDef {
+    ClassDef {
+        name: "removed".into(),
+        fill: colors::REMOVED_FILL.into(),
+        stroke: colors::REMOVED_STROKE.into(),
+        color: colors::FG_ON_FILL.into(),
+        stroke_width: Some("2px".into()),
+        stroke_dasharray: Some("4 3".into()),
+    }
+}
+
 fn muted_class_def() -> ClassDef {
     ClassDef {
         name: "muted".into(),
@@ -177,43 +291,89 @@ fn muted_class_def() -> ClassDef {
     }
 }
 
-/// Build the AFTER-state flowchart from the affected call trees with
-/// PR-color styling applied to touched nodes.
-fn build_after_flowchart(
-    entries: &[CallTreeNode],
-    changed_files: &[String],
-) -> Flowchart {
-    if entries.is_empty() {
-        return Flowchart {
-            direction: FlowDirection::LR,
-            title: None,
-            subgraphs: vec![],
-            nodes: vec![FlowNode {
-                id: "empty".into(),
-                label: "No affected entries".into(),
-                shape: NodeShape::Rect,
-                class: Some("muted".into()),
-            }],
-            edges: vec![],
-            class_defs: vec![muted_class_def()],
-        };
+/// Map a node's file status → mermaid class name.
+/// Encoded once here so BEFORE and AFTER stay in lockstep on what each
+/// color means; renderers can also map class names → status for tests.
+fn class_for_status(status: FileStatus) -> Option<&'static str> {
+    match status {
+        FileStatus::Added => Some("added"),
+        FileStatus::Modified => Some("changed"),
+        FileStatus::Renamed => Some("changed"),
+        FileStatus::Removed => Some("removed"),
+        FileStatus::Unchanged => None,
     }
+}
 
+/// Configures how `build_call_graph` colours nodes for the chart being
+/// rendered. BEFORE and AFTER share the BFS walker — they only differ in
+/// which file-status they skip and which palette they paint.
+#[derive(Debug, Clone, Copy)]
+struct GraphMode {
+    /// Skip nodes whose file matches this status. Used by BEFORE to drop
+    /// `Added` files (didn't exist yet) and by AFTER to drop `Removed`
+    /// files (gone — though they generally don't show up in the call tree
+    /// anyway since the call tree was scanned at HEAD).
+    skip_status: FileStatus,
+    /// When true, override every retained node's class to `"muted"` —
+    /// the BEFORE chart's signature look.
+    force_muted: bool,
+}
+
+/// When rendering the BEFORE chart, a node whose label IS its file's
+/// basename (a file/module-level entry, e.g. `users.ts`) must show the
+/// file's PRE-PR name if the file was renamed. Symbol nodes
+/// (`OrderService.create_order`) keep their names — a rename moves the
+/// file, not the symbol — so this only fires for file-named nodes.
+///
+/// `rename_old` maps new_path → old_path (only renamed/copied files are
+/// present). Returns the OLD basename when this node should be relabeled
+/// for BEFORE, else None (caller keeps the default label).
+fn before_rename_label(
+    mode: GraphMode,
+    name: &str,
+    parent_class: &Option<String>,
+    file: &str,
+    rename_old: &BTreeMap<String, String>,
+) -> Option<String> {
+    // AFTER always shows HEAD names; only BEFORE relabels.
+    if !mode.force_muted {
+        return None;
+    }
+    // File/module nodes only: no enclosing class AND label == basename(file).
+    if parent_class.as_deref().is_some_and(|p| !p.is_empty()) {
+        return None;
+    }
+    if name != basename(file) {
+        return None;
+    }
+    // Find this file's old path (paths_match tolerates ./ and / prefixes).
+    let old = rename_old
+        .iter()
+        .find(|(new, _)| paths_match(file, new))
+        .map(|(_, old)| old.as_str())?;
+    Some(basename(old).to_string())
+}
+
+/// Shared BFS walker for BEFORE and AFTER. Returns the assembled
+/// (nodes, edges) pair. Tagging logic lives here so the two charts
+/// can't disagree on what a "changed" or "added" node is.
+///
+/// `rename_old` (new_path → old_path) is consulted ONLY in BEFORE mode
+/// to relabel file-named nodes to their pre-PR names; AFTER passes an
+/// empty map.
+fn build_call_graph(
+    entries: &[CallTreeNode],
+    changed_files: &[ChangedFile],
+    mode: GraphMode,
+    rename_old: &BTreeMap<String, String>,
+) -> (Vec<FlowNode>, Vec<FlowEdge>) {
     let mut nodes: Vec<FlowNode> = Vec::new();
     let mut edges: Vec<FlowEdge> = Vec::new();
     let mut id_for: BTreeMap<String, String> = BTreeMap::new();
-    // A2: dedup edges so the same (from, to) pair doesn't appear
-    // twice. Without this, two children of a root with the same
-    // name (e.g. overloaded methods) emit duplicate arrows that
-    // confuse the mermaid renderer.
     let mut edge_seen: std::collections::HashSet<(String, String)> =
         std::collections::HashSet::new();
     let mut next_id: usize = 0;
 
-    // A2: parent-class-aware interning. `intern_node` is a free
-    // function (vs. a closure) because A6's multi-hop walk needs to
-    // read `nodes.len()` between calls — closures that capture
-    // `&mut nodes` block that read.
     fn intern_node(
         nodes: &mut Vec<FlowNode>,
         id_for: &mut BTreeMap<String, String>,
@@ -221,9 +381,13 @@ fn build_after_flowchart(
         name: &str,
         parent_class: &Option<String>,
         file: &str,
-        touched: bool,
+        class: Option<&str>,
+        label_override: Option<&str>,
     ) -> String {
         let parent_seg = parent_class.as_deref().unwrap_or("");
+        // Dedup key uses the STABLE identity (name + file), never the
+        // possibly-overridden display label — so a BEFORE rename relabel
+        // can't accidentally merge or split nodes.
         let key = format!("{parent_seg}\u{1F}{name}\u{1F}{file}");
         if let Some(existing) = id_for.get(&key) {
             return existing.clone();
@@ -231,32 +395,39 @@ fn build_after_flowchart(
         let id = format!("n{}", *next_id);
         *next_id += 1;
         id_for.insert(key, id.clone());
-        let display = if parent_seg.is_empty() {
-            name.to_string()
-        } else {
-            format!("{parent_seg}.{name}")
+        let display = match label_override {
+            Some(o) => o.to_string(),
+            None if parent_seg.is_empty() => name.to_string(),
+            None => format!("{parent_seg}.{name}"),
         };
         nodes.push(FlowNode {
             id: id.clone(),
             label: display,
             shape: NodeShape::Rect,
-            class: if touched { Some("changed".into()) } else { None },
+            class: class.map(String::from),
         });
         id
     }
 
-    // A6: bounded multi-hop walk. The pre-A6 code only emitted
-    // root→direct-child edges (1 hop). For a 2-node graph this gave
-    // reviewers no context for what the slice does. Now we walk up
-    // to MAX_DEPTH hops and emit transitive callees so the visual
-    // shows the call-chain shape — capped at MAX_NODES total to
-    // keep mermaid renderable.
     const MAX_DEPTH: usize = 3;
     const MAX_NODES: usize = 16;
     const MAX_CHILDREN_PER_NODE: usize = 6;
 
+    let class_for = |status: FileStatus| -> Option<&'static str> {
+        if mode.force_muted {
+            Some("muted")
+        } else {
+            class_for_status(status)
+        }
+    };
+
     for root in entries.iter().take(8) {
-        let root_touched = changed_files.iter().any(|p| root.file.ends_with(p));
+        let root_status = classify_file(&root.file, changed_files);
+        if root_status == mode.skip_status {
+            continue;
+        }
+        let root_override =
+            before_rename_label(mode, &root.name, &root.parent_class, &root.file, rename_old);
         let rid = intern_node(
             &mut nodes,
             &mut id_for,
@@ -264,10 +435,10 @@ fn build_after_flowchart(
             &root.name,
             &root.parent_class,
             &root.file,
-            root_touched,
+            class_for(root_status),
+            root_override.as_deref(),
         );
 
-        // BFS from this root. Each queue entry carries (node, depth, parent_id).
         let mut queue: std::collections::VecDeque<(&CallTreeNode, usize, String)> =
             std::collections::VecDeque::new();
         for c in root.children.iter().take(MAX_CHILDREN_PER_NODE) {
@@ -277,7 +448,12 @@ fn build_after_flowchart(
             if nodes.len() >= MAX_NODES {
                 break;
             }
-            let touched = changed_files.iter().any(|p| node.file.ends_with(p));
+            let n_status = classify_file(&node.file, changed_files);
+            if n_status == mode.skip_status {
+                continue;
+            }
+            let n_override =
+                before_rename_label(mode, &node.name, &node.parent_class, &node.file, rename_old);
             let nid = intern_node(
                 &mut nodes,
                 &mut id_for,
@@ -285,9 +461,9 @@ fn build_after_flowchart(
                 &node.name,
                 &node.parent_class,
                 &node.file,
-                touched,
+                class_for(n_status),
+                n_override.as_deref(),
             );
-            // A2: skip self-loops + dedup edges.
             if parent_id != nid {
                 let key = (parent_id.clone(), nid.clone());
                 if edge_seen.insert(key) {
@@ -307,40 +483,220 @@ fn build_after_flowchart(
         }
     }
 
+    (nodes, edges)
+}
+
+/// Build the AFTER-state flowchart — the call graph AT HEAD with each
+/// node tinted by its file's diff status:
+///   • Added files   → green   (didn't exist before this PR)
+///   • Modified/Renamed → amber (existed; the body / surface changed)
+///   • Unchanged     → uncoloured (transitive callee outside the PR slice)
+/// Removed files are skipped from the BFS (they have no AST at HEAD;
+/// this only matters defensively when a stale changed-files list leaks
+/// a Removed status for a file that nonetheless appears in the tree).
+fn build_after_flowchart(
+    entries: &[CallTreeNode],
+    changed_files: &[ChangedFile],
+) -> Flowchart {
+    if entries.is_empty() {
+        return Flowchart {
+            direction: FlowDirection::LR,
+            title: None,
+            subgraphs: vec![],
+            nodes: vec![FlowNode {
+                id: "empty".into(),
+                label: "No affected entries".into(),
+                shape: NodeShape::Rect,
+                class: Some("muted".into()),
+            }],
+            edges: vec![],
+            class_defs: vec![muted_class_def()],
+        };
+    }
+
+    // AFTER shows HEAD names → no rename relabeling (empty map).
+    let no_renames: BTreeMap<String, String> = BTreeMap::new();
+    let (nodes, edges) = build_call_graph(
+        entries,
+        changed_files,
+        GraphMode {
+            skip_status: FileStatus::Removed,
+            force_muted: false,
+        },
+        &no_renames,
+    );
+
     Flowchart {
         direction: FlowDirection::LR,
         title: None,
         subgraphs: vec![],
         nodes,
         edges,
-        class_defs: vec![changed_class_def()],
+        class_defs: vec![changed_class_def(), added_class_def()],
     }
 }
 
-/// Build a minimal BEFORE-state placeholder flowchart. Without a
-/// `--base-sha` checkout we can't reconstruct true BEFORE; this
-/// emits a clear muted-styled placeholder so the renderer doesn't
-/// crash on an empty image-1 LEFT.
-fn build_before_flowchart() -> Flowchart {
+/// Build the new_path → old_path map for files RENAMED in this PR. Used by
+/// the BEFORE chart to relabel file-named nodes to their pre-PR names.
+///
+/// Restricted to `status = "renamed"` on purpose: copies ALSO carry an
+/// `old_path`, but a copy classifies as `Added` and is SKIPPED from the
+/// BEFORE BFS — so it can never reach the relabel. Excluding copies here
+/// keeps the map's contract unambiguous ("these are the files whose BEFORE
+/// name differs") and prevents any future code path from mistaking a
+/// copy's source for a rename origin.
+fn rename_old_map(changed_files: &[ChangedFile]) -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    for cf in changed_files {
+        let is_rename = cf
+            .status
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+            == Some("renamed");
+        if !is_rename {
+            continue;
+        }
+        if let Some(old) = &cf.old_path {
+            if !old.is_empty() {
+                m.insert(cf.path.clone(), old.clone());
+            }
+        }
+    }
+    m
+}
+
+/// Just the basename of a path — used in the "🗑 removed — <basename>"
+/// placeholder labels. Falls back to the whole path when there's no
+/// separator.
+fn basename(p: &str) -> &str {
+    p.rsplit('/').next().unwrap_or(p)
+}
+
+/// Build the BEFORE-state flowchart by reconstructing the pre-PR call
+/// graph from diff signals — NO `--base-sha` checkout required.
+///
+/// The reconstruction is honest about what it CAN and CAN'T see:
+///   • Files with `status = Added` are SKIPPED from the BFS (they didn't
+///     exist before, so any node anchored in them must not appear).
+///   • Files with `status = Modified | Renamed | Unchanged` ARE included
+///     (their AST existed before; the body or signature may differ but
+///     the symbol existed). All are tinted MUTED so reviewers see this
+///     panel as "before-state, not the focus."
+///   • Files with `status = Removed` get a one-per-file placeholder
+///     card `🗑 removed — <basename>` painted with the RED "removed"
+///     class — exactly the signal a reviewer needs: "this file is gone
+///     in the AFTER chart on the right."
+///
+/// When the entire BFS produces zero nodes AND there are no removed
+/// files (e.g. an all-Added PR where every entry root was created in
+/// this PR), the chart falls back to a clean muted note rather than
+/// rendering an empty flowchart.
+fn build_before_flowchart(
+    entries: &[CallTreeNode],
+    changed_files: &[ChangedFile],
+) -> Flowchart {
+    let renames = rename_old_map(changed_files);
+    let (mut nodes, edges) = build_call_graph(
+        entries,
+        changed_files,
+        GraphMode {
+            skip_status: FileStatus::Added,
+            force_muted: true,
+        },
+        &renames,
+    );
+
+    // Emit one placeholder per file with `status = Removed`. These files
+    // have no AST at HEAD (so the BFS never saw them), but they DID exist
+    // before — the reviewer needs to see them disappear.
+    //
+    // Bounded + deduped: a mass-deletion PR (50–200 files) would otherwise
+    // produce that many red cards, blowing out the chart (and the BFS's
+    // own MAX_NODES budget, which doesn't cover post-BFS cards). We dedup
+    // on a NORMALIZED path (so `./x` and `x` collapse) and cap the card
+    // count, collapsing the overflow into a single `🗑 +N more removed`
+    // summary card.
+    const MAX_REMOVED_CARDS: usize = 8;
+    let mut removed_id_counter = 0usize;
+    let mut total_removed = 0usize;
+    let mut seen_removed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cf in changed_files {
+        let is_removed = matches!(
+            cf.status.as_deref().map(str::to_ascii_lowercase).as_deref(),
+            Some("removed") | Some("deleted")
+        );
+        if !is_removed {
+            continue;
+        }
+        // Dedup on the normalized path (mirrors `paths_match`'s norm) so a
+        // duplicate TSV row or a `./`-vs-bare spelling can't double-render.
+        let norm = cf.path.trim_start_matches("./").trim_start_matches('/').to_string();
+        if !seen_removed.insert(norm) {
+            continue;
+        }
+        total_removed += 1;
+        if removed_id_counter >= MAX_REMOVED_CARDS {
+            continue; // counted for the summary card; not rendered individually
+        }
+        let id = format!("rm_{removed_id_counter}");
+        removed_id_counter += 1;
+        // Format: `🗑 removed — <basename>`. Parens and brackets are
+        // stripped by `safe_label` (mermaid uses them as node-shape
+        // delimiters), so we encode "removed" with an emoji + em-dash
+        // separator that survives sanitization AND reads cleanly.
+        nodes.push(FlowNode {
+            id,
+            label: format!("🗑 removed — {}", basename(&cf.path)),
+            shape: NodeShape::Rect,
+            class: Some("removed".into()),
+        });
+    }
+    // Overflow summary so a 200-file deletion reads "🗑 +192 more removed"
+    // instead of rendering (or silently dropping) 192 extra cards.
+    if total_removed > removed_id_counter {
+        let overflow = total_removed - removed_id_counter;
+        nodes.push(FlowNode {
+            id: "rm_more".into(),
+            label: format!("🗑 +{overflow} more removed"),
+            shape: NodeShape::Rect,
+            class: Some("removed".into()),
+        });
+    }
+
+    if nodes.is_empty() {
+        return Flowchart {
+            direction: FlowDirection::LR,
+            title: None,
+            subgraphs: vec![],
+            nodes: vec![FlowNode {
+                id: "before_empty".into(),
+                label: "All affected files are new in this PR — nothing existed before".into(),
+                shape: NodeShape::Rect,
+                class: Some("muted".into()),
+            }],
+            edges: vec![],
+            class_defs: vec![muted_class_def()],
+        };
+    }
+
     Flowchart {
         direction: FlowDirection::LR,
         title: None,
         subgraphs: vec![],
-        nodes: vec![FlowNode {
-            id: "note".into(),
-            label: "Before-state requires --base-sha; not reconstructed here".into(),
-            shape: NodeShape::Rect,
-            class: Some("muted".into()),
-        }],
-        edges: vec![],
-        class_defs: vec![muted_class_def()],
+        nodes,
+        edges,
+        class_defs: vec![muted_class_def(), removed_class_def()],
     }
 }
 
 /// A5: build a SINGLE Flowchart containing BEFORE / AFTER / DS subgraphs
-/// connected by dashed "evolves to" / "uses" arrows. This is the layout
-/// the spec (`pr-review-spec.md` §1) and the HTML mockup actually expect.
+/// connected by dashed "evolves to" / "uses" arrows. Legacy-shape API
+/// preserved for downstream consumers that haven't migrated to the two-
+/// chart layout yet; new consumers should prefer the separate
+/// `before_mermaid` / `after_mermaid` fields.
 fn build_combined_flowchart(
+    before: &Flowchart,
     after: &Flowchart,
     data_structures: &[DataStructureEntry],
 ) -> Flowchart {
@@ -349,21 +705,38 @@ fn build_combined_flowchart(
     let mut class_defs: Vec<ClassDef> = Vec::new();
     let mut edges: Vec<FlowEdge> = Vec::new();
 
-    // ── BEFORE subgraph (muted placeholder) ──────────────────────────
-    let before_id = "before_note".to_string();
-    nodes.push(FlowNode {
-        id: before_id.clone(),
-        label: "Before-state requires --base-sha".into(),
-        shape: NodeShape::Rect,
-        class: Some("muted".into()),
-    });
+    // ── BEFORE subgraph (real reconstructed nodes from `before` chart) ─
+    // Renamespace ids with `b_` so they don't collide with AFTER's `a_`.
+    let mut before_ids: Vec<String> = Vec::new();
+    for n in &before.nodes {
+        let id = format!("b_{}", n.id);
+        nodes.push(FlowNode {
+            id: id.clone(),
+            label: n.label.clone(),
+            shape: n.shape,
+            class: n.class.clone(),
+        });
+        before_ids.push(id);
+    }
+    for e in &before.edges {
+        edges.push(FlowEdge {
+            from: format!("b_{}", e.from),
+            to: format!("b_{}", e.to),
+            label: e.label.clone(),
+            style: e.style,
+        });
+    }
     subgraphs.push(crate::pr_algorithms::mermaid::Subgraph {
         id: "BEFORE".into(),
         label: "🔴 BEFORE".into(),
         direction: Some(FlowDirection::LR),
-        node_ids: vec![before_id.clone()],
+        node_ids: before_ids.clone(),
     });
-    class_defs.push(muted_class_def());
+    for cd in &before.class_defs {
+        if !class_defs.iter().any(|x| x.name == cd.name) {
+            class_defs.push(cd.clone());
+        }
+    }
 
     // ── AFTER subgraph (nodes from the after-flowchart) ──────────────
     // Renamespace AFTER's node ids so they don't collide with the
@@ -444,20 +817,41 @@ fn build_combined_flowchart(
     }
 
     // ── Inter-subgraph connectors (dashed) ───────────────────────────
-    // Connect the first node of each subgraph so mermaid links the
-    // subgraph BOXES via those nodes.
+    // Anchor every AFTER node with no inbound AFTER-internal edge to the
+    // BEFORE subgraph via a single dashed "evolves to" edge — this is the
+    // no-orphan invariant that kept GitHub's mermaid from rendering the
+    // chart when there were ≥2 disconnected AFTER roots. The source side
+    // is BEFORE's first node (the "spine"): always anchored, always
+    // unique. When BEFORE is genuinely empty (all-Added PR) we skip the
+    // connectors — there's nothing to evolve FROM.
+    let inbound_after: std::collections::HashSet<String> =
+        edges.iter().map(|e| e.to.clone()).collect();
+    let disconnected_after: Vec<String> = after_ids
+        .iter()
+        .filter(|id| !inbound_after.contains(*id))
+        .cloned()
+        .collect();
+    let evolves_label = Some("evolves to".to_string());
+    if let Some(spine) = before_ids.first() {
+        for aid in &disconnected_after {
+            edges.push(FlowEdge {
+                from: spine.clone(),
+                to: aid.clone(),
+                label: evolves_label.clone(),
+                style: EdgeStyle::Dashed,
+            });
+        }
+    }
+    // Same treatment for DS: anchor every DS node to the first AFTER
+    // node with a single shared "uses" label, so DS doesn't end up as
+    // a cluster of floating cards either.
     if let Some(first_after) = after_ids.first() {
-        edges.push(FlowEdge {
-            from: before_id.clone(),
-            to: first_after.clone(),
-            label: Some("evolves to".into()),
-            style: EdgeStyle::Dashed,
-        });
-        if let Some(first_ds) = ds_ids.first() {
+        let uses_label = Some("uses".to_string());
+        for did in &ds_ids {
             edges.push(FlowEdge {
                 from: first_after.clone(),
-                to: first_ds.clone(),
-                label: Some("uses".into()),
+                to: did.clone(),
+                label: uses_label.clone(),
                 style: EdgeStyle::Dashed,
             });
         }
@@ -473,25 +867,65 @@ fn build_combined_flowchart(
     }
 }
 
+/// Backward-compatible API for callers that only have file PATHS, no
+/// diff status. Synthesizes `ChangedFile` entries with `status = None`
+/// (which classifies as `Modified` — the safe default), so existing
+/// behavior is preserved: paths in `changed_files` are treated as
+/// "touched" and tinted amber. Callers that DO have status data should
+/// prefer `compute_with_diff`, which produces a real BEFORE chart.
 pub fn compute(entries: &[CallTreeNode], changed_files: &[String]) -> ArchitectureFlow {
+    let synthetic: Vec<ChangedFile> = changed_files
+        .iter()
+        .map(|p| ChangedFile {
+            path: p.clone(),
+            status: None,
+            ..Default::default()
+        })
+        .collect();
+    compute_with_diff(entries, &synthetic)
+}
+
+/// Rich entry point: builds BEFORE and AFTER as two INDEPENDENT charts
+/// (in addition to the legacy combined diagram) using `ChangedFile`
+/// diff status to decide which nodes appear where.
+///
+/// Output guarantees:
+///   • `before_mermaid` — real reconstructed pre-PR call graph:
+///     `Added`/`Copied` files skipped (didn't exist); `Removed` files
+///     appear as red `🗑 removed` placeholder cards (deduped + capped at
+///     8 with a `🗑 +N more removed` overflow); renamed files shown under
+///     their OLD name (`ChangedFile.old_path`).
+///   • `after_mermaid` — current HEAD call graph with file-status
+///     colouring: green = added/copied, amber = modified/renamed, no
+///     class = unchanged transitive callee.
+///   • `combined_mermaid` — LEGACY single graph: BEFORE + AFTER + DS
+///     subgraphs joined by dashed "evolves to" / "uses" edges, with the
+///     no-orphan invariant (every AFTER node has an inbound edge). The
+///     action renderer PREFERS the before/after pair and only falls back
+///     to this for older reports; it's retained for back-compat and as
+///     the regression guard for the orphan-AFTER bug that once broke
+///     GitHub's mermaid layout. Kept always-populated deliberately —
+///     gating it off would forfeit that coverage for a small wire saving.
+///   • `before_structured` / `after_structured` / `combined_structured`
+///     are populated 1:1 with their rendered counterparts.
+pub fn compute_with_diff(
+    entries: &[CallTreeNode],
+    changed_files: &[ChangedFile],
+) -> ArchitectureFlow {
+    let before_struct = build_before_flowchart(entries, changed_files);
+    let before_mermaid = before_struct.render();
     let after_struct = build_after_flowchart(entries, changed_files);
     let after_mermaid = after_struct.render();
-    let before_struct = build_before_flowchart();
-    let before_mermaid = before_struct.render();
-    let data_structures = collect_data_structures(entries, changed_files);
-    // A5: build the combined subgraph layout.
-    let combined_struct = build_combined_flowchart(&after_struct, &data_structures);
+    let changed_paths: Vec<String> = changed_files.iter().map(|f| f.path.clone()).collect();
+    let data_structures = collect_data_structures(entries, &changed_paths);
+    let combined_struct = build_combined_flowchart(&before_struct, &after_struct, &data_structures);
     let combined_mermaid = combined_struct.render();
     ArchitectureFlow {
         before_mermaid,
         after_mermaid,
         combined_mermaid: Some(combined_mermaid),
+        before_structured: Some(before_struct),
         after_structured: Some(after_struct),
-        // O3: combined_structured mirrors combined_mermaid 1-to-1.
-        // before_structured stays None until A1/--base-sha is wired
-        // (no real before-state today, so emitting a stub Flowchart
-        // would be misleading).
-        before_structured: None,
         combined_structured: Some(combined_struct),
         data_structures,
         reference_link: Some(ReferenceLink {
@@ -663,5 +1097,329 @@ mod tests {
         assert_eq!(s.nodes.len(), 1);
         assert_eq!(s.nodes[0].label, "create_order");
         assert!(!s.class_defs.is_empty());
+    }
+
+    /// Verbatim reproduction of the production-broken diagram (8 unrelated
+    /// call-tree roots, none in `changed_files`). The pre-fix output had
+    /// `a_n1..a_n7` as floating nodes — only `a_n0` had an inbound edge —
+    /// which is what broke "rich display" rendering. After the fix every
+    /// AFTER node must have exactly one inbound edge (either internal or
+    /// the dashed `<BEFORE-spine> → a_nX`).
+    ///
+    /// The names are the same module-kind labels the original report
+    /// showed, so the fixture stays a true post-mortem.
+    #[test]
+    fn no_orphan_after_nodes_in_combined_flowchart() {
+        let entries = vec![
+            mk_node("model_discovery.rs", "drift/model_discovery.rs"),
+            mk_node("users.ts", "web/users.ts"),
+            mk_node("queries.py", "api/queries.py"),
+            mk_node("models.py", "api/models.py"),
+            mk_node("views.py", "api/views.py"),
+            mk_node("users.ts", "mobile/users.ts"),
+            mk_node("orders.py", "api/orders.py"),
+            mk_node("users.ts", "admin/users.ts"),
+        ];
+        // changed_files deliberately empty — matches the original bug:
+        // every root is `FileStatus::Unchanged` (no entry in changed_files),
+        // so the BEFORE chart mirrors AFTER (muted) and the BEFORE spine
+        // (`b_n0`) is the only path that can anchor disconnected AFTER roots.
+        let r = compute(&entries, &[]);
+        let combined = r.combined_mermaid.as_ref().expect("combined must be Some");
+
+        // Every AFTER node (prefix `a_`) must appear at least once as the
+        // RHS of some edge. The BEFORE spine fans dashed "evolves to" edges
+        // to every disconnected AFTER root.
+        let combined_struct = r.combined_structured.as_ref().unwrap();
+        let inbound: std::collections::HashSet<&str> =
+            combined_struct.edges.iter().map(|e| e.to.as_str()).collect();
+        let after_ids: Vec<&str> = combined_struct
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .filter(|id| id.starts_with("a_"))
+            .collect();
+        assert!(after_ids.len() >= 8, "expected ≥8 AFTER nodes, got {} in:\n{combined}", after_ids.len());
+        for aid in &after_ids {
+            assert!(
+                inbound.contains(*aid),
+                "AFTER node {aid} has no inbound edge — would float in the renderer:\n{combined}"
+            );
+        }
+    }
+
+    /// The unused `changed` classDef must NOT leak into the rendered output.
+    /// Empty `changed_files` means no AFTER root is `class=changed`; the
+    /// renderer should consequently omit the classDef entirely.
+    #[test]
+    fn unused_changed_classdef_is_pruned() {
+        let entries = vec![mk_node("foo", "src/foo.py")];
+        let r = compute(&entries, &[]); // empty changed_files → no node gets class=changed
+        assert!(
+            !r.combined_mermaid.as_ref().unwrap().contains("classDef changed"),
+            "unused classDef leaked into render:\n{}",
+            r.combined_mermaid.as_ref().unwrap()
+        );
+    }
+
+    /// Inverse of the above: when a node IS in changed_files, the
+    /// `changed` classDef must survive (referenced ⇒ emitted).
+    #[test]
+    fn referenced_changed_classdef_is_kept() {
+        let entries = vec![mk_node("foo", "src/foo.py")];
+        let r = compute(&entries, &["src/foo.py".into()]);
+        assert!(
+            r.combined_mermaid.as_ref().unwrap().contains("classDef changed"),
+            "referenced classDef was pruned:\n{}",
+            r.combined_mermaid.as_ref().unwrap()
+        );
+    }
+
+    // ── Diff-aware BEFORE/AFTER behaviors (compute_with_diff) ────────────
+
+    /// Local `ChangedFile` factory for the diff-aware tests below.
+    fn cf(path: &str, status: &str) -> ChangedFile {
+        ChangedFile {
+            path: path.into(),
+            status: Some(status.into()),
+            ..Default::default()
+        }
+    }
+    fn cf_renamed(new_path: &str, old_path: &str) -> ChangedFile {
+        ChangedFile {
+            path: new_path.into(),
+            status: Some("renamed".into()),
+            old_path: Some(old_path.into()),
+            ..Default::default()
+        }
+    }
+
+    /// THE rename headline: a FILE-NAMED node (label == file basename, the
+    /// shape the original "Unable to render" bug used) must show its OLD
+    /// basename in BEFORE ("what the code was") and its NEW basename in
+    /// AFTER. Symbol nodes are unaffected — a rename moves the file, not
+    /// the symbol.
+    #[test]
+    fn rename_shows_old_name_in_before_new_in_after() {
+        // A file-named module entry: name == new basename.
+        let entries = vec![mk_node("users.ts", "web/users.ts")];
+        let changed = vec![cf_renamed("web/users.ts", "web/legacy_users.ts")];
+        let arch = compute_with_diff(&entries, &changed);
+
+        // BEFORE relabels the file-named node to its OLD basename.
+        assert!(
+            arch.before_mermaid.contains("\"legacy_users.ts\""),
+            "BEFORE must show the OLD filename for a renamed file:\n{}",
+            arch.before_mermaid
+        );
+        assert!(
+            !arch.before_mermaid.contains("\"users.ts\""),
+            "BEFORE must NOT show the new filename for a renamed file:\n{}",
+            arch.before_mermaid
+        );
+        // AFTER keeps the current (new) name, amber `changed`.
+        assert!(
+            arch.after_mermaid.contains("\"users.ts\""),
+            "AFTER must show the NEW filename:\n{}",
+            arch.after_mermaid
+        );
+        assert!(
+            !arch.after_mermaid.contains("legacy_users.ts"),
+            "AFTER must NOT show the old filename:\n{}",
+            arch.after_mermaid
+        );
+    }
+
+    /// A renamed file's SYMBOL nodes (not file-named) keep their symbol
+    /// names in BOTH charts — the rename relabel must not touch them.
+    #[test]
+    fn rename_does_not_relabel_symbol_nodes() {
+        let mut method = mk_node("create", "app/services.py");
+        method.parent_class = Some("OrderService".into());
+        let entries = vec![with_children(mk_node("handler", "app/routes.py"), vec![method])];
+        let changed = vec![cf_renamed("app/services.py", "app/legacy_services.py")];
+        let arch = compute_with_diff(&entries, &changed);
+        // The symbol keeps its name; the old FILE name must not leak onto it.
+        assert!(arch.before_mermaid.contains("OrderService.create"), "symbol node lost its name:\n{}", arch.before_mermaid);
+        assert!(!arch.before_mermaid.contains("legacy_services"), "old file name must not bleed onto a symbol node:\n{}", arch.before_mermaid);
+    }
+
+    /// Copied files (C-status) behave like additions: ABSENT from BEFORE,
+    /// green `added` in AFTER.
+    #[test]
+    fn copied_file_behaves_like_added() {
+        let entries = vec![mk_node("copiedFn", "app/copy_of_util.py")];
+        let changed = vec![cf("app/copy_of_util.py", "copied")];
+        let arch = compute_with_diff(&entries, &changed);
+        // AFTER: green `added`.
+        assert!(arch.after_mermaid.contains("classDef added"), "copied file must be green (added) in AFTER:\n{}", arch.after_mermaid);
+        assert!(arch.after_mermaid.contains("class n0 added"), "copied node must carry the `added` class:\n{}", arch.after_mermaid);
+        // BEFORE: skipped (didn't exist) → empty-state note.
+        assert!(
+            arch.before_mermaid.contains("All affected files are new in this PR"),
+            "copied-only PR should yield the all-new BEFORE note:\n{}",
+            arch.before_mermaid
+        );
+    }
+
+    /// Removed-card flood control: a mass-deletion PR caps individual cards
+    /// at MAX_REMOVED_CARDS (8) and collapses the rest into one summary card.
+    #[test]
+    fn removed_cards_are_capped_with_overflow_summary() {
+        // No entries (files deleted → nothing at HEAD); 20 removed files.
+        let changed: Vec<ChangedFile> =
+            (0..20).map(|i| cf(&format!("app/dead_{i}.py"), "removed")).collect();
+        let arch = compute_with_diff(&[], &changed);
+        let before = &arch.before_mermaid;
+        // Exactly 8 individual "🗑 removed — " cards…
+        let individual = before.matches("🗑 removed — ").count();
+        assert_eq!(individual, 8, "expected 8 capped individual removed cards:\n{before}");
+        // …plus one overflow summary for the remaining 12.
+        assert!(before.contains("🗑 +12 more removed"), "missing overflow summary card:\n{before}");
+    }
+
+    /// Removed-card dedup: the same file appearing twice (duplicate TSV row
+    /// or `./x` vs `x` spelling) renders only ONE card.
+    #[test]
+    fn removed_cards_dedup_on_normalized_path() {
+        let changed = vec![
+            cf("app/gone.py", "removed"),
+            cf("./app/gone.py", "removed"), // same file, different spelling
+            cf("app/gone.py", "deleted"),   // alias + exact dup
+        ];
+        let arch = compute_with_diff(&[], &changed);
+        let cards = arch.before_mermaid.matches("🗑 removed — gone.py").count();
+        assert_eq!(cards, 1, "duplicate/aliased removed paths must collapse to one card:\n{}", arch.before_mermaid);
+        assert!(!arch.before_mermaid.contains("more removed"), "no overflow for a single deduped file:\n{}", arch.before_mermaid);
+    }
+
+    /// A pure-rename PR (file-named entries) renders OLD names muted in
+    /// BEFORE and NEW names in AFTER — end to end, both parse-shaped.
+    #[test]
+    fn pure_rename_pr_before_old_after_new() {
+        let entries = vec![
+            mk_node("alpha.ts", "src/alpha.ts"),
+            mk_node("beta.ts", "src/beta.ts"),
+        ];
+        let changed = vec![
+            cf_renamed("src/alpha.ts", "src/old_alpha.ts"),
+            cf_renamed("src/beta.ts", "src/old_beta.ts"),
+        ];
+        let arch = compute_with_diff(&entries, &changed);
+        assert!(arch.before_mermaid.contains("old_alpha.ts") && arch.before_mermaid.contains("old_beta.ts"),
+            "BEFORE must show both old names:\n{}", arch.before_mermaid);
+        assert!(arch.after_mermaid.contains("\"alpha.ts\"") && arch.after_mermaid.contains("\"beta.ts\""),
+            "AFTER must show both new names:\n{}", arch.after_mermaid);
+    }
+
+    /// THE "all cases at once" test the task names: a single PR that
+    /// exercises EVERY status — added + modified + renamed + copied +
+    /// removed + unchanged — and asserts each lands in the right chart with
+    /// the right treatment. This is the integration of every diff-aware
+    /// rule in one BEFORE/AFTER pair.
+    #[test]
+    fn all_statuses_in_one_pr_land_correctly() {
+        // Build a call tree touching files of every status. Use file-named
+        // roots so the rename relabel is observable, plus a symbol child.
+        let entries = vec![
+            mk_node("services.py", "app/services.py"),          // Modified
+            mk_node("new_api.py", "app/new_api.py"),            // Added
+            mk_node("routes.py", "app/routes.py"),              // Renamed (old: legacy_routes.py)
+            mk_node("copy_util.py", "app/copy_util.py"),        // Copied (→ Added)
+            mk_node("shared.py", "lib/shared.py"),              // Unchanged (not in diff)
+        ];
+        let changed = vec![
+            cf("app/services.py", "modified"),
+            cf("app/new_api.py", "added"),
+            cf_renamed("app/routes.py", "app/legacy_routes.py"),
+            ChangedFile { path: "app/copy_util.py".into(), status: Some("copied".into()), old_path: Some("app/orig_util.py".into()), ..Default::default() },
+            cf("app/deleted_thing.py", "removed"), // not in tree → BEFORE placeholder
+            // lib/shared.py omitted → Unchanged
+        ];
+        let arch = compute_with_diff(&entries, &changed);
+        let before = &arch.before_mermaid;
+        let after = &arch.after_mermaid;
+
+        // ── AFTER ─────────────────────────────────────────────────────
+        // Added + Copied → green; Modified + Renamed → amber; Unchanged → no class.
+        assert!(after.contains("classDef added") && after.contains("classDef changed"),
+            "AFTER must declare both added + changed classes:\n{after}");
+        assert!(after.contains("\"new_api.py\""), "added file present in AFTER:\n{after}");
+        assert!(after.contains("\"copy_util.py\""), "copied file present in AFTER:\n{after}");
+        assert!(after.contains("\"routes.py\""), "renamed file present under NEW name in AFTER:\n{after}");
+        assert!(!after.contains("legacy_routes"), "AFTER must not show the old rename name:\n{after}");
+        assert!(after.contains("\"shared.py\""), "unchanged callee present in AFTER:\n{after}");
+        // Removed file has no AST at HEAD → absent from AFTER.
+        assert!(!after.contains("deleted_thing"), "removed file must be absent from AFTER:\n{after}");
+
+        // ── BEFORE ────────────────────────────────────────────────────
+        // Added + Copied skipped (didn't exist); Renamed shown under OLD name;
+        // Removed → red placeholder; Modified/Unchanged → muted.
+        assert!(!before.contains("\"new_api.py\""), "added file must be ABSENT from BEFORE:\n{before}");
+        assert!(!before.contains("\"copy_util.py\""), "copied file must be ABSENT from BEFORE:\n{before}");
+        assert!(before.contains("\"legacy_routes.py\""), "renamed file must show OLD name in BEFORE:\n{before}");
+        assert!(!before.contains("\"routes.py\""), "renamed file must NOT show new name in BEFORE:\n{before}");
+        assert!(before.contains("🗑 removed — deleted_thing.py"), "removed file → placeholder in BEFORE:\n{before}");
+        assert!(before.contains("\"services.py\"") && before.contains("\"shared.py\""),
+            "modified + unchanged files present (muted) in BEFORE:\n{before}");
+        assert!(before.contains("classDef muted") && before.contains("classDef removed"),
+            "BEFORE must declare muted + removed classes:\n{before}");
+        assert!(!before.contains("classDef added") && !before.contains("classDef changed"),
+            "BEFORE must NOT carry added/changed palettes:\n{before}");
+    }
+
+    /// Gap-#2 CONTRACT: for a graph UNDER the node cap (no truncation),
+    /// BEFORE and AFTER agree on the set of Modified + Unchanged nodes —
+    /// they show the SAME code, differing only by Added (after-only) and
+    /// Removed-cards (before-only). This pins the "two charts of the same
+    /// code" guarantee where it's deterministic.
+    ///
+    /// DESIGN NOTE: we deliberately do NOT assert strict structural equality
+    /// OVER the cap. BEFORE skips Added subtrees DURING the walk (so an added
+    /// function and everything it newly introduced correctly vanish), which
+    /// is the semantically-correct "before" — at the 16-node truncation
+    /// boundary the two charts MAY include slightly different unchanged
+    /// tail-nodes, and that's an accepted artifact, not a bug. Forcing a
+    /// shared union skeleton would instead strand unchanged-via-added nodes
+    /// as misleading floating boxes in BEFORE, which is worse.
+    #[test]
+    fn before_after_agree_on_shared_nodes_under_cap() {
+        // Small graph (well under MAX_NODES=16): a modified root with an
+        // unchanged callee and an added callee.
+        let entries = vec![with_children(
+            mk_node("handler", "app/handler.py"), // Modified
+            vec![
+                mk_node("validate", "lib/validate.py"), // Unchanged
+                mk_node("new_step", "app/new_step.py"), // Added
+            ],
+        )];
+        let changed = vec![
+            cf("app/handler.py", "modified"),
+            cf("app/new_step.py", "added"),
+            // lib/validate.py omitted → Unchanged
+        ];
+        let arch = compute_with_diff(&entries, &changed);
+
+        // Shared (Modified + Unchanged) nodes appear in BOTH with identical labels.
+        for shared in ["handler", "validate"] {
+            let needle = format!("\"{shared}\"");
+            assert!(arch.before_mermaid.contains(&needle), "{shared} missing from BEFORE:\n{}", arch.before_mermaid);
+            assert!(arch.after_mermaid.contains(&needle), "{shared} missing from AFTER:\n{}", arch.after_mermaid);
+        }
+        // Added node: AFTER only.
+        assert!(arch.after_mermaid.contains("\"new_step\""), "added node must be in AFTER:\n{}", arch.after_mermaid);
+        assert!(!arch.before_mermaid.contains("\"new_step\""), "added node must NOT be in BEFORE:\n{}", arch.before_mermaid);
+    }
+
+    /// Pure-deletion PR: empty call tree (everything deleted) → AFTER is the
+    /// "No affected entries" placeholder, BEFORE is the removed-card list.
+    /// The renderer still emits two coherent charts (verified e2e elsewhere).
+    #[test]
+    fn pure_deletion_after_placeholder_before_cards() {
+        let changed = vec![cf("app/a.py", "removed"), cf("app/b.py", "removed")];
+        let arch = compute_with_diff(&[], &changed);
+        assert!(arch.after_mermaid.contains("No affected entries"), "AFTER placeholder:\n{}", arch.after_mermaid);
+        assert!(arch.before_mermaid.contains("🗑 removed — a.py") && arch.before_mermaid.contains("🗑 removed — b.py"),
+            "BEFORE must list both removed files:\n{}", arch.before_mermaid);
     }
 }

@@ -66,7 +66,7 @@ pub const TAGS_QUERY: &str = r#"
   body: (_) @def.body) @def.function
 
 ; Python `lambda x: ...` — anonymous callable. Tagged so the scanner
-; emits a synthetic `<lambda@<line>>` Function symbol, which lets
+; emits a synthetic `<anonymous@<line>>` Function symbol, which lets
 ; references inside the lambda body resolve to a real caller (instead
 ; of disappearing into module-level orphan refs).
 (lambda) @def.anonymous

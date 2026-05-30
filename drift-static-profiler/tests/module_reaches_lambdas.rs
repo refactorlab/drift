@@ -1,5 +1,5 @@
 //! Regression test for the "module entry shows much less" symptom
-//! after `<lambda@N>` symbols started being extracted as first-class
+//! after `<anonymous@N>` symbols started being extracted as first-class
 //! nodes.
 //!
 //! Symptom (before the synthetic-reach fix): a top-level arrow
@@ -26,13 +26,13 @@ use drift_static_profiler::tags::extract_tags_from_source;
 use drift_static_profiler::Language;
 
 /// Top-level TS arrow function calling another function. The synthetic
-/// edge `<module> → <lambda@N>` MUST be in the references so the
+/// edge `<module> → <anonymous@N>` MUST be in the references so the
 /// module entry's call tree reaches everything the lambda calls.
 #[test]
 fn ts_top_level_arrow_gets_module_reach() {
     // After the lambda binding-name rename, `const handler = (req) =>
     // ...` produces a symbol literally named `handler` (not
-    // `<lambda@N>`). The synthetic `<module> → handler` ref is what
+    // `<anonymous@N>`). The synthetic `<module> → handler` ref is what
     // we assert.
     let source = "\
 const handler = (req) => {
@@ -144,7 +144,7 @@ function plain() {
     let any_lambda_ref = tags
         .references
         .iter()
-        .any(|r| r.name.starts_with("<lambda@"));
+        .any(|r| r.name.starts_with("<anonymous@"));
     assert!(
         !any_lambda_ref,
         "synthesizer must not invent lambda refs when no lambdas exist; refs={:#?}",
