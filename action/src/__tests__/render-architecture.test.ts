@@ -81,8 +81,8 @@ test('architecture: collapsible diagrams + data-structure table', () => {
     keyFiles: { mermaid: 'mindmap\n root((x))' },
     ctx: CTX,
   })!;
-  assert.match(out, /<summary>🧭 Architecture flow diagram — before → after<\/summary>/);
-  assert.match(out, /‹lambda@N›/, 'lambda note present');
+  assert.match(out, /<summary>🧭 Architecture flow diagram — before vs after<\/summary>/);
+  assert.match(out, /‹anonymous@N›/, 'anonymous-callable note present');
   assert.match(out, /<summary>🧠 Business-logic reach diagram<\/summary>/);
   assert.match(out, /> \*\*Summary —\*\* why this exists/);
   assert.match(out, /<summary>📦 Data structures touched \(1\)<\/summary>/);
@@ -100,4 +100,67 @@ test('architecture: no context → code-span fallbacks, still valid', () => {
 
 test('architecture: null when there is nothing to show', () => {
   assert.equal(renderArchitecture({ prScope: { changed_files: [], affected_roots: [], unreachable_changes: [] } }), null);
+});
+
+// Two-chart layout — the post-fix scanner output. When both `before_mermaid`
+// and `after_mermaid` are non-empty, the renderer must emit them as TWO
+// separate ```mermaid``` blocks (under "🔴 BEFORE" / "🟢 AFTER" headings)
+// instead of one combined block.
+test('architecture: two-chart layout — before AND after rendered as separate mermaid blocks', () => {
+  const out = renderArchitecture({
+    prScope: scope(),
+    arch: {
+      before_mermaid: 'flowchart LR\n n0["foo"]',
+      after_mermaid: 'flowchart LR\n a0["foo"]\n class a0 changed',
+      // combined is OPTIONAL — caller may still set it; the two-chart path
+      // must win when before+after are both present.
+      combined_mermaid: 'flowchart TB\n stale --> ignored',
+    },
+    ctx: CTX,
+  })!;
+
+  // Both heading labels rendered.
+  assert.match(out, /\*\*🔴 BEFORE — what the code was:\*\*/);
+  assert.match(out, /\*\*🟢 AFTER — what the code is now:\*\*/);
+  // Each mermaid block appears exactly once with its own content.
+  assert.match(out, /```mermaid\nflowchart LR\n n0\["foo"\]\n```/);
+  assert.match(out, /```mermaid\nflowchart LR\n a0\["foo"\]\n class a0 changed\n```/);
+  // The legacy `combined_mermaid` MUST NOT be emitted when the two-chart
+  // pair is available (otherwise we'd post three diagrams).
+  assert.doesNotMatch(out, /flowchart TB\n stale --> ignored/);
+  // Exactly TWO mermaid fences (no orphaned third).
+  const fenceCount = (out.match(/```mermaid/g) ?? []).length;
+  assert.equal(fenceCount, 2, `expected exactly 2 mermaid fences, got ${fenceCount}:\n${out}`);
+});
+
+// Legacy fallback — when the scanner only emits `combined_mermaid`
+// (older builds or test fixtures), the renderer must fall back to a
+// single ```mermaid``` block. No "BEFORE / AFTER" headings appear.
+test('architecture: single-chart fallback for legacy combined-only output', () => {
+  const out = renderArchitecture({
+    prScope: scope(),
+    arch: { combined_mermaid: 'flowchart TB\n a --> b' },
+    ctx: CTX,
+  })!;
+  assert.match(out, /```mermaid\nflowchart TB\n a --> b\n```/);
+  assert.doesNotMatch(out, /\*\*🔴 BEFORE/);
+  assert.doesNotMatch(out, /\*\*🟢 AFTER/);
+  const fenceCount = (out.match(/```mermaid/g) ?? []).length;
+  assert.equal(fenceCount, 1, `expected 1 mermaid fence in legacy fallback, got ${fenceCount}`);
+});
+
+// Whitespace-only diagrams must NOT count as "present" — those would
+// emit empty mermaid fences. The renderer trims first.
+test('architecture: whitespace-only before/after fall through to the single-chart fallback', () => {
+  const out = renderArchitecture({
+    prScope: scope(),
+    arch: {
+      before_mermaid: '   \n',
+      after_mermaid: '',
+      combined_mermaid: 'flowchart TB\n a --> b',
+    },
+    ctx: CTX,
+  })!;
+  assert.match(out, /```mermaid\nflowchart TB\n a --> b\n```/);
+  assert.doesNotMatch(out, /\*\*🔴 BEFORE/);
 });

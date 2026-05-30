@@ -380,10 +380,24 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         .map(|x| x.render())
         .unwrap_or_default();
 
-    p.phase("architecture flow (tree-sitter: data structures + after-state mermaid)");
-    let architecture_flow = architecture_flow::compute(entries, &changed_paths);
+    p.phase("architecture flow (tree-sitter: data structures + before/after mermaid)");
+    // Pass the FULL `ChangedFile` list (with status / additions / deletions)
+    // so the architecture flow can render BEFORE and AFTER as two real
+    // charts — status=Added files are skipped from BEFORE, status=Removed
+    // get placeholder cards, status=Modified are tinted amber in AFTER, etc.
+    let architecture_flow = architecture_flow::compute_with_diff(entries, inputs.changed_files);
 
     p.phase("business logic (product-flow mermaid)");
+    // DESIGN NOTE — why business_logic does NOT get the BEFORE/AFTER
+    // two-chart treatment (and only receives `&changed_paths`, not the
+    // status-bearing `&[ChangedFile]`): the business-logic diagram answers
+    // "why does this PR exist?" as a single PRODUCT-FLOW narrative
+    // (User → entry → roots → side-effect categories). That narrative is
+    // status-agnostic by design — it describes the product surface the PR
+    // touches, not a before/after code diff. A "before product flow" would
+    // be meaningless (the product didn't have a different user journey).
+    // The diff-aware BEFORE/AFTER split lives in `architecture_flow` above,
+    // which is the code-structure view where "what changed" is the point.
     let business_logic = business_logic::compute(
         &affected_root_names,
         inputs.changed_files.len(),

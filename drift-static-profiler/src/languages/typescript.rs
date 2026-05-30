@@ -75,7 +75,7 @@ pub const TAGS_QUERY: &str = r#"
 
 ; Arrow functions and function expressions — anonymous callables.
 ; Both nodes lack a `name:` field so tags.rs synthesizes
-; `<lambda@<line>>` for them.
+; `<anonymous@<line>>` for them.
 (arrow_function) @def.anonymous
 (function_expression) @def.anonymous
 

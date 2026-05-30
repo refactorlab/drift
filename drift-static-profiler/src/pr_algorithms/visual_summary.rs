@@ -511,6 +511,7 @@ mod tests {
             status: Some("modified".into()),
             additions: add,
             deletions: 0,
+            ..Default::default()
         }
     }
 

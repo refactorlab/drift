@@ -447,6 +447,66 @@ fn architecture_flow_pipeline_validates_with_zero_entries() {
     }
 }
 
+/// REGRESSION — production "Unable to render rich display" report.
+///
+/// Reproduces the exact shape that broke: 8 unrelated call-tree roots,
+/// all `kind: Function` but with file-basename names (the report's
+/// `model_discovery.rs`, `users.ts`, …), AND an empty `changed_files`
+/// so no root receives the `changed` class. Pre-fix this rendered
+/// `a_n1..a_n7` as floating nodes inside the AFTER subgraph (only
+/// `a_n0` had the dashed `before_note → a_n0` edge), which combined
+/// with the inner `direction LR` was rejected by GitHub's mermaid
+/// rendering layer.
+///
+/// Post-fix we assert two invariants directly on the structured graph
+/// (cheap, runs without node) AND parse the rendered combined mermaid
+/// through the real mermaid parser when available:
+///   1. Every AFTER node (`a_*`) has at least one inbound edge.
+///   2. The unused `changed` classDef is pruned (empty changed_files →
+///      no node uses it → the declaration must not appear).
+#[test]
+fn architecture_flow_repro_floating_after_nodes() {
+    let entries = vec![
+        mk_node("model_discovery.rs", "drift/model_discovery.rs"),
+        mk_node("users.ts", "web/users.ts"),
+        mk_node("queries.py", "api/queries.py"),
+        mk_node("models.py", "api/models.py"),
+        mk_node("views.py", "api/views.py"),
+        mk_node("users.ts", "mobile/users.ts"),
+        mk_node("orders.py", "api/orders.py"),
+        mk_node("users.ts", "admin/users.ts"),
+    ];
+    let arch = architecture_flow::compute(&entries, &[]);
+    let combined_struct = arch.combined_structured.as_ref().expect("combined_structured must be Some");
+    let combined_mermaid = arch.combined_mermaid.as_deref().expect("combined_mermaid must be Some");
+
+    // Invariant 1 — no orphan AFTER nodes.
+    let inbound: std::collections::HashSet<&str> =
+        combined_struct.edges.iter().map(|e| e.to.as_str()).collect();
+    let after_ids: Vec<&str> = combined_struct
+        .nodes
+        .iter()
+        .map(|n| n.id.as_str())
+        .filter(|id| id.starts_with("a_"))
+        .collect();
+    assert!(after_ids.len() >= 8, "expected ≥8 AFTER nodes, got {}", after_ids.len());
+    for aid in &after_ids {
+        assert!(
+            inbound.contains(*aid),
+            "regression: AFTER node {aid} has no inbound edge, would float in the renderer:\n{combined_mermaid}"
+        );
+    }
+
+    // Invariant 2 — unused classDef is pruned.
+    assert!(
+        !combined_mermaid.contains("classDef changed"),
+        "regression: unused `changed` classDef leaked into render:\n{combined_mermaid}"
+    );
+
+    // End-to-end — feed the exact rendered string to the real mermaid parser.
+    validate_pipeline("arch.combined_mermaid (repro)", combined_mermaid);
+}
+
 #[test]
 fn business_logic_pipeline_validates_for_adversarial_inputs() {
     // Builder accepts strings AND CallTreeNodes; feed both with hostile content.
@@ -506,11 +566,11 @@ fn visual_summary_pipeline_validates_for_adversarial_repos() {
         mk_node("save", "@scope/pkg/src/save.ts"),
     ];
     let changed_files: Vec<ChangedFile> = vec![
-        ChangedFile { path: "src/[id]/page.tsx".into(), status: Some("modified".into()), additions: 12, deletions: 3 },
-        ChangedFile { path: "crates/svc/src/lib.rs".into(), status: Some("modified".into()), additions: 40, deletions: 5 },
-        ChangedFile { path: "app/(group)/route.py".into(), status: Some("added".into()), additions: 60, deletions: 0 },
-        ChangedFile { path: "你好/世界.go".into(), status: Some("added".into()), additions: 3, deletions: 0 },
-        ChangedFile { path: "weird path with spaces.kt".into(), status: Some("renamed".into()), additions: 2, deletions: 2 },
+        ChangedFile { path: "src/[id]/page.tsx".into(), status: Some("modified".into()), additions: 12, deletions: 3, ..Default::default() },
+        ChangedFile { path: "crates/svc/src/lib.rs".into(), status: Some("modified".into()), additions: 40, deletions: 5, ..Default::default() },
+        ChangedFile { path: "app/(group)/route.py".into(), status: Some("added".into()), additions: 60, deletions: 0, ..Default::default() },
+        ChangedFile { path: "你好/世界.go".into(), status: Some("added".into()), additions: 3, deletions: 0, ..Default::default() },
+        ChangedFile { path: "weird path with spaces.kt".into(), status: Some("renamed".into()), additions: 2, deletions: 2, ..Default::default() },
     ];
     let commit_messages = vec![
         "feat(<scope>): add operator==<T> for fn(&mut self) -> Box<dyn Fn()>".to_string(),
@@ -1053,4 +1113,745 @@ fn structured_json_roundtrip_preserves_validity_for_every_diagram_type() {
         bars: vec![],
     };
     assert_json_roundtrip("XyChart (empty)", &xy_empty, |x| x.render());
+}
+
+// ── DEEPER POST-FIX COVERAGE (architecture_flow no-orphan invariant) ──────
+//
+// These tests bracket the architecture_flow fix from every angle the team
+// could plausibly land in production:
+//   • randomised tree shapes (fuzz),
+//   • lambda-heavy labels (the original `<lambda@N>` bug-family rejoins the
+//     no-orphan invariant — proving the two fixes COMPOSE),
+//   • truncation-cap interactions (MAX_NODES boundary),
+//   • JSON struct → re-render parity for the combined diagram,
+//   • a tight shape snapshot of the original 8-root repro.
+
+/// Helper: extracts the set of node ids that appear as the `to` of any edge
+/// in the rendered combined mermaid. A node id is "anchored" iff it's a
+/// target of at least one edge, OR (special-case) it's `before_note` — the
+/// muted BEFORE-state placeholder by design has no inbound.
+fn extract_inbound_ids(combined_mermaid: &str) -> std::collections::HashSet<String> {
+    let mut s = std::collections::HashSet::new();
+    for line in combined_mermaid.lines() {
+        let t = line.trim();
+        // Match "X --> Y" and "X -.-> Y", with optional |"label"| between.
+        // The arrow and label-handling here just need to find the FINAL
+        // token — that's the destination id.
+        if let Some(idx) = t.rfind("|").map(|i| i + 1).or_else(|| {
+            // No labelled segment — find the arrow.
+            t.rfind("-->")
+                .map(|i| i + 3)
+                .or_else(|| t.rfind("-.->").map(|i| i + 4))
+        }) {
+            let tail = t[idx..].trim();
+            // tail can be just the id OR id followed by trailing whitespace/end.
+            // Drop anything after the first whitespace, just in case.
+            let dest = tail.split_whitespace().next().unwrap_or("").trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_').to_string();
+            if !dest.is_empty() {
+                s.insert(dest);
+            }
+        }
+    }
+    s
+}
+
+/// Helper: every AFTER node in the combined struct must have an inbound edge.
+fn assert_no_orphan_after_nodes(
+    combined: &drift_static_profiler::pr_algorithms::mermaid::Flowchart,
+    rendered: &str,
+) {
+    let inbound: std::collections::HashSet<&str> =
+        combined.edges.iter().map(|e| e.to.as_str()).collect();
+    for n in &combined.nodes {
+        if n.id.starts_with("a_") {
+            assert!(
+                inbound.contains(n.id.as_str()),
+                "orphan AFTER node {} in struct (label={:?}):\n{}",
+                n.id, n.label, rendered
+            );
+        }
+    }
+    // Double-check via the rendered string — guards against any future
+    // builder that touches the struct but skips render-time edges.
+    let rendered_inbound = extract_inbound_ids(rendered);
+    for n in &combined.nodes {
+        if n.id.starts_with("a_") {
+            assert!(
+                rendered_inbound.contains(&n.id),
+                "AFTER node {} present in struct but unreachable as edge target in render:\n{rendered}",
+                n.id
+            );
+        }
+    }
+}
+
+/// PROPERTY/FUZZ — across 100 randomized tree shapes the no-orphan invariant
+/// always holds AND the rendered output always parses through the real
+/// mermaid grammar. The seed is fixed so failures are reproducible without
+/// CI noise.
+#[test]
+fn fuzz_no_orphan_invariant_holds_for_random_tree_shapes() {
+    // Linear-congruential PRNG — no external crate, deterministic seed.
+    let mut state: u64 = 0xD15EA5E_5EEDBA5E;
+    let mut rng = || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state
+    };
+    let pick = |r: u64, lo: usize, hi: usize| -> usize { lo + (r as usize % (hi - lo + 1)) };
+
+    let names = [
+        "useTheme.<lambda@21>", "createOrder", "operator==", "__init__",
+        "fn(&mut self) -> Box<dyn Fn()>", "end", "()", "model_discovery.rs",
+        "users.ts", "queries.py", "🚀 ship_it",
+    ];
+    let files = [
+        "src/[id]/page.tsx", "app/services.py", "crates/svc/src/lib.rs",
+        "web/users.ts", "drift/model_discovery.rs",
+    ];
+
+    let mut total = 0u64;
+    let mut tried_repros = 0u64;
+    for iter in 0..100 {
+        let n_roots = pick(rng(), 1, 8);
+        let mut roots: Vec<CallTreeNode> = Vec::with_capacity(n_roots);
+        for _ in 0..n_roots {
+            let name = names[pick(rng(), 0, names.len() - 1)];
+            let file = files[pick(rng(), 0, files.len() - 1)];
+            let n_children = pick(rng(), 0, 4);
+            let children: Vec<CallTreeNode> = (0..n_children)
+                .map(|_| {
+                    let cname = names[pick(rng(), 0, names.len() - 1)];
+                    let cfile = files[pick(rng(), 0, files.len() - 1)];
+                    mk_node(cname, cfile)
+                })
+                .collect();
+            roots.push(with_children(mk_node(name, file), children));
+        }
+        // Half the iterations: changed_files empty (the original bug shape).
+        // Other half: a random subset of files in scope.
+        let changed_files: Vec<String> = if iter % 2 == 0 {
+            vec![]
+        } else {
+            files.iter().take(pick(rng(), 1, files.len())).map(|s| s.to_string()).collect()
+        };
+
+        let arch = architecture_flow::compute(&roots, &changed_files);
+        let combined_struct = arch.combined_structured.as_ref().expect("combined_structured must be Some");
+        let combined_mermaid = arch.combined_mermaid.as_deref().expect("combined_mermaid must be Some");
+
+        assert_no_orphan_after_nodes(combined_struct, combined_mermaid);
+        total += 1;
+        if changed_files.is_empty() { tried_repros += 1; }
+    }
+    assert_eq!(total, 100);
+    assert!(tried_repros >= 40, "expected ≥40 empty-changed_files repros, got {tried_repros}");
+
+    // And once, prove the whole-rendered-output parses through real mermaid
+    // for ONE representative seed (each parse is ~600ms via jsdom — keeping it
+    // to a single check rather than 100× is the right cost/coverage trade-off).
+    let representative = vec![
+        mk_node("useTheme.<lambda@21>", "src/[id]/page.tsx"),
+        mk_node("createOrder", "app/services.py"),
+        mk_node("operator==", "crates/svc/src/lib.rs"),
+        mk_node("end", "src/[id]/page.tsx"),
+    ];
+    let arch = architecture_flow::compute(&representative, &[]);
+    validate_pipeline("fuzz-representative", arch.combined_mermaid.as_deref().unwrap());
+}
+
+/// LAMBDA + FLOATING-ROOTS COMBO — the IDE-hinted `<lambda@N>` label family
+/// (which fixed the LINK_ID tokenizer bug in [[mermaid-hardening]]) must
+/// COMPOSE with the new no-orphan invariant. Every disconnected lambda root
+/// gets a `before_note → a_nX` edge AND the labels render as guillemets.
+#[test]
+fn lambda_heavy_roots_remain_anchored_and_parse() {
+    let entries = vec![
+        // Lambdas as root names — these previously broke LINK_ID tokenization.
+        mk_node("useTheme.<lambda@21>", "web/components/Theme.tsx"),
+        mk_node("ShaderBackground.<lambda@94>", "web/Shader.tsx"),
+        // Lambda inside a child — the parent root is named but children are lambdas.
+        with_children(
+            mk_node("Cursor", "web/components/Cursor.tsx"),
+            vec![
+                mk_node("<lambda@11>", "web/components/Cursor.tsx"),
+                mk_node("<lambda@17>", "web/components/Cursor.tsx"),
+            ],
+        ),
+        // A reserved keyword as a root name — exercises safe_id + the fan.
+        mk_node("end", "src/keywords.ts"),
+        // Empty-collapsed-to-placeholder root — the most degenerate shape.
+        mk_node("()", "src/punct.ts"),
+    ];
+    let arch = architecture_flow::compute(&entries, &[]);
+    let combined_struct = arch.combined_structured.as_ref().unwrap();
+    let combined_mermaid = arch.combined_mermaid.as_deref().unwrap();
+
+    // 1. No orphans.
+    assert_no_orphan_after_nodes(combined_struct, combined_mermaid);
+    // 2. Lambda labels are rendered with guillemets — raw `<` MUST NOT appear
+    //    anywhere in the render (mermaid arrows use `>` legitimately in `-->`
+    //    so we only ban `<`, which has no legal use in flowchart grammar).
+    assert!(
+        !combined_mermaid.contains('<'),
+        "raw `<` leaked into render — parse hazard:\n{combined_mermaid}"
+    );
+    // Inside QUOTED label contexts (`["..."]`), no raw `<` OR `>` may appear —
+    // those would be eaten as HTML tags by mermaid's htmlLabels renderer.
+    for line in combined_mermaid.lines() {
+        let t = line.trim_start();
+        if let (Some(lo), Some(hi)) = (t.find("[\""), t.rfind("\"]")) {
+            if hi > lo {
+                let label = &t[lo + 2..hi];
+                assert!(
+                    !label.contains('<') && !label.contains('>'),
+                    "raw `<`/`>` in quoted label: {label:?}\n--- diagram ---\n{combined_mermaid}"
+                );
+            }
+        }
+    }
+    assert!(combined_mermaid.contains("‹lambda@21›"), "lambda label not mapped to guillemets:\n{combined_mermaid}");
+    // 3. The reserved `end` symbol is still anchored — `safe_id` turns it into
+    //    `end_` everywhere consistently. Either the original `end` survived
+    //    (as part of the bigger string) or its safe form is targeted by an edge.
+    //    What we care about: every AFTER node in the struct has inbound. ✓ above.
+    // 4. End-to-end parser gate.
+    validate_pipeline("lambda-heavy", combined_mermaid);
+}
+
+/// MAX_NODES CAP INTERACTION — when the BFS in `build_after_flowchart` hits
+/// the 16-node ceiling, the truncated AFTER subgraph must still satisfy the
+/// no-orphan invariant. (The cap could in principle strand a half-walked
+/// branch — proving it doesn't is the point of this test.)
+///
+/// Important: `build_after_flowchart` only checks the cap INSIDE the BFS
+/// loop. Each root's `intern_node` always fires first, so with N>1 roots
+/// you can exceed MAX_NODES by up to (N − 1) extra root nodes. We exercise
+/// the cap with a SINGLE root + fan-out children, which is the path the
+/// cap was designed for — every BFS child past the 15th is dropped.
+#[test]
+fn truncated_after_subgraph_has_no_orphans() {
+    // One root, 6 direct children, each with 6 grandchildren = 43 nodes
+    // before truncation. The BFS cap will fire and keep ~16; the no-orphan
+    // invariant must hold for whatever subset survives.
+    fn deep(depth: usize, prefix: &str) -> CallTreeNode {
+        if depth == 0 {
+            return mk_node(&format!("{prefix}_leaf"), "src/leaf.rs");
+        }
+        let children = (0..6)
+            .map(|i| deep(depth - 1, &format!("{prefix}_{i}")))
+            .collect();
+        with_children(mk_node(prefix, "src/branch.rs"), children)
+    }
+    let entries = vec![deep(2, "root")];
+    let arch = architecture_flow::compute(&entries, &[]);
+    let combined_struct = arch.combined_structured.as_ref().unwrap();
+    let combined_mermaid = arch.combined_mermaid.as_deref().unwrap();
+
+    // Cap MUST have fired — otherwise we'd see 1 + 6 + 36 = 43 AFTER nodes.
+    let after_count = combined_struct.nodes.iter().filter(|n| n.id.starts_with("a_")).count();
+    assert!(after_count <= 16, "single-root MAX_NODES cap exceeded: {after_count} > 16");
+    assert!(
+        after_count < 43,
+        "truncation did not fire — test isn't exercising the cap (got {after_count} nodes)"
+    );
+
+    assert_no_orphan_after_nodes(combined_struct, combined_mermaid);
+    validate_pipeline("truncated-tree", combined_mermaid);
+}
+
+/// Multi-root truncation cousin — proves the no-orphan invariant survives
+/// the documented soft-cap behavior (each root's `intern_node` runs before
+/// the BFS cap check, so total nodes can exceed MAX_NODES with many roots).
+/// Even when the cap is BLOWN past by root iteration, every AFTER node must
+/// still be reachable from some inbound edge.
+#[test]
+fn many_roots_past_soft_cap_still_no_orphans() {
+    // 8 deep roots — known to produce ~23 nodes (8 roots + ~15 BFS-walked
+    // children before the cap halts the first root's queue). This is the
+    // exact arithmetic the production scanner hits on big repos.
+    fn deep(depth: usize, prefix: &str) -> CallTreeNode {
+        if depth == 0 {
+            return mk_node(&format!("{prefix}_leaf"), "src/leaf.rs");
+        }
+        let children = (0..6)
+            .map(|i| deep(depth - 1, &format!("{prefix}_{i}")))
+            .collect();
+        with_children(mk_node(prefix, "src/branch.rs"), children)
+    }
+    let entries: Vec<CallTreeNode> = (0..8).map(|i| deep(3, &format!("r{i}"))).collect();
+    let arch = architecture_flow::compute(&entries, &[]);
+    let combined_struct = arch.combined_structured.as_ref().unwrap();
+    let combined_mermaid = arch.combined_mermaid.as_deref().unwrap();
+
+    let after_count = combined_struct.nodes.iter().filter(|n| n.id.starts_with("a_")).count();
+    // 8 roots minimum (all root `intern_node` calls always succeed) — and at
+    // least one BFS child from the first root. Upper bound is generous: roots
+    // (≤8) + cap-blown BFS children (~15) ≈ 23, but we don't pin a tight max
+    // because the cap is INTENTIONALLY soft.
+    assert!(after_count >= 8, "expected ≥8 AFTER nodes (one per root), got {after_count}");
+    assert!(after_count <= 32, "AFTER node count looks runaway: {after_count}");
+
+    assert_no_orphan_after_nodes(combined_struct, combined_mermaid);
+    validate_pipeline("many-roots-soft-cap", combined_mermaid);
+}
+
+/// JSON STRUCT ↔ RENDER PARITY for the FULL combined diagram. The post-fix
+/// `combined_structured` carries the fan-out edges in the typed struct, so a
+/// downstream consumer that deserializes and re-renders MUST get the same
+/// post-fix mermaid (no edges silently dropped, no orphans reintroduced).
+#[test]
+fn combined_flowchart_struct_roundtrip_preserves_no_orphans() {
+    let entries = vec![
+        mk_node("model_discovery.rs", "drift/model_discovery.rs"),
+        mk_node("users.ts", "web/users.ts"),
+        mk_node("queries.py", "api/queries.py"),
+    ];
+    let arch = architecture_flow::compute(&entries, &[]);
+    let original = arch.combined_structured.as_ref().expect("combined_structured");
+
+    let json = serde_json::to_string(original).expect("serialize");
+    let restored: drift_static_profiler::pr_algorithms::mermaid::Flowchart =
+        serde_json::from_str(&json).expect("deserialize");
+
+    let rendered_original = original.render();
+    let rendered_restored = restored.render();
+    assert_eq!(
+        rendered_original, rendered_restored,
+        "combined flowchart drifted across JSON roundtrip"
+    );
+    assert_no_orphan_after_nodes(&restored, &rendered_restored);
+    validate_pipeline("combined-roundtrip", &rendered_restored);
+}
+
+/// SHAPE SNAPSHOT — locks the exact post-fix output for the original 8-root
+/// repro. If somebody refactors the fan-out logic and accidentally drops to
+/// only the first edge again (or any other layout regression), this fails
+/// loudly with a readable diff.
+#[test]
+fn architecture_flow_snapshot_for_8_root_repro() {
+    let entries = vec![
+        mk_node("model_discovery.rs", "drift/model_discovery.rs"),
+        mk_node("users.ts", "web/users.ts"),
+        mk_node("queries.py", "api/queries.py"),
+        mk_node("models.py", "api/models.py"),
+        mk_node("views.py", "api/views.py"),
+        mk_node("users.ts", "mobile/users.ts"),
+        mk_node("orders.py", "api/orders.py"),
+        mk_node("users.ts", "admin/users.ts"),
+    ];
+    let arch = architecture_flow::compute(&entries, &[]);
+    let combined = arch.combined_mermaid.as_deref().unwrap();
+
+    // Count is the structural invariant we want to lock: exactly 8 dashed
+    // "evolves to" edges (one per AFTER root) — not 1 (pre-fix), not 9
+    // (would mean a duplicated edge), not 0 (would mean fan-out broke).
+    let evolves_count = combined.matches("-.->|\"evolves to\"|").count();
+    assert_eq!(
+        evolves_count, 8,
+        "expected exactly 8 evolves-to edges (one per AFTER root); got {evolves_count}.\n\
+         If the fan-out logic changed deliberately, update this snapshot.\n\
+         --- diagram ---\n{combined}"
+    );
+
+    // Lock the exact AFTER-node count too — proves nothing was added or
+    // dropped silently.
+    let after_decl_count = combined.lines().filter(|l| l.trim_start().starts_with("a_n")).count();
+    assert_eq!(after_decl_count, 8, "expected 8 AFTER node declarations, got {after_decl_count}:\n{combined}");
+
+    // No unused classDef. (`changed` is unreferenced when changed_files is empty.)
+    assert!(
+        !combined.contains("classDef changed"),
+        "unused classDef leaked into snapshot:\n{combined}"
+    );
+
+    // And the whole thing parses.
+    validate_pipeline("snapshot-8-roots", combined);
+}
+
+// ── TWO-CHART (BEFORE / AFTER) DIFF-DRIVEN COVERAGE ──────────────────────
+//
+// The post-fix scanner produces TWO independent diagrams (before_mermaid +
+// after_mermaid) reconstructed from `ChangedFile.status`. These tests cover
+// every status-mix the diff parser can emit, verifying that:
+//   1. BEFORE skips `status=added` nodes (didn't exist pre-PR).
+//   2. BEFORE includes `status=modified|renamed|unchanged` nodes (muted).
+//   3. BEFORE emits one (removed) placeholder card per `status=removed` file.
+//   4. AFTER includes `status=added` nodes (green class).
+//   5. AFTER includes `status=modified|renamed` nodes (amber `changed` class).
+//   6. AFTER omits any node whose file is `status=removed`.
+//   7. Both diagrams parse through the real mermaid grammar in every scenario.
+
+fn cf(path: &str, status: &str) -> drift_static_profiler::pr_algorithms::counts::ChangedFile {
+    drift_static_profiler::pr_algorithms::counts::ChangedFile {
+        path: path.into(),
+        status: Some(status.into()),
+        additions: 1,
+        deletions: 0,
+        ..Default::default()
+    }
+}
+
+/// Walk every node-declaration line in a rendered mermaid diagram and
+/// return `(id, label, class)` tuples. The class is parsed from
+/// `class id name` lines; absent class is `None`. Useful for asserting
+/// "every X-status node got class=Y" without re-parsing the structured form.
+fn rendered_node_classes(mmd: &str) -> Vec<(String, String, Option<String>)> {
+    let mut id_label: Vec<(String, String)> = Vec::new();
+    for line in mmd.lines() {
+        let t = line.trim_start();
+        if t.starts_with("subgraph ") || t.starts_with("class ") || t.starts_with("classDef ") {
+            continue;
+        }
+        if let (Some(lo), Some(hi)) = (t.find("[\""), t.rfind("\"]")) {
+            if hi > lo {
+                let id = t[..lo].to_string();
+                let label = t[lo + 2..hi].to_string();
+                if !id.is_empty() {
+                    id_label.push((id, label));
+                }
+            }
+        }
+    }
+    // Parse `class id1,id2 classname` lines.
+    let mut classes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for line in mmd.lines() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("class ") {
+            let mut parts = rest.rsplitn(2, ' ');
+            let cname = parts.next().unwrap_or("").to_string();
+            let ids_csv = parts.next().unwrap_or("");
+            for id in ids_csv.split(',') {
+                if !id.is_empty() && !cname.is_empty() {
+                    classes.insert(id.trim().to_string(), cname.clone());
+                }
+            }
+        }
+    }
+    id_label
+        .into_iter()
+        .map(|(id, label)| {
+            let c = classes.get(&id).cloned();
+            (id, label, c)
+        })
+        .collect()
+}
+
+// SCENARIO 1: only ADDED files. BEFORE must collapse to its empty-state
+// placeholder ("All affected files are new in this PR — nothing existed
+// before"); AFTER must show every node tinted green (`added` class).
+#[test]
+fn two_chart_scenario_all_files_added() {
+    let entries = vec![
+        mk_node("createOrder", "app/new_service.py"),
+        mk_node("validatePayment", "app/new_payments.py"),
+    ];
+    let changed = vec![
+        cf("app/new_service.py", "added"),
+        cf("app/new_payments.py", "added"),
+    ];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    // BEFORE: every root was Added → BFS skips them all → empty-state placeholder fires.
+    assert!(
+        arch.before_mermaid.contains("All affected files are new in this PR"),
+        "all-added BEFORE should fall back to the empty-state note:\n{}",
+        arch.before_mermaid
+    );
+
+    // AFTER: every node must be `class=added`.
+    let after_classes = rendered_node_classes(&arch.after_mermaid);
+    assert!(!after_classes.is_empty(), "AFTER should have nodes:\n{}", arch.after_mermaid);
+    for (id, label, class) in &after_classes {
+        assert_eq!(
+            class.as_deref(),
+            Some("added"),
+            "AFTER node {id}={label:?} must be class=added in all-added PR:\n{}",
+            arch.after_mermaid
+        );
+    }
+    // And the AFTER classDef must include `added`.
+    assert!(
+        arch.after_mermaid.contains("classDef added"),
+        "AFTER must emit the `added` classDef:\n{}",
+        arch.after_mermaid
+    );
+
+    validate_pipeline("all-added BEFORE", &arch.before_mermaid);
+    validate_pipeline("all-added AFTER", &arch.after_mermaid);
+}
+
+// SCENARIO 2: only REMOVED files (no entries — the call tree at HEAD has
+// nothing under removed files). BEFORE must emit one red placeholder per
+// removed file; AFTER must fall back to its "No affected entries" note.
+#[test]
+fn two_chart_scenario_all_files_removed() {
+    let entries: Vec<CallTreeNode> = vec![]; // nothing left at HEAD
+    let changed = vec![
+        cf("app/dead_code.py", "removed"),
+        cf("app/old_payments.py", "deleted"), // alias for `removed`
+        cf("app/retired.go", "removed"),
+    ];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    // BEFORE has exactly 3 placeholder cards, each labelled "🗑 removed —<basename>".
+    let before_classes = rendered_node_classes(&arch.before_mermaid);
+    let removed_nodes: Vec<_> = before_classes
+        .iter()
+        .filter(|(_, _, c)| c.as_deref() == Some("removed"))
+        .collect();
+    assert_eq!(
+        removed_nodes.len(), 3,
+        "BEFORE should emit one `removed` card per removed file:\n{}",
+        arch.before_mermaid
+    );
+    for (_, label, _) in &removed_nodes {
+        assert!(label.starts_with("🗑 removed —"), "removed-card label format: {label:?}");
+    }
+    assert!(arch.before_mermaid.contains("classDef removed"));
+
+    // AFTER: no entries → standard empty-state note.
+    assert!(
+        arch.after_mermaid.contains("No affected entries"),
+        "AFTER with zero entries must show the empty-state note:\n{}",
+        arch.after_mermaid
+    );
+
+    validate_pipeline("all-removed BEFORE", &arch.before_mermaid);
+    validate_pipeline("all-removed AFTER", &arch.after_mermaid);
+}
+
+// SCENARIO 3: only MODIFIED files — the most common PR shape. BEFORE
+// renders every node muted; AFTER renders every node amber (`changed`).
+#[test]
+fn two_chart_scenario_all_files_modified() {
+    let entries = vec![mk_node("create_order", "app/services.py")];
+    let changed = vec![cf("app/services.py", "modified")];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    let before_classes = rendered_node_classes(&arch.before_mermaid);
+    for (id, label, class) in &before_classes {
+        assert_eq!(class.as_deref(), Some("muted"), "BEFORE {id}={label:?} must be muted:\n{}", arch.before_mermaid);
+    }
+    let after_classes = rendered_node_classes(&arch.after_mermaid);
+    for (id, label, class) in &after_classes {
+        assert_eq!(class.as_deref(), Some("changed"), "AFTER {id}={label:?} must be `changed`:\n{}", arch.after_mermaid);
+    }
+
+    validate_pipeline("all-modified BEFORE", &arch.before_mermaid);
+    validate_pipeline("all-modified AFTER", &arch.after_mermaid);
+}
+
+// SCENARIO 4: MIXED diff. The exhaustive case — adds + mods + removes +
+// renames + unchanged transitive callees, all in one PR. Asserts the full
+// classification table holds and both diagrams parse.
+#[test]
+fn two_chart_scenario_mixed_diff_exhaustive() {
+    let entries = vec![
+        with_children(
+            mk_node("createOrder", "app/services.py"), // Modified
+            vec![
+                mk_node("validateNew", "app/new_validator.py"), // Added
+                mk_node("renamedFn", "app/renamed_module.py"),  // Renamed
+                mk_node("untouched_helper", "lib/utils.py"),    // Unchanged (not in changed_files)
+            ],
+        ),
+    ];
+    let changed = vec![
+        cf("app/services.py", "modified"),
+        cf("app/new_validator.py", "added"),
+        cf("app/renamed_module.py", "renamed"),
+        cf("app/removed_legacy.py", "removed"),
+        // lib/utils.py deliberately omitted → status=Unchanged.
+    ];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    // BEFORE: `validateNew` (Added) MUST be absent. `removed_legacy.py`
+    // placeholder MUST be present. `createOrder` / `renamedFn` / `untouched_helper`
+    // MUST be present, all muted.
+    let before_classes = rendered_node_classes(&arch.before_mermaid);
+    let before_labels: Vec<&str> = before_classes.iter().map(|(_, l, _)| l.as_str()).collect();
+    assert!(!before_labels.iter().any(|l| l.contains("validateNew")),
+        "Added node must NOT appear in BEFORE:\n{}", arch.before_mermaid);
+    assert!(before_labels.iter().any(|l| l.contains("createOrder")),
+        "Modified node must appear in BEFORE:\n{}", arch.before_mermaid);
+    assert!(before_labels.iter().any(|l| l.contains("🗑 removed — removed_legacy.py")),
+        "Removed file must appear as BEFORE placeholder:\n{}", arch.before_mermaid);
+    for (id, label, class) in &before_classes {
+        if label.starts_with("🗑 removed —") {
+            assert_eq!(class.as_deref(), Some("removed"), "removed-card needs `removed` class for {id}={label}");
+        } else {
+            assert_eq!(class.as_deref(), Some("muted"), "non-placeholder BEFORE node must be muted: {id}={label}");
+        }
+    }
+
+    // AFTER: `validateNew` (Added) → green. `createOrder` / `renamedFn` →
+    // amber `changed`. `untouched_helper` → no class. NO node should appear
+    // for `removed_legacy.py` (it has no AST at HEAD).
+    let after_classes = rendered_node_classes(&arch.after_mermaid);
+    let label_class: std::collections::HashMap<&str, Option<&str>> = after_classes
+        .iter()
+        .map(|(_, l, c)| (l.as_str(), c.as_deref()))
+        .collect();
+    assert_eq!(label_class.get("validateNew").copied(), Some(Some("added")),
+        "Added node must be green in AFTER:\n{}", arch.after_mermaid);
+    assert_eq!(label_class.get("createOrder").copied(), Some(Some("changed")),
+        "Modified node must be amber in AFTER:\n{}", arch.after_mermaid);
+    assert_eq!(label_class.get("renamedFn").copied(), Some(Some("changed")),
+        "Renamed node must be amber in AFTER:\n{}", arch.after_mermaid);
+    assert_eq!(label_class.get("untouched_helper").copied(), Some(None),
+        "Unchanged node must have no class in AFTER:\n{}", arch.after_mermaid);
+    assert!(!after_classes.iter().any(|(_, l, _)| l.contains("removed_legacy")),
+        "Removed file MUST NOT appear in AFTER:\n{}", arch.after_mermaid);
+
+    validate_pipeline("mixed-diff BEFORE", &arch.before_mermaid);
+    validate_pipeline("mixed-diff AFTER", &arch.after_mermaid);
+}
+
+// SCENARIO 5: NO diff (empty changed_files). The legacy compute() path
+// produces this via the backward-compat wrapper. BEFORE and AFTER must
+// both render meaningfully — BEFORE muted, AFTER no classes.
+#[test]
+fn two_chart_scenario_empty_diff_legacy_compute() {
+    let entries = vec![mk_node("hello", "src/main.rs")];
+    let arch = architecture_flow::compute(&entries, &[]);
+    let before_classes = rendered_node_classes(&arch.before_mermaid);
+    assert!(!before_classes.is_empty(), "BEFORE should have nodes (mirrors AFTER as muted)");
+    for (_, _, c) in &before_classes {
+        assert_eq!(c.as_deref(), Some("muted"), "legacy-compute BEFORE must be muted");
+    }
+    validate_pipeline("empty-diff BEFORE", &arch.before_mermaid);
+    validate_pipeline("empty-diff AFTER", &arch.after_mermaid);
+}
+
+// SCENARIO 6: LAMBDA-HEAVY mixed diff. Combines the lambda-label hardening
+// (guillemets) with the new diff-driven classification. Anonymous callables
+// in `status=added` files must be SKIPPED from BEFORE and tinted green in
+// AFTER; the labels must still render with `‹›` guillemets in both.
+#[test]
+fn two_chart_scenario_lambda_heavy_mixed_diff() {
+    let entries = vec![
+        mk_node("useTheme.<lambda@21>", "web/Theme.tsx"), // Added
+        mk_node("Cursor.<lambda@94>", "web/Cursor.tsx"),  // Modified
+        mk_node("operator==", "lib/cmp.rs"),              // Unchanged
+    ];
+    let changed = vec![
+        cf("web/Theme.tsx", "added"),
+        cf("web/Cursor.tsx", "modified"),
+        cf("web/old_button.tsx", "removed"),
+    ];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    // No raw `<` in either diagram (label-scope guillemet substitution).
+    for (name, mmd) in [("BEFORE", &arch.before_mermaid), ("AFTER", &arch.after_mermaid)] {
+        for line in mmd.lines() {
+            let t = line.trim_start();
+            if let (Some(lo), Some(hi)) = (t.find("[\""), t.rfind("\"]")) {
+                if hi > lo {
+                    let label = &t[lo + 2..hi];
+                    assert!(!label.contains('<') && !label.contains('>'),
+                        "[{name}] raw `<`/`>` in quoted label {label:?}");
+                }
+            }
+        }
+    }
+
+    // BEFORE: useTheme.<lambda@21> is GONE (file Added). Cursor.<lambda@94>
+    // is present and muted. operator== is present and muted. (removed) old_button.tsx
+    // appears as a red placeholder.
+    let before_labels: Vec<String> = rendered_node_classes(&arch.before_mermaid)
+        .into_iter().map(|(_, l, _)| l).collect();
+    assert!(!before_labels.iter().any(|l| l.contains("useTheme")),
+        "Added lambda must NOT be in BEFORE:\n{}", arch.before_mermaid);
+    assert!(before_labels.iter().any(|l| l.contains("Cursor.‹lambda@94›")),
+        "Modified lambda must be in BEFORE with guillemets:\n{}", arch.before_mermaid);
+    assert!(before_labels.iter().any(|l| l.contains("🗑 removed — old_button.tsx")),
+        "Removed file must be in BEFORE as placeholder:\n{}", arch.before_mermaid);
+
+    // AFTER: useTheme green, Cursor amber, operator== uncoloured.
+    let after_map: std::collections::HashMap<String, Option<String>> =
+        rendered_node_classes(&arch.after_mermaid).into_iter().map(|(_, l, c)| (l, c)).collect();
+    assert_eq!(
+        after_map.get("useTheme.‹lambda@21›").map(|c| c.as_deref()),
+        Some(Some("added")),
+        "Added lambda must be green:\n{}", arch.after_mermaid
+    );
+    assert_eq!(
+        after_map.get("Cursor.‹lambda@94›").map(|c| c.as_deref()),
+        Some(Some("changed")),
+        "Modified lambda must be amber:\n{}", arch.after_mermaid
+    );
+
+    validate_pipeline("lambda-mixed BEFORE", &arch.before_mermaid);
+    validate_pipeline("lambda-mixed AFTER", &arch.after_mermaid);
+}
+
+// SCENARIO 7: STRUCTURED form ↔ rendered form parity for both BEFORE and
+// AFTER under a mixed diff. Round-tripping via JSON must preserve every
+// classification — otherwise downstream renderers (SVG / PNG / alt-themes)
+// silently drift away from the canonical mermaid.
+#[test]
+fn two_chart_struct_render_parity_under_mixed_diff() {
+    let entries = vec![
+        with_children(
+            mk_node("modified_root", "app/svc.py"),
+            vec![
+                mk_node("added_child", "app/new.py"),
+                mk_node("unchanged_helper", "lib/util.py"),
+            ],
+        ),
+    ];
+    let changed = vec![
+        cf("app/svc.py", "modified"),
+        cf("app/new.py", "added"),
+        cf("app/dead.py", "removed"),
+    ];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    for (name, structured, rendered) in [
+        (
+            "before",
+            arch.before_structured.as_ref().expect("before_structured must be Some"),
+            &arch.before_mermaid,
+        ),
+        (
+            "after",
+            arch.after_structured.as_ref().expect("after_structured must be Some"),
+            &arch.after_mermaid,
+        ),
+    ] {
+        let json = serde_json::to_string(structured).expect("serialize");
+        let restored: drift_static_profiler::pr_algorithms::mermaid::Flowchart =
+            serde_json::from_str(&json).expect("deserialize");
+        let rendered_again = restored.render();
+        assert_eq!(rendered, &rendered_again,
+            "{name} drifted across JSON roundtrip:\n--- original ---\n{rendered}\n--- restored ---\n{rendered_again}");
+        validate_pipeline(&format!("{name} roundtrip"), &rendered_again);
+    }
+}
+
+// SCENARIO 8: ARCHITECTURE-FLOW SPECIFIC SNAPSHOT — locks the BEFORE and
+// AFTER chart shapes for the canonical mixed-PR fixture. Catches accidental
+// fan-out / colour / placeholder regressions during future refactors.
+#[test]
+fn two_chart_snapshot_canonical_mixed_pr() {
+    let entries = vec![mk_node("createOrder", "app/services.py")];
+    let changed = vec![
+        cf("app/services.py", "modified"),
+        cf("app/new_endpoint.py", "added"),
+        cf("app/old_endpoint.py", "removed"),
+    ];
+    let arch = architecture_flow::compute_with_diff(&entries, &changed);
+
+    // BEFORE: exactly 2 nodes — the (modified) createOrder + (removed) old_endpoint placeholder.
+    let before_nodes = rendered_node_classes(&arch.before_mermaid);
+    assert_eq!(before_nodes.len(), 2, "BEFORE node count:\n{}", arch.before_mermaid);
+
+    // AFTER: exactly 1 node — createOrder (modified=amber). new_endpoint.py
+    // wasn't in the call tree (no entry for it), so AFTER doesn't surface it.
+    let after_nodes = rendered_node_classes(&arch.after_mermaid);
+    assert_eq!(after_nodes.len(), 1, "AFTER node count:\n{}", arch.after_mermaid);
+    assert_eq!(after_nodes[0].2.as_deref(), Some("changed"));
+
+    validate_pipeline("canonical-mixed BEFORE", &arch.before_mermaid);
+    validate_pipeline("canonical-mixed AFTER", &arch.after_mermaid);
 }

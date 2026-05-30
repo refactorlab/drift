@@ -13,7 +13,7 @@ import type { CodeSuggestion, DiffLine } from '../../report.ts';
 import { passesQualityBar } from '../../report.ts';
 import type { PrContext } from '../context.ts';
 import { fileLink, snippetPermalink } from '../context.ts';
-import { confidencePercent, plural, fencedBlock } from '../lib/format.ts';
+import { confidencePercent, plural, fencedBlock, escapeHtml } from '../lib/format.ts';
 
 const CATEGORY: Record<'A' | 'B' | 'C', { badge: string; name: string }> = {
   A: { badge: '🅐', name: 'Optimization' },
@@ -101,7 +101,13 @@ function renderDetail(s: CodeSuggestion, ctx?: PrContext): string {
 
   const out: string[] = [
     '<details>',
-    `<summary>${cat.badge} <strong>${title}</strong> · <code>${loc}</code> · ${pct}</summary>`,
+    // `title` (from category_label) and `loc` (file:line) are PR-controlled —
+    // file paths can legally contain `<`/`>` on Linux/macOS, so a path like
+    // `src/</summary><details>evil.ts` would otherwise close the <summary>
+    // early and inject a phantom <details>, breaking the disclosure and
+    // unbalancing the comment's tags. Escape both before embedding in the
+    // structural <summary>/<code>. (`cat.badge` and `pct` are static/computed.)
+    `<summary>${cat.badge} <strong>${escapeHtml(title)}</strong> · <code>${escapeHtml(loc)}</code> · ${pct}</summary>`,
     '',
     s.why_it_matters,
     '',

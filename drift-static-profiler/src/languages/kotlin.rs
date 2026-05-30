@@ -115,7 +115,7 @@ pub const TAGS_QUERY: &str = r#"
 
 ; Kotlin lambdas — `{ x -> x + 1 }`. The `lambda_literal` node
 ; produced by `tree-sitter-kotlin-ng` 1.1 carries no name field;
-; tags.rs synthesizes `<lambda@<line>>`.
+; tags.rs synthesizes `<anonymous@<line>>`.
 (lambda_literal) @def.anonymous
 
 (call_expression
