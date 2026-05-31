@@ -1,7 +1,7 @@
 // Tests for the collapsible-section framing: the lib/section.ts helpers in
 // isolation, plus the end-to-end structure they produce in renderOverview —
 // every detail section is an expandable <details> with a "Title — TLDR"
-// summary, the header stays visible, and primary sections default to open.
+// summary, the header stays visible, and every section defaults to collapsed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -121,30 +121,60 @@ test('overview: every detail section is an expandable <details> with a TLDR summ
   const afterLastDetails = body.slice(body.lastIndexOf('</details>'));
   assert.match(afterLastDetails, /## ✅ Before you merge/, 'checklist is after the last <details>');
 
-  // Each detail section is a collapsible carrying a TLDR (the "— …" suffix).
-  // Risks auto-opens here because the fixture has 1 act-before-merge item.
+  // Each detail section is a collapsed collapsible carrying a TLDR (the "— …"
+  // suffix). Every section defaults to closed — the comment is a scannable
+  // list of TLDRs the reviewer expands on demand.
   for (const re of [
-    /<details open>\n<summary><strong>📊 Business value<\/strong> — Overall drift \+18\.0% ▲/,
-    /<details open>\n<summary><strong>⚠️ Code suggestions \(1\)<\/strong> — 1 suggestion/,
-    /<details open>\n<summary><strong>🛰 Risks<\/strong> — 1 to address · 2 total<\/summary>/,
+    /<details>\n<summary><strong>📊 Business value<\/strong> — Overall drift \+18\.0% ▲/,
+    /<details>\n<summary><strong>⚠️ Code suggestions \(1\)<\/strong> — 1 suggestion/,
+    /<details>\n<summary><strong>🛰 Risks<\/strong> — 1 to address · 2 total<\/summary>/,
     /<details>\n<summary><strong>🏗 Architecture<\/strong> — Before vs after diagrams<\/summary>/,
   ]) {
     assert.match(body, re, `missing collapsible/TLDR: ${re}`);
   }
+  // No section is open-by-default anymore.
+  assert.doesNotMatch(body, /<details open>/, 'every section defaults to collapsed');
 });
 
 test('overview: official section screenshots precede the major sections (fail-soft to alt text)', () => {
   const body = renderOverview(fullReport(), { ctx: CTX });
   const SHOT = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
-  for (const file of ['drift-review.png', 'architecture.png', 'business-value.png', 'code-suggestions.png', 'andy.png']) {
+  for (const file of ['drift-review.png', 'architecture.png', 'business-value.png', 'code-suggestions.png']) {
     assert.ok(body.includes(`<img src="${SHOT}/${file}"`), `${file} section image present`);
   }
   // The header screenshot leads the comment, right after the sticky marker.
   assert.match(body, /drift:sticky-comment -->\n<p><img src="[^"]*\/drift-review\.png"/);
   // Each banner sits ABOVE its section (architecture image precedes the heading).
   assert.ok(body.indexOf('architecture.png') < body.indexOf('🏗 Architecture'), 'image precedes its section');
-  // The andy banner sits just above the footer attribution.
-  assert.ok(body.indexOf('andy.png') < body.indexOf('Posted by'), 'andy banner precedes the footer');
+  // The Andy sign-off banner closes the comment: present, and pinned AFTER the
+  // attribution line so it stays stuck to the very end.
+  assert.ok(body.includes('andy.png'), 'andy sign-off banner is present');
+  assert.ok(body.indexOf('andy.png') > body.indexOf('Posted by'), 'andy sign-off sits after the attribution');
+  // It is the LAST visible element — nothing but the invisible state markers
+  // (HTML comments) may follow it.
+  const afterAndy = body.slice(body.indexOf('andy.png'));
+  assert.doesNotMatch(afterAndy, /<img|<details|<table/, 'nothing visible renders after the Andy sign-off');
+});
+
+test('overview: section banners are decorative <p> images ABOVE the <details>, never inside the <summary>', () => {
+  // An image can't toggle a GitHub <details>: clicking an image opens the
+  // image, not the disclosure. So each section banner stays OUTSIDE the
+  // collapsible — a standalone <p> above it — and the clean text <summary>
+  // row (which GitHub renders with a ▸/▾ arrow) is the toggle. This guards
+  // against regressing to a banner inside <summary>, which hijacks the click.
+  const body = renderOverview(fullReport(), { ctx: CTX });
+  const SHOT = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
+  for (const file of ['architecture.png', 'business-value.png', 'code-suggestions.png']) {
+    assert.ok(body.includes(`<p><img src="${SHOT}/${file}"`), `${file} banner is a standalone <p> above its section`);
+  }
+  // No <summary> anywhere may contain an <img> — the banner never sits in the toggle.
+  for (const m of body.matchAll(/<summary>([\s\S]*?)<\/summary>/g)) {
+    assert.ok(!m[1].includes('<img'), 'a <summary> must not contain an image (it would hijack the toggle click)');
+  }
+  // The header banner is a decorative <p> image; the footer carries one too
+  // (the small Andy sign-off at the very end).
+  assert.ok(body.includes(`<p><img src="${SHOT}/drift-review.png"`), 'header banner is a <p>');
+  assert.ok(body.includes(`<p><img src="${SHOT}/andy.png"`), 'andy sign-off is a standalone <p> image');
 });
 
 test('overview: audio summary button banner renders only when there is an audio URL', () => {
@@ -152,6 +182,9 @@ test('overview: audio summary button banner renders only when there is an audio 
   const withAudio = renderOverview(fullReport(), { ctx: CTX, audioUrl: 'https://github.com/o/r/actions/runs/1/artifacts/2?x=1&y=2' });
   // A clickable banner linked to the artifact, with the href safely escaped.
   assert.match(withAudio, /<a href="https:\/\/github\.com\/o\/r\/actions\/runs\/1\/artifacts\/2\?x=1&amp;y=2"><img src="[^"]*\/summary-audio\.png"/);
+  // The audio button lands "before the end": it precedes the Andy sign-off,
+  // which stays pinned to the very end of the comment.
+  assert.ok(withAudio.indexOf('summary-audio.png') < withAudio.indexOf('andy.png'), 'audio banner precedes the Andy sign-off');
   const noAudio = renderOverview(fullReport(), { ctx: CTX });
   assert.doesNotMatch(noAudio, /summary-audio\.png/, 'no audio banner without an audio URL');
 });
@@ -164,20 +197,22 @@ test('overview: regressed-axis TLDR names the regression count', () => {
   assert.match(body, /<summary><strong>📊 Business value<\/strong> — Overall drift −4\.0% ▼ · 2 axes regressed/);
 });
 
-test('overview: primary sections open; architecture stays collapsed', () => {
+test('overview: all detail sections default to collapsed', () => {
   const body = renderOverview(fullReport(), { ctx: CTX });
-  // value + suggestions always open; architecture is reference → always closed.
-  assert.match(body, /<details open>\n<summary><strong>📊 Business value/);
-  assert.match(body, /<details open>\n<summary><strong>⚠️ Code suggestions/);
+  // Every section is reference content the reviewer expands on demand — none
+  // is open-by-default, including value, suggestions, and architecture.
+  assert.match(body, /<details>\n<summary><strong>📊 Business value/);
+  assert.match(body, /<details>\n<summary><strong>⚠️ Code suggestions/);
   assert.match(body, /<details>\n<summary><strong>🏗 Architecture/);
 });
 
-test('overview: Risks auto-opens iff there are items to address before merge', () => {
-  // fixture has 1 act_before_merge risk → Risks opens.
-  const open = renderOverview(fullReport(), { ctx: CTX });
-  assert.match(open, /<details open>\n<summary><strong>🛰 Risks<\/strong> — 1 to address/);
+test('overview: Risks stays collapsed regardless of act-before-merge items', () => {
+  // fixture has 1 act_before_merge risk → still collapsed.
+  const withGating = renderOverview(fullReport(), { ctx: CTX });
+  assert.match(withGating, /<details>\n<summary><strong>🛰 Risks<\/strong> — 1 to address/);
+  assert.doesNotMatch(withGating, /<details open>\n<summary><strong>🛰 Risks/);
 
-  // No act_before_merge items → Risks stays collapsed.
+  // No act_before_merge items → also collapsed.
   const r = fullReport();
   r.pr_review!.visual_summary = { risks: { items: [risk('R1', 'acceptable'), risk('R2', 'monitor_closely')] } };
   const closed = renderOverview(r, { ctx: CTX });

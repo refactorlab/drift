@@ -46,8 +46,10 @@ RESET  := \033[0m
         drift-lab-build drift-lab-build-release drift-lab-verify \
         drift-lab-export drift-lab-export-clean \
         drift-lab-ci-preflight \
-        action-scan-demo action-scan-demo-kotlin-exposed action-test action-build \
+        action-scan-demo action-scan-demo-kotlin-exposed action-scan-demo-self \
+        action-test action-build \
         action-render-comment action-render-comment-kotlin action-render-comments \
+        action-render-comment-self \
         hello-test hello-test-clean
 
 # Internal: assert the Tauri signing key exists before invoking cargo. Cheaper
@@ -637,6 +639,95 @@ action-scan-demo-kotlin-exposed: ## scan-pr on kotlin-ktor WITH realistic Action
 	@printf "    Open $(CYAN)$(DRIFT_ACTION_KOTLIN_OUTPUT)$(RESET) to inspect the full JSON.\n"
 	@$(MAKE) --no-print-directory action-render-comment-kotlin
 
+# ── Self-scan demo: profile THIS repo's own branch as a PR (dogfood) ─────
+# action-scan-demo[-kotlin-exposed] feed SYNTHETIC fixture inputs. This one
+# sources the four Action inputs from THIS repo's REAL diff vs main — the exact
+# shapes action.yml derives in CI (see its "Build diff stats + commits" step).
+# For the CURRENT branch it diffs the WORKING TREE (so uncommitted edits count);
+# for any other branch it diffs that branch's committed tip. Base is always the
+# merge-base with main:
+#   changed.txt      git diff --name-only   --diff-filter=ACMRT  <base> [branch]
+#   diff-stats.tsv   git diff --numstat                          <base> [branch]  (adds⇥dels⇥path)
+#   diff-status.tsv  git diff --name-status --diff-filter=ACMRTD <base> [branch]
+#   commits.txt      git log  --format=%B%x00 <base>..<branch|HEAD>               (NUL-separated)
+# then runs scan-pr over the repo root (.) so Drift profiles ITSELF. The walker
+# hard-skips node_modules/target/build, so the polyglot monorepo scans cleanly.
+#
+#   make action-scan-demo-self                            # default branch
+#   make action-scan-demo-self DRIFT_SELF_BRANCH=my-feat  # any local branch
+#
+# DRIFT_SELF_BRANCH defaults to the CURRENT branch whenever it has ANYTHING to
+# show vs main — either uncommitted working-tree edits OR commits ahead — so a
+# bare `make action-scan-demo-self` profiles whatever you're working on right
+# now. Falls back to desktop-fullpipelile only when the tree is clean AND level
+# with main (e.g. a fresh checkout), so the demo still has a diff to render.
+DRIFT_SELF_BASE    ?= main
+DRIFT_SELF_BRANCH  ?= $(shell b=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null); base=$$(git merge-base $(DRIFT_SELF_BASE) HEAD 2>/dev/null); d=$$( { git diff --name-only --diff-filter=ACMRT "$$base" 2>/dev/null; git diff --name-only --diff-filter=ACMRT "$$base" HEAD 2>/dev/null; } ); if [ -n "$$b" ] && [ -n "$$base" ] && [ -n "$$d" ]; then echo "$$b"; else echo desktop-fullpipelile; fi)
+DRIFT_SELF_TMPDIR  ?= tmp/action-inputs-self
+DRIFT_SELF_OUTPUT  ?= tmp/scan-pr-output-self.json
+DRIFT_SELF_COMMENT ?= tmp/pr-comment-self.md
+action-scan-demo-self: ## scan-pr over THIS repo from a real branch diff vs main (dogfood)
+	@command -v jq >/dev/null 2>&1 || { printf "$(RED)✗$(RESET) jq required for this target — $(CYAN)brew install jq$(RESET)\n"; exit 1; }
+	@mkdir -p $$(dirname $(DRIFT_SELF_OUTPUT)) $(DRIFT_SELF_TMPDIR)
+	@if ! drift-static-profiler/target/debug/drift-static-profiler scan-pr --help >/dev/null 2>&1; then \
+	  printf "$(BLUE)▶$(RESET) building drift-static-profiler (debug — binary missing or pre-scan-pr)\n"; \
+	  cd drift-static-profiler && cargo build --quiet; \
+	fi
+	@set -e; \
+	branch="$(DRIFT_SELF_BRANCH)"; base_ref="$(DRIFT_SELF_BASE)"; \
+	current=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null); \
+	git rev-parse --verify "$$branch" >/dev/null 2>&1 || { \
+	  printf "$(RED)✗$(RESET) branch $(CYAN)%s$(RESET) not found — set $(CYAN)DRIFT_SELF_BRANCH=<name>$(RESET)\n" "$$branch"; exit 1; }; \
+	if [ "$$branch" = "$$current" ] || [ "$$branch" = HEAD ]; then \
+	  ref=HEAD; range_end=""; mode="working tree"; \
+	else \
+	  ref="$$branch"; range_end="$$branch"; mode="committed tip"; \
+	fi; \
+	head_sha=$$(git rev-parse "$$ref"); \
+	base=$$(git merge-base "$$base_ref" "$$ref" 2>/dev/null || git rev-parse "$$base_ref^{commit}"); \
+	git diff --name-only   --find-renames --diff-filter=ACMRT  "$$base" $$range_end > $(DRIFT_SELF_TMPDIR)/changed.txt; \
+	nfiles=$$(wc -l < $(DRIFT_SELF_TMPDIR)/changed.txt | tr -d ' '); \
+	if [ "$$nfiles" -eq 0 ]; then \
+	  printf "$(RED)✗$(RESET) no changed files for %s [%s] vs %s — tree clean and no commits ahead. Edit a file or set $(CYAN)DRIFT_SELF_BRANCH=<branch>$(RESET)\n" "$$branch" "$$mode" "$$base_ref"; exit 1; fi; \
+	git diff --numstat     --find-renames                      "$$base" $$range_end > $(DRIFT_SELF_TMPDIR)/diff-stats.tsv; \
+	git diff --name-status --find-renames --diff-filter=ACMRTD "$$base" $$range_end > $(DRIFT_SELF_TMPDIR)/diff-status.tsv; \
+	git log  --format=%B%x00                                   "$$base..$${range_end:-HEAD}" > $(DRIFT_SELF_TMPDIR)/commits.txt; \
+	ncommits=$$(git rev-list --count "$$base..$${range_end:-HEAD}"); \
+	base_short=$$(git rev-parse --short=12 "$$base"); \
+	title=$$(git log -1 --format=%s "$$ref" 2>/dev/null); [ -n "$$title" ] || title="WIP on $$branch"; \
+	slug=$$(git remote get-url origin 2>/dev/null | sed -E 's#^git@[^:]+:##; s#^https?://[^/]+/##; s#\.git$$##'); \
+	[ -n "$$slug" ] || slug="local/drift"; \
+	author=$$(git config user.name 2>/dev/null || echo drift); \
+	body=$$(printf 'Self-scan of `%s` (%s) — %s commit(s), %s file(s) vs `%s`. Synthesized by `make action-scan-demo-self` for local Drift dogfooding.' "$$branch" "$$mode" "$$ncommits" "$$nfiles" "$$base_ref"); \
+	jq -n --arg t "$$title" --arg b "$$body" --arg base "$$base" --arg head "$$head_sha" \
+	  '{title:$$t, body:$$b, number:0, base:{sha:$$base}, head:{sha:$$head}}' > $(DRIFT_SELF_TMPDIR)/pr-context.json; \
+	jq -n --arg t "$$title" --arg url "https://github.com/$$slug/pull/0" --arg ref "$$branch" \
+	  --arg head "$$head_sha" --arg base "$$base_ref" --arg login "$$author" \
+	  --arg owner "$${slug%%/*}" --arg repo "$${slug##*/}" \
+	  '{pull_request:{number:0,title:$$t,html_url:$$url,head:{ref:$$ref,sha:$$head},base:{ref:$$base},user:{login:$$login}},repository:{owner:{login:$$owner},name:$$repo}}' > $(DRIFT_SELF_TMPDIR)/event.json; \
+	printf "$(BLUE)▶$(RESET) self-scan $(CYAN)%s$(RESET) [%s] vs $(CYAN)%s$(RESET) — merge-base %s · %s file(s) · %s commit(s)\n" "$$branch" "$$mode" "$$base_ref" "$$base_short" "$$nfiles" "$$ncommits"; \
+	drift-static-profiler/target/debug/drift-static-profiler scan-pr . \
+	    --changed-files $(DRIFT_SELF_TMPDIR)/changed.txt \
+	    --commits $(DRIFT_SELF_TMPDIR)/commits.txt \
+	    --diff-stats $(DRIFT_SELF_TMPDIR)/diff-stats.tsv \
+	    --diff-status $(DRIFT_SELF_TMPDIR)/diff-status.tsv \
+	    --pr-context-file $(DRIFT_SELF_TMPDIR)/pr-context.json \
+	    --base-sha "$$base" \
+	    --pretty --output $(DRIFT_SELF_OUTPUT) \
+	  2>&1 | grep -E "^(✓|✗|note:) " || true
+	@SIZE=$$(wc -c < $(DRIFT_SELF_OUTPUT) | tr -d ' '); \
+	  printf "$(GREEN)✓$(RESET) wrote $(CYAN)$(DRIFT_SELF_OUTPUT)$(RESET) ($$SIZE bytes)\n"
+	@if command -v jq >/dev/null 2>&1; then \
+	  printf "    pr_scope changed:        "; jq -r '.pr_scope.changed_files | length' $(DRIFT_SELF_OUTPUT); \
+	  printf "    pr_review present?       "; jq -r 'has("pr_review")' $(DRIFT_SELF_OUTPUT); \
+	  printf "    counts: feat / fix / issues / new_tests: "; \
+	    jq -r '[.pr_review.counts.features.value, .pr_review.counts.bug_fixes.value, .pr_review.counts.issues_resolved.value, .pr_review.counts.new_test_files.value] | @csv' $(DRIFT_SELF_OUTPUT); \
+	  printf "    bottom_line:             "; jq -r '.pr_review.value_card.bottom_line' $(DRIFT_SELF_OUTPUT); \
+	  printf "    code_suggestions:        "; jq -r '.pr_review.code_suggestions | length' $(DRIFT_SELF_OUTPUT); \
+	fi
+	@printf "    Open $(CYAN)$(DRIFT_SELF_OUTPUT)$(RESET) to inspect the full JSON.\n"
+	@$(MAKE) --no-print-directory action-render-comment-self
+
 # ── PR-comment renderers ────────────────────────────────────────────────
 # Render the scan-pr JSON into the exact GitHub-Flavored Markdown body the
 # action would POST as `issues.createComment.body`. Useful for:
@@ -667,6 +758,15 @@ action-render-comment-kotlin: ## Render tmp/scan-pr-output-kotlin-ktor.json → 
 	  | sed 's/^/    /'
 
 action-render-comments: action-render-comment action-render-comment-kotlin ## Render BOTH fixtures' PR-comment markdown
+
+action-render-comment-self: ## Render tmp/scan-pr-output-self.json → tmp/pr-comment-self.md (uses the self-scan's synthesized event.json)
+	@test -s $(DRIFT_SELF_OUTPUT) || { \
+	  printf "$(RED)✗$(RESET) $(DRIFT_SELF_OUTPUT) missing or empty — run $(CYAN)make action-scan-demo-self$(RESET) first\n"; \
+	  exit 1; }
+	@printf "$(BLUE)▶$(RESET) rendering PR-comment markdown ($(DRIFT_SELF_OUTPUT) → $(DRIFT_SELF_COMMENT))\n"
+	@node --experimental-strip-types --no-warnings \
+	  action/scripts/render-comment.ts $(DRIFT_SELF_OUTPUT) $(DRIFT_SELF_COMMENT) $(DRIFT_SELF_TMPDIR)/event.json \
+	  | sed 's/^/    /'
 
 action-build: ## Build the Drift Action bundle (action/src/* → dist/index.js via esbuild)
 	@printf "$(BLUE)▶$(RESET) npm run build (Drift Action)\n"
