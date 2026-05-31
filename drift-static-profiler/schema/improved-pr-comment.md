@@ -461,6 +461,15 @@ These entry points lack retry / timeout / circuit / fallback markers:
 
 <sub>Posted by <a href="https://drift.dev">Drift</a> · static-analysis report from <code>drift-static-profiler</code> v0.6.3 · 🔊 <a href="https://github.com/refactorlab/andy/actions/runs/26524874870/artifacts/7246155704">Listen to the spoken summary</a> (Piper TTS · WAV)</sub>
 
+<details>
+<summary><sub>📎 Scan artifacts (JSON)</sub></summary>
+
+<sub><a href="https://github.com/refactorlab/andy/actions/runs/26524874870/artifacts/7246155801">pr-scan.json</a> · <a href="https://github.com/refactorlab/andy/actions/runs/26524874870/artifacts/7246155802">pr-scan-context.json</a> — machine-readable scanner report + scan context. Sign in to GitHub to download.</sub>
+
+</details>
+
+> **Scan-artifacts accordion** (closed by default, smallest text). Two machine-readable JSON files this run uploaded as non-zipped artifacts, for an agent picking up the handoff: `pr-scan.json` is the **complete** (uncapped) scanner report — unlike the size-capped comment above, it carries every suggestion — and `pr-scan-context.json` bundles the scan's *context* (PR identity, the exact diff scope, the merge-base, scanner identity, run pointers): "what did Drift look at", complementing the report's "what did Drift find". Both links 404 for signed-out viewers (GitHub gates artifact downloads even on public repos), hence the explicit login note.
+
 [^money]: **Money — sources:** [Testomat: real cost of software bugs](https://testomat.io/blog/software-bug-cost/) · [Sonar: cost of technical debt](https://www.sonarsource.com/blog/new-research-from-sonar-on-cost-of-technical-debt) · [HiBob: fully-burdened labor rate](https://www.hibob.com/financial-metrics/fully-burdened-labor-rate/) · [BenchLM: LLM token pricing 2026](https://benchlm.ai/llm-pricing) · [Stanford Digital Economy Lab: how AI agents spend tokens](https://digitaleconomy.stanford.edu/news/how-are-ai-agents-spending-your-tokens/)
 
 [^customer]: **Customer — sources:** [Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) · [GitHub: linking PRs to issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue)

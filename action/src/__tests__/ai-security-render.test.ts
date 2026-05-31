@@ -58,8 +58,9 @@ test('XSS: PR title with backticks cannot escape the surrounding code span', () 
       'hostile "## INJECTED H2" landed at start of a line — markdown would render it as a real heading',
     );
   }
-  // And the OUTER Drift heading still anchors the body.
-  assert.match(out, /^## .*Drift review/m);
+  // And the OUTER Drift brand banner still anchors the body (the title is the
+  // banner image now, not a `##` heading).
+  assert.match(out, /<img [^>]*alt="Drift review"/);
 });
 
 test('XSS: PR title with line/paragraph separators cannot break the heading line', () => {
@@ -254,10 +255,10 @@ test('XSS: multi-vector hostile report — every escape applies, the body still 
     'hostile <b> tag broke out of the tool <code> span',
   );
 
-  // Positive invariant: the sticky marker + footer + Drift heading
+  // Positive invariant: the sticky marker + footer + Drift brand banner
   // still anchor the body — the whole render survived multi-vector
   // input without crashing or producing a degenerate output.
   assert.ok(out.includes('<!-- drift:sticky-comment -->'));
   assert.match(out, /Posted by <a href="https:\/\/drift\.dev">Drift<\/a>/);
-  assert.match(out, /^## .*Drift review/m);
+  assert.match(out, /<img [^>]*alt="Drift review"/);
 });

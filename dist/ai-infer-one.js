@@ -21095,12 +21095,17 @@ var FOCAL_SYSTEM_PROMPT = [
   '    "start_line":     int,      // optional; first line of a multi-line range (<= line)',
   '    "category":       "A" | "B" | "C",',
   '    "confidence":     number,   // 0..1',
+  '    "summary":        string,   // ONE plain sentence: WHAT the change does',
   '    "why_it_matters": string,',
   '    "references":     [ { "url": string, "title": string } ],',
   '    "after_code":     string    // COMPLETE replacement for lines start_line..line',
   "  }",
   "",
   "Rules:",
+  "  - summary is a single imperative sentence stating WHAT the edit does, e.g.",
+  '    "Wrap the login call in a retry loop with exponential backoff." It is the',
+  "    headline a reviewer reads first \u2014 distinct from why_it_matters (the WHY).",
+  "    Keep it under ~25 words; no code, no markdown.",
   "  - after_code is the WHOLE new content of the anchored line(s), ready to",
   '    commit verbatim \u2014 GitHub "Apply suggestion" swaps those exact lines for',
   "    it. No diff prefixes (+/-), no surrounding fence, no line numbers.",
@@ -21243,6 +21248,8 @@ function validateSuggestion(s, idx) {
     return `suggestions[${idx}].category must be 'A' | 'B' | 'C'`;
   if (typeof o.confidence !== "number" || o.confidence < 0 || o.confidence > 1)
     return `suggestions[${idx}].confidence must be a number in [0,1]`;
+  if (o.summary !== void 0 && typeof o.summary !== "string")
+    return `suggestions[${idx}].summary must be a string when present`;
   if (typeof o.why_it_matters !== "string" || o.why_it_matters.length < 10)
     return `suggestions[${idx}].why_it_matters must be a string of \u2265 10 chars`;
   if (!Array.isArray(o.references) || o.references.length === 0)

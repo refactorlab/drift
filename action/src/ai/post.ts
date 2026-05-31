@@ -46,6 +46,36 @@ export async function fetchCommentableLines(
   return map;
 }
 
+/**
+ * One pulls.listFiles pass that returns BOTH the commentable-lines map (for
+ * the diff filter) AND the raw per-file `.patch` text (for reconstructing the
+ * red/green diff of an AI suggestion — see ai/to-code-suggestion.ts). Used by
+ * the combined poster when it also has to render the sticky comment; a single
+ * call backs both needs.
+ */
+export async function fetchPrFiles(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<{ commentable: Map<string, Set<number>>; patches: Map<string, string> }> {
+  const { data } = await octokit.rest.pulls.listFiles({
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  const commentable = new Map<string, Set<number>>();
+  const patches = new Map<string, string>();
+  for (const f of data) {
+    if (f.patch) {
+      commentable.set(f.filename, parseCommentableLines(f.patch));
+      patches.set(f.filename, f.patch);
+    }
+  }
+  return { commentable, patches };
+}
+
 export type PostAIReviewArgs = {
   octokit: Octokit;
   owner: string;

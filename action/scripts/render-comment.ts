@@ -53,7 +53,13 @@ const outputPath = resolve(outputArg);
 statSync(inputPath); // throws if missing — clearer than load() error
 const report = loadReport(inputPath);
 const ctx = eventArg ? contextFromEvent(resolve(eventArg)) : undefined;
-const body = renderOverview(report, { ctx, audioUrl: process.env.DRIFT_AUDIO_URL, maxSuggestions });
+const body = renderOverview(report, {
+  ctx,
+  audioUrl: process.env.DRIFT_AUDIO_URL,
+  scanJsonUrl: process.env.DRIFT_SCAN_JSON_URL,
+  scanContextUrl: process.env.DRIFT_SCAN_CONTEXT_URL,
+  maxSuggestions,
+});
 
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, body);

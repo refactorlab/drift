@@ -55,14 +55,24 @@ export function renderSuggestions(
   const passing = (suggestions ?? []).filter(passesQualityBar);
   if (passing.length === 0) return null;
 
-  const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
-  const total = sorted.length;
-  // Render cap: how many of the highest-priority suggestions reach the comment.
-  // The heading + overflow note keep the TRUE total (`total`) visible.
+  // Two render paths share this section. AI-refined suggestions (source: 'ai')
+  // get their own expanded "code suggestion" blocks — a plain-language
+  // narrative + a red/green diff with surrounding context — while deterministic
+  // findings stay in the priority table. Partition up front so each renders
+  // independently and the AI blocks are never capped out of view.
+  const aiSugg = passing.filter((s) => s.source === 'ai');
+  const detSugg = passing.filter((s) => s.source !== 'ai');
+
+  const sorted = [...detSugg].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
+  const detTotal = sorted.length;
+  // Headline count spans BOTH paths; the cap below only governs the table rows.
+  const total = passing.length;
+  // Render cap: how many of the highest-priority deterministic suggestions reach
+  // the table. The heading + overflow note keep the TRUE totals visible.
   const kept = sorted.slice(0, resolveMax(opts.max));
   // Counts reflect the WHOLE PR (true totals), not just the rendered slice — the
   // heading and the CAUTION callout would understate the problem otherwise.
-  const correctness = sorted.filter((s) => s.category === 'B').length;
+  const correctness = passing.filter((s) => s.category === 'B').length;
 
   const lines: string[] = [`## ⚠️ Code suggestions (${total})`, ''];
 
@@ -76,37 +86,55 @@ export function renderSuggestions(
     );
   }
 
-  lines.push(
-    '<sub>**Priority reflects impact, not certainty** — a 100%-confident dead-code removal is still low-priority cleanup; ' +
-      'a product-correctness finding matters more.</sub>',
-    '',
-  );
-
-  // priority table — capped to the top `kept` rows (highest priority first)
-  lines.push('| Priority | Finding | Location | Confidence |', '|:--:|---|---|---:|');
-  for (const s of kept) {
-    const p = priority(s);
-    lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
-  }
-  lines.push('');
-  // Overflow note: the TRUE total minus what we rendered. Keeps the reviewer
-  // honest about scale even though only the top slice is shown.
-  if (total > kept.length) {
-    const more = total - kept.length;
-    lines.push(`_…+${more} more ${plural(more, 'suggestion')} not shown — rendering the top ${kept.length} by priority._`, '');
-  }
-
-  // detail blocks — over the kept slice, bounded by the detail ceiling.
+  // Deterministic findings → priority table + per-finding detail blocks. Gated
+  // on there being any, so an AI-only section skips straight to the AI blocks.
   const shown = kept.slice(0, MAX_SHOWN);
-  for (const s of shown) lines.push(renderDetail(s, ctx), '');
+  if (kept.length > 0) {
+    lines.push(
+      '<sub>**Priority reflects impact, not certainty** — a 100%-confident dead-code removal is still low-priority cleanup; ' +
+        'a product-correctness finding matters more.</sub>',
+      '',
+    );
 
-  // 🤖 One batched "Fix-All" handoff — dispatch every shown finding in a single
-  // copy-paste to an AI agent. Omitted for a lone finding (use its own prompt).
-  const fixAll = buildFixAllPrompt(shown, ctx);
+    // priority table — capped to the top `kept` rows (highest priority first)
+    lines.push('| Priority | Finding | Location | Confidence |', '|:--:|---|---|---:|');
+    for (const s of kept) {
+      const p = priority(s);
+      lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
+    }
+    lines.push('');
+    // Overflow note: the deterministic total minus what we rendered. Keeps the
+    // reviewer honest about scale even though only the top slice is shown.
+    if (detTotal > kept.length) {
+      const more = detTotal - kept.length;
+      lines.push(`_…+${more} more ${plural(more, 'suggestion')} not shown — rendering the top ${kept.length} by priority._`, '');
+    }
+
+    // detail blocks — over the kept slice, bounded by the detail ceiling.
+    for (const s of shown) lines.push(renderDetail(s, ctx), '');
+  }
+
+  // AI-refined suggestions → expanded "code suggestion" blocks. Always rendered
+  // (never capped by the deterministic table cap); their count is bounded
+  // upstream by ai-max-suggestions.
+  if (aiSugg.length > 0) {
+    lines.push(
+      `### 🤖 AI-refined code suggestions (${aiSugg.length})`,
+      '',
+      '<sub>Model-generated patches grounded in the scanner findings — each carries an **Apply** button on its matching inline review comment.</sub>',
+      '',
+    );
+    for (const s of aiSugg) lines.push(renderAIDetail(s, ctx), '');
+  }
+
+  // 🤖 One batched "Fix-All" handoff — dispatch every shown finding (deterministic
+  // + AI) in a single copy-paste to an AI agent. Omitted for a lone finding.
+  const fixAllItems = [...shown, ...aiSugg];
+  const fixAll = buildFixAllPrompt(fixAllItems, ctx);
   if (fixAll) {
     lines.push(
       '<details>',
-      `<summary>🤖 <strong>Fix-All handoff</strong> — one prompt that dispatches all ${shown.length} findings</summary>`,
+      `<summary>🤖 <strong>Fix-All handoff</strong> — one prompt that dispatches all ${fixAllItems.length} findings</summary>`,
       '',
       fencedBlock(fixAll, 'text'),
       '',
@@ -174,6 +202,66 @@ function renderDetail(s: CodeSuggestion, ctx?: PrContext): string {
 
   // 🤖 One-click handoff: a copy-paste prompt for the reviewer's AI agent.
   // Nested <details> needs surrounding blank lines so GitHub parses it.
+  if (s.file) {
+    out.push(
+      '<details>',
+      '<summary>🤖 Copy this prompt for your AI agent <sub>(Claude Code · Cursor · Copilot)</sub></summary>',
+      '',
+      fencedBlock(buildAgentPrompt(s, ctx), 'text'),
+      '',
+      '</details>',
+      '',
+    );
+  }
+
+  out.push('</details>');
+  return out.join('\n');
+}
+
+/**
+ * One AI-refined suggestion as an expanded "code suggestion" disclosure — the
+ * CodeRabbit/Sourcery shape, rebuilt from our own data: a plain-language WHAT
+ * narrative, the WHY, then a red/green diff with surrounding context (the `-`
+ * side reconstructed from the PR patch, the `+` side the model's replacement —
+ * see ai/to-code-suggestion.ts). Defaults to OPEN because there are few of them
+ * and each is the headline a reviewer wants to see, not hunt for. The trailing
+ * agent-prompt handoff mirrors the deterministic block so a reviewer can pass
+ * the fix straight to their AI agent.
+ */
+function renderAIDetail(s: CodeSuggestion, ctx?: PrContext): string {
+  const loc = typeof s.line === 'number' ? `${s.file}:${s.line}` : s.file;
+  const pct = confidencePercent(s.confidence);
+  // `loc` is PR-controlled (file paths may contain `<`/`>` on Linux/macOS) and
+  // `model` is env-influenced — escape both before embedding in the <summary>.
+  const modelTag = s.model ? ` · <code>${escapeHtml(s.model)}</code>` : '';
+  const out: string[] = [
+    '<details open>',
+    `<summary>🤖 <strong>code suggestion</strong> · <code>${escapeHtml(loc)}</code> · ${pct}${modelTag}</summary>`,
+    '',
+  ];
+
+  // WHAT (model narrative) then WHY (impact). The narrative is the lead line a
+  // reviewer reads; it's omitted cleanly when the model didn't supply one.
+  if (s.summary) out.push(`**What** — ${s.summary}`, '');
+  out.push(`**Why it matters** — ${s.why_it_matters}`, '');
+
+  // Red/green diff. Prefer the reconstructed unified view (context + `-`/`+`);
+  // degrade to an after-only block when reconstruction had no patch to anchor.
+  const unified = s.diff?.unified;
+  if (unified) {
+    out.push('**Suggested change:**', '', fencedBlock(unified, 'diff'), '');
+  } else {
+    const after = s.diff?.after_lines ?? [];
+    if (after.length) {
+      out.push('**Suggested change:**', '', fencedBlock(after.map((l) => `+ ${l.code}`).join('\n'), 'diff'), '');
+    }
+  }
+
+  const ref = s.references?.[0];
+  if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, '');
+
+  // 🤖 One-click handoff — same copy-paste agent prompt as the deterministic
+  // blocks. Nested <details> needs surrounding blank lines so GitHub parses it.
   if (s.file) {
     out.push(
       '<details>',

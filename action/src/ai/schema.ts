@@ -35,6 +35,10 @@ export const AI_SUGGESTION_SCHEMA = {
           start_line: { type: 'integer', minimum: 1 },
           category: { type: 'string', enum: ['A', 'B', 'C'] },
           confidence: { type: 'number', minimum: 0, maximum: 1 },
+          // One plain sentence on WHAT the change does (distinct from
+          // why_it_matters). Optional + bounded: an over-long narrative is the
+          // model padding, not signal, so we cap rather than reject.
+          summary: { type: 'string', maxLength: 280 },
           why_it_matters: { type: 'string', minLength: 10 },
           references: {
             type: 'array',
@@ -67,6 +71,8 @@ export type AISuggestion = {
   start_line?: number;
   category: 'A' | 'B' | 'C';
   confidence: number;
+  /** Plain-language WHAT-this-does sentence; optional (fail-soft if absent). */
+  summary?: string;
   why_it_matters: string;
   references: AISuggestionReference[];
   after_code: string;

@@ -84,6 +84,10 @@ function validateSuggestion(s: unknown, idx: number): string | null {
     return `suggestions[${idx}].category must be 'A' | 'B' | 'C'`;
   if (typeof o.confidence !== 'number' || o.confidence < 0 || o.confidence > 1)
     return `suggestions[${idx}].confidence must be a number in [0,1]`;
+  // `summary` is optional (the WHAT narrative); reject only a non-string so a
+  // present-but-malformed value can't slip through to the renderer.
+  if (o.summary !== undefined && typeof o.summary !== 'string')
+    return `suggestions[${idx}].summary must be a string when present`;
   if (typeof o.why_it_matters !== 'string' || o.why_it_matters.length < 10)
     return `suggestions[${idx}].why_it_matters must be a string of ≥ 10 chars`;
   if (!Array.isArray(o.references) || o.references.length === 0)

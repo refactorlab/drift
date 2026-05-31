@@ -37,6 +37,7 @@ import { renderBlastRadius } from './sections/blast_radius.ts';
 import { renderExt } from './sections/ext.ts';
 import { renderBeforeMerge } from './sections/before_merge.ts';
 import { renderFooter } from './sections/footer.ts';
+import { renderScanArtifacts } from './sections/artifacts.ts';
 
 export const STICKY_MARKER = '<!-- drift:sticky-comment -->';
 
@@ -51,10 +52,12 @@ const HARD_CAP = 65_000;
 const SCREENSHOTS = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
 // Banner sizing. These brand PNGs are wide hero images; at full width they
 // dominate the comment, so every banner is pinned to a small FIXED width
-// (height auto-scales, preserving aspect ratio). Two knobs only: section
-// + audio banners share BANNER_WIDTH; the Andy sign-off is smaller still.
-const BANNER_WIDTH = 200;
-const ANDY_WIDTH = 72;
+// (height auto-scales, preserving aspect ratio). Deliberately kept compact so a
+// banner reads as a section marker, not a hero that pushes the content below
+// the fold. Two knobs only: section + audio banners share BANNER_WIDTH; the
+// Andy sign-off is smaller still.
+const BANNER_WIDTH = 120;
+const ANDY_WIDTH = 64;
 const sectionImage = (file: string, alt: string): string =>
   `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
 /** Prepend a section-header screenshot to a section's markdown (own line, above it). */
@@ -93,6 +96,19 @@ export type RenderOptions = {
    */
   audioMp4Url?: string;
   /**
+   * Artifact URL of the raw scanner report (pr-scan.json), linked in the
+   * collapsed scan-artifacts accordion at the bottom of the comment. Absent →
+   * the accordion omits that link (and omits the whole block if both URLs are
+   * absent). Threaded in from the action as DRIFT_SCAN_JSON_URL.
+   */
+  scanJsonUrl?: string;
+  /**
+   * Artifact URL of the scan-context bundle (pr-scan-context.json) — PR
+   * identity, diff scope, and run/scanner pointers an agent can reload.
+   * Threaded in from the action as DRIFT_SCAN_CONTEXT_URL.
+   */
+  scanContextUrl?: string;
+  /**
    * Render cap on the Code-suggestions section (default 10). Only the top-N
    * highest-priority findings are rendered; the heading + overflow note keep
    * the true total visible. RENDER-ONLY — the underlying report is untouched,
@@ -103,7 +119,7 @@ export type RenderOptions = {
 };
 
 export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): string {
-  const { ctx, priorState, audioUrl, audioMp4Url, maxSuggestions } = opts;
+  const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
@@ -181,13 +197,16 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   sections.push(beforeMerge);
 
   // The footer block, in order: (when there's a spoken summary) the clickable
-  // audio button banner, then the attribution/audio text, then the small Andy
+  // audio button banner, then the attribution/audio text, then the collapsed
+  // scan-artifacts accordion (machine-readable JSON links), then the small Andy
   // sign-off LAST. This keeps the audio "before the end" and pins the Andy
   // banner to the very end of the comment (the trailing state markers are
-  // invisible HTML comments, so Andy is the last *visible* element).
+  // invisible HTML comments, so Andy is the last *visible* element). Each
+  // segment returns '' when its data is absent, so the block degrades cleanly.
   const footer = [
     audioUrl?.trim() ? audioBanner(audioUrl.trim()) : '',
     renderFooter(report.generator, audioUrl, audioMp4Url),
+    renderScanArtifacts({ scanJsonUrl, scanContextUrl }),
     andySignoff(),
   ]
     .filter(Boolean)

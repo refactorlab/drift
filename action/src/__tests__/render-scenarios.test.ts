@@ -286,7 +286,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     // PR title with mermaid-hostile characters. The TS renderer puts the title
     // inside a backtick code span on the H2; a literal backtick in the title
     // would break the span. The header replaces backticks with `'`.
-    name: "PR title with hostile chars (backticks, <>, |, reserved 'end') never reaches the H2",
+    name: "PR title with hostile chars (backticks, <>, |, reserved 'end') never reaches the heading",
     report: base({
       pr_review: {
         overall_drift: { percent: 5, direction: 'up', confidence: 'low' },
@@ -295,8 +295,10 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: { ...CTX, prTitle: 'feat: `code` <T> | end keyword fix' },
     expect: (b) => {
-      // The PR title is no longer rendered, so hostile chars can't reach the H2.
-      assert.match(b, /^## [▲▼—] Drift review$/m, 'clean H2 with no title suffix');
+      // The PR title is not rendered and there's no `##` title line at all now —
+      // the brand banner is the title — so hostile chars can't reach a heading.
+      assert.match(b, /<img [^>]*alt="Drift review"/, 'brand banner is the title');
+      assert.doesNotMatch(b, /^## [▲▼—]? ?Drift review/m, 'no duplicate H2 title');
       assert.doesNotMatch(b, /Drift review —/, 'no PR-title suffix at all');
     },
   },

@@ -25,7 +25,9 @@ use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::mermaid::{
     colors, ClassDef, EdgeStyle, FlowDirection, FlowEdge, FlowNode, Flowchart, NodeShape,
 };
+use crate::pr_algorithms::symbol_label::display_symbol_label;
 use crate::pr_algorithms::types::*;
+use crate::tags::{is_anonymous_symbol_name, is_synthetic_module_name};
 use crate::tree::CallTreeNode;
 use crate::SymbolKind;
 use std::collections::BTreeMap;
@@ -173,10 +175,15 @@ fn collect_data_structures(
         }
 
         // Signal B: node is a Method whose enclosing class is on disk
-        // in a changed file.
+        // in a changed file. A synthetic enclosing scope (`<anonymous@N>`
+        // closure, `<module>`) is NOT a data structure — skip it so it never
+        // appears in the table or the DS subgraph as a raw synthetic name.
         if file_touched {
             if let Some(parent) = &node.parent_class {
-                if !parent.is_empty() {
+                if !parent.is_empty()
+                    && !is_anonymous_symbol_name(parent)
+                    && !is_synthetic_module_name(parent)
+                {
                     let key = (parent.clone(), node.file.clone());
                     *classes.entry(key).or_insert(0) += 1;
                 }
@@ -319,39 +326,49 @@ struct GraphMode {
     force_muted: bool,
 }
 
-/// When rendering the BEFORE chart, a node whose label IS its file's
-/// basename (a file/module-level entry, e.g. `users.ts`) must show the
-/// file's PRE-PR name if the file was renamed. Symbol nodes
-/// (`OrderService.create_order`) keep their names — a rename moves the
-/// file, not the symbol — so this only fires for file-named nodes.
+/// When rendering the BEFORE chart, any node whose displayed label embeds
+/// the file basename must show the file's PRE-PR name if the file was
+/// renamed. Three shapes embed the basename (see `display_symbol_label`):
+///   * a file-named entry (`name == basename`, e.g. `users.ts`),
+///   * the synthetic `<module>` entry (renders as the basename), and
+///   * an `<anonymous@N>` node (renders as `anon <basename:line>`).
+/// Ordinary symbol nodes (`OrderService.create_order`) keep their names —
+/// a rename moves the file, not the symbol.
 ///
 /// `rename_old` maps new_path → old_path (only renamed/copied files are
-/// present). Returns the OLD basename when this node should be relabeled
-/// for BEFORE, else None (caller keeps the default label).
+/// present). Returns the BEFORE label rendered against the OLD path when
+/// this node should be relabeled, else None (caller keeps the default).
 fn before_rename_label(
     mode: GraphMode,
     name: &str,
     parent_class: &Option<String>,
     file: &str,
+    line: usize,
     rename_old: &BTreeMap<String, String>,
 ) -> Option<String> {
     // AFTER always shows HEAD names; only BEFORE relabels.
     if !mode.force_muted {
         return None;
     }
-    // File/module nodes only: no enclosing class AND label == basename(file).
-    if parent_class.as_deref().is_some_and(|p| !p.is_empty()) {
-        return None;
-    }
-    if name != basename(file) {
-        return None;
-    }
-    // Find this file's old path (paths_match tolerates ./ and / prefixes).
+    // Bail unless this file was actually renamed (paths_match tolerates
+    // ./ and / prefixes).
     let old = rename_old
         .iter()
         .find(|(new, _)| paths_match(file, new))
         .map(|(_, old)| old.as_str())?;
-    Some(basename(old).to_string())
+    // Synthetic nodes embed the file basename in their rendered label
+    // (`<module>` → basename, `<anonymous@N>` → `anon <basename:line>`), so
+    // render them against the OLD path. A named parent is kept; a synthetic
+    // parent is suppressed by the presenter.
+    if is_synthetic_module_name(name) || is_anonymous_symbol_name(name) {
+        return Some(display_symbol_label(name, parent_class.as_deref(), old, line));
+    }
+    // A file-named entry (no enclosing class, name == basename) shows the
+    // basename directly — swap to the OLD basename.
+    if parent_class.as_deref().map_or(true, |p| p.is_empty()) && name == basename(file) {
+        return Some(basename(old).to_string());
+    }
+    None
 }
 
 /// Shared BFS walker for BEFORE and AFTER. Returns the assembled
@@ -381,13 +398,14 @@ fn build_call_graph(
         name: &str,
         parent_class: &Option<String>,
         file: &str,
+        line: usize,
         class: Option<&str>,
         label_override: Option<&str>,
     ) -> String {
         let parent_seg = parent_class.as_deref().unwrap_or("");
         // Dedup key uses the STABLE identity (name + file), never the
-        // possibly-overridden display label — so a BEFORE rename relabel
-        // can't accidentally merge or split nodes.
+        // possibly-overridden / file-line-decorated display label — so a
+        // BEFORE rename relabel can't accidentally merge or split nodes.
         let key = format!("{parent_seg}\u{1F}{name}\u{1F}{file}");
         if let Some(existing) = id_for.get(&key) {
             return existing.clone();
@@ -395,10 +413,13 @@ fn build_call_graph(
         let id = format!("n{}", *next_id);
         *next_id += 1;
         id_for.insert(key, id.clone());
+        // `label_override` (BEFORE rename relabel) wins; otherwise the
+        // shared presenter turns synthetic names (`<module>`,
+        // `<anonymous@N>`) into human-readable `file:line` labels and keeps
+        // ordinary names as `parent.name`. See `symbol_label`.
         let display = match label_override {
             Some(o) => o.to_string(),
-            None if parent_seg.is_empty() => name.to_string(),
-            None => format!("{parent_seg}.{name}"),
+            None => display_symbol_label(name, parent_class.as_deref(), file, line),
         };
         nodes.push(FlowNode {
             id: id.clone(),
@@ -427,7 +448,7 @@ fn build_call_graph(
             continue;
         }
         let root_override =
-            before_rename_label(mode, &root.name, &root.parent_class, &root.file, rename_old);
+            before_rename_label(mode, &root.name, &root.parent_class, &root.file, root.line, rename_old);
         let rid = intern_node(
             &mut nodes,
             &mut id_for,
@@ -435,6 +456,7 @@ fn build_call_graph(
             &root.name,
             &root.parent_class,
             &root.file,
+            root.line,
             class_for(root_status),
             root_override.as_deref(),
         );
@@ -453,7 +475,7 @@ fn build_call_graph(
                 continue;
             }
             let n_override =
-                before_rename_label(mode, &node.name, &node.parent_class, &node.file, rename_old);
+                before_rename_label(mode, &node.name, &node.parent_class, &node.file, node.line, rename_old);
             let nid = intern_node(
                 &mut nodes,
                 &mut id_for,
@@ -461,6 +483,7 @@ fn build_call_graph(
                 &node.name,
                 &node.parent_class,
                 &node.file,
+                node.line,
                 class_for(n_status),
                 n_override.as_deref(),
             );
@@ -939,7 +962,7 @@ pub fn compute_with_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pr_algorithms::test_helpers::{mk_node, with_children};
+    use crate::pr_algorithms::test_helpers::{mk_node, with_children, with_line};
 
     #[test]
     fn empty_entries_renders_placeholder() {
@@ -1044,6 +1067,30 @@ mod tests {
         assert_eq!(r.data_structures[0].name, "OrderService");
         assert!(r.data_structures[0].description.contains("2 method"));
         assert_eq!(r.data_structures[0].scope, "python");
+    }
+
+    /// A synthetic enclosing scope (`<anonymous@N>` closure, `<module>`) is
+    /// NOT a data structure — it must never appear in the table (where it
+    /// would render as a raw `<anonymous@N>`) nor inflate a method count.
+    #[test]
+    fn synthetic_parent_is_not_a_data_structure() {
+        let mut real = mk_node("save", "app/db.ts");
+        real.parent_class = Some("Repository".into());
+        let mut closure_child = mk_node("cb", "app/db.ts");
+        closure_child.parent_class = Some("<anonymous@42>".into());
+        let mut module_child = mk_node("helper", "app/db.ts");
+        module_child.parent_class = Some("<module>".into());
+        let entries = vec![with_children(
+            mk_node("setup", "app/db.ts"),
+            vec![real, closure_child, module_child],
+        )];
+        let r = compute(&entries, &["app/db.ts".into()]);
+        let names: Vec<&str> = r.data_structures.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Repository"), "real class kept: {names:?}");
+        assert!(
+            !names.iter().any(|n| n.starts_with('<')),
+            "no synthetic name may appear as a data structure: {names:?}"
+        );
     }
 
     /// data_structures must NOT include classes from files outside the
@@ -1242,6 +1289,131 @@ mod tests {
         // The symbol keeps its name; the old FILE name must not leak onto it.
         assert!(arch.before_mermaid.contains("OrderService.create"), "symbol node lost its name:\n{}", arch.before_mermaid);
         assert!(!arch.before_mermaid.contains("legacy_services"), "old file name must not bleed onto a symbol node:\n{}", arch.before_mermaid);
+    }
+
+    /// An anonymous callable renders as `anon ‹basename:line›` — the file
+    /// (previously absent) plus the authoritative line, bracketed in the
+    /// guillemets `safe_label` produces from `<…>`.
+    #[test]
+    fn anonymous_node_label_shows_file_and_line() {
+        let entries = vec![with_line(mk_node("<anonymous@20>", "src/audio/keymap.ts"), 20)];
+        let r = compute(&entries, &[]);
+        assert!(
+            r.after_mermaid.contains("anon ‹keymap.ts:20›"),
+            "anonymous node must show file+line:\n{}",
+            r.after_mermaid
+        );
+        assert!(
+            !r.after_mermaid.contains("anonymous@"),
+            "the raw synthetic name must not leak into the label:\n{}",
+            r.after_mermaid
+        );
+    }
+
+    /// The synthetic `<module>` entry renders as the file basename so the
+    /// formerly-identical `‹module›` boxes become distinguishable.
+    #[test]
+    fn module_node_shows_basename_not_module_literal() {
+        let entries = vec![mk_node("<module>", "src/audio/keymap.ts")];
+        let r = compute(&entries, &[]);
+        assert!(
+            r.after_mermaid.contains("\"keymap.ts\""),
+            "module entry must render as the file basename:\n{}",
+            r.after_mermaid
+        );
+        assert!(
+            !r.after_mermaid.contains("module›") && !r.after_mermaid.contains("‹module"),
+            "the `<module>` literal must not be shown:\n{}",
+            r.after_mermaid
+        );
+    }
+
+    /// A closure nested in another closure (`<anonymous@4>.<anonymous@5>`
+    /// in the screenshot) drops the meaningless anonymous parent and shows
+    /// only its own `anon ‹file:line›`.
+    #[test]
+    fn nested_anonymous_collapses_the_anonymous_parent() {
+        let mut child = with_line(mk_node("<anonymous@5>", "src/timecode.ts"), 5);
+        child.parent_class = Some("<anonymous@4>".into());
+        let entries = vec![with_children(
+            with_line(mk_node("<anonymous@4>", "src/timecode.ts"), 4),
+            vec![child],
+        )];
+        let r = compute(&entries, &[]);
+        assert!(
+            r.after_mermaid.contains("anon ‹timecode.ts:5›"),
+            "nested anon must show its own file+line:\n{}",
+            r.after_mermaid
+        );
+        assert!(
+            !r.after_mermaid.contains("anonymous@4"),
+            "the anonymous parent segment must be dropped:\n{}",
+            r.after_mermaid
+        );
+    }
+
+    /// A NAMED symbol whose enclosing scope is anonymous renders without the
+    /// meaningless `<anonymous@N>.` qualifier — end-to-end through the graph,
+    /// not just the unit helper.
+    #[test]
+    fn named_symbol_with_anonymous_parent_drops_the_qualifier() {
+        let mut helper = mk_node("helper", "m.ts");
+        helper.parent_class = Some("<anonymous@4>".into());
+        let entries = vec![with_children(with_line(mk_node("<anonymous@4>", "m.ts"), 4), vec![helper])];
+        let r = compute(&entries, &[]);
+        assert!(r.after_mermaid.contains("[\"helper\"]"), "named child keeps its bare name:\n{}", r.after_mermaid);
+        // The anon parent renders as its own `anon ‹m.ts:4›`, never as a
+        // `‹anonymous@4›.helper` qualifier on the child.
+        assert!(r.after_mermaid.contains("anon ‹m.ts:4›"), "anon parent node label:\n{}", r.after_mermaid);
+        assert!(!r.after_mermaid.contains("anonymous@4"), "raw synthetic name must be transformed:\n{}", r.after_mermaid);
+        assert!(!r.after_mermaid.contains(".helper"), "no synthetic qualifier on the named child:\n{}", r.after_mermaid);
+    }
+
+    /// An anonymous node in a RENAMED file shows the OLD basename in the muted
+    /// BEFORE chart (its label embeds the basename, so it must respect the
+    /// rename just like the `<module>` entry does).
+    #[test]
+    fn anonymous_node_in_renamed_file_shows_old_basename_in_before() {
+        let mut anon = with_line(mk_node("<anonymous@7>", "web/users.ts"), 7);
+        anon.parent_class = None;
+        let entries = vec![anon];
+        let changed = vec![cf_renamed("web/users.ts", "web/legacy_users.ts")];
+        let arch = compute_with_diff(&entries, &changed);
+        assert!(
+            arch.before_mermaid.contains("anon ‹legacy_users.ts:7›"),
+            "BEFORE must show the OLD basename for an anon node in a renamed file:\n{}",
+            arch.before_mermaid
+        );
+        assert!(
+            arch.after_mermaid.contains("anon ‹users.ts:7›"),
+            "AFTER must show the NEW basename:\n{}",
+            arch.after_mermaid
+        );
+    }
+
+    /// A renamed file's `<module>` entry now respects the BEFORE relabel:
+    /// OLD basename in BEFORE, NEW basename in AFTER (it used to render the
+    /// indistinguishable `‹module›` in both).
+    #[test]
+    fn module_node_shows_old_basename_in_before_when_renamed() {
+        let entries = vec![mk_node("<module>", "web/users.ts")];
+        let changed = vec![cf_renamed("web/users.ts", "web/legacy_users.ts")];
+        let arch = compute_with_diff(&entries, &changed);
+        assert!(
+            arch.before_mermaid.contains("\"legacy_users.ts\""),
+            "BEFORE must show the OLD basename for a renamed module entry:\n{}",
+            arch.before_mermaid
+        );
+        assert!(
+            arch.after_mermaid.contains("\"users.ts\""),
+            "AFTER must show the NEW basename:\n{}",
+            arch.after_mermaid
+        );
+        assert!(
+            !arch.before_mermaid.contains("module›"),
+            "the `<module>` literal must not be shown:\n{}",
+            arch.before_mermaid
+        );
     }
 
     /// Copied files (C-status) behave like additions: ABSENT from BEFORE,

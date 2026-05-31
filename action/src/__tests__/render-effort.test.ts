@@ -86,12 +86,15 @@ test('header: hero bottom-line leads with a verdict dot and the move', () => {
   assert.match(heroLine, /^> (🟢|🟡|🔴|🔵) /, 'hero line opens with a status dot');
 });
 
-test('header: signal line carries both 0–5 gauges (confidence + effort) and the time band', () => {
+test('header: badge dashboard carries both 0–5 gauges and folds the effort time band into the effort pill', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  const signal = h.split('\n').find((l) => /Merge confidence/.test(l)) ?? '';
-  assert.match(signal, /🛡️ \*\*Merge confidence \d\/5\*\*/, 'confidence gauge present');
-  assert.match(signal, /🧮 \*\*Review effort \d\/5\*\*/, 'effort gauge present');
-  assert.match(signal, /min<\/sub>/, 'time band present');
+  // The gauges live ONLY as badges now — no prose "signal line" duplicating them.
+  assert.doesNotMatch(h, /🛡️ \*\*Merge confidence/, 'no prose merge-confidence signal line');
+  assert.match(h, /badge\/merge_confidence-\d%2F5/, 'merge-confidence gauge badge');
+  assert.match(h, /badge\/review_effort-\d%2F5/, 'review-effort gauge badge');
+  assert.match(h, /badge\/review_effort-\d%2F5[^)]*min/, 'effort badge folds in the time band');
+  // bareMinutes() strips the leading "≈ " (U+2248 → %E2%89%88) so the band fits the pill.
+  assert.doesNotMatch(h, /badge\/review_effort-[^)]*%E2%89%88/, 'the ≈ prefix is stripped from the folded time band');
 });
 
 test('header: confidence trend sparkline renders only with ≥2 pushes of history', () => {
@@ -99,13 +102,17 @@ test('header: confidence trend sparkline renders only with ≥2 pushes of histor
   const first = renderHeader(report, CTX, { confTrend: [3] });
   assert.doesNotMatch(first, /trend `/, 'no sparkline on the first push');
   const later = renderHeader(report, CTX, { confTrend: [2, 3, 4] });
-  assert.match(later, /trend `[▁▂▃▄▅▆▇█]+`/, 'sparkline after multiple pushes');
+  assert.match(
+    later,
+    /<sub>🛡️ Merge-confidence trend `[▁▂▃▄▅▆▇█]+` \(over the last 3 pushes\)<\/sub>/,
+    'full trend line: <sub> wrapper + glyphs + push count',
+  );
 });
 
 test('header: effort + confidence KPI badges render next to the verdict badge', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  assert.match(h, /badge\/review_effort-\d%2F5-/, 'review-effort badge present');
-  assert.match(h, /badge\/merge_confidence-\d%2F5-/, 'merge-confidence badge present');
+  assert.match(h, /badge\/review_effort-\d%2F5/, 'review-effort badge present');
+  assert.match(h, /badge\/merge_confidence-\d%2F5/, 'merge-confidence badge present');
 });
 
 test('header: "Look here first" points at the top correctness finding with a permalink', () => {
@@ -121,7 +128,9 @@ test('header: callout TL;DR no longer restates the recommendation (hero owns it)
   const inCallout = h.split('[!WARNING]')[1] ?? '';
   const tldrPara = inCallout.split('\n').find((l) => /\*\*TL;DR/.test(l)) ?? '';
   assert.doesNotMatch(tldrPara, /address before merge/i, 'TL;DR paragraph does not echo the recommendation');
-  assert.match(tldrPara, /Advisory — does not fail the check/, 'advisory note rides in the TL;DR');
+  // The advisory status is a badge now, not a prose note inside the TL;DR.
+  assert.doesNotMatch(tldrPara, /Advisory — does not fail the check/, 'advisory note no longer rides in the TL;DR');
+  assert.match(h, /badge\/advisory-does_not_gate/, 'advisory is surfaced as a badge');
 });
 
 test('header: clean improvement → green dot, "ship it", effort badge still present', () => {
@@ -134,5 +143,5 @@ test('header: clean improvement → green dot, "ship it", effort badge still pre
   const heroLine = h.split('\n').find((l) => /Looks good/.test(l)) ?? '';
   assert.match(heroLine, /^> 🟢 /, 'green dot for a clean improvement');
   assert.match(heroLine, /ship it/i);
-  assert.match(h, /badge\/review_effort-1%2F5-2ea043/, '1/5 effort, green');
+  assert.match(h, /badge\/review_effort-1%2F5[^)]*-2ea043/, '1/5 effort, green');
 });

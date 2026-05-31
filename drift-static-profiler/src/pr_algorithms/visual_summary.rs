@@ -244,7 +244,15 @@ fn risks_from_findings(signals: &PrSignals, max: usize) -> Vec<RiskItem> {
             let severity = severity_axis(f.tier);
             let basename = f.file.rsplit('/').next().unwrap_or(&f.file);
             RiskItem {
-                label: format!("{} · {} ({basename}:{})", pretty_kind(f.kind), f.function, f.line),
+                // The location is already in the `(basename:line)` suffix,
+                // so collapse a synthetic `function` to a bare token here
+                // rather than re-embedding file/line. See `symbol_label`.
+                label: format!(
+                    "{} · {} ({basename}:{})",
+                    pretty_kind(f.kind),
+                    crate::pr_algorithms::symbol_label::humanize_symbol_token(&f.function),
+                    f.line
+                ),
                 likelihood,
                 severity,
                 quadrant: RiskCandidate {
@@ -598,5 +606,82 @@ mod tests {
             r.risks.items.iter().map(|i| &i.label).collect::<Vec<_>>(),
         );
         assert!(matches!(item.unwrap().quadrant, Quadrant::ActBeforeMerge));
+    }
+
+    /// The "Uncovered roots" risk item shows the already-humanized strings
+    /// (file basename / `anon <file:line>`) it receives from tests_in_graph,
+    /// and never the raw synthetic names.
+    #[test]
+    fn uncovered_roots_humanized_strings_survive_into_risk_label() {
+        let uncovered = vec!["anon <keymap.ts:20>".to_string(), "keymap.ts".to_string()];
+        let inputs = Inputs {
+            uncovered_roots: &uncovered,
+            ..Default::default()
+        };
+        let r = compute(inputs);
+        let item = r
+            .risks
+            .items
+            .iter()
+            .find(|it| it.label.starts_with("Uncovered roots"))
+            .expect("uncovered-roots risk item");
+        // The label is rendered through safe_label downstream; assert the
+        // pre-render form here carries the humanized strings verbatim.
+        assert!(item.label.contains("anon <keymap.ts:20>"), "{}", item.label);
+        assert!(item.label.contains("keymap.ts"), "{}", item.label);
+        assert!(
+            !item.label.contains("<module>") && !item.label.contains("<anonymous@"),
+            "raw synthetic names leaked: {}",
+            item.label
+        );
+    }
+
+    /// A finding on an anonymous symbol collapses its `function` token to
+    /// `anon` in the risk map (location stays in the `(file:line)` suffix);
+    /// no raw `<anonymous@N>` leaks.
+    #[test]
+    fn synthetic_finding_function_is_humanized_in_risk_map() {
+        use crate::insights::{Effort, Finding, FindingKind, Severity};
+        use crate::pr_algorithms::pr_signals::{collect, QualityBar};
+        use crate::pr_algorithms::test_helpers::with_findings;
+
+        let mut node = with_findings(
+            crate::pr_algorithms::test_helpers::mk_node("<anonymous@12>", "src/orders.rs"),
+            vec![Finding {
+                kind: FindingKind::NPlusOne,
+                severity: Severity::High,
+                effort: Effort::Medium,
+                confidence: 0.9,
+                line: 12,
+                message: "n+1".into(),
+                evidence: vec![],
+                remediation: None,
+                byte_range: None,
+                fidelity: None,
+                fusion_paths: vec![],
+                predicted_sql: None,
+                originating_orm: None,
+            }],
+        );
+        node.line = 12;
+        let signals = collect(&[node], &["src/orders.rs".to_string()], &QualityBar::default());
+        let inputs = Inputs {
+            changed_files: &[cf("src/orders.rs", 10)],
+            signals: Some(&signals),
+            ..Default::default()
+        };
+        let r = compute(inputs);
+        let item = r
+            .risks
+            .items
+            .iter()
+            .find(|it| it.label.contains("N+1 query"))
+            .expect("N+1 risk item");
+        assert!(item.label.contains("· anon ("), "function should collapse to `anon`: {}", item.label);
+        assert!(
+            !item.label.contains("<anonymous@") && !item.label.contains("‹anonymous"),
+            "raw synthetic name leaked: {}",
+            item.label
+        );
     }
 }

@@ -90,7 +90,16 @@ pub fn compute(entries: &[CallTreeNode]) -> TestsInGraph {
             }
         }
         if !any_test {
-            uncovered.push(root.name.clone());
+            // Present synthetic roots (`<module>` / `<anonymous@N>`)
+            // human-readably here, where the node's file/line are in scope
+            // — the downstream risk map only displays these strings. Real
+            // names pass through unchanged. See `symbol_label`.
+            uncovered.push(crate::pr_algorithms::symbol_label::display_symbol_label(
+                &root.name,
+                root.parent_class.as_deref(),
+                &root.file,
+                root.line,
+            ));
         }
     }
 
@@ -137,5 +146,28 @@ mod tests {
         let r = compute(&entries);
         assert!(r.uncovered_roots.contains(&"uncovered".to_string()));
         assert!(!r.uncovered_roots.contains(&"covered".to_string()));
+    }
+
+    /// Synthetic uncovered roots are humanized at the source (where file/line
+    /// are in scope) so the downstream risk map never shows raw
+    /// `<module>` / `<anonymous@N>`. NOTE: this string is NOT run through
+    /// mermaid's `safe_label`, so the anonymous form keeps ASCII `<…>`.
+    #[test]
+    fn synthetic_uncovered_roots_are_humanized() {
+        let module_root = mk_node("<module>", "app/keymap.ts");
+        let mut anon_root = mk_node("<anonymous@7>", "app/keymap.ts");
+        anon_root.line = 7;
+        let r = compute(&[module_root, anon_root]);
+        assert!(r.uncovered_roots.contains(&"keymap.ts".to_string()), "{:?}", r.uncovered_roots);
+        assert!(
+            r.uncovered_roots.contains(&"anon <keymap.ts:7>".to_string()),
+            "{:?}",
+            r.uncovered_roots
+        );
+        assert!(
+            !r.uncovered_roots.iter().any(|s| s.contains("<module>") || s.contains("<anonymous@")),
+            "raw synthetic names must not survive:\n{:?}",
+            r.uncovered_roots
+        );
     }
 }

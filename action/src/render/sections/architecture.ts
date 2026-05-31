@@ -63,7 +63,7 @@ export function renderArchitecture(input: ArchitectureInput): string | null {
     // fails to lay out. The legacy `combined_mermaid` is still accepted as
     // a single-block fallback for older scanner builds.
     const anonNote =
-      '> Nodes labelled `‹anonymous@N›` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.';
+      '> Nodes labelled `anon ‹file:line›` are anonymous functions/callbacks (arrows, lambdas, closures) the profiler could not name; the `file:line` marks where each is defined. A file-level entry shows as its filename.';
     const inner: string[] = [];
     if ('combined' in pair) {
       // Legacy single-chart shape — no "two charts" preamble (that would
