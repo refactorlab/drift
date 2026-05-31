@@ -1,0 +1,608 @@
+[{
+  "summary": "Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.",
+  "agentCount": 106,
+  "logs": [
+    "Q: Implementation-grade research for a Rust static-analysis tool (drift-static-prof…",
+    "Decomposed into 5 angles: Rust crate build-vs-buy facts (tokenizers + complexity + line classification), Code tokenizer density numbers + Anthropic tokenizer availability, SonarSource cognitive complexity algorithm + reference implementations (academic/spec), 2026 context windows + long-context degradation research (recent/contrarian), Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner)",
+    "SonarSource cognitive complexity algorithm + reference implementations (academic/spec): 6 results",
+    "Rust crate build-vs-buy facts (tokenizers + complexity + line classification): 6 results",
+    "2026 context windows + long-context degradation research (recent/contrarian): 6 results",
+    "2026 context windows + long-context degradation research (recent/contrarian): 4 novel (2 filtered)",
+    "Code tokenizer density numbers + Anthropic tokenizer availability: 6 results",
+    "Code tokenizer density numbers + Anthropic tokenizer availability: 4 novel (2 filtered)",
+    "Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner): 6 results",
+    "Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner): 4 novel (2 filtered)",
+    "Fetched 24 sources → 115 claims → verifying top 25",
+    "\"tiktoken-rs supports the OpenAI BPE encodings rele…\": 3-0 ✓",
+    "\"tiktoken-rs is at version 0.11.0 (released 2026-04…\": 3-0 ✓",
+    "\"tiktoken-rs is a pure-Rust BPE tokenizer crate at …\": 3-0 ✓",
+    "\"tiktoken-rs is a pure-Rust implementation built on…\": 3-0 ✓",
+    "\"tiktoken-rs supports the o200k_base encoding (cove…\": 3-0 ✓",
+    "\"rust-code-analysis documents and computes both Cog…\": 3-0 ✓",
+    "\"The most recent GitHub release of mozilla/rust-cod…\": 0-3 ✗",
+    "\"tiktoken-rs works offline via locally vendored voc…\": 3-0 ✓",
+    "\"rust-code-analysis is dual-licensed: the main libr…\": 3-0 ✓",
+    "\"rust-code-analysis extracts metrics for ten differ…\": 3-0 ✓",
+    "\"rust-code-analysis supports cognitive complexity a…\": 2-1 ✓",
+    "\"tokei is published as a Rust library crate (not on…\": 3-0 ✓",
+    "\"tokei is dual-licensed MIT OR Apache-2.0.…\": 3-0 ✓",
+    "\"The latest release of rust-code-analysis is v0.0.2…\": 2-1 ✓",
+    "\"scc is written in pure Go and licensed under the M…\": 3-0 ✓",
+    "\"scc's counting engine is exposed publicly as a lib…\": 3-0 ✓",
+    "\"tokei's line classification handles edge cases inc…\": 3-0 ✓",
+    "\"scc classifies lines using a byte-level state mach…\": 3-0 ✓",
+    "\"Anthropic's only token counting mechanism for Clau…\": 3-0 ✓",
+    "\"A switch and all of its cases combined incur only …\": 3-0 ✓",
+    "\"A nesting increment is added for each level of nes…\": 3-0 ✓",
+    "\"Cognitive Complexity adds +1 per contiguous sequen…\": 3-0 ✓",
+    "\"Cognitive Complexity adds a fundamental increment …\": 3-0 ✓",
+    "\"gocognit implements the SonarSource Cognitive Comp…\": 2-1 ✓",
+    "\"Cognitive Complexity (canonical SonarSource whitep…\": 2-1 ✓",
+    "Verify done: 25 claims → 24 confirmed, 1 killed"
+  ],
+  "result": {
+    "question": "Implementation-grade research for a Rust static-analysis tool (drift-static-profiler) that scores GitHub PRs on \"LLM complexity\" and code-quality dimensions, WITHOUT calling any LLM at runtime — pure deterministic static analysis over a tree-sitter call graph. I need to verify facts and find production-ready open-source Rust crates. Treat each as a principal engineer who must defend the choice in review. Answer every sub-question with verified citations, version numbers, and license. Flag anything that is a tuning knob vs a hard external fact.\n\nTHEME 1 — Token estimation for source code WITHOUT vendoring an LLM tokenizer in the hot path:\n1. Measured chars-per-token / bytes-per-token densities for CODE (not prose) on the 2026 tokenizers: OpenAI o200k_base and cl100k_base; Anthropic Claude (Sonnet 4.5/4.6, Opus 4.8) — per language (Python, TypeScript, Go, Rust, Java). Are newer tokenizers denser (more tokens per char)? Get hard numbers with sources.\n2. Pure-Rust crates that can serve as a tokenizer ORACLE in dev/tests: tiktoken-rs (current version, which encodings, license), HuggingFace `tokenizers` crate, any Claude/Anthropic tokenizer availability in Rust. Is Anthropic's tokenizer public in 2026? Can the count-tokens API be used offline?\n3. Is \"bytes/2.8\" a defensible safety-biased estimator for code across these tokenizers, or should it differ? What is the error profile (over/under-budget)?\n\nTHEME 2 — Cognitive complexity (Campbell) computed statically in Rust:\n4. The `rust-code-analysis` crate (Mozilla) — current status/version, license, does it expose cognitive complexity AND cyclomatic across Python/JS/TS/Go/Rust/Java? Is it maintained in 2026? Any successor crates?\n5. The exact SonarSource Cognitive Complexity algorithm (B1 increment / B2 nesting / B3 nesting-only buckets) — confirm the precise rules: which constructs increment, the nesting penalty, the boolean-operator-run rule (+1 per contiguous run of same operator), switch counted once not per-case, recursion, labeled jumps. Cite the Campbell whitepaper.\n6. Reference implementations to validate against: `gocognit` (Go), `lizard` (multi-language CCN), SonarQube S3776. Confirm cognitive_complexity_limit = 15.\n\nTHEME 3 — Source-text classification (comment vs code vs string) state machine:\n7. How `scc` and `tokei` classify lines (the byte-level state machine: blank/code/comment/string states, strings suppress comment tokens, nested block comments, longest-delimiter-first). Are `tokei` or `scc` usable as Rust LIBRARY crates (not just CLIs)? Versions + license.\n8. SonarQube comment_lines_density definition and healthy band; the S109 \"magic number\" rule (exempt set, what counts).\n\nTHEME 4 — Context-window & long-context degradation facts (2026):\n9. Confirmed context windows for current flagship + workhorse models (Claude Opus 4.8 / Sonnet 4.6, GPT-4.1/o-series, Gemini 2.5/3 Pro/Flash) — 1M vs 200K vs 128K.\n10. Long-context effective-length / \"context rot\" research: NoLiMa (ICML 2025, arXiv 2502.05167), Chroma context-rot, \"Lost in the Middle\" (Liu 2024). What fraction of a 1M / 200K window is reliably usable for retrieval/reasoning? Cite specific degradation knees.\n\nTHEME 5 — Coupling / fragility / centrality metrics and normalization:\n11. CK metrics (CBO), Martin's instability (I = Ce/(Ca+Ce)), Henry-Kafura information flow — confirmed fault-risk thresholds (Shatnawi 2010 CBO≈9). Are class-level thresholds defensibly transferable to function-level?\n12. PageRank as a centrality measure on call graphs; why thresholding raw PageRank is wrong (shrinks with N) and \"centrality multiple = pagerank·N\" is scale-free. NDepend / CodeScene precedents.\n13. log1p(x)/log1p(SAT) saturation normalization for power-law-distributed graph-degree counts — is this a sound, citable choice vs z-score / min-max?\n\nTHEME 6 — Validation methodology:\n14. sMAPE vs MAPE for estimator error bands on small diffs; Spearman ρ for rank-prediction quality. Best practice for validating a heuristic composite score (dead-score/saturation detection).\n15. Any 2024-2026 academic or industry work specifically on \"PR reviewability for LLMs\", \"token budget of a diff\", or \"AI code review degradation with large diffs\" — GitHub Copilot large-PR behavior, Anthropic/Cursor agent token-spend studies.\n\nPrioritize: hard version+license facts for the Rust crates (THEME 1-3 crates are the highest value — they decide build vs buy), and the 2026 numeric facts (densities, context windows, degradation knees). Where a number is genuinely a calibration knob with no external source, say so explicitly.",
+    "summary": "For drift-static-profiler, the build-vs-buy decisions resolve cleanly on the Rust-crate facts. For OpenAI token estimation, tiktoken-rs v0.11.0 (released 2026-04-08, MIT) is a production-ready, fully offline pure-Rust oracle covering o200k_base (GPT-5/o-series/4o/4.1) and cl100k_base (GPT-4/3.5) via compile-time-embedded vocab files — use it in dev/tests with no LLM runtime call. There is NO official, accurate offline Claude tokenizer in 2026: Anthropic exposes only a server-side count_tokens HTTP endpoint requiring an API key, so any Claude token count is either a network call or an unofficial ~96%-accurate approximation. For cognitive/cyclomatic complexity, Mozilla's rust-code-analysis (v0.0.25, MPL-2.0/MIT, last released 2023-01-13) implements both metrics for C/C++/Rust/Python/JS/TS/Java but is effectively unmaintained as of 2026 (~3.4 years stale) and its Go complexity-metric support is unconfirmed — a maintenance risk to flag. The canonical SonarSource Cognitive Complexity algorithm (Campbell whitepaper, 29 Aug 2023, v1.7) is fully confirmed down to the increment/nesting/boolean-run/switch/recursion/labeled-jump rules, with gocognit as a faithful reference implementation. For line classification, tokei (v14.0.0, MIT OR Apache-2.0) is usable as a Rust library with a state machine handling nested comments and comment-in-string edge cases; scc is equivalent but Go-only.",
+    "findings": [
+      {
+        "claim": "tiktoken-rs v0.11.0 (released 2026-04-08, MIT) is a pure-Rust, fully offline tokenizer oracle covering the 2026-relevant OpenAI encodings o200k_base (GPT-5/o-series/gpt-4o/gpt-4.5/gpt-4.1/codex) and cl100k_base (GPT-4/3.5-turbo), plus p50k_base/p50k_edit/r50k_base/gpt2/o200k_harmony. Vocab is baked in at compile time via include_str! (assets/*.tiktoken), so there is no network or LLM runtime call. BUILD-VS-BUY: BUY for OpenAI dev/test token oracle.",
+        "confidence": "high",
+        "vote": "merged 3-0 (claims 0,1,2,3,4,5)",
+        "sources": [
+          "https://crates.io/crates/tiktoken-rs",
+          "https://github.com/zurawiki/tiktoken-rs",
+          "https://docs.rs/crate/tiktoken-rs/0.11.0"
+        ],
+        "evidence": "crates.io API: max version 0.11.0, license MIT, updated 2026-04-08. docs.rs exposes o200k_base()/cl100k_base() singletons. Source loads BPE tables via include_str!(\"../../assets/cl100k_base.tiktoken\") etc. — compile-time embedded, no HTTP client in deps (anyhow/base64/bstr/fancy-regex/lazy_static/regex/rustc-hash; async-openai optional). CAVEAT: it is a pure-Rust REIMPLEMENTATION reusing OpenAI's published vocab files, NOT a binding/wrapper on top of OpenAI's tiktoken core crate (no `tiktoken` dependency in Cargo.toml). Covers OpenAI only, not Anthropic."
+      },
+      {
+        "claim": "Anthropic exposes NO official, accurate offline Claude tokenizer in 2026. The only authoritative token count is the server-side HTTP endpoint POST https://api.anthropic.com/v1/messages/count_tokens, which requires an API key and a network call (rate-limited 100-8000 RPM, free). For drift-static-profiler's no-LLM-at-runtime constraint, any Claude count must be an estimate, not an oracle.",
+        "confidence": "high",
+        "vote": "3-0 (claim 17)",
+        "sources": [
+          "https://platform.claude.com/docs/en/build-with-claude/token-counting",
+          "https://github.com/anthropics/anthropic-tokenizer-typescript"
+        ],
+        "evidence": "Docs show only the curl count_tokens endpoint with x-api-key; recommend relying on response `usage`. The official @anthropic-ai/tokenizer package is offline but its own README states it is NOT accurate for Claude 3+ (and by extension Claude 4.x/Opus 4.8/Sonnet 4.6) — 'a very rough approximation.' Unofficial reverse-engineered offline estimators exist (e.g. ctoc ~96% accuracy via sandwich counting; Jellyfishboy/claude-tokenizer Rust lib with embedded JSON) but carry no accuracy guarantee. NUANCE FOR IMPLEMENTATION: for an offline Claude estimate you must either accept the API oracle in dev/tests or use an unofficial ~96% approximation; treat the Claude byte/char ratio as a calibration knob, not an external fact."
+      },
+      {
+        "claim": "Mozilla's rust-code-analysis implements BOTH Cognitive Complexity (COGNITIVE) and Cyclomatic Complexity (CC) as distinct documented metrics for C/C++, Rust, Python, JavaScript, TypeScript, and Java (~ten languages total). Licensed MPL-2.0 for the libraries, MIT for Mozilla-defined grammars. BUILD-VS-BUY: viable for the metric math, but a maintenance risk (see next finding).",
+        "confidence": "high",
+        "vote": "merged (claims 6 [2-1], 7 [3-0], 8 [3-0], 10 [3-0])",
+        "sources": [
+          "https://github.com/mozilla/rust-code-analysis",
+          "https://mozilla.github.io/rust-code-analysis/metrics.html",
+          "https://mozilla.github.io/rust-code-analysis/languages.html"
+        ],
+        "evidence": "Master source confirms full `impl Cognitive` and `impl Cyclomatic` for Python/Rust/Cpp/Javascript/Typescript(Tsx)/Java. metrics.html: CC 'calculates the Cyclomatic complexity'; COGNITIVE 'measuring how complex it is to understand a unit of code.' README: 'eleven maintainability metrics for ten different languages.' License: libraries MPL-2.0, Mozilla grammars MIT. CAVEAT: claim 6 was 2-1 because pre-2022 issues/studies predate Java cognitive support (now present). The crate's GO complexity-metric support is UNCONFIRMED — a Go tree-sitter parser exists but Cognitive/Cyclomatic impls for Go were not verified; this matters because the research question explicitly asks about Go."
+      },
+      {
+        "claim": "rust-code-analysis is effectively UNMAINTAINED as of 2026: latest release v0.0.25 dated 2023-01-13, ~3.4 years stale, no 0.0.26+ or 2024-2025 release found.",
+        "confidence": "high",
+        "vote": "2-1 (claim 9); refuted a competing claim that dated it 2021",
+        "sources": [
+          "https://crates.io/api/v1/crates/rust-code-analysis",
+          "https://github.com/mozilla/rust-code-analysis/releases"
+        ],
+        "evidence": "crates.io API: max_version=newest_version=0.0.25, created_at/updated_at = 2023-01-13. No newer release exists. The alternative claim dating it to January 2021 was REFUTED 0-3. IMPLICATION: building on rust-code-analysis means depending on a stale crate (potential tree-sitter grammar drift, no upstream fixes) — flag as a build-vs-buy risk; consider vendoring/forking or reimplementing the SonarSource algorithm directly (which is fully specified — see next findings)."
+      },
+      {
+        "claim": "The canonical Cognitive Complexity algorithm is the SonarSource whitepaper by G. Ann Campbell, dated 29 August 2023, Version 1.7. It uses three basic rules and four increment types whose CANONICAL names are Nesting, Structural, Fundamental, and Hybrid (do NOT use the loose A/B/C/D 'structural-fundamental' labels from the original research note).",
+        "confidence": "high",
+        "vote": "2-1 (claim 18) — split was over label naming, not the load-bearing facts",
+        "sources": [
+          "https://www.sonarsource.com/docs/CognitiveComplexity.pdf"
+        ],
+        "evidence": "PDF FlateDecode streams extracted: byline 'By G. Ann Campbell'; '29 August 2023, Version 1.7'; 'three basic rules'; 'four different types of increments.' CAVEAT (the 1 dissent): the four types are Nesting / Structural / Fundamental / Hybrid. The original research note's 'A/B/C/D structural-fundamental' paraphrase is sloppy and should be corrected before implementation. The who/when/version/structure facts are exact."
+      },
+      {
+        "claim": "Cognitive Complexity nesting/increment rules (hard external facts, not tuning knobs): (1) +1 plus current nesting level for each nesting structure — worked example if=+1, nested for=+2 (nesting=1), doubly-nested while=+3 (nesting=2); the method declaration and try blocks add NO nesting increment (catch does). (2) A switch and all its cases combined incur a SINGLE structural increment (not per-case like cyclomatic). (3) +1 per CONTIGUOUS RUN of the same binary boolean operator (a change of operator starts a new run): `if (a && b && c && d)` = if+1 plus one &&-run+1; `if (a && !(b && c))` = if+1 + outer-&&+1 + inner-&&+1. (4) +1 fundamental increment per method in a recursion cycle (direct or indirect); each catch = one structural increment regardless of exception-type count; goto / labeled break/continue each add a fundamental increment.",
+        "confidence": "high",
+        "vote": "3-0 unanimous across claims 19, 20, 21, 22",
+        "sources": [
+          "https://www.sonarsource.com/docs/CognitiveComplexity.pdf",
+          "https://www.sonarsource.com/blog/cognitive-complexity-because-testability-understandability/",
+          "SonarQube rule S3776"
+        ],
+        "evidence": "Whitepaper worked examples extracted verbatim for nesting cascade, switch-single-increment, boolean-operator-run, recursion/catch/labeled-jump rules. B2 nesting structures: for, while, do-while, if, else-if, else, catch (NOT method, NOT try). try and finally ignored entirely; catch alone gets structural+nesting. These are fixed algorithm rules. The cognitive_complexity_limit = 15 default was referenced but verify against your specific SonarQube ruleset version (default S3776 threshold)."
+      },
+      {
+        "claim": "gocognit (Go) is a faithful reference implementation of the SonarSource B1/B2/B3 structure and can be used to validate drift-static-profiler's cognitive scores: B1 increments for if/else-if/else, switch/select, for, labeled goto/break/continue, a sequence of binary logical operators, and each method in a recursion cycle; B2 nesting-level adds for if/else-if/else, switch/select, for, and function literal/lambda; B3 nesting increments apply to if, switch/select, for commensurate with depth.",
+        "confidence": "high",
+        "vote": "2-1 (claim 23) — split on phrasing, mapping confirmed",
+        "sources": [
+          "https://github.com/uudashr/gocognit/blob/master/README.md"
+        ],
+        "evidence": "gocognit README lists B1/B2/B3 bullets matching the SonarSource model exactly, including switch/select counted once and binary-logical-operator runs. Cross-validated: the inner/outer boolean-run example (+2 for logical ops) reproduces in gocognit, phpcs-cognitive-complexity, and SonarQube C++. Use gocognit + lizard (multi-language CCN, but note lizard computes CYCLOMATIC and counts each operator separately — a different metric, not a cognitive reference)."
+      },
+      {
+        "claim": "tokei (v14.0.0, released 2025-12-30, dual MIT OR Apache-2.0) is usable as a Rust LIBRARY crate (bin+lib), not just a CLI. Its line classifier is a state machine (not regex) that handles edge cases including nested comments and comment syntax inside string literals. BUILD-VS-BUY: BUY for line classification in Rust.",
+        "confidence": "high",
+        "vote": "merged 3-0 (claims 11, 12, 13)",
+        "sources": [
+          "https://docs.rs/tokei/latest/tokei/",
+          "https://github.com/XAMPPRocky/tokei",
+          "https://lib.rs/crates/tokei"
+        ],
+        "evidence": "docs.rs: 'A simple, efficient library for counting code in directories. This functionality is also provided as a CLI utility.' Public API: Languages::get_statistics, Language, CodeStats, Report, Config, LanguageType. Cargo.toml license = 'MIT OR Apache-2.0'. Docs: 'uses a small state machine rather than regular expressions ... can accurately count a lot more edge cases such as nested comments, or comment syntax inside string literals.' CAVEAT: treat 'accurately' as best-effort — open/closed bugs exist (e.g. #1245 multi-line comment, #330 C# verbatim string, #413 Python docstrings, Go /* in multiline string)."
+      },
+      {
+        "claim": "scc (boyter/scc, MIT, pure Go) exposes its counting engine publicly as a Go library (processor package: FileJob, LineType BLANK/CODE/COMMENT, CountStats) and uses a byte-level state machine tracking code/comment/string/blank states (single/multi-line comments, strings, multi-line strings), evaluated/reset at each newline so comments inside strings are not miscounted. It is NOT a Rust crate — only usable as a reference/oracle via subprocess or to mirror its state-machine design in Rust.",
+        "confidence": "high",
+        "vote": "merged 3-0 (claims 14, 15, 16)",
+        "sources": [
+          "https://github.com/boyter/scc",
+          "https://boyter.org/posts/sloc-cloc-code-revisited/",
+          "https://pkg.go.dev/github.com/boyter/scc/v3/processor"
+        ],
+        "evidence": "README: 'written in pure Go ... Licensed under MIT licence'; 'The core part of scc which is the counting engine is exposed publicly to be integrated into other Go applications'; 'scc uses a small state machine ... aware of single-line comments, multi-line comments, strings, multi-line strings, blank lines ... able to accurately determine if a comment is in a string.' Author blog confirms newline resets/counts state. BUILD-VS-BUY IMPLICATION: for a Rust tool, tokei is the in-process library choice; scc serves as a cross-check oracle (subprocess) or a design reference for the byte-level state machine."
+      }
+    ],
+    "caveats": "SCOPE GAPS — the verified claim set does NOT cover several sub-questions the research asked, so these remain unsubstantiated here: (1) THEME 1.1/1.3 — no measured chars-per-token / bytes-per-token densities for code per language on any 2026 tokenizer, and no verification of the 'bytes/2.8' estimator or its over/under-budget error profile. Treat any density ratio (including bytes/2.8) as a CALIBRATION KNOB with no external source confirmed in this round; calibrate empirically against tiktoken-rs (OpenAI) and accept Claude is un-oracle-able offline. (2) THEME 4.9/4.10 — no confirmed 2026 context-window numbers for any model, and NoLiMa/Chroma context-rot/Lost-in-the-Middle degradation knees were not verified. (3) THEME 5.11-13 — CK/CBO thresholds (Shatnawi CBO~9), Martin instability, Henry-Kafura, PageRank scale-invariance ('centrality multiple = pagerank*N'), and log1p saturation normalization are UNVERIFIED here; the function-vs-class threshold transferability question is open. (4) THEME 6.14-15 — sMAPE vs MAPE, Spearman rho methodology, and 2024-2026 'PR reviewability for LLMs' / large-diff AI-review-degradation literature are UNVERIFIED. TIME-SENSITIVITY: tiktoken-rs (2026-04-08) and tokei (2025-12-30) are fresh; rust-code-analysis is stale (2023-01-13) and its staleness is the single biggest build-vs-buy risk. SPLIT-VOTE NOTES: claims 6, 9, 18, 23 were 2-1 — in every case the dissent was over phrasing/snapshot-era, not the load-bearing fact. The original note's Cognitive Complexity 'A/B/C/D' labels are wrong; use Nesting/Structural/Fundamental/Hybrid.",
+    "openQuestions": [
+      "Does rust-code-analysis v0.0.25 actually implement Cognitive AND Cyclomatic complexity for GO (not just provide a Go tree-sitter parser)? The research question requires Go; this was explicitly unconfirmed. If not, you must reimplement the SonarSource algorithm for Go yourself.",
+      "What are the real measured bytes-per-token / chars-per-token densities for code (Python/TS/Go/Rust/Java) under o200k_base vs cl100k_base, and is 'bytes/2.8' actually safety-biased (always over-budget) or does it under-count for any language? This needs an empirical calibration run against tiktoken-rs since no external source was verified.",
+      "Is there ANY citable basis for treating class-level CK/CBO fault thresholds (e.g. CBO~9) as transferable to function-level call-graph nodes, or is the function-level threshold purely a tuning knob requiring its own calibration?",
+      "Given rust-code-analysis is unmaintained (last release 2023-01-13), is the lower-risk path to vendor/fork it or to reimplement the fully-specified SonarSource cognitive-complexity rules directly on your own tree-sitter call graph (validated against gocognit and SonarQube S3776)?"
+    ],
+    "refuted": [
+      {
+        "claim": "The most recent GitHub release of mozilla/rust-code-analysis is v0.0.25, dated January 13, 2021, indicating the project is stale/unmaintained as of 2026 (no releases in over five years).",
+        "vote": "0-3",
+        "source": "https://github.com/mozilla/rust-code-analysis/releases"
+      }
+    ],
+    "sources": [
+      {
+        "url": "https://crates.io/crates/tiktoken-rs",
+        "quality": "primary",
+        "angle": "Rust crate build-vs-buy facts (tokenizers + complexity + line classification)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://github.com/zurawiki/tiktoken-rs",
+        "quality": "primary",
+        "angle": "Rust crate build-vs-buy facts (tokenizers + complexity + line classification)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://github.com/mozilla/rust-code-analysis/releases",
+        "quality": "primary",
+        "angle": "Rust crate build-vs-buy facts (tokenizers + complexity + line classification)",
+        "claimCount": 4
+      },
+      {
+        "url": "https://mozilla.github.io/rust-code-analysis/metrics.html",
+        "quality": "primary",
+        "angle": "Rust crate build-vs-buy facts (tokenizers + complexity + line classification)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://docs.rs/tokei/latest/tokei/",
+        "quality": "primary",
+        "angle": "Rust crate build-vs-buy facts (tokenizers + complexity + line classification)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://github.com/boyter/scc",
+        "quality": "primary",
+        "angle": "Rust crate build-vs-buy facts (tokenizers + complexity + line classification)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://simonwillison.net/2026/Apr/20/claude-token-counts/",
+        "quality": "blog",
+        "angle": "Code tokenizer density numbers + Anthropic tokenizer availability",
+        "claimCount": 5
+      },
+      {
+        "url": "https://www.claudecodecamp.com/p/i-measured-claude-4-7-s-new-tokenizer-here-s-what-it-costs-you",
+        "quality": "blog",
+        "angle": "Code tokenizer density numbers + Anthropic tokenizer availability",
+        "claimCount": 5
+      },
+      {
+        "url": "https://community.openai.com/t/rules-of-thumb-for-number-of-source-code-characters-to-tokens/622947",
+        "quality": "forum",
+        "angle": "Code tokenizer density numbers + Anthropic tokenizer availability",
+        "claimCount": 5
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/token-counting",
+        "quality": "primary",
+        "angle": "Code tokenizer density numbers + Anthropic tokenizer availability",
+        "claimCount": 5
+      },
+      {
+        "url": "https://www.sonarsource.com/docs/CognitiveComplexity.pdf",
+        "quality": "primary",
+        "angle": "SonarSource cognitive complexity algorithm + reference implementations (academic/spec)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://github.com/uudashr/gocognit/blob/master/README.md",
+        "quality": "primary",
+        "angle": "SonarSource cognitive complexity algorithm + reference implementations (academic/spec)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://github.com/SonarSource/sonar-python/blob/master/python-checks/src/main/resources/org/sonar/l10n/py/rules/python/S3776.html",
+        "quality": "primary",
+        "angle": "SonarSource cognitive complexity algorithm + reference implementations (academic/spec)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://www.sonarsource.com/resources/cognitive-complexity/",
+        "quality": "primary",
+        "angle": "SonarSource cognitive complexity algorithm + reference implementations (academic/spec)",
+        "claimCount": 3
+      },
+      {
+        "url": "https://github.com/terryyin/lizard",
+        "quality": "primary",
+        "angle": "SonarSource cognitive complexity algorithm + reference implementations (academic/spec)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://www.sonarsource.com/blog/cognitive-complexity-because-testability-understandability",
+        "quality": "primary",
+        "angle": "SonarSource cognitive complexity algorithm + reference implementations (academic/spec)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://arxiv.org/abs/2502.05167",
+        "quality": "primary",
+        "angle": "2026 context windows + long-context degradation research (recent/contrarian)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://research.trychroma.com/context-rot",
+        "quality": "primary",
+        "angle": "2026 context windows + long-context degradation research (recent/contrarian)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+        "quality": "primary",
+        "angle": "2026 context windows + long-context degradation research (recent/contrarian)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://aclanthology.org/2024.tacl-1.9/",
+        "quality": "primary",
+        "angle": "2026 context windows + long-context degradation research (recent/contrarian)",
+        "claimCount": 4
+      },
+      {
+        "url": "https://www.researchgate.net/publication/220071232_Shatnawi_R_A_Quantitative_Investigation_of_the_Acceptable_Risk_levels_of_Object-Oriented_Metrics_in_Open-Source_Systems_IEEE_Transactions_on_Software_Engineering_362_216-225",
+        "quality": "primary",
+        "angle": "Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Software_package_metrics",
+        "quality": "secondary",
+        "angle": "Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://github.blog/ai-and-ml/generative-ai/agent-pull-requests-are-everywhere-heres-how-to-review-them/",
+        "quality": "blog",
+        "angle": "Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Symmetric_mean_absolute_percentage_error",
+        "quality": "secondary",
+        "angle": "Coupling/centrality metrics, normalization, and PR-reviewability validation (practitioner)",
+        "claimCount": 4
+      }
+    ],
+    "stats": {
+      "angles": 5,
+      "sourcesFetched": 24,
+      "claimsExtracted": 115,
+      "claimsVerified": 25,
+      "confirmed": 24,
+      "killed": 1,
+      "afterSynthesis": 9,
+      "urlDupes": 1,
+      "budgetDropped": 5,
+      "agentCalls": 106
+    }
+  }
+},{
+  "summary": "Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.",
+  "agentCount": 104,
+  "logs": [
+    "Q: Targeted verification pass for a Rust PR-quality static-analysis tool. A prior r…",
+    "Decomposed into 5 angles: Context-window sizes (official model docs), Long-context degradation studies (primary research), Coupling and centrality metric sources, Call-graph normalization & function-level transfer (practitioner), Validation methodology & LLM PR-review degradation",
+    "Long-context degradation studies (primary research): 6 results",
+    "Validation methodology & LLM PR-review degradation: 6 results",
+    "Coupling and centrality metric sources: 6 results",
+    "Coupling and centrality metric sources: 4 novel (2 filtered)",
+    "Context-window sizes (official model docs): 6 results",
+    "Context-window sizes (official model docs): 4 novel (2 filtered)",
+    "Call-graph normalization & function-level transfer (practitioner): 5 results",
+    "Call-graph normalization & function-level transfer (practitioner): 2 novel (3 filtered)",
+    "Fetched 22 sources → 92 claims → verifying top 25",
+    "\"Claude's latest Opus model (Opus 4.8, the 'NextOpu…\": 3-0 ✓",
+    "\"Anthropic itself acknowledges that retrieval accur…\": 3-0 ✓",
+    "\"Claude Opus 4.7, Claude Opus 4.6, and Claude Sonne…\": 3-0 ✓",
+    "\"Other Claude models, including Claude Sonnet 4.5 a…\": 3-0 ✓",
+    "\"Legacy/earlier Claude models split on context wind…\": 3-0 ✓",
+    "\"Claude Sonnet 4.6 has a 1,000,000-token (1M) conte…\": 3-0 ✓",
+    "\"GPT-4.1, GPT-4.1 mini, and GPT-4.1 nano all suppor…\": 3-0 ✓",
+    "\"The precise GPT-4.1 context-window limit in the Op…\": 3-0 ✓",
+    "\"Gemini models support a context window of up to 1 …\": 3-0 ✓",
+    "\"GPT-4o degrades from a near-perfect 99.3% short-co…\": 3-0 ✓",
+    "\"Retrieval accuracy degrades when multiple 'needles…\": 3-0 ✓",
+    "\"NoLiMa measures latent-association retrieval by mi…\": 3-0 ✓",
+    "\"At 32K tokens, 10-11 of the evaluated long-context…\": 3-0 ✓",
+    "\"LLM performance degrades as input/context length i…\": 3-0 ✓",
+    "\"Language model performance exhibits a U-shaped cur…\": 3-0 ✓",
+    "\"The degradation with input length holds across all…\": 3-0 ✓",
+    "\"Models do not use the tokens in their context wind…\": 3-0 ✓",
+    "\"NoLiMa defines a model's 'effective length' as the…\": 3-0 ✓",
+    "\"Long-context performance degrades severely with in…\": 2-1 ✓",
+    "\"The study finds that LLM performance varies signif…\": 3-0 ✓",
+    "\"Models do not handle later context positions as re…\": 3-0 ✓",
+    "\"On multi-document question answering, retrieval/QA…\": 3-0 ✓",
+    "\"Robert C. Martin's Instability metric is defined a…\": 3-0 ✓",
+    "\"The effective context length of open-source LLMs t…\": 3-0 ✓",
+    "\"The 'Main Sequence' is the line from (A=0,I=1)... …\": 3-0 ✓",
+    "Verify done: 25 claims → 25 confirmed, 0 killed"
+  ],
+  "result": {
+    "question": "Targeted verification pass for a Rust PR-quality static-analysis tool. A prior research round verified the Rust-crate build-vs-buy facts but EXPLICITLY LEFT THESE THREE THEMES UNVERIFIED. Verify each with hard citations (prefer primary sources: arXiv papers, official model docs, original metric papers). For every numeric value state whether it is a HARD EXTERNAL FACT (with source) or a CALIBRATION KNOB (no authoritative source — say so plainly).\n\nTHEME A — Context windows & long-context degradation (2026 facts):\n1. Confirmed maximum context-window token counts for: Anthropic Claude Opus 4.8 and Sonnet 4.6; OpenAI GPT-4.1 and the o-series/GPT-5; Google Gemini 2.5 Pro / 3 Pro / Flash. Which are 1,000,000 vs 200,000 vs 128,000 tokens? Cite official model/docs pages.\n2. NoLiMa (arXiv 2502.05167): what does it measure (\"effective context length\" where performance stays ≥85% of short-context baseline), and what effective lengths did it find for long-context models — i.e. at what token depth does performance fall below the 85% threshold?\n3. Chroma \"context rot\" study (research.trychroma.com/context-rot): what degradation does it report as input length grows, and at roughly what token counts does reliability noticeably drop for 200K-class and 1M-class models?\n4. \"Lost in the Middle\" (Liu et al. 2024, TACL): the U-shaped position effect — does retrieval accuracy drop for information in the middle of a long context? Quantify.\n5. Net: what FRACTION of a 1M-token window and a 200K-token window is reliably usable for accurate retrieval/reasoning (the \"usable fraction\")? Is ~0.30 of 1M defensible, or what does the evidence actually support?\n\nTHEME B — Coupling / fragility / centrality metrics & normalization:\n6. CK metric CBO (Coupling Between Objects): Shatnawi 2010 (\"A Quantitative Investigation of the Acceptable Risk Levels of Object-Oriented Metrics\") — what acceptable-risk CBO threshold did it find (is CBO≈9 correct)? Cite.\n7. Robert C. Martin's Instability metric I = Ce/(Ca+Ce): definition, the \"stable/unstable\" bands (≥0.7 unstable, ≤0.3 stable?), and the main-sequence/zone-of-pain concept. Cite Martin.\n8. Henry-Kafura information-flow complexity: the fan-in × fan-out squared formula. Cite.\n9. Are CLASS/PACKAGE-level coupling thresholds (CK CBO, Martin instability) defensibly transferable to FUNCTION-level call-graph nodes, or is that a category error requiring independent calibration? What do practitioners (NDepend, CodeScene, SonarQube) actually do at function granularity?\n10. PageRank as a centrality measure on software call graphs: precedent (NDepend \"Rank\", CodeScene). Why does thresholding RAW pagerank fail as graph size N grows (pagerank values sum to 1, so each shrinks ~1/N)? Is \"centrality multiple = pagerank × N\" (how many times the uniform 1/N baseline) a sound scale-invariant normalization?\n11. log1p(x)/log1p(SAT) saturation normalization for power-law / heavy-tailed graph-degree counts (fan-in, fan-out, subtree size): is this a sound, defensible transform vs z-score (unbounded) or min-max (needs full distribution)? Any citable basis for log compression of degree distributions?\n\nTHEME C — Validation methodology & PR-reviewability literature:\n12. sMAPE (symmetric mean absolute percentage error) vs MAPE: why is sMAPE preferred when the denominator (true value) can be tiny — e.g. estimating tokens for a tiny diff? Cite the definition and its bounded [0,200%] property.\n13. Spearman rank correlation ρ vs Pearson: why ρ is the right metric for validating a heuristic that should predict RANK ORDER (which PR is riskier) rather than absolute values. Cite.\n14. Best practice for validating/calibrating a composite heuristic score: detecting \"dead\" sub-scores (no variance / always saturated), the saturation/peg trap, choosing saturation points at distribution percentiles (p90). Any references.\n15. 2024-2026 work specifically on AI/LLM code-review degradation with LARGE diffs / PR reviewability for LLMs: GitHub's guidance on reviewing agent-generated PRs, any studies on how AI review quality drops as diff/token size grows, Cursor/Anthropic agent token-spend-per-task studies. Cite what exists.\n\nPrioritize hard primary-source numbers for THEME A (context windows, NoLiMa effective lengths, the usable-fraction question) and clear cited/knob verdicts for every value.",
+    "summary": "For the three previously-unverified themes, the strongest verifiable results are in THEME A (context windows and long-context degradation). Context-window maxima are HARD EXTERNAL FACTS from official vendor docs: Claude Opus 4.8/4.7/4.6 and Sonnet 4.6 = 1,000,000 tokens (Opus 4.8 reduced to 200K only on Microsoft Foundry); older Claude models (Sonnet 4.5, Opus 4.5/4.1, Sonnet 4, Opus 4, Haiku 4.5) = 200K; OpenAI GPT-4.1 family = 1M (exact API limit 1,047,576, vs 128K for prior GPT-4o); Gemini = 1M+. Crucially, the \"usable fraction\" of these windows is NOT 1.0: multiple primary sources (NoLiMa arXiv 2502.05167, Chroma \"context rot\", Liu et al. \"Lost in the Middle\" TACL 2024, Quan et al. arXiv 2410.18745) document severe, non-uniform degradation well within advertised windows — NoLiMa found \"effective lengths\" (>=85% of short-context baseline) of just 2K-8K for 128K-2M-class models, and effective length for open-source LLMs typically does not exceed half of training length. The specific usable-fraction value (~0.30 of 1M) is a CALIBRATION KNOB — directionally well-supported (a fraction well below 1.0 is robust) but no source authorizes the exact 0.30 number. For THEME B, Martin's Instability metric I=Ce/(Ca+Ce), its [0,1] range/bands, the Main Sequence and distance D=|A+I-1|/sqrt(2) are confirmed primary facts; however the verified claim set did NOT confirm Shatnawi 2010 CBO≈9, Henry-Kafura fan-in×fan-out², PageRank×N normalization, log1p saturation, or the class-to-function transferability question — these remain unverified. THEME C (sMAPE, Spearman, composite-score calibration practice, AI-review-degradation-with-diff-size literature) was NOT covered by any surviving claim and remains entirely unverified.",
+    "findings": [
+      {
+        "claim": "Confirmed context-window maxima (HARD EXTERNAL FACTS): Claude Opus 4.8 (the 'NextOpus' placeholder), Opus 4.7, Opus 4.6, and Sonnet 4.6 = 1,000,000 tokens on Claude API/Bedrock/Vertex; Opus 4.8 is reduced to 200,000 tokens only on Microsoft Foundry. All other Claude models — Sonnet 4.5, Opus 4.5, Opus 4.1, Sonnet 4, Opus 4, Haiku 4.5 — = 200,000 tokens. This confirms a clean 1M-vs-200K tiering across the Claude lineup.",
+        "confidence": "high",
+        "vote": "3-0 (across 6 merged claims)",
+        "sources": [
+          "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+          "https://platform.claude.com/docs/en/about-claude/models/overview"
+        ],
+        "evidence": "Official Anthropic docs state verbatim: '<NextOpus />, [Claude Mythos Preview], Claude Opus 4.7, Claude Opus 4.6, and Claude Sonnet 4.6 have a 1M-token context window on the Claude API, Amazon Bedrock, and Vertex AI. On Microsoft Foundry, <NextOpus /> has a 200k-token context window. Other Claude models, including Claude Sonnet 4.5 and Sonnet 4 (deprecated), have a 200k-token context window.' The models-overview table independently shows Sonnet 4.6=1M, Haiku 4.5=200k, and legacy Opus 4.7/4.6=1M while Sonnet 4.5/Opus 4.5/4.1/Sonnet 4/Opus 4=200k. NOTE: the newest Opus appears as a '<NextOpus />' placeholder, not the literal string 'Opus 4.8', though the page anchor reads 'migrating-to-claude-opus-4-8'. These are HARD EXTERNAL FACTS, not calibration knobs."
+      },
+      {
+        "claim": "OpenAI GPT-4.1 / 4.1 mini / 4.1 nano support up to 1,000,000 tokens (up from 128,000 for prior GPT-4o); the exact API context-window limit is 1,047,576 tokens.",
+        "confidence": "high",
+        "vote": "3-0 (2 merged claims)",
+        "sources": [
+          "https://openai.com/index/gpt-4-1/",
+          "https://developers.openai.com/api/docs/models/gpt-4.1"
+        ],
+        "evidence": "OpenAI launch page: 'GPT-4.1, GPT-4.1 mini, and GPT-4.1 nano can process up to 1 million tokens of context—up from 128,000 for previous GPT-4o models.' Developer API docs list the precise spec as '1,047,576 context window.' HARD EXTERNAL FACTS. Caveat: the 1,047,576 figure equals 2^20 (1,048,576) minus ~1,000 reserved tokens, NOT '2^20 + overhead' as one phrasing claimed (sign error in the rationale; the number itself is correct)."
+      },
+      {
+        "claim": "Google Gemini supports a context window up to 1,000,000 tokens (Gemini described as 'the first model capable of accepting 1 million tokens'); the long-context docs page defers per-model 1M-vs-2M breakdown to the Models page.",
+        "confidence": "high",
+        "vote": "3-0",
+        "sources": [
+          "https://ai.google.dev/gemini-api/docs/long-context"
+        ],
+        "evidence": "Verbatim: 'Gemini is the first model capable of accepting 1 million tokens.' The page does not break down per-model maxima and explicitly defers. NOTE: the surviving claim set confirmed the generic 1M capability but did NOT pin specific 2026 per-model numbers for Gemini 2.5 Pro / 3 Pro / Flash from this primary page — that per-model breakdown remains an open verification gap for Gemini specifically."
+      },
+      {
+        "claim": "NoLiMa (arXiv 2502.05167) measures latent-association retrieval (minimal lexical overlap between question and needle) and defines a model's 'effective length' as the largest tested context length where performance still exceeds 85% of the base score (max across 250/500/1K-token tests). Measured effective lengths are far below advertised windows: GPT-4o (128K claimed) = 8K effective; Llama 3.3 70B (128K) = 2K; Gemini 1.5 Pro (2M) = 2K; Claude 3.5 Sonnet (200K) = 4K.",
+        "confidence": "high",
+        "vote": "3-0",
+        "sources": [
+          "https://arxiv.org/abs/2502.05167",
+          "https://arxiv.org/html/2502.05167v1",
+          "https://github.com/adobe-research/NoLiMa"
+        ],
+        "evidence": "Abstract/HTML define effective length via the 85%-of-base-score threshold and report the effective-length table verbatim. The 85% definition directly answers Theme A item 2. CRITICAL CAVEAT: these effective-length numbers are HARD EXTERNAL FACTS for the OLDER models tested (GPT-4o, Gemini 1.5 Pro, Llama 3.3, Claude 3.5 Sonnet) — they must NOT be transplanted onto 2026 frontier models (Opus 4.8, Sonnet 4.6, GPT-5, Gemini 3 Pro), which NoLiMa did not test."
+      },
+      {
+        "claim": "NoLiMa degradation magnitude: at 32K tokens, 10 of 12 tested models (all advertising >=128K) score at or below half their short-context base score. GPT-4o falls from a 99.3% base to 69.7% at 32K (a ~29.6-point drop) despite a 128K window.",
+        "confidence": "high",
+        "vote": "3-0 / 2-1",
+        "sources": [
+          "https://arxiv.org/abs/2502.05167",
+          "https://arxiv.org/html/2502.05167v1"
+        ],
+        "evidence": "v1 HTML: 'Out of the 12 models, 10 exhibit performance at 32K lengths that is half or less of their base scores' and 'Even GPT-4o... experiences a reduction from an almost-perfect baseline of 99.3% to 69.7%.' HARD EXTERNAL FACTS. Version caveat: cite '10' (v1); a later abstract revision says '11 models drop below 50%'. Use 10, not '10-11'. Scope caveat: these are NoLiMa (latent-association, minimal-lexical-overlap) scores, not general-capability scores."
+      },
+      {
+        "claim": "Chroma 'context rot' study (research.trychroma.com/context-rot) finds that across all 18 frontier models tested (incl. Claude Opus 4/Sonnet 4, GPT-4.1, Gemini 2.5 Pro/Flash, Qwen3), performance consistently and non-uniformly degrades as input length grows, even on simple tasks — refuting the assumption of uniform context processing (the model does not handle the 10,000th token as reliably as the 100th).",
+        "confidence": "high",
+        "vote": "3-0 (5 merged claims)",
+        "sources": [
+          "https://research.trychroma.com/context-rot",
+          "https://github.com/chroma-core/context-rot"
+        ],
+        "evidence": "Verbatim findings: 'model performance degrades as input length increases, often in surprising and non-uniform ways'; 'Across all experiments, model performance consistently degrades with increasing input length'; 'the model should handle the 10,000th token just as reliably as the 100th. However, in practice, this assumption does not hold.' CAVEAT: vendor-published (Chroma sells retrieval infra) — controlled empirical study but not peer-reviewed, mild conflict of interest. The study does NOT publish specific token thresholds at which 200K-class vs 1M-class reliability 'drops' — it reports continuous degradation, so a precise drop-off token count is not a hard fact from this source."
+      },
+      {
+        "claim": "'Lost in the Middle' (Liu et al. 2024, TACL) confirms a U-shaped position effect: retrieval/QA accuracy is highest when relevant info is at the beginning or end of context and degrades significantly in the middle. On multi-document QA (Natural Questions, 20 docs), gpt-3.5-turbo accuracy falls from ~79% (first position) to ~52-53% (middle) and recovers to ~76-79% (last) — a ~30-point mid-context drop, with middle accuracy falling below the closed-book baseline (56.1%).",
+        "confidence": "high",
+        "vote": "3-0 (2 merged claims)",
+        "sources": [
+          "https://aclanthology.org/2024.tacl-1.9.pdf"
+        ],
+        "evidence": "Abstract verbatim: 'performance is often highest when relevant information occurs at the beginning or end of the input context, and significantly degrades when models must access relevant information in the middle of long contexts.' Figure 5 numbers (~79% first, ~52-53% middle, recovering last) corroborated. The ~30% magnitude is a HARD EXTERNAL FACT for that specific setup, not a universal constant (varies by model/task); the qualitative U-shape is robustly replicated."
+      },
+      {
+        "claim": "USABLE-FRACTION VERDICT: the full context window is not reliably usable — only a fraction is. This is directionally well-supported (Anthropic itself names 'context rot'; Quan et al. arXiv 2410.18745 find open-source effective context typically does not exceed HALF of training length; NoLiMa shows effective lengths of 2K-8K vs 128K-2M advertised). However, NO source authorizes a specific usable-fraction number such as ~0.30 of 1M — that exact value is a CALIBRATION KNOB.",
+        "confidence": "high",
+        "vote": "3-0 (multiple merged claims)",
+        "sources": [
+          "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+          "https://arxiv.org/pdf/2410.18745",
+          "https://arxiv.org/abs/2502.05167",
+          "https://research.trychroma.com/context-rot",
+          "https://aclanthology.org/2024.tacl-1.9.pdf"
+        ],
+        "evidence": "Anthropic docs: 'As token count grows, accuracy and recall degrade, a phenomenon known as context rot.' Quan et al. abstract: 'the effective context lengths of open-source LLMs often fall short, typically not exceeding half of their training lengths.' NoLiMa: effective lengths 2K-8K for 128K-2M models. VERDICT on the research question's '~0.30 of 1M': a usable fraction well below 1.0 is DEFENSIBLE and strongly evidenced; the literature most directly supports an upper bound near 0.5 (Quan et al.) with effective fractions far smaller on hard latent-retrieval tasks (NoLiMa). The precise 0.30 is a tunable knob, not a hard external fact — state it plainly as such in the tool."
+      },
+      {
+        "claim": "Robert C. Martin's package metrics are confirmed primary facts: Instability I = Ce/(Ca+Ce), range [0,1], I=0 = maximally stable, I=1 = maximally unstable; Ce (efferent) = inside classes depending on outside classes, Ca (afferent) = outside classes depending on inside classes. The Main Sequence is the line from (0,1) to (1,0) (A+I=1); perpendicular distance D = |A+I-1|/sqrt(2), range [0,~0.707], normalized Dn = |A+I-1| in [0,1]; off-line corners (0,0)='zone of pain', (1,1)='zone of uselessness'.",
+        "confidence": "high",
+        "vote": "3-0 (2 merged claims)",
+        "sources": [
+          "https://linux.ime.usp.br/~joaomm/mac499/arquivos/referencias/oodmetrics.pdf",
+          "https://en.wikipedia.org/wiki/Software_package_metrics"
+        ],
+        "evidence": "Primary source (Martin, 'OO Design Quality Metrics,' 1994): 'I : Instability : (Ce / (Ca+Ce)) : range [0,1]. I=0 maximally stable. I=1 maximally instable.' Main Sequence line (0,1)-(1,0) confirmed. NOTE: Martin's paper literally writes D=|(A+I-1)/2|, but the geometrically-correct and range-consistent form (max 0.707) is /sqrt(2); the /2 is a known typo. The verified claims did NOT confirm the research question's specific stable/unstable BANDS (I>=0.7 unstable, I<=0.3 stable) — those band thresholds are unverified and likely calibration knobs, not Martin's own numbers."
+      }
+    ],
+    "caveats": "SCOPE: Of the 15 research-question items, the surviving verified claims substantively cover only items 1-5 (Theme A context windows + degradation) and item 7 (Martin Instability/Main Sequence). The following were NOT verified by any surviving claim and remain OPEN: item 6 (Shatnawi 2010 CBO acceptable-risk threshold ~9), item 8 (Henry-Kafura fan-in×fan-out² formula), item 9 (class/package-to-function-level transferability; what NDepend/CodeScene/SonarQube do at function granularity), item 10 (PageRank on call graphs; pagerank×N scale-invariant normalization), item 11 (log1p saturation normalization for heavy-tailed degree distributions), and ALL of Theme C (items 12-15: sMAPE vs MAPE, Spearman vs Pearson, composite-score calibration best practice, and 2024-2026 AI/LLM code-review-degradation-with-diff-size literature). Do not treat the absence of these from the report as evidence against them — they were simply outside the verified claim set provided.\\n\\nTIME-SENSITIVITY: Context-window facts are 2026-current (Opus 4.8 era) but the model lineup moves fast; the '<NextOpus />' placeholder means the literal name 'Opus 4.8' is inferred from the page anchor, not printed. Sonnet 4.6's 1M window was noted as beta/API-gated in corroborating sources.\\n\\nNUMERIC STATUS SUMMARY: HARD EXTERNAL FACTS = all context-window token counts (1M/200K/128K; exact GPT-4.1 = 1,047,576), NoLiMa's 85% effective-length definition and its effective-length/32K-degradation numbers (for the OLDER models tested only), Lost-in-the-Middle's ~30-point mid-context drop (for its specific setup), Quan et al.'s 'not exceeding half of training length', and Martin's I formula/range/Main Sequence geometry. CALIBRATION KNOBS (no authoritative source) = any specific usable-fraction like ~0.30 of 1M, and the I>=0.7/I<=0.3 stable/unstable band thresholds.\\n\\nSOURCE-QUALITY NOTE: The Chroma context-rot study is vendor-published (Chroma sells retrieval infrastructure) and not peer-reviewed — directionally corroborated by peer-grade sources (NoLiMa, TACL Lost-in-the-Middle) but carries mild conflict of interest. NoLiMa effective lengths apply ONLY to the older models it tested and must not be transplanted onto 2026 frontier models.",
+    "openQuestions": [
+      "THEME B (unverified): What is Shatnawi 2010's actual acceptable-risk CBO threshold (is CBO~9 correct), and what are the precise Henry-Kafura information-flow formula (length x (fan-in x fan-out)^2) citation and the PageRank-x-N / log1p(x)/log1p(SAT) normalization justifications? None were in the verified claim set.",
+      "THEME B (unverified): Are class/package-level coupling thresholds (CK CBO, Martin instability) defensibly transferable to function-level call-graph nodes, and what do NDepend ('Rank'/PageRank), CodeScene, and SonarQube actually do at function granularity? This category-error question is entirely open.",
+      "THEME C (entirely unverified): The sMAPE-vs-MAPE bounded-[0,200%] rationale, Spearman-vs-Pearson rank-order justification, composite-heuristic calibration best practices (dead sub-scores, saturation/peg trap, p90 saturation points), and 2024-2026 AI/LLM code-review-degradation-with-large-diffs literature (GitHub agent-PR guidance, Cursor/Anthropic token-spend studies) were not addressed by any surviving claim and need a dedicated verification round.",
+      "THEME A (gap): Confirm specific 2026 per-model context windows for Gemini 2.5 Pro / 3 Pro / Flash and for OpenAI's o-series/GPT-5 from primary docs — the verified claims only established the generic Gemini 1M capability and the GPT-4.1 family, not these specific models."
+    ],
+    "refuted": [],
+    "sources": [
+      {
+        "url": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+        "quality": "primary",
+        "angle": "Context-window sizes (official model docs)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+        "quality": "primary",
+        "angle": "Context-window sizes (official model docs)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://openai.com/index/gpt-4-1/",
+        "quality": "primary",
+        "angle": "Context-window sizes (official model docs)",
+        "claimCount": 4
+      },
+      {
+        "url": "https://ai.google.dev/gemini-api/docs/long-context",
+        "quality": "primary",
+        "angle": "Context-window sizes (official model docs)",
+        "claimCount": 4
+      },
+      {
+        "url": "https://arxiv.org/abs/2502.05167",
+        "quality": "primary",
+        "angle": "Long-context degradation studies (primary research)",
+        "claimCount": 4
+      },
+      {
+        "url": "https://research.trychroma.com/context-rot",
+        "quality": "primary",
+        "angle": "Long-context degradation studies (primary research)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://aclanthology.org/2024.tacl-1.9.pdf",
+        "quality": "primary",
+        "angle": "Long-context degradation studies (primary research)",
+        "claimCount": 3
+      },
+      {
+        "url": "https://arxiv.org/html/2502.05167v1",
+        "quality": "primary",
+        "angle": "Long-context degradation studies (primary research)",
+        "claimCount": 3
+      },
+      {
+        "url": "https://github.com/chroma-core/context-rot",
+        "quality": "primary",
+        "angle": "Long-context degradation studies (primary research)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://arxiv.org/pdf/2410.18745",
+        "quality": "primary",
+        "angle": "Long-context degradation studies (primary research)",
+        "claimCount": 4
+      },
+      {
+        "url": "https://www.academia.edu/29908205/A_Quantitative_Investigation_of_the_Acceptable_Risk_Levels_of_Object_Oriented_Metrics_in_Open_Source_Systems",
+        "quality": "secondary",
+        "angle": "Coupling and centrality metric sources",
+        "claimCount": 4
+      },
+      {
+        "url": "https://www.researchgate.net/publication/220071232_Shatnawi_R_A_Quantitative_Investigation_of_the_Acceptable_Risk_levels_of_Object-Oriented_Metrics_in_Open-Source_Systems_IEEE_Transactions_on_Software_Engineering_362_216-225",
+        "quality": "unreliable",
+        "angle": "Coupling and centrality metric sources",
+        "claimCount": 0
+      },
+      {
+        "url": "https://linux.ime.usp.br/~joaomm/mac499/arquivos/referencias/oodmetrics.pdf",
+        "quality": "primary",
+        "angle": "Coupling and centrality metric sources",
+        "claimCount": 5
+      },
+      {
+        "url": "https://masters.donntu.ru/2020/fknt/mazalov/library/article04/",
+        "quality": "primary",
+        "angle": "Coupling and centrality metric sources",
+        "claimCount": 4
+      },
+      {
+        "url": "https://www.ndepend.com/docs/code-metrics",
+        "quality": "primary",
+        "angle": "Call-graph normalization & function-level transfer (practitioner)",
+        "claimCount": 5
+      },
+      {
+        "url": "https://arxiv.org/pdf/2407.13730",
+        "quality": "primary",
+        "angle": "Call-graph normalization & function-level transfer (practitioner)",
+        "claimCount": 3
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Symmetric_mean_absolute_percentage_error",
+        "quality": "secondary",
+        "angle": "Validation methodology & LLM PR-review degradation",
+        "claimCount": 5
+      },
+      {
+        "url": "https://robjhyndman.com/hyndsight/smape/",
+        "quality": "primary",
+        "angle": "Validation methodology & LLM PR-review degradation",
+        "claimCount": 5
+      },
+      {
+        "url": "https://statistics.laerd.com/statistical-guides/spearmans-rank-order-correlation-statistical-guide.php",
+        "quality": "secondary",
+        "angle": "Validation methodology & LLM PR-review degradation",
+        "claimCount": 5
+      },
+      {
+        "url": "https://arxiv.org/abs/2603.26130",
+        "quality": "primary",
+        "angle": "Validation methodology & LLM PR-review degradation",
+        "claimCount": 5
+      },
+      {
+        "url": "https://support.minitab.com/en-us/minitab/help-and-how-to/statistics/basic-statistics/supporting-topics/correlation-and-covariance/a-comparison-of-the-pearson-and-spearman-correlation-methods/",
+        "quality": "secondary",
+        "angle": "Validation methodology & LLM PR-review degradation",
+        "claimCount": 4
+      },
+      {
+        "url": "https://arxiv.org/pdf/2601.21276",
+        "quality": "primary",
+        "angle": "Validation methodology & LLM PR-review degradation",
+        "claimCount": 5
+      }
+    ],
+    "stats": {
+      "angles": 5,
+      "sourcesFetched": 22,
+      "claimsExtracted": 92,
+      "claimsVerified": 25,
+      "confirmed": 25,
+      "killed": 0,
+      "afterSynthesis": 9,
+      "urlDupes": 0,
+      "budgetDropped": 7,
+      "agentCalls": 104
+    }
+  }
+}]
