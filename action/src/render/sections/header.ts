@@ -1,18 +1,18 @@
 // The header block — the whole-PR TL;DR, everything above the value card. It's
-// written bottom-line-up-front and BADGE-FORWARD: the verdict in one line, then
-// an at-a-glance badge dashboard, then the one place to look. There is NO `##`
+// written bottom-line-up-front and GAUGE-FORWARD: the verdict in one line, then
+// an at-a-glance dial dashboard, then the one place to look. There is NO `##`
 // title here — the brand banner (added by overview.ts) IS the title, so we don't
 // repeat "Drift review" as text. Order:
 //   1. bottom line    — one plain-language verdict + the move (the BLUF)
-//   2. KPI badge dashboard — shields.io pills, grouped into themed rows:
-//        • verdict & gauges — review status · merge confidence N/5 · review
-//          effort N/5 (the two 0–5 gauges fold in their rubric word + time band,
-//          so there's no prose "signal line" duplicating them) · advisory
-//        • value & size — drift · files · net LOC
-//        • findings — suggestions · agent-ready · risks · new tests
-//   3. confidence trend — a cross-push sparkline; the ONE signal with no badge
+//   2. KPI gauge dashboard — a table of quickchart.io radialGauge tiles
+//      (lib/gauge.ts), in priority order: merge confidence N/5 · review effort
+//      N/5 · risks · drift · suggestions · new tests. The two 0–5 gauges show a
+//      proportional arc; count/percent tiles show a full arc (the number is the
+//      signal). Files-changed & net-LOC are deliberately NOT here — GitHub's PR
+//      header already shows both, so a tile would only duplicate them.
+//   3. confidence trend — a cross-push sparkline; the ONE signal with no tile
 //      equivalent, so it stays a tiny line (only ≥2 pushes)
-//   4. sub-line       — repo permalink · sticky-comment note
+//   4. sub-line       — repo permalink · advisory (does-not-gate) · sticky note
 //   5. advisory callout — GFM alert, BLUF-ordered:
 //        • **TL;DR** — the data-driven one-paragraph verdict (numbers)
 //        • 👉 **Look here first** — the single highest-value spot for the
@@ -20,7 +20,7 @@
 //
 // The "✅ Before you merge" checklist + merge-readiness bar are NO LONGER here —
 // they render as their own section at the END of the comment (sections/before_merge.ts).
-// Everything degrades: no value model → no drift/LOC badges, a factual verdict.
+// Everything degrades: no value model → no drift tile, a factual verdict.
 // Review effort + the focus pointer always render — they need only the call-graph facts.
 
 import type { ScanPrOutput, CodeSuggestion } from '../../report.ts';
@@ -32,6 +32,7 @@ import { correctnessTag } from '../lib/checklist.ts';
 import { reviewEffort, type ReviewEffort } from '../lib/effort.ts';
 import { mergeConfidence, type MergeConfidence } from '../lib/confidence.ts';
 import { sparkline } from '../lib/bars.ts';
+import { gaugeTable, type Gauge, type GaugeColor } from '../lib/gauge.ts';
 import { signedPercent, signedInt, int, plural, confidencePercent } from '../lib/format.ts';
 
 type Verdict = {
@@ -66,7 +67,7 @@ export function renderHeader(report: ScanPrOutput, ctx?: PrContext, opts: Header
   // the title, so we never repeat "Drift review" as text here.
   const blocks: string[] = [
     bottomLine(verdict, facts),
-    badgeRow(facts, verdict, effort, confidence),
+    gaugeDashboard(facts, effort, confidence),
     trendLine(opts.confTrend),
     subLine(ctx),
     calloutBlock(verdict, facts, composite, ctx),
@@ -78,14 +79,15 @@ export function renderHeader(report: ScanPrOutput, ctx?: PrContext, opts: Header
 }
 
 // ── sub-line ──────────────────────────────────────────────────────────────
-// Trimmed to the essentials: repo permalink + the sticky-comment note. The
-// "advisory" status it used to carry is now an `advisory` badge in the
-// dashboard, so it isn't repeated here (less text, no duplication).
+// Repo permalink + the does-not-gate advisory + the sticky-comment note. The
+// advisory used to be its own shields pill; with the dashboard now a table of
+// numeric gauges (no text pills), it folds in here as a one-line `<sub>` note so
+// the "Drift never blocks the merge" signal isn't lost.
 
 function subLine(ctx?: PrContext): string {
   const slug = repoSlug(ctx);
   const repo = slug ? `📍 [\`${slug}\`](https://github.com/${ctx!.owner}/${ctx!.repo}) &nbsp;·&nbsp; ` : '';
-  return `<sub>${repo}sticky review comment — re-rendered on every push</sub>`;
+  return `<sub>${repo}advisory — does not gate the merge &nbsp;·&nbsp; sticky review comment — re-rendered on every push</sub>`;
 }
 
 // ── advisory callout ─────────────────────────────────────────────────────────
@@ -293,74 +295,52 @@ function narrative(facts: PrFacts, composite: Composite): string[] {
   return lines;
 }
 
-// ── KPI badge dashboard ──────────────────────────────────────────────────────
-// Everything the header used to say in prose is a pill here, grouped into three
-// themed rows so the reviewer scans by category, not by wrap-wherever order:
-//   1. verdict & gauges — review status · merge confidence · review effort ·
-//      advisory. The two 0–5 gauges fold in the text that used to live on a
-//      separate "signal line": confidence carries its rubric word, effort its
-//      time band — so the dashboard is self-contained and nothing is duplicated.
-//   2. value & size — drift · files · net LOC.
-//   3. findings — suggestions · agent-ready · risks · new tests.
-// Each group is its own line (single `\n` → GitHub renders a line break), so the
-// three rows stack instead of forming one long strip.
+// ── KPI gauge dashboard ──────────────────────────────────────────────────────
+// A table of quickchart.io radialGauge tiles (lib/gauge.ts) — the metrics the
+// header used to say in prose/pills, now as dials a reviewer scans in one glance.
+// Priority order (highest-judgement signals first): merge confidence · review
+// effort · risks · drift · suggestions · new tests. The two 0–5 gauges show a
+// proportional arc (score/5); count/percent tiles show a full arc because the
+// centred NUMBER is the signal, not the arc. A tile only appears when its metric
+// exists, so a partial report degrades gracefully (e.g. no value model → no
+// drift tile). Files-changed & net-LOC are intentionally omitted — GitHub's PR
+// header already shows both, so a tile would add nothing.
 
-function badgeRow(facts: PrFacts, verdict: Verdict, effort: ReviewEffort, confidence: MergeConfidence): string {
-  // Group 1 — verdict & the two 0–5 gauges + the advisory pill (Drift never gates).
-  const verdictGroup = [
-    badge('Review status', 'review', verdict.statusMessage, verdict.statusColor),
-    badge(`Merge confidence ${confidence.score}/5`, 'merge confidence', `${confidence.score}/5 · ${confidence.label}`, confidence.color),
-    badge(`Review effort ${effort.score}/5`, 'review effort', `${effort.score}/5 · ${bareMinutes(effort.minutes)}`, effort.color),
-    badge('Advisory — does not gate the merge', 'advisory', 'does not gate', COLOR.grey),
+function gaugeDashboard(facts: PrFacts, effort: ReviewEffort, confidence: MergeConfidence): string {
+  const gauges: Gauge[] = [
+    { title: 'MERGE CONFIDENCE', center: `${confidence.score}/5`, arc: (confidence.score / 5) * 100, color: gaugeColor(confidence.color) },
+    { title: 'REVIEW EFFORT', center: `${effort.score}/5`, arc: (effort.score / 5) * 100, color: gaugeColor(effort.color) },
   ];
 
-  // Group 2 — value drift & change size (drift/net-LOC only with a value model).
-  const sizeGroup: string[] = [];
-  if (facts.overallPercent !== null) {
-    const color = facts.overallDirection === 'up' ? COLOR.green : facts.overallDirection === 'down' ? COLOR.red : COLOR.grey;
-    sizeGroup.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, 'drift', signedPercent(facts.overallPercent), color));
-  }
-  sizeGroup.push(badge(`Files ${facts.changedFiles}`, 'files', int(facts.changedFiles), COLOR.blue));
-  if (facts.netLoc !== null) {
-    sizeGroup.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, 'net LOC', signedInt(facts.netLoc), COLOR.grey));
-  }
-
-  // Group 3 — findings & actionability.
-  const findingsGroup: string[] = [
-    badge(`Suggestions ${facts.passing.length}`, 'suggestions', int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey),
-  ];
-  // Every shown finding ships a copy-paste AI-fix prompt — surface that as a
-  // brand-orange KPI so reviewers know the review is one-click-actionable.
-  if (facts.passing.length > 0) {
-    findingsGroup.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, 'agent-ready', `${int(facts.passing.length)} fix prompts`, COLOR.brand));
-  }
   if (facts.totalRisks > 0) {
-    const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
-    findingsGroup.push(badge(`Risks: ${facts.risksToAddress} to address`, 'risks', `${facts.risksToAddress} to address`, color));
+    gauges.push({ title: 'RISKS', center: int(facts.risksToAddress), arc: 100, color: facts.risksToAddress > 0 ? 'red' : 'green' });
   }
+  if (facts.overallPercent !== null) {
+    const color: GaugeColor = facts.overallDirection === 'up' ? 'green' : facts.overallDirection === 'down' ? 'red' : 'grey';
+    gauges.push({ title: 'DRIFT', center: signedPercent(facts.overallPercent), arc: 100, color });
+  }
+  gauges.push({ title: 'SUGGESTIONS', center: int(facts.passing.length), arc: 100, color: facts.passing.length > 0 ? 'blue' : 'grey' });
   if (facts.newTestFiles !== null) {
-    const color = facts.newTestFiles > 0 ? COLOR.green : COLOR.red;
-    findingsGroup.push(badge(`New tests: ${facts.newTestFiles}`, 'new tests', int(facts.newTestFiles), color));
+    gauges.push({ title: 'NEW TESTS', center: int(facts.newTestFiles), arc: 100, color: facts.newTestFiles > 0 ? 'green' : 'red' });
   }
 
-  return [verdictGroup, sizeGroup, findingsGroup]
-    .map((group) => group.join(' &nbsp;'))
-    .filter(Boolean)
-    .join('\n');
+  return gaugeTable(gauges);
 }
 
-/** Drop the leading "≈ " so a time band fits compactly inside a badge message. */
-function bareMinutes(minutes: string): string {
-  return minutes.replace(/^≈\s*/, '');
-}
-
-function badge(alt: string, label: string, message: string, color: string): string {
-  return `![${alt}](https://img.shields.io/badge/${shields(label)}-${shields(message)}-${color}?style=flat-square)`;
-}
-
-/** shields.io path encoding: double `_`/`-`, spaces→`_`, then percent-encode. */
-function shields(s: string): string {
-  return encodeURIComponent(s.replace(/_/g, '__').replace(/-/g, '--').replace(/ /g, '_'));
+/** Map a shields.io palette hex (no `#`) onto the gauge tile's semantic colour. */
+function gaugeColor(shieldsHex: string): GaugeColor {
+  switch (shieldsHex) {
+    case COLOR.green:
+      return 'green';
+    case COLOR.amber:
+      return 'amber';
+    case COLOR.red:
+      return 'red';
+    case COLOR.blue:
+      return 'blue';
+    default:
+      return 'grey';
+  }
 }
 
 function joinClauses(parts: string[]): string {

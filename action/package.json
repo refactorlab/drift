@@ -9,6 +9,7 @@
     "test": "node --test --experimental-strip-types --no-warnings 'src/__tests__/*.test.ts'",
     "smoke": "./scripts/smoke.sh",
     "validate-mermaid": "node scripts/validate-mermaid.mjs",
+    "validate-cvd": "node scripts/validate-gauge-cvd.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

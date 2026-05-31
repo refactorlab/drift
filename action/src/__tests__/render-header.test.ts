@@ -1,4 +1,4 @@
-// Header section: title, sub-line, advisory callout, KPI badges, the
+// Header section: title, sub-line, advisory callout, KPI gauges, the
 // "Before you merge" checklist, and merge-readiness — across the real fixtures
 // and synthetic edge cases (mixed / regression / clean / no value model / no
 // context).
@@ -14,6 +14,17 @@ import type { PrContext } from '../render/context.ts';
 
 const fixtureDir = join(import.meta.dirname, '../../.dev');
 const CTX: PrContext = { owner: 'acme', repo: 'shop', sha: 'cafe1234', prTitle: 'feat: speed up checkout' };
+
+// The KPI dashboard is now a table of quickchart.io radialGauge tiles, each a
+// `<picture>` whose `alt` is "TITLE value". This returns the one tile whose
+// ALL-CAPS title matches, so a test can assert its presence + arc colour (the
+// dark `backgroundColor` hex, percent-encoded as `%23<hex>` inside the URL).
+function tile(html: string, title: string): string {
+  const cell = html.split('</picture>').find((c) => c.includes(`alt="${title} `));
+  return cell ? `${cell}</picture>` : '';
+}
+// Dark-variant arc hexes from the accessible gauge palette (lib/gauge.ts).
+const GAUGE = { green: '%234ae3b0', amber: '%23e3b341', red: '%23ff7b6b', blue: '%2379c0ff', grey: '%239aa5b1' };
 
 function makeReport(over: Partial<ScanPrOutput['pr_review']>, scope?: Partial<ScanPrOutput['pr_scope']>): ScanPrOutput {
   return {
@@ -38,25 +49,29 @@ function axis(name: ValueAxis['name'], delta: number, conf: ValueAxis['confidenc
 
 // ── real fixtures ────────────────────────────────────────────────────────────
 
-test('header(python): TIP verdict, all-up drift, full KPI row (checklist now lives at the END, not here)', () => {
+test('header(python): TIP verdict, all-up drift, gauge dashboard (checklist now lives at the END, not here)', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output.json')), CTX);
   assert.doesNotMatch(h, /^## .*Drift review/m, 'no duplicate H2 title — the brand banner is the title now');
   assert.match(h, /\[`acme\/shop`\]\(https:\/\/github\.com\/acme\/shop\)/, 'repo permalink');
   assert.match(h, /\[!TIP\]/, 'all-up → TIP');
-  assert.match(h, /badge\/advisory-does_not_gate/, 'advisory pill is unconditional (also on a TIP verdict)');
-  assert.match(h, /badge\/drift-%2B21\.0%25-2ea043/, 'green drift badge, + encoded');
-  assert.match(h, /badge\/files-3-/, 'files KPI');
-  assert.match(h, /badge\/net_LOC-/, 'net LOC KPI');
-  assert.match(h, /badge\/new_tests-0-d1242f/, 'new-tests 0 → red');
+  assert.match(h, /advisory — does not gate the merge/, 'does-not-gate advisory folded into the sub-line');
+  // Drift tile renders the signed percent and is green when up.
+  assert.match(tile(h, 'DRIFT'), /alt="DRIFT \+21\.0%"/, 'drift tile shows +21.0%');
+  assert.match(tile(h, 'DRIFT'), new RegExp(GAUGE.green), 'green drift tile when up');
+  assert.match(tile(h, 'NEW TESTS'), new RegExp(GAUGE.red), 'new-tests 0 → red tile');
+  // Files-changed & net-LOC tiles are intentionally gone (GitHub's PR header shows both).
+  assert.equal(tile(h, 'FILES CHANGED'), '', 'no files tile');
+  assert.equal(tile(h, 'NET LOC'), '', 'no net-LOC tile');
+  assert.doesNotMatch(h, /img\.shields\.io/, 'no shields pills — the dashboard is gauges now');
   // The checklist + readiness bar moved out of the header → not here anymore.
   assert.doesNotMatch(h, /Before you merge/, 'checklist is no longer in the header');
   assert.doesNotMatch(h, /Merge readiness/, 'readiness bar is no longer in the header');
 });
 
-test('header: KPI dashboard renders exactly three themed badge rows (verdict · size · findings), gauges isolated to row 1', () => {
-  // The redesign's core: badges are grouped into three rows (joined by single
-  // `\n`), not one flat strip. Lock the row count AND per-row membership so a
-  // regression that collapses them back into one wrapping line is caught.
+test('header: KPI dashboard is a gauge table in priority order, files/net-LOC omitted', () => {
+  // The redesign's core: the dashboard is an HTML <table> of quickchart gauge
+  // tiles, in priority order, NOT shields pills. Lock the tiles that must be
+  // present, the ones that must NOT, and that they share one table.
   const r = makeReport({
     overall_drift: { percent: -5, direction: 'down', confidence: 'low' },
     value_card: { axes: [axis('money', -5)] },
@@ -66,28 +81,22 @@ test('header: KPI dashboard renders exactly three themed badge rows (verdict · 
     ],
   });
   const h = renderHeader(r, CTX);
-  const rows = h.split('\n').filter((l) => l.includes('img.shields.io'));
-  assert.equal(rows.length, 3, 'three themed badge rows, not one flat strip');
-  // Row 1 — verdict status + the two 0–5 gauges + the unconditional advisory pill.
-  assert.match(rows[0], /badge\/review-/, 'row 1: review status');
-  assert.match(rows[0], /badge\/merge_confidence-/, 'row 1: merge-confidence gauge');
-  assert.match(rows[0], /badge\/review_effort-/, 'row 1: review-effort gauge');
-  assert.match(rows[0], /badge\/advisory-does_not_gate/, 'row 1: advisory pill');
-  // Row 2 — value drift & change size.
-  assert.match(rows[1], /badge\/drift-/, 'row 2: drift');
-  assert.match(rows[1], /badge\/files-/, 'row 2: files');
-  assert.match(rows[1], /badge\/net_LOC-/, 'row 2: net LOC');
-  // Row 3 — findings & actionability.
-  assert.match(rows[2], /badge\/suggestions-/, 'row 3: suggestions');
-  // The gauges + advisory belong ONLY to row 1 — they must not leak into others.
-  assert.doesNotMatch(rows[1], /merge_confidence|review_effort|badge\/advisory/, 'row 2 carries no gauges/advisory');
-  assert.doesNotMatch(rows[2], /merge_confidence|review_effort|badge\/advisory/, 'row 3 carries no gauges/advisory');
+  assert.equal((h.match(/<table>/g) ?? []).length, 1, 'one dashboard table');
+  for (const t of ['MERGE CONFIDENCE', 'REVIEW EFFORT', 'DRIFT', 'SUGGESTIONS', 'NEW TESTS']) {
+    assert.notEqual(tile(h, t), '', `${t} tile present`);
+  }
+  assert.equal(tile(h, 'FILES CHANGED'), '', 'no files tile');
+  assert.equal(tile(h, 'NET LOC'), '', 'no net-LOC tile');
+  // Order: merge confidence first, drift before suggestions.
+  assert.ok(h.indexOf('MERGE CONFIDENCE') < h.indexOf('REVIEW EFFORT'), 'confidence before effort');
+  assert.ok(h.indexOf('DRIFT') < h.indexOf('SUGGESTIONS'), 'drift before suggestions');
+  assert.match(tile(h, 'DRIFT'), new RegExp(GAUGE.red), 'red drift tile when down');
 });
 
-test('header(kotlin): cat-B → WARNING + amber badge + narrative (no checklist in header)', () => {
+test('header(kotlin): cat-B → WARNING + amber hero dot + narrative (no checklist in header)', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
   assert.match(h, /\[!WARNING\]/);
-  assert.match(h, /badge\/review-address_before_merge-d29922/, 'amber review badge');
+  assert.match(h, /^> 🟡 /m, 'amber hero dot for the mixed/attention case');
   assert.match(h, /product-correctness issue\*\* flagged/, 'narrative mentions the finding');
   assert.doesNotMatch(h, /Fix the product-correctness issue at/, 'checklist item is no longer in the header');
 });
@@ -113,8 +122,7 @@ test('header(mixed axes): amber "mixed", narrative says "led by" the top gain', 
   assert.match(h, /\[!WARNING\]/, 'divergent signs warn');
   assert.match(h, /led by 👥 Customer value \(\*\*\+60\.0%\*\*\)/);
   assert.match(h, /\*\*💰 Money −15\.9%\*\* and \*\*⚙️ Runtime −3\.0%\*\* regressed/);
-  assert.match(h, /badge\/review-address_before_merge-d29922/, 'mixed stays AMBER (not red) — the gain offsets the regression');
-  assert.match(h, /^> 🟡 /m, 'amber hero dot for a mixed case');
+  assert.match(h, /^> 🟡 /m, 'amber hero dot for a mixed case (the gain offsets the regression)');
 });
 
 test('header(all down): net-regression narrative, WARNING', () => {
@@ -125,9 +133,8 @@ test('header(all down): net-regression narrative, WARNING', () => {
   const h = renderHeader(r, CTX);
   assert.match(h, /\[!WARNING\]/);
   assert.match(h, /net regression/);
-  assert.match(h, /badge\/drift-.*-d1242f/, 'red drift badge when down');
-  assert.match(h, /badge\/review-address_before_merge-d1242f/, 'review pill is red on a pure net regression (matches the 🔴 hero dot)');
-  // The hero dot must agree with the pill — both red here.
+  assert.match(tile(h, 'DRIFT'), new RegExp(GAUGE.red), 'red drift tile when down');
+  // The hero dot is red on a pure net regression.
   assert.match(h, /^> 🔴 /m, 'red hero dot on a pure net regression');
 });
 
@@ -142,7 +149,6 @@ test('header(all-down axes, no overall_drift block): still red — the per-axis 
   const h = renderHeader(r, CTX);
   assert.match(h, /\[!WARNING\]/);
   assert.match(h, /^> 🔴 /m, 'red hero dot from the all-down composite, even without overall_drift');
-  assert.match(h, /badge\/review-address_before_merge-d1242f/, 'red review pill agrees with the value-card composite');
 });
 
 test('header(no value model): NOTE verdict, factual narrative, no drift/LOC badges', () => {
@@ -150,9 +156,11 @@ test('header(no value model): NOTE verdict, factual narrative, no drift/LOC badg
   const h = renderHeader(r, CTX);
   assert.match(h, /\[!NOTE\]/);
   assert.match(h, /2 changed files, 1 entry point reached\./);
-  assert.match(h, /badge\/advisory-does_not_gate/, 'advisory pill is unconditional (also on a NOTE verdict)');
-  assert.doesNotMatch(h, /badge\/drift-/, 'no drift badge without a value model');
-  assert.doesNotMatch(h, /badge\/net_LOC-/, 'no net-LOC badge without money inputs');
+  assert.match(h, /advisory — does not gate the merge/, 'does-not-gate advisory shows on a NOTE verdict too');
+  assert.equal(tile(h, 'DRIFT'), '', 'no drift tile without a value model');
+  // Confidence + effort + suggestions tiles always render (call-graph facts only).
+  assert.notEqual(tile(h, 'MERGE CONFIDENCE'), '', 'confidence tile always present');
+  assert.notEqual(tile(h, 'SUGGESTIONS'), '', 'suggestions tile always present');
 });
 
 test('header(clean improvement, tests added): no "Add tests" item', () => {
@@ -163,7 +171,8 @@ test('header(clean improvement, tests added): no "Add tests" item', () => {
   });
   const h = renderHeader(r, CTX);
   assert.match(h, /\[!TIP\]/);
-  assert.match(h, /badge\/new_tests-4-2ea043/, 'new tests > 0 → green');
+  assert.match(tile(h, 'NEW TESTS'), /alt="NEW TESTS 4"/, 'new-tests tile shows 4');
+  assert.match(tile(h, 'NEW TESTS'), new RegExp(GAUGE.green), 'new tests > 0 → green');
   assert.doesNotMatch(h, /Add tests/, 'no test-gap item when tests were added');
 });
 

@@ -44,7 +44,7 @@ for (const fix of fixtures) {
     const body = render();
     assert.match(body, /<img [^>]*alt="Drift review"[^>]*width="120"/, 'brand banner is the title, pinned small (120px)');
     assert.doesNotMatch(body, /^## [▲▼—]? ?Drift review/m, 'no duplicate H2 title');
-    assert.match(body, /img\.shields\.io\/badge\/review-/, 'review-status KPI badge');
+    assert.match(body, /quickchart\.io\/chart[^"]*MERGE%20CONFIDENCE/, 'merge-confidence KPI gauge tile');
     assert.match(body, /## ✅ Before you merge/, 'merge checklist (now a section at the end)');
     assert.match(body, /> \*\*Merge readiness\*\*/, 'merge-readiness bar');
     // Sections are now collapsible: the title lives in a <details><summary>
@@ -130,7 +130,7 @@ test('render(no pr_review): factual-only output', () => {
   // and no unreachable files, so the section is omitted.
   assert.doesNotMatch(body, /🏗 Architecture/, 'no architecture without diagrams or a dead-code callout');
   assert.doesNotMatch(body, /📊 Business value/, 'no value card without a value model');
-  assert.doesNotMatch(body, /img\.shields\.io\/badge\/drift-/, 'no drift badge without a value model');
+  assert.doesNotMatch(body, /quickchart\.io\/chart[^"]*text%22%3A%22DRIFT/, 'no drift gauge tile without a value model');
 });
 
 test('render: guardSize collapses <details> innermost-first when over budget', () => {

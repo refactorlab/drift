@@ -13,6 +13,13 @@ import type { ScanPrOutput, ValueAxis, ValueCard, CodeSuggestion, RiskItem } fro
 import type { PrContext } from '../render/context.ts';
 
 const CTX: PrContext = { owner: 'refactorlab', repo: 'andy', sha: 'sha123', prTitle: 'feat: x' };
+
+// The KPI dashboard is a table of quickchart radialGauge tiles; return the one
+// `<picture>` whose ALL-CAPS title matches so a scenario can assert its colour.
+function tile(html: string, title: string): string {
+  const cell = html.split('</picture>').find((c) => c.includes(`alt="${title} `));
+  return cell ? `${cell}</picture>` : '';
+}
 const GOOD_FLOW = ['flowchart TB', '    n0["App"]', '    n1["useTheme.‹lambda@21›"]', '    n0 --> n1'].join('\n');
 const GOOD_MIND = ['mindmap', '  root((Affected files))', '    src', '      A.tsx'].join('\n');
 
@@ -111,7 +118,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     expect: (b) => {
       assert.match(b, /\[!WARNING\]/);
       assert.match(b, /net regression/);
-      assert.match(b, /badge\/drift-.*-d1242f/);
+      assert.match(tile(b, 'DRIFT'), /%23ff7b6b/, 'red drift tile when down');
     },
   },
   {
@@ -140,7 +147,8 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     ctx: CTX,
     expect: (b) => {
       assert.match(b, /\[!TIP\]/);
-      assert.match(b, /badge\/new_tests-5-2ea043/);
+      assert.match(tile(b, 'NEW TESTS'), /alt="NEW TESTS 5"/, 'new-tests tile shows 5');
+      assert.match(tile(b, 'NEW TESTS'), /%234ae3b0/, 'new tests > 0 → green');
       assert.doesNotMatch(b, /Add tests/);
     },
   },
