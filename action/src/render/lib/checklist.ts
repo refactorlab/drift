@@ -65,8 +65,9 @@ export function buildChecklist(facts: PrFacts, ctx?: PrContext): string[] {
 
 // The label after the em-dash, e.g. "Product correctness — Raw SQL concatenation"
 // → "raw SQL concatenation" (verbatim suffix, just first letter lowercased so
-// it reads naturally inside the parenthetical).
-function correctnessTag(label?: string): string | null {
+// it reads naturally inside the parenthetical). Exported so the header's
+// "Look here first" focus pointer labels a correctness finding identically.
+export function correctnessTag(label?: string): string | null {
   if (!label) return null;
   const idx = label.indexOf('—');
   const suffix = (idx >= 0 ? label.slice(idx + 1) : label).trim();

@@ -1,4 +1,4 @@
-// 📊 Value card — the HTML-table dashboard (the heart of the comment).
+// 📊 Business value — the HTML-table value dashboard (the heart of the comment).
 //
 //   row 1: composite verdict (mean of the axes) + magnitude bar + one-liner
 //   row 2: per-axis headers (💰 / 👥 / ⚙️ / 🎨)
@@ -41,7 +41,7 @@ export function renderValueCard(input: ValueCardInput): string | null {
   const axes = card?.axes ?? [];
   if (axes.length === 0 && !counts) return null;
 
-  const lines: string[] = ['## 📊 Value card', ''];
+  const lines: string[] = ['## 📊 Business value', ''];
 
   if (axes.length > 0) {
     lines.push(dashboardTable(axes, input.overallPercent), '');
@@ -61,19 +61,8 @@ export function renderValueCard(input: ValueCardInput): string | null {
     lines.push(howComputed(axes));
   }
 
-  if (card?.bars_mermaid) {
-    lines.push(
-      '',
-      '<details>',
-      '<summary>📈 Bar-chart view</summary>',
-      '',
-      '```mermaid',
-      card.bars_mermaid,
-      '```',
-      '',
-      '</details>',
-    );
-  }
+  // NOTE: the per-axis Mermaid bar-chart was removed — it duplicated the
+  // dashboard table's ⅛-block magnitude bars (same four values, twice).
 
   return lines.join('\n').trimEnd();
 }

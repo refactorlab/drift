@@ -382,7 +382,7 @@ Andy works with **zero configuration** — just paste the YAML above.
 ## License & contact
 
 - **Marketplace:** <https://github.com/marketplace/actions/andy-pr-handoff-by-drift>
-- **Issues:** <https://github.com/refactorlab/andy/issues>
+- **Issues:** <https://github.com/refactorlab/drift/issues>
 - **Contact:** [schuldi@gmail.com](mailto:schuldi@gmail.com)
 - **License:** [MIT](./LICENSE)
 

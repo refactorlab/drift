@@ -753,7 +753,7 @@ test('audio.yml structure: defenses_fired telemetry + GITHUB_STEP_SUMMARY scorec
   assert.match(run, /_emit_telemetry ok/, 'success path emits telemetry');
 });
 
-test('audio-link end-to-end chain: synth → upload → render — all three hops are wired in action.yml', () => {
+test('audio-link end-to-end chain: synth → precheck → upload → resolver → render → validator — all four hops are wired in action.yml', () => {
   const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
   // HOP 1: synth step writes synthesized=true + wav_path=... on success.
   const synthStep = yamlText.match(/Synthesize audio summary[\s\S]+?(?=\n {4}- name:)/);
@@ -761,31 +761,104 @@ test('audio-link end-to-end chain: synth → upload → render — all three hop
   assert.match(synthStep![0], /synthesized=true.*GITHUB_OUTPUT/, 'synth writes synthesized=true');
   assert.match(synthStep![0], /wav_path=.*GITHUB_OUTPUT/, 'synth writes wav_path');
   assert.match(synthStep![0], /🔊 hop 1\/3 OK:/, 'hop 1 diagnostic on success');
-  // HOP 2: upload step gates on synthesized==true + emits artifact-url.
+  // HOP 1.5: precheck step exists, asserts wav_path is non-empty, gates upload.
+  const precheckStep = yamlText.match(/Audio upload precheck[\s\S]+?(?=\n {4}- name:)/);
+  assert.ok(precheckStep, 'precheck step is present');
+  assert.match(precheckStep![0], /id: audio-precheck/, 'precheck has id=audio-precheck');
+  assert.match(precheckStep![0], /\[ -s "\$\{WAV_PATH\}" \]/, 'precheck asserts wav_path is non-empty');
+  // HOP 2: upload step gates on synthesized==true AND precheck.ok=='true'.
   const uploadStep = yamlText.match(/Upload audio summary artifact[\s\S]+?(?=\n {4}- name:)/);
   assert.ok(uploadStep, 'upload step is present');
   assert.match(uploadStep![0], /id: audio-upload/, 'upload step has id=audio-upload');
   assert.match(uploadStep![0], /steps\.audio\.outputs\.synthesized == 'true'/, 'upload gated on synthesized');
+  assert.match(uploadStep![0], /steps\.audio-precheck\.outputs\.ok == 'true'/, 'upload gated on precheck.ok');
   assert.match(uploadStep![0], /actions\/upload-artifact@v\d+/, 'uses upload-artifact');
   assert.match(uploadStep![0], /archive: false/, 'non-zipped artifact (so URL serves the raw .wav)');
   assert.match(uploadStep![0], /steps\.audio\.outputs\.wav_path/, 'upload reads wav_path from synth');
-  // HOP 2.5 — chain diagnostic step makes both hop 2 and hop 3 debuggable.
-  assert.match(yamlText, /Audio-link chain diagnostic/, 'audio-link chain diagnostic step present');
-  assert.match(yamlText, /🔊 hop 2\/3:/, 'hop 2 diagnostic line present');
-  assert.match(yamlText, /🔊 hop 3\/3 (OK|FAILED):/, 'hop 3 diagnostic line present');
-  // HOP 3: render step reads DRIFT_AUDIO_URL from upload's artifact-url output.
-  // This is the link from the action runtime to the dist/index.js bundle
-  // that emits the PR-comment markdown.
+  // HOP 2.5: resolver step with two-source fallback (direct → reconstructed).
+  // Anchor on `- name: Resolve` so the comment block above doesn't match.
+  const resolverStep = yamlText.match(/- name: Resolve audio artifact URL[\s\S]+?(?=\n {4}- name:)/);
+  assert.ok(resolverStep, 'resolver step is present');
+  assert.match(resolverStep![0], /id: audio-url/, 'resolver step has id=audio-url');
+  assert.match(resolverStep![0], /DIRECT_URL:\s+\$\{\{ steps\.audio-upload\.outputs\.artifact-url \}\}/, 'resolver reads direct url');
+  assert.match(resolverStep![0], /ARTIFACT_ID:\s+\$\{\{ steps\.audio-upload\.outputs\.artifact-id \}\}/, 'resolver reads artifact-id for reconstruction');
+  assert.match(resolverStep![0], /\$\{SERVER_URL\}\/\$\{REPO\}\/actions\/runs\/\$\{RUN_ID\}\/artifacts\/\$\{ARTIFACT_ID\}/, 'resolver reconstructs canonical URL');
+  assert.match(resolverStep![0], /continue-on-error: true/, 'resolver is fail-soft');
+  assert.match(resolverStep![0], /audio_url=\$\{url\}.*GITHUB_OUTPUT/, 'resolver writes audio_url output');
+  assert.match(resolverStep![0], /url_source=\$\{source\}.*GITHUB_OUTPUT/, 'resolver writes url_source output');
+  // HOP 2.75: chain diagnostic now reads from resolver, not upload directly.
+  const diag = yamlText.match(/- name: Audio-link chain diagnostic[\s\S]+?(?=\n {4}- name:)/);
+  assert.ok(diag, 'diagnostic step is present');
+  assert.match(diag![0], /RESOLVED_URL:\s+\$\{\{ steps\.audio-url\.outputs\.audio_url \}\}/, 'diagnostic reads resolved URL');
+  assert.match(diag![0], /URL_SOURCE:\s+\$\{\{ steps\.audio-url\.outputs\.url_source \}\}/, 'diagnostic logs url_source');
+  // HOP 3 (rewired): render step reads from the resolver — NOT the upload step
+  // directly. This is the load-bearing wire change — reverting it silently
+  // drops the link on any upload-artifact@v7 quirk.
   assert.match(
     yamlText,
-    /DRIFT_AUDIO_URL:\s+\$\{\{\s+steps\.audio-upload\.outputs\.artifact-url\s+\}\}/,
-    'render step env reads artifact-url from upload step',
+    /DRIFT_AUDIO_URL:\s+\$\{\{\s+steps\.audio-url\.outputs\.audio_url\s+\}\}/,
+    'render step env reads audio_url from resolver (NOT from upload directly)',
   );
+  assert.doesNotMatch(
+    yamlText,
+    /DRIFT_AUDIO_URL:\s+\$\{\{\s+steps\.audio-upload\.outputs\.artifact-url\s+\}\}/,
+    'render must NEVER read artifact-url directly — that bypasses the fallback chain',
+  );
+  // HOP 4: post-comment validator re-reads the sticky comment and warns if the
+  // 🔊 Listen link is missing despite all preconditions succeeding.
+  const validatorStep = yamlText.match(/Validate audio link landed in sticky comment[\s\S]+?(?=\n {4}- name:|\n {4}# ───)/);
+  assert.ok(validatorStep, 'audio-link-validate step is present');
+  assert.match(validatorStep![0], /id: audio-link-validate/, 'validator has id=audio-link-validate');
+  assert.match(validatorStep![0], /continue-on-error: true/, 'validator is warn-only (never fails the PR)');
+  assert.match(validatorStep![0], /steps\.audio-url\.outputs\.audio_url != ''/, 'validator gates on resolved url');
+  assert.match(validatorStep![0], /api\.github\.com\/repos\/\$\{GH_OWNER\}\/\$\{GH_REPO\}\/issues\/\$\{PR_NUMBER\}\/comments/, 'validator hits /issues/{n}/comments (event-agnostic, covered by pull-requests:write)');
+  assert.match(validatorStep![0], /<!-- drift:sticky-comment -->/, 'validator filters by STICKY_MARKER');
+  assert.match(validatorStep![0], /grep -qF '🔊'/, 'validator grep-asserts 🔊 glyph');
+  assert.match(validatorStep![0], /grep -qF 'Listen to the spoken summary'/, 'validator grep-asserts literal Listen text');
+  assert.match(validatorStep![0], /::warning::/, 'validator emits ::warning:: on absence');
+  assert.match(validatorStep![0], /GITHUB_STEP_SUMMARY/, 'validator writes scorecard row to step summary');
+  // Position invariant: validator MUST run AFTER the Post step.
+  const postIdx = yamlText.indexOf('name: Post Drift PR review');
+  const valIdx = yamlText.indexOf('name: Validate audio link landed in sticky comment');
+  assert.ok(postIdx > 0 && valIdx > postIdx, 'validator must come after Post Drift PR review');
   // dist/index.js (the bundle the render step invokes) reads
   // process.env.DRIFT_AUDIO_URL and threads it to renderOverview.
   const distSource = readFileSync(join(REPO, 'dist/index.js'), 'utf8');
   assert.match(distSource, /process\.env\.DRIFT_AUDIO_URL/, 'bundle reads DRIFT_AUDIO_URL');
   assert.match(distSource, /audioUrl/, 'bundle threads audioUrl into render');
+});
+
+test('audio-link UX: dist/index.js renders the GitHub-login hint + MP4 drag-drop affordance in the footer', () => {
+  // The render bundle is what consumers actually invoke (dist/index.js).
+  // The honest footer wording is load-bearing UX: GitHub's artifact
+  // endpoint returns 404 to unauthenticated viewers even on public
+  // repos, so an incognito-tab reviewer clicking the link sees
+  // "Not Found" and reasonably reports "no audio link". The footer
+  // must (a) state the login requirement up-front and (b) surface the
+  // MP4 drag-drop affordance — the only within-permissions way to get
+  // GitHub's native inline <video> player in PR comments. If a future
+  // TS edit changes the source but skips `npm run build`, this catches
+  // it.
+  const distSource = readFileSync(join(REPO, 'dist/index.js'), 'utf8');
+  assert.match(
+    distSource,
+    /sign in to GitHub to download/,
+    'dist/index.js footer text must include login requirement (rebuild dist if this fails)',
+  );
+  assert.match(
+    distSource,
+    /drop the MP4 into a reply for an inline player/,
+    'dist/index.js footer text must include MP4 drag-drop affordance',
+  );
+});
+
+test('action.yml: chain diagnostic includes an unauth HEAD-probe for the resolved URL', () => {
+  const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
+  // The probe makes the auth gate visible at CI time so we know whether
+  // unauthenticated viewers can play the audio.
+  assert.match(yamlText, /unauth_status=\$\(curl.*RESOLVED_URL/, 'unauth HEAD probe present');
+  assert.match(yamlText, /hop 3\.5\/4 unauth check/, 'probe emits hop-3.5 diagnostic');
+  assert.match(yamlText, /GitHub's expected auth gate/, 'documents the auth-gate expected case');
 });
 
 test('audio.yml structure: AI briefing has prompt-injection boundary + curl timeouts + reply-head sanitisation', () => {

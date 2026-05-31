@@ -1,4 +1,4 @@
-// ⚠️ Suggestions — the quality-passing code findings, as a priority table plus
+// ⚠️ Code suggestions — the quality-passing code findings, as a priority table plus
 // one expandable detail block each.
 //
 // Mirrored HERE (a plain issue-comment section) as well as inline review
@@ -14,6 +14,7 @@ import { passesQualityBar } from '../../report.ts';
 import type { PrContext } from '../context.ts';
 import { fileLink, snippetPermalink } from '../context.ts';
 import { confidencePercent, plural, fencedBlock, escapeHtml } from '../lib/format.ts';
+import { buildAgentPrompt, buildFixAllPrompt } from '../lib/agent_prompt.ts';
 
 const CATEGORY: Record<'A' | 'B' | 'C', { badge: string; name: string }> = {
   A: { badge: '🅐', name: 'Optimization' },
@@ -32,7 +33,7 @@ export function renderSuggestions(suggestions: CodeSuggestion[] | undefined, ctx
   const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
   const correctness = sorted.filter((s) => s.category === 'B').length;
 
-  const lines: string[] = [`## ⚠️ Suggestions (${sorted.length})`, ''];
+  const lines: string[] = [`## ⚠️ Code suggestions (${sorted.length})`, ''];
 
   if (correctness > 0) {
     lines.push(
@@ -59,9 +60,24 @@ export function renderSuggestions(suggestions: CodeSuggestion[] | undefined, ctx
   lines.push('');
 
   // detail blocks
-  for (const s of sorted.slice(0, MAX_SHOWN)) lines.push(renderDetail(s, ctx), '');
+  const shown = sorted.slice(0, MAX_SHOWN);
+  for (const s of shown) lines.push(renderDetail(s, ctx), '');
   if (sorted.length > MAX_SHOWN) {
-    lines.push(`_…+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, 'suggestion')} not shown._`);
+    lines.push(`_…+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, 'suggestion')} not shown._`, '');
+  }
+
+  // 🤖 One batched "Fix-All" handoff — dispatch every shown finding in a single
+  // copy-paste to an AI agent. Omitted for a lone finding (use its own prompt).
+  const fixAll = buildFixAllPrompt(shown, ctx);
+  if (fixAll) {
+    lines.push(
+      '<details>',
+      `<summary>🤖 <strong>Fix-All handoff</strong> — one prompt that dispatches all ${shown.length} findings</summary>`,
+      '',
+      fencedBlock(fixAll, 'text'),
+      '',
+      '</details>',
+    );
   }
 
   return lines.join('\n').trimEnd();
@@ -121,6 +137,20 @@ function renderDetail(s: CodeSuggestion, ctx?: PrContext): string {
 
   const ref = s.references?.[0];
   if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, '');
+
+  // 🤖 One-click handoff: a copy-paste prompt for the reviewer's AI agent.
+  // Nested <details> needs surrounding blank lines so GitHub parses it.
+  if (s.file) {
+    out.push(
+      '<details>',
+      '<summary>🤖 Copy this prompt for your AI agent <sub>(Claude Code · Cursor · Copilot)</sub></summary>',
+      '',
+      fencedBlock(buildAgentPrompt(s, ctx), 'text'),
+      '',
+      '</details>',
+      '',
+    );
+  }
 
   out.push('</details>');
   return out.join('\n');

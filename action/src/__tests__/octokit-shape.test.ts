@@ -295,6 +295,6 @@ test('upsertStickyComment: kotlin-ktor fixture renders + posts cleanly', async (
   });
   const create = calls.find((c) => c.method === 'issues.createComment')!;
   const body = (create.args as { body: string }).body;
-  assert.ok(body.includes('<summary><strong>🏗 Architecture &amp; reach</strong> — '));
+  assert.ok(body.includes('<summary><strong>🏗 Architecture</strong> — '));
   assert.ok(body.length < 60_000, `body too large: ${body.length}`);
 });

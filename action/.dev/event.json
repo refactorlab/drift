@@ -1,7 +1,7 @@
 {
   "pull_request": {
     "number": 1,
-    "title": "Drift smoke run",
+    "title": "feat(orders): introduce OrderService layer",
     "html_url": "https://github.com/PLACEHOLDER_OWNER/PLACEHOLDER_REPO/pull/1",
     "head": {
       "ref": "smoke",

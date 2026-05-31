@@ -23896,6 +23896,11 @@ ${fence}`;
 }
 
 // src/render/state.ts
+var CONF_HISTORY_CAP = 12;
+function appendConfHistory(prior, score) {
+  const past = Array.isArray(prior?.confHistory) ? prior.confHistory.filter((n) => Number.isFinite(n)) : [];
+  return [...past, score].slice(-CONF_HISTORY_CAP);
+}
 var MARKER_RE = /<!--\s*drift:state\s+(\{[\s\S]*?\})\s*-->/;
 function stateFromReport(report) {
   const state = { v: 1 };
@@ -23964,6 +23969,13 @@ function extractFacts(report) {
   const counts = review?.counts;
   const passing = (review?.code_suggestions ?? []).filter(passesQualityBar);
   const risks = review?.visual_summary?.risks?.items ?? [];
+  const uncoveredSet = new Set(ext?.tests_in_graph?.uncovered_roots ?? []);
+  const missingByRoot = new Map((ext?.nfr_edge_cases?.per_root ?? []).map((p) => [p.root, p.missing ?? []]));
+  const perRootCoverage = ps.affected_roots.map((root) => ({
+    root,
+    tested: !uncoveredSet.has(root),
+    missing: missingByRoot.get(root) ?? []
+  }));
   return {
     changedFiles: ps.changed_files.length,
     affectedRoots: ps.affected_roots.length,
@@ -23990,7 +24002,8 @@ function extractFacts(report) {
     reliabilityGaps: ext?.nfr_edge_cases?.reliability_gaps ?? [],
     highComplexity: ext?.tech_debt?.high_complexity?.length ?? 0,
     longFunctions: ext?.tech_debt?.long_functions?.length ?? 0,
-    duplicationClusters: ext?.duplication?.clusters?.length ?? 0
+    duplicationClusters: ext?.duplication?.clusters?.length ?? 0,
+    perRootCoverage
   };
 }
 function isDeadCode(s) {
@@ -24002,6 +24015,157 @@ function numInput(inputs, key) {
   const v = inputs[key];
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
   return Number.isFinite(n) ? n : null;
+}
+
+// src/render/lib/severity.ts
+var COLOR = {
+  green: "2ea043",
+  // improvement / ship
+  amber: "d29922",
+  // mixed / monitor
+  red: "d1242f",
+  // regression / act
+  blue: "58a6ff",
+  // neutral-informational
+  grey: "8b949e",
+  // muted / flat
+  brand: "ff6b3d"
+  // Drift / Andy brand orange — brand chips & agent-ready badge
+};
+function directionEmoji(direction) {
+  return direction === "up" ? "\u{1F7E2}" : direction === "down" ? "\u{1F534}" : "\u26AA";
+}
+function directionWord(direction) {
+  return direction === "up" ? "improved" : direction === "down" ? "regressed" : "no change";
+}
+function compositeStatus(axes) {
+  const ups = (axes ?? []).filter((a) => a.direction === "up").length;
+  const downs = (axes ?? []).filter((a) => a.direction === "down").length;
+  if (ups > 0 && downs > 0) return { emoji: "\u{1F7E1}", label: "mixed", color: COLOR.amber, mixed: true };
+  if (downs > 0) return { emoji: "\u{1F534}", label: "regressed", color: COLOR.red, mixed: false };
+  if (ups > 0) return { emoji: "\u{1F7E2}", label: "improved", color: COLOR.green, mixed: false };
+  return { emoji: "\u26AA", label: "no change", color: COLOR.grey, mixed: false };
+}
+function maxAbsDelta(axes) {
+  return (axes ?? []).reduce((m, a) => Math.max(m, Math.abs(a.delta_percent)), 0);
+}
+
+// src/render/lib/effort.ts
+var LABEL = {
+  1: "trivial",
+  2: "easy",
+  3: "moderate",
+  4: "involved",
+  5: "demanding"
+};
+var MINUTES = {
+  1: "\u2248 5 min",
+  2: "\u2248 10 min",
+  3: "\u2248 20 min",
+  4: "\u2248 30\u201345 min",
+  5: "\u2248 60 min+"
+};
+var SCORE_COLOR = {
+  1: COLOR.green,
+  2: COLOR.green,
+  3: COLOR.blue,
+  4: COLOR.amber,
+  5: COLOR.red
+};
+function reviewEffort(f) {
+  let pts = 0;
+  const files = f.changedFiles;
+  if (files > 40) pts += 2;
+  else if (files > 15) pts += 1.5;
+  else if (files > 6) pts += 1;
+  else pts += 0.5;
+  const loc = f.locAdded ?? 0;
+  if (loc > 1e3) pts += 2;
+  else if (loc > 400) pts += 1.5;
+  else if (loc > 150) pts += 1;
+  else if (loc > 0) pts += 0.5;
+  if (f.affectedRoots > 30) pts += 1;
+  else if (f.affectedRoots > 12) pts += 0.5;
+  const debt = f.highComplexity + f.longFunctions;
+  pts += Math.min(1.5, debt * 0.25);
+  pts += Math.min(2, f.correctness.length * 0.9);
+  if (f.regressedAxes.length > 0) pts += Math.min(1, f.regressedAxes.length * 0.5);
+  if (f.risksToAddress > 0) pts += Math.min(1, f.risksToAddress * 0.2);
+  if (f.newTestFiles === 0 && loc > 150) pts += 0.5;
+  const score = pts >= 7 ? 5 : pts >= 5 ? 4 : pts >= 3 ? 3 : pts >= 1.5 ? 2 : 1;
+  return {
+    score,
+    label: LABEL[score],
+    minutes: MINUTES[score],
+    drivers: drivers(f),
+    color: SCORE_COLOR[score]
+  };
+}
+function drivers(f) {
+  const out = [];
+  if (f.correctness.length > 0) {
+    out.push(`${f.correctness.length} ${plural(f.correctness.length, "correctness issue")}`);
+  }
+  if (f.regressedAxes.length > 0) {
+    out.push(`${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`);
+  }
+  const debt = f.highComplexity + f.longFunctions;
+  if (debt > 0) out.push(`${debt} complex/long ${plural(debt, "fn")}`);
+  if (f.changedFiles > 6) out.push(`${int(f.changedFiles)} files`);
+  if (f.locAdded !== null && f.locAdded > 0) out.push(`${signedInt(f.locAdded)} LOC`);
+  if (f.affectedRoots > 12) out.push(`${int(f.affectedRoots)} entry points`);
+  if (out.length === 0) {
+    out.push(`${int(f.changedFiles)} ${plural(f.changedFiles, "file")}`);
+  }
+  return out.slice(0, 3);
+}
+
+// src/render/lib/confidence.ts
+var LABEL2 = {
+  5: "ship with confidence",
+  4: "minor polish",
+  3: "review closely",
+  2: "significant concerns",
+  1: "high risk",
+  0: "do not merge"
+};
+function mergeConfidence(f) {
+  let pts = 5;
+  pts -= Math.min(3, f.correctness.length * 1);
+  pts -= Math.min(1.5, f.regressedAxes.length * 0.5);
+  pts -= Math.min(1.5, f.risksToAddress * 0.5);
+  if (f.affectedRoots > 0 && f.uncoveredRoots.length > 0) {
+    const frac = Math.min(1, f.uncoveredRoots.length / f.affectedRoots);
+    pts -= frac;
+  } else if (f.newTestFiles === 0 && f.locAdded !== null && f.locAdded > 150) {
+    pts -= 0.5;
+  }
+  const effort = reviewEffort(f).score;
+  if (effort >= 5) pts -= 0.5;
+  else if (effort === 4) pts -= 0.25;
+  const score = clampScore(Math.round(pts));
+  return { score, label: LABEL2[score], color: scoreColor(score), drivers: drivers2(f) };
+}
+function scoreColor(score) {
+  if (score >= 4) return COLOR.green;
+  if (score === 3) return COLOR.blue;
+  if (score === 2) return COLOR.amber;
+  return COLOR.red;
+}
+function drivers2(f) {
+  const out = [];
+  if (f.correctness.length > 0) out.push(`${f.correctness.length} ${plural(f.correctness.length, "correctness issue")}`);
+  if (f.affectedRoots > 0 && f.uncoveredRoots.length > 0) {
+    out.push(`${int(f.uncoveredRoots.length)}/${int(f.affectedRoots)} reached ${plural(f.affectedRoots, "root")} untested`);
+  } else if (f.newTestFiles === 0 && f.locAdded !== null && f.locAdded > 0) {
+    out.push("no new tests");
+  }
+  if (f.regressedAxes.length > 0) out.push(`${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`);
+  if (f.risksToAddress > 0) out.push(`${f.risksToAddress} gating ${plural(f.risksToAddress, "risk")}`);
+  return out.slice(0, 3);
+}
+function clampScore(n) {
+  return Math.max(0, Math.min(5, n));
 }
 
 // src/render/lib/section.ts
@@ -24062,37 +24226,6 @@ function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-// src/render/lib/severity.ts
-var COLOR = {
-  green: "2ea043",
-  // improvement / ship
-  amber: "d29922",
-  // mixed / monitor
-  red: "d1242f",
-  // regression / act
-  blue: "58a6ff",
-  // neutral-informational
-  grey: "8b949e"
-  // muted / flat
-};
-function directionEmoji(direction) {
-  return direction === "up" ? "\u{1F7E2}" : direction === "down" ? "\u{1F534}" : "\u26AA";
-}
-function directionWord(direction) {
-  return direction === "up" ? "improved" : direction === "down" ? "regressed" : "no change";
-}
-function compositeStatus(axes) {
-  const ups = (axes ?? []).filter((a) => a.direction === "up").length;
-  const downs = (axes ?? []).filter((a) => a.direction === "down").length;
-  if (ups > 0 && downs > 0) return { emoji: "\u{1F7E1}", label: "mixed", color: COLOR.amber, mixed: true };
-  if (downs > 0) return { emoji: "\u{1F534}", label: "regressed", color: COLOR.red, mixed: false };
-  if (ups > 0) return { emoji: "\u{1F7E2}", label: "improved", color: COLOR.green, mixed: false };
-  return { emoji: "\u26AA", label: "no change", color: COLOR.grey, mixed: false };
-}
-function maxAbsDelta(axes) {
-  return (axes ?? []).reduce((m, a) => Math.max(m, Math.abs(a.delta_percent)), 0);
-}
-
 // src/render/lib/checklist.ts
 var MAX_DEAD_EXPORTS_LINKED = 5;
 var MAX_CORRECTNESS_LINES = 3;
@@ -24100,8 +24233,8 @@ function buildChecklist(facts, ctx) {
   const items = [];
   for (const s of facts.correctness.slice(0, MAX_CORRECTNESS_LINES)) {
     const loc = fileLink(ctx, s.file, s.line);
-    const why = correctnessTag(s.category_label);
-    items.push(`Fix the product-correctness issue at ${loc}${why ? ` (${why})` : ""}`);
+    const why2 = correctnessTag(s.category_label);
+    items.push(`Fix the product-correctness issue at ${loc}${why2 ? ` (${why2})` : ""}`);
   }
   if (facts.correctness.length > MAX_CORRECTNESS_LINES) {
     const extra = facts.correctness.length - MAX_CORRECTNESS_LINES;
@@ -24158,6 +24291,19 @@ function magnitudeBar(value, max, cells = 10) {
   const used = full + (rem > 0 ? 1 : 0);
   return head + EMPTY.repeat(Math.max(0, cells - used));
 }
+var SPARK = ["\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
+function sparkline(nums) {
+  const xs = nums.filter((n) => Number.isFinite(n));
+  if (xs.length < 2) return "";
+  const lo = Math.min(...xs);
+  const hi = Math.max(...xs);
+  const span = hi - lo;
+  return xs.map((n) => {
+    const frac = span === 0 ? 1 : (n - lo) / span;
+    const idx = clamp(Math.round(frac * (SPARK.length - 1)), 0, SPARK.length - 1);
+    return SPARK[idx];
+  }).join("");
+}
 function progressBar(done, total, cells = 10) {
   if (total <= 0) return EMPTY.repeat(cells);
   const filled = clamp(Math.round(done / total * cells), 0, cells);
@@ -24165,34 +24311,25 @@ function progressBar(done, total, cells = 10) {
 }
 
 // src/render/sections/header.ts
-function renderHeader(report, ctx) {
+function renderHeader(report, ctx, opts = {}) {
   const facts = extractFacts(report);
   const composite = compositeStatus(facts.axes);
   const verdict = decideVerdict(facts, composite);
+  const effort = reviewEffort(facts);
+  const confidence = mergeConfidence(facts);
   const blocks = [
-    titleLine(facts, ctx),
+    titleLine(facts),
+    bottomLine(verdict, facts),
+    signalLine(confidence, effort, opts.confTrend),
     subLine(ctx),
-    calloutBlock(verdict, facts, composite),
-    badgeRow(facts, verdict)
+    calloutBlock(verdict, facts, composite, ctx),
+    badgeRow(facts, verdict, effort, confidence)
   ];
-  const checklist = buildChecklist(facts, ctx);
-  blocks.push(checklistBlock(checklist));
   return blocks.filter(Boolean).join("\n\n");
 }
-var TITLE_MAX_CHARS = 200;
-function sanitizeTitle(raw) {
-  let s = raw.replace(/[\r\n\u0085\u2028\u2029]+/g, " ").replace(/`/g, "'").replace(/[\x00-\x1F\x7F]/g, " ").replace(/\s+/g, " ").trim();
-  if ([...s].length > TITLE_MAX_CHARS) {
-    s = [...s].slice(0, TITLE_MAX_CHARS - 1).join("") + "\u2026";
-  }
-  return s;
-}
-function titleLine(facts, ctx) {
+function titleLine(facts) {
   const arrow = facts.overallDirection === "up" ? "\u25B2 " : facts.overallDirection === "down" ? "\u25BC " : facts.overallDirection === "neutral" ? "\u2014 " : "";
-  const raw = ctx?.prTitle?.trim();
-  const title = raw ? sanitizeTitle(raw) : "";
-  const suffix = title ? ` \u2014 \`${title}\`` : "";
-  return `## ${arrow}Drift review${suffix}`;
+  return `## ${arrow}Drift review`;
 }
 function subLine(ctx) {
   const slug = repoSlug(ctx);
@@ -24202,9 +24339,11 @@ function subLine(ctx) {
 function decideVerdict(facts, composite) {
   const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
   if (needsAttention) {
+    const netRegression = facts.overallDirection === "down" && !composite.mixed;
     return {
       alert: "WARNING",
-      headline: "**Recommend addressing before merge**",
+      emoji: netRegression ? "\u{1F534}" : "\u{1F7E1}",
+      tldr: "address before merge",
       statusMessage: "address before merge",
       statusColor: COLOR.amber
     };
@@ -24212,21 +24351,92 @@ function decideVerdict(facts, composite) {
   if (facts.overallDirection === "up") {
     return {
       alert: "TIP",
-      headline: "**Looks good** \u2014 advisory review found nothing to gate on",
+      emoji: "\u{1F7E2}",
+      tldr: "looks good \u2014 nothing to gate on",
       statusMessage: "looks good",
       statusColor: COLOR.green
     };
   }
   return {
     alert: "NOTE",
-    headline: "**Advisory review**",
+    emoji: "\u{1F535}",
+    tldr: "advisory review only \u2014 nothing flagged",
     statusMessage: "advisory",
     statusColor: COLOR.blue
   };
 }
-function calloutBlock(verdict, facts, composite) {
-  const body = [`${verdict.headline} &nbsp;\xB7&nbsp; advisory, does not fail the check.`, ...narrative(facts, composite)];
-  return [`> [!${verdict.alert}]`, ...body.map((l) => `> ${l}`)].join("\n");
+function bottomLine(verdict, facts) {
+  const move = theMove(facts);
+  const win = facts.overallDirection === "up" && facts.overallPercent !== null ? ` ${signedPercent(facts.overallPercent)}` : "";
+  let sentence;
+  if (verdict.alert === "WARNING") {
+    sentence = move ? `**Address before merge** \u2014 ${move}${win ? `, then ship the${win} improvement` : ""}.` : `**Address the regressions below before merge.**`;
+  } else if (verdict.alert === "TIP") {
+    sentence = move ? `**Looks good** \u2014 ${move} before you ship.` : `**Looks good \u2014 ship it.**`;
+  } else {
+    sentence = move ? `**Advisory** \u2014 ${move}.` : `**Advisory only \u2014 nothing flagged.**`;
+  }
+  return `> ${verdict.emoji} ${sentence}`;
+}
+function signalLine(confidence, effort, confTrend) {
+  const trend = sparkline(confTrend ?? []);
+  const trendTag = trend ? ` \xB7 trend \`${trend}\` <sub>(confidence over the last ${confTrend.length} pushes)</sub>` : "";
+  return `> <sub>\u{1F6E1}\uFE0F **Merge confidence ${confidence.score}/5** (${confidence.label}) &nbsp;\xB7&nbsp; \u{1F9EE} **Review effort ${effort.score}/5** \xB7 ${effort.minutes}</sub>${trendTag}`;
+}
+function theMove(facts) {
+  const parts = [];
+  const c = topCorrectness(facts.correctness);
+  if (c) parts.push(`fix the ${correctnessTag(c.category_label) ?? "correctness issue"}`);
+  if (facts.newTestFiles === 0 && facts.locAdded !== null && facts.locAdded > 0) parts.push("add tests");
+  if (parts.length < 2 && facts.regressedAxes.length > 0) {
+    const worst = facts.regressedAxes.reduce((w, a) => a.delta_percent < w.delta_percent ? a : w);
+    parts.push(`confirm the ${worst.label} ${signedPercent(worst.delta_percent)} regression`);
+  }
+  if (parts.length < 2 && facts.deadCode.length > 0) {
+    parts.push(`drop ${facts.deadCode.length} dead ${plural(facts.deadCode.length, "export")}`);
+  }
+  return joinClauses(parts.slice(0, 2));
+}
+function calloutBlock(verdict, facts, composite, ctx) {
+  const tldr = `**TL;DR \u2014** ${narrative(facts, composite).join(" ")} _Advisory \u2014 does not fail the check._`.trim();
+  const focus = focusLine(facts, ctx);
+  const paras = [tldr];
+  if (focus) paras.push(focus);
+  const lines = [`> [!${verdict.alert}]`];
+  paras.forEach((p, i) => {
+    if (i > 0) lines.push(">");
+    lines.push(`> ${p}`);
+  });
+  return lines.join("\n");
+}
+function focusLine(facts, ctx) {
+  const c = topCorrectness(facts.correctness);
+  if (c) {
+    const loc = fileLink(ctx, c.file, c.line);
+    const tag = correctnessTag(c.category_label) ?? "product-correctness issue";
+    return `\u{1F449} **Look here first:** ${loc} \u2014 ${tag} \xB7 ${confidencePercent(c.confidence)} confidence`;
+  }
+  if (facts.regressedAxes.length > 0) {
+    const worst = facts.regressedAxes.reduce((w, a) => a.delta_percent < w.delta_percent ? a : w);
+    return `\u{1F449} **Look here first:** the **${worst.label} ${signedPercent(worst.delta_percent)}** regression \u2014 confirm it's acceptable or fix it`;
+  }
+  const gaps = facts.reliabilityGaps.length || facts.uncoveredRoots.length;
+  if (gaps > 0) {
+    return `\u{1F449} **Look here first:** **${int(gaps)}** entry ${plural(gaps, "point")} ${plural(gaps, "lacks", "lack")} retry / timeout / fallback or test coverage`;
+  }
+  if (facts.deadCode.length > 0) {
+    const s = facts.deadCode[0];
+    const n = facts.deadCode.length;
+    return `\u{1F449} **Look here first:** **${n}** dead ${plural(n, "export")} in changed files (e.g. ${fileLink(ctx, s.file, s.line)})`;
+  }
+  if (facts.newTestFiles === 0 && facts.locAdded !== null && facts.locAdded > 0) {
+    return `\u{1F449} **Look here first:** **${signedInt(facts.locAdded)} LOC** shipped with **0** tests \u2014 spot-check the risky paths`;
+  }
+  return `\u{1F449} **Looks clean** \u2014 no findings; a quick skim of the **${int(facts.changedFiles)}** changed ${plural(facts.changedFiles, "file")} should do`;
+}
+function topCorrectness(items) {
+  if (items.length === 0) return null;
+  return [...items].sort((a, b) => b.confidence - a.confidence)[0];
 }
 function narrative(facts, composite) {
   const lines = [];
@@ -24261,9 +24471,11 @@ function narrative(facts, composite) {
   }
   return lines;
 }
-function badgeRow(facts, verdict) {
+function badgeRow(facts, verdict, effort, confidence) {
   const badges = [];
   badges.push(badge("Review status", "review", verdict.statusMessage, verdict.statusColor));
+  badges.push(badge(`Merge confidence ${confidence.score}/5`, "merge confidence", `${confidence.score}/5`, confidence.color));
+  badges.push(badge(`Review effort ${effort.score}/5`, "review effort", `${effort.score}/5`, effort.color));
   if (facts.overallPercent !== null) {
     const color = facts.overallDirection === "up" ? COLOR.green : facts.overallDirection === "down" ? COLOR.red : COLOR.grey;
     badges.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, "drift", signedPercent(facts.overallPercent), color));
@@ -24273,6 +24485,9 @@ function badgeRow(facts, verdict) {
     badges.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, "net LOC", signedInt(facts.netLoc), COLOR.grey));
   }
   badges.push(badge(`Suggestions ${facts.passing.length}`, "suggestions", int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey));
+  if (facts.passing.length > 0) {
+    badges.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, "agent-ready", `${int(facts.passing.length)} fix prompts`, COLOR.brand));
+  }
   if (facts.totalRisks > 0) {
     const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
     badges.push(badge(`Risks: ${facts.risksToAddress} to address`, "risks", `${facts.risksToAddress} to address`, color));
@@ -24289,15 +24504,211 @@ function badge(alt, label, message, color) {
 function shields(s) {
   return encodeURIComponent(s.replace(/_/g, "__").replace(/-/g, "--").replace(/ /g, "_"));
 }
-function checklistBlock(items) {
-  if (items.length === 0) {
-    return ["### \u2705 Before you merge", "", "_Nothing blocking \u2014 Drift found no gating issues. Advisory review only._"].join("\n");
-  }
-  const boxes = items.map((t) => `- [ ] ${t}`);
-  const readiness = `> **Merge readiness** &nbsp; \`${progressBar(0, items.length)}\` &nbsp; **0 / ${items.length}** \u2014 GitHub tallies the boxes above as you check them off.`;
-  return ["### \u2705 Before you merge", "", ...boxes, "", readiness].join("\n");
-}
 function joinClauses(parts) {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+// src/render/lib/cohorts.ts
+var TEST_RE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)(\/|$)|\.(test|spec)\.[a-z0-9]+$|_test\.[a-z0-9]+$/i;
+var DOCS_RE = /(^|\/)docs?(\/|$)|\.(md|mdx|rst|adoc|txt)$|(^|\/)(readme|license|changelog|contributing)(\.[a-z0-9]+)?$/i;
+var CONFIG_RE = /\.(ya?ml|json|toml|ini|cfg|conf|lock|env)$|(^|\/)\.[^/]+$|(^|\/)(dockerfile|makefile|\.github|\.config)(\/|$)|\.(gitignore|editorconfig|npmrc|prettierrc|eslintrc)/i;
+function groupCohorts(changedFiles, unreachable = []) {
+  const dead = new Set(unreachable);
+  const byKey = /* @__PURE__ */ new Map();
+  for (const file of changedFiles) {
+    const { key, label, role } = classify(file);
+    let c = byKey.get(key);
+    if (!c) {
+      c = { key, label, role, files: [], unreachable: 0 };
+      byKey.set(key, c);
+    }
+    c.files.push(file);
+    if (dead.has(file)) c.unreachable += 1;
+  }
+  const ROLE_RANK = { source: 0, tests: 1, docs: 2, config: 3 };
+  const cohorts = [...byKey.values()].sort(
+    (a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || b.files.length - a.files.length || a.key.localeCompare(b.key)
+  );
+  const sourceAreas = cohorts.filter((c) => c.role === "source").length;
+  const spread = sourceAreas >= 4 ? "spread" : sourceAreas >= 2 ? "multi" : "focused";
+  return { cohorts, totalFiles: changedFiles.length, spread, sourceAreas };
+}
+function classify(file) {
+  const path = file.replace(/^\.\//, "");
+  if (TEST_RE.test(path)) return { key: "role:tests", label: "Tests", role: "tests" };
+  if (DOCS_RE.test(path)) return { key: "role:docs", label: "Docs", role: "docs" };
+  if (CONFIG_RE.test(path)) return { key: "role:config", label: "Config & CI", role: "config" };
+  const segs = path.split("/").filter(Boolean);
+  if (segs.length <= 1) return { key: "dir:(root)", label: "(repo root)", role: "source" };
+  const depth = segs.length >= 3 ? 2 : segs.length - 1;
+  const dir = segs.slice(0, depth).join("/");
+  return { key: `dir:${dir}`, label: dir, role: "source" };
+}
+
+// src/render/sections/reviewers_guide.ts
+var MAX_KEY_ISSUES = 5;
+var MAX_COHORT_ROWS = 8;
+var MAX_FILES_PER_COHORT = 6;
+var WHY_MAX = 90;
+var VERIFY_BELOW = 0.85;
+function renderReviewersGuide(input) {
+  const { facts, changedFiles, ctx } = input;
+  if (changedFiles.length === 0 && facts.passing.length === 0) return null;
+  const cohorts = groupCohorts(changedFiles, input.unreachable);
+  const lines = ["## \u{1F9ED} Reviewer\u2019s guide", ""];
+  const tripwire = regressionTripwire(facts, input.priorState, input.currentState);
+  if (tripwire) lines.push(tripwire, "");
+  lines.push(atAGlance(facts), "");
+  const clean = cleanChecks(facts);
+  if (clean) lines.push(clean, "");
+  lines.push(focusVerdict(cohorts), "");
+  lines.push(keyIssues(facts, ctx));
+  if (cohorts.totalFiles > 0) lines.push("", changesWalkthrough(cohorts, ctx));
+  return lines.join("\n").trimEnd();
+}
+function regressionTripwire(facts, prior, current) {
+  const priorConf = lastFinite(prior?.confHistory);
+  if (priorConf === null) return null;
+  const curConf = mergeConfidence(facts).score;
+  const confDropped = curConf < priorConf;
+  const priorDrift = typeof prior?.overall === "number" ? prior.overall : null;
+  const curDrift = typeof current.overall === "number" ? current.overall : null;
+  const driftDropped = priorDrift !== null && curDrift !== null && curDrift < priorDrift - 0.05;
+  if (!confDropped && !driftDropped) return null;
+  const bits = [];
+  if (confDropped) bits.push(`merge confidence **${priorConf} \u2192 ${curConf}/5**`);
+  if (driftDropped) bits.push(`overall drift **${signedPercent(priorDrift)} \u2192 ${signedPercent(curDrift)}**`);
+  return [
+    "> [!CAUTION]",
+    `> \u{1F501} **Heads-up \u2014 this push got riskier since the last review:** ${joinClauses2(bits)}. If you already approved, take another look before merge.`
+  ].join("\n");
+}
+function atAGlance(facts) {
+  const reached = facts.perRootCoverage.length;
+  const untested = facts.perRootCoverage.filter((r) => !r.tested).length;
+  const parts = [`\u{1F534} **${int(facts.correctness.length)}** correctness`];
+  if (facts.totalRisks > 0) parts.push(`\u{1F7E1} **${int(facts.risksToAddress)}** gating ${plural(facts.risksToAddress, "risk")}`);
+  parts.push(`\u{1F4A1} **${int(facts.passing.length)}** ${plural(facts.passing.length, "suggestion")}`);
+  if (reached > 0) parts.push(`\u{1F9EA} **${int(untested)}/${int(reached)}** reached ${plural(reached, "root")} untested`);
+  return `**At a glance:** ${parts.join(" \xB7 ")}`;
+}
+function cleanChecks(facts) {
+  const passed = [];
+  if (facts.changedFiles > 0 && facts.correctness.length === 0) passed.push("no product-correctness issues");
+  if (facts.axes.length > 0 && facts.regressedAxes.length === 0) passed.push("no value-axis regressions");
+  if (facts.totalRisks > 0 && facts.risksToAddress === 0) passed.push("no gating risks");
+  if (facts.perRootCoverage.length > 0 && facts.perRootCoverage.every((r) => r.tested)) {
+    passed.push(`all ${int(facts.perRootCoverage.length)} reached entry points tested`);
+  }
+  if (facts.passing.length > 0 && facts.deadCode.length === 0) passed.push("no dead code in changed files");
+  if (facts.newTestFiles !== null && facts.newTestFiles > 0) passed.push(`${int(facts.newTestFiles)} new test ${plural(facts.newTestFiles, "file")} added`);
+  if (passed.length === 0) return null;
+  return `\u2705 **Clean:** ${passed.slice(0, 4).join(" \xB7 ")}.`;
+}
+function focusVerdict(cohorts) {
+  if (cohorts.spread === "spread") {
+    const areas = cohorts.cohorts.filter((c) => c.role === "source").slice(0, 4).map((c) => `\`${escapeCell(c.label)}\``).join(", ");
+    return `\u{1F500} **Consider splitting** \u2014 this PR spans **${cohorts.sourceAreas}** source areas (${areas}\u2026); smaller, single-purpose PRs review faster and revert cleaner.`;
+  }
+  if (cohorts.sourceAreas === 1) {
+    return "\u{1F3AF} **Focused PR** \u2014 the code changes are confined to a single area.";
+  }
+  if (cohorts.sourceAreas === 0) {
+    return "\u{1F4C4} **No source changes** \u2014 this PR touches only tests, docs, or config.";
+  }
+  return `\u{1F9ED} Touches **${cohorts.sourceAreas}** source areas across **${int(cohorts.totalFiles)}** files.`;
+}
+function keyIssues(facts, ctx) {
+  const correctness = [...facts.correctness].sort((a, b) => b.confidence - a.confidence);
+  let rows = correctness.slice(0, MAX_KEY_ISSUES);
+  let advisory = false;
+  if (rows.length === 0) {
+    rows = [...facts.passing].sort((a, b) => b.confidence - a.confidence).slice(0, 3);
+    advisory = rows.length > 0;
+  }
+  if (rows.length === 0) {
+    return [
+      "### \u{1F511} Key issues to review",
+      "",
+      "\u2705 No must-review code issues flagged. Skim the **Changes** map below, then check **Blast radius** for coverage."
+    ].join("\n");
+  }
+  const heading = advisory ? "### \u{1F511} Key issues to review <sub>(no must-fix \u2014 top advisory items)</sub>" : `### \u{1F511} Key issues to review (${rows.length})`;
+  const out = [heading, "", "| Issue | Where | Why it matters |", "|---|---|---|"];
+  for (const s of rows) {
+    out.push(`| ${issueLabel(s)} | ${where(s, ctx)} | ${why(s)} |`);
+  }
+  return out.join("\n");
+}
+function issueLabel(s) {
+  const emoji = s.category === "B" ? "\u{1F7E1}" : s.category === "C" ? "\u{1F535}" : "\u26AA";
+  const suffix = labelSuffix(s.category_label);
+  const name = suffix ?? (s.category === "B" ? "Product correctness" : s.category === "C" ? "Framework misuse" : "Optimization");
+  return `${emoji} ${escapeCell(name)}`;
+}
+function where(s, ctx) {
+  const line = typeof s.line === "number" ? s.line : void 0;
+  const label = escapeCell(typeof line === "number" ? `${basenameOf(s.file)}:${line}` : s.file);
+  return fileLink(ctx, s.file, line, label);
+}
+function why(s) {
+  const raw = s.why_it_matters.trim();
+  const dash = raw.indexOf(" \u2014 ");
+  const reason = dash >= 0 ? raw.slice(dash + 3).trim() : raw;
+  const verify = s.confidence < VERIFY_BELOW ? ` <sub>(${confidencePercent(s.confidence)} \u2014 verify)</sub>` : "";
+  return `${escapeCell(truncate(firstSentence(reason), WHY_MAX))}${verify}`;
+}
+function changesWalkthrough(cohorts, ctx) {
+  const summary2 = `\u{1F5C2} Changes \u2014 ${cohorts.cohorts.length} ${plural(cohorts.cohorts.length, "area")} \xB7 ${int(cohorts.totalFiles)} files`;
+  const out = ["<details>", `<summary>${summary2}</summary>`, "", "| Area | Files | Notes |", "|---|---|---|"];
+  for (const c of cohorts.cohorts.slice(0, MAX_COHORT_ROWS)) {
+    const links = c.files.slice(0, MAX_FILES_PER_COHORT).map((f) => fileLink(ctx, f, void 0, escapeCell(basenameOf(f)))).join(" \xB7 ");
+    const more = c.files.length > MAX_FILES_PER_COHORT ? ` *\u2026+${c.files.length - MAX_FILES_PER_COHORT}*` : "";
+    const count = `**${c.files.length}** ${plural(c.files.length, "file")}`;
+    const note = c.unreachable > 0 ? `\u26A0\uFE0F ${c.unreachable} unreachable` : "\u2014";
+    out.push(`| **${escapeCell(c.label)}** | ${count} \xB7 ${links}${more} | ${note} |`);
+  }
+  if (cohorts.cohorts.length > MAX_COHORT_ROWS) {
+    out.push(`| *\u2026+${cohorts.cohorts.length - MAX_COHORT_ROWS} more areas* | | |`);
+  }
+  out.push("", "</details>");
+  return out.join("\n");
+}
+function labelSuffix(label) {
+  if (!label) return null;
+  const idx = label.indexOf("\u2014");
+  const suffix = (idx >= 0 ? label.slice(idx + 1) : "").trim();
+  return suffix || null;
+}
+function firstSentence(s) {
+  const t = s.trim();
+  const m = t.match(/^(.*?[.!?])(\s|$)/);
+  if (!m) return t;
+  const candidate = m[1];
+  const abbrev = /\b(?:e\.g|i\.e|etc|vs|cf|al|approx|no|fig|eq|sec|ch|st|mr|mrs|dr)\.$/i;
+  if (candidate.length < 16 || abbrev.test(candidate)) return t;
+  return candidate;
+}
+function truncate(s, max) {
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}\u2026` : s;
+}
+function escapeCell(s) {
+  return s.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").replace(/`/g, "'").replace(/\s+/g, " ").trim();
+}
+function basenameOf(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+function lastFinite(xs) {
+  if (!Array.isArray(xs)) return null;
+  for (let i = xs.length - 1; i >= 0; i--) {
+    if (Number.isFinite(xs[i])) return xs[i];
+  }
+  return null;
+}
+function joinClauses2(parts) {
   if (parts.length <= 1) return parts.join("");
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
@@ -24314,7 +24725,7 @@ function renderValueCard(input) {
   const { counts, card } = input;
   const axes = card?.axes ?? [];
   if (axes.length === 0 && !counts) return null;
-  const lines = ["## \u{1F4CA} Value card", ""];
+  const lines = ["## \u{1F4CA} Business value", ""];
   if (axes.length > 0) {
     lines.push(dashboardTable(axes, input.overallPercent), "");
     lines.push(barsCaption(axes), "");
@@ -24328,19 +24739,6 @@ function renderValueCard(input) {
   if (highlights) lines.push(highlights, "");
   if (axes.length > 0) {
     lines.push(howComputed(axes));
-  }
-  if (card?.bars_mermaid) {
-    lines.push(
-      "",
-      "<details>",
-      "<summary>\u{1F4C8} Bar-chart view</summary>",
-      "",
-      "```mermaid",
-      card.bars_mermaid,
-      "```",
-      "",
-      "</details>"
-    );
   }
   return lines.join("\n").trimEnd();
 }
@@ -24448,6 +24846,104 @@ function formatInput(v) {
   return String(v);
 }
 
+// src/render/lib/agent_prompt.ts
+var CONFIDENCE_GUARDRAIL = 0.85;
+var MAX_CODE_LINES = 30;
+var CATEGORY_CONSTRAINTS = {
+  A: [
+    "If the symbol is genuinely unused, delete it and any now-dead imports; otherwise wire it to a real caller.",
+    "Touch only this file and its direct imports \u2014 do not refactor unrelated code."
+  ],
+  B: [
+    "Preserve the public signature and the observable behaviour for valid inputs.",
+    "Do not add new dependencies, and do not modify existing tests."
+  ],
+  C: [
+    "Use the framework's idiomatic API; keep the public signature unchanged.",
+    "Do not add new dependencies, and do not modify existing tests."
+  ]
+};
+var CATEGORY_ACCEPTANCE = {
+  A: "The symbol is removed (or reached by a real entry point) and the project still builds.",
+  B: "Valid inputs behave exactly as before, and the flagged failure mode can no longer occur.",
+  C: "The framework API is used correctly and existing behaviour is preserved."
+};
+function buildAgentPrompt(s, ctx) {
+  const loc = locLabel(s);
+  const lines = [
+    "You are fixing ONE finding from a static-analysis PR review. Work only in the file below.",
+    "",
+    `FILE: ${loc}`
+  ];
+  const permalink = filePermalink(s, ctx);
+  if (permalink) lines.push(permalink);
+  lines.push("", "PROBLEM:", s.why_it_matters.trim());
+  const doThis = s.remediation_hint?.trim() || s.llm_prompt_hint?.trim() || s.category_label?.trim();
+  if (doThis) lines.push("", "DO THIS:", doThis);
+  const code = currentCode(s.diff?.before_lines);
+  if (code) lines.push("", "CURRENT CODE:", code);
+  lines.push("", "CONSTRAINTS:", ...CATEGORY_CONSTRAINTS[s.category].map((c) => `- ${c}`), "- Keep the diff minimal; do not reformat untouched code.");
+  lines.push("", "ACCEPTANCE:", `- ${CATEGORY_ACCEPTANCE[s.category]}`, "- Re-run the build/linter; this finding should no longer trigger.");
+  if (s.confidence < CONFIDENCE_GUARDRAIL) {
+    lines.push(
+      "",
+      `NOTE: Drift is ~${confidencePercent(s.confidence)} confident in this finding. If the code is actually correct, STOP and explain why instead of changing it.`
+    );
+  }
+  return lines.join("\n");
+}
+function buildFixAllPrompt(sorted, ctx) {
+  if (sorted.length < 2) return null;
+  const items = sorted.map((s, i) => {
+    const tag = labelTag(s);
+    const ask = (s.remediation_hint?.trim() || s.llm_prompt_hint?.trim() || s.why_it_matters.trim()).replace(/\s+/g, " ");
+    const lowConf = s.confidence < CONFIDENCE_GUARDRAIL ? ` (~${confidencePercent(s.confidence)} confident \u2014 verify before changing)` : "";
+    return `${i + 1}. [${tag}] ${locLabel(s)} \u2014 ${truncate2(ask, 200)}${lowConf}`;
+  });
+  return [
+    `You are resolving the ${sorted.length} findings from a Drift PR review. Fix them in the order listed, one minimal commit each, then run the build and the test suite.`,
+    "",
+    ...items,
+    "",
+    "GLOBAL CONSTRAINTS:",
+    "- Minimal diffs; do not reformat untouched code. No new dependencies. Do not modify existing tests unless a test encodes the bug.",
+    "- After each fix, re-run the build/linter and the tests before moving on.",
+    "- If you believe any finding is a false positive, STOP and report it rather than changing code you think is correct."
+  ].join("\n");
+}
+function locLabel(s) {
+  const range = lineRange(s.diff?.before_lines ?? s.diff?.after_lines);
+  if (range && range[0] !== range[1]) return `${s.file} (lines ${range[0]}\u2013${range[1]})`;
+  if (typeof s.line === "number") return `${s.file}:${s.line}`;
+  if (range) return `${s.file}:${range[0]}`;
+  return s.file;
+}
+function filePermalink(s, ctx) {
+  const range = lineRange(s.diff?.before_lines ?? s.diff?.after_lines);
+  const start = range ? range[0] : s.line;
+  const end = range ? range[1] : s.line;
+  if (typeof start !== "number") return null;
+  return permalinkUrl(ctx, s.file, start, typeof end === "number" ? end : start);
+}
+function currentCode(before) {
+  if (!before?.length) return null;
+  const code = before.map((l) => l.code).slice(0, MAX_CODE_LINES).join("\n").trimEnd();
+  return code || null;
+}
+function labelTag(s) {
+  const label = s.category_label?.split("\u2014").pop()?.trim();
+  if (label) return label;
+  return s.category === "B" ? "Product correctness" : s.category === "C" ? "Framework misuse" : "Optimization";
+}
+function lineRange(lines) {
+  const nums = (lines ?? []).map((l) => l.line_number).filter((n) => typeof n === "number");
+  if (nums.length === 0) return null;
+  return [Math.min(...nums), Math.max(...nums)];
+}
+function truncate2(s, max) {
+  return s.length > max ? `${s.slice(0, max - 1)}\u2026` : s;
+}
+
 // src/render/sections/suggestions.ts
 var CATEGORY = {
   A: { badge: "\u{1F150}", name: "Optimization" },
@@ -24460,7 +24956,7 @@ function renderSuggestions(suggestions, ctx) {
   if (passing.length === 0) return null;
   const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
   const correctness = sorted.filter((s) => s.category === "B").length;
-  const lines = [`## \u26A0\uFE0F Suggestions (${sorted.length})`, ""];
+  const lines = [`## \u26A0\uFE0F Code suggestions (${sorted.length})`, ""];
   if (correctness > 0) {
     lines.push(
       "> [!CAUTION]",
@@ -24478,9 +24974,21 @@ function renderSuggestions(suggestions, ctx) {
     lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
   }
   lines.push("");
-  for (const s of sorted.slice(0, MAX_SHOWN)) lines.push(renderDetail(s, ctx), "");
+  const shown = sorted.slice(0, MAX_SHOWN);
+  for (const s of shown) lines.push(renderDetail(s, ctx), "");
   if (sorted.length > MAX_SHOWN) {
-    lines.push(`_\u2026+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, "suggestion")} not shown._`);
+    lines.push(`_\u2026+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, "suggestion")} not shown._`, "");
+  }
+  const fixAll = buildFixAllPrompt(shown, ctx);
+  if (fixAll) {
+    lines.push(
+      "<details>",
+      `<summary>\u{1F916} <strong>Fix-All handoff</strong> \u2014 one prompt that dispatches all ${shown.length} findings</summary>`,
+      "",
+      fencedBlock(fixAll, "text"),
+      "",
+      "</details>"
+    );
   }
   return lines.join("\n").trimEnd();
 }
@@ -24492,10 +25000,10 @@ function priority(s) {
 }
 function findingLabel(s) {
   const cat = CATEGORY[s.category];
-  const suffix = labelSuffix(s.category_label);
+  const suffix = labelSuffix2(s.category_label);
   return suffix ? `${cat.badge} ${suffix}` : `${cat.badge} ${cat.name}`;
 }
-function labelSuffix(label) {
+function labelSuffix2(label) {
   if (!label) return null;
   const idx = label.indexOf("\u2014");
   const suffix = (idx >= 0 ? label.slice(idx + 1) : "").trim();
@@ -24503,7 +25011,7 @@ function labelSuffix(label) {
 }
 function renderDetail(s, ctx) {
   const cat = CATEGORY[s.category];
-  const suffix = labelSuffix(s.category_label);
+  const suffix = labelSuffix2(s.category_label);
   const title = suffix && suffix.toLowerCase() !== cat.name.toLowerCase() ? `${cat.name} \xB7 ${suffix.toLowerCase()}` : cat.name;
   const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
   const pct = confidencePercent(s.confidence);
@@ -24526,6 +25034,17 @@ function renderDetail(s, ctx) {
   }
   const ref = s.references?.[0];
   if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, "");
+  if (s.file) {
+    out.push(
+      "<details>",
+      "<summary>\u{1F916} Copy this prompt for your AI agent <sub>(Claude Code \xB7 Cursor \xB7 Copilot)</sub></summary>",
+      "",
+      fencedBlock(buildAgentPrompt(s, ctx), "text"),
+      "",
+      "</details>",
+      ""
+    );
+  }
   out.push("</details>");
   return out.join("\n");
 }
@@ -24540,7 +25059,7 @@ function codeContext(s, ctx) {
     return ["**Suggested fix:**", "", fencedBlock(body, "diff"), ""];
   }
   if (before.length > 0) {
-    const range = lineRange(before);
+    const range = lineRange2(before);
     const url = range ? snippetPermalink(ctx, s.file, range[0], range[1]) : null;
     if (url) {
       return [
@@ -24558,7 +25077,7 @@ function prefix(l) {
   if (l.kind === "del") return `- ${l.code}`;
   return `  ${l.code}`;
 }
-function lineRange(lines) {
+function lineRange2(lines) {
   const nums = lines.map((l) => l.line_number).filter((n) => typeof n === "number");
   if (nums.length === 0) return null;
   return [Math.min(...nums), Math.max(...nums)];
@@ -24568,6 +25087,7 @@ function cell(s) {
 }
 
 // src/render/sections/risks.ts
+var MAX_RISKS = 3;
 var QUADRANT = {
   act_before_merge: { emoji: "\u{1F534}", label: "Act before merge", rank: 0 },
   monitor_closely: { emoji: "\u{1F7E1}", label: "Monitor closely", rank: 1 },
@@ -24582,8 +25102,13 @@ function renderRisks(risks) {
     const act = items.filter((r) => r.quadrant === "act_before_merge").length;
     lines.push(intro(act, items.length), "");
     lines.push("| Risk | Likelihood | Severity | Quadrant |", "|---|---:|---:|---|");
-    for (const r of sortByImpact(items)) {
+    const ranked = sortByImpact(items);
+    for (const r of ranked.slice(0, MAX_RISKS)) {
       lines.push(`| ${cell2(r.label)} | ${prob(r.likelihood)} | ${prob(r.severity)} | ${quadrant(r)} |`);
+    }
+    if (ranked.length > MAX_RISKS) {
+      const more = ranked.length - MAX_RISKS;
+      lines.push(`| *\u2026+${more} lower-impact ${plural(more, "risk")}* | | | *see the quadrant map* |`);
     }
     lines.push("");
   }
@@ -24628,38 +25153,18 @@ function cell2(s) {
 }
 
 // src/render/sections/architecture.ts
-var MAX_REACH_ROWS = 12;
 var MAX_UNREACHABLE_LINKED = 8;
-var MAX_ROOTS_INLINE = 12;
 function renderArchitecture(input) {
   const { prScope, arch: arch2, business, keyFiles, ctx } = input;
-  const roots = prScope.affected_roots;
   const unreachable = prScope.unreachable_changes;
   const dataStructures = arch2?.data_structures ?? [];
-  const keyFileRows = flattenKeyFiles(keyFiles);
-  const nothing = roots.length === 0 && unreachable.length === 0 && dataStructures.length === 0 && keyFileRows.length === 0 && !archMermaid(arch2) && !business?.mermaid;
+  const nothing = unreachable.length === 0 && dataStructures.length === 0 && !archMermaid(arch2) && !business?.mermaid && !keyFiles?.mermaid;
   if (nothing) return null;
-  const lines = ["## \u{1F3D7} Architecture & reach", ""];
-  if (roots.length > 0) {
-    const reaches = plural(roots.length, "reaches", "reach");
-    const intro2 = `**${int(roots.length)}** entry ${plural(roots.length, "point")} ${reaches} changes in this PR.`;
-    if (keyFileRows.length > 0) {
-      lines.push(`${intro2} The files most callers depend on:`, "");
-      lines.push("| File | Roots reaching it |", "|---|---:|");
-      for (const row of keyFileRows.slice(0, MAX_REACH_ROWS)) {
-        lines.push(`| ${fileLink(ctx, row.path, void 0, row.path)} | ${row.reach === null ? "\u2014" : int(row.reach)} |`);
-      }
-      lines.push("");
-    } else {
-      lines.push(intro2, "", inlineList(roots, MAX_ROOTS_INLINE), "");
-    }
-  } else {
-    lines.push("No entry point reaches this PR's changes \u2014 the change is internal, config, or unreachable.", "");
-  }
+  const lines = ["## \u{1F3D7} Architecture", ""];
   if (unreachable.length > 0) {
-    const links = unreachable.slice(0, MAX_UNREACHABLE_LINKED).map((f) => fileLink(ctx, f, void 0, basenameOf(f)));
+    const links = unreachable.slice(0, MAX_UNREACHABLE_LINKED).map((f) => fileLink(ctx, f, void 0, basenameOf2(f)));
     const more = unreachable.length > MAX_UNREACHABLE_LINKED ? `, *\u2026+${unreachable.length - MAX_UNREACHABLE_LINKED} more*` : "";
-    const note = (input.deadCodeCount ?? 0) > 0 ? " (These match the dead-code suggestions above.)" : "";
+    const note = (input.deadCodeCount ?? 0) > 0 ? " (These match the dead-code suggestions below.)" : "";
     lines.push(
       `> **${int(unreachable.length)} changed ${plural(unreachable.length, "file")} ${unreachable.length === 1 ? "is" : "are"} unreachable** from any entry point \u2014 likely dead code, config, or tests: ${links.join(", ")}${more}.${note}`,
       ""
@@ -24708,17 +25213,6 @@ function renderArchitecture(input) {
   if (details.length > 0) lines.push(details.join("\n\n"));
   return lines.join("\n").trimEnd();
 }
-function flattenKeyFiles(kf) {
-  const rows = [];
-  for (const g of kf?.groups ?? []) {
-    for (const f of g.files) rows.push({ path: f.path, reach: reachCount(f.why) });
-  }
-  return rows.sort((a, b) => (b.reach ?? -1) - (a.reach ?? -1) || a.path.localeCompare(b.path));
-}
-function reachCount(why) {
-  const m = (why ?? "").match(/(\d+)/);
-  return m ? Number(m[1]) : null;
-}
 function dataStructureTable(ds) {
   const lines = ["| Name | Kind | Language | Methods in scope |", "|---|:--:|---|---:|"];
   for (const d of ds) {
@@ -24745,9 +25239,49 @@ function beforeAfterPair(arch2) {
 function detailsBlock(summary2, inner) {
   return ["<details>", `<summary>${summary2}</summary>`, "", ...inner, "", "</details>"].join("\n");
 }
-function basenameOf(path) {
+function basenameOf2(path) {
   const parts = path.split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
+}
+
+// src/render/sections/blast_radius.ts
+var MAX_ROWS = 15;
+var MAX_TESTLIST = 10;
+var MAX_GUARDS = 3;
+function renderBlastRadius(facts) {
+  const rows = facts.perRootCoverage;
+  if (rows.length === 0) return null;
+  const untested = rows.filter((r) => !r.tested);
+  const unguarded = rows.filter((r) => r.missing.length > 0);
+  if (untested.length === 0 && unguarded.length === 0) return null;
+  const sorted = [...rows].sort(
+    (a, b) => Number(a.tested) - Number(b.tested) || b.missing.length - a.missing.length || a.root.localeCompare(b.root)
+  );
+  const lines = ["## \u{1F3AF} Blast radius & coverage", ""];
+  const summary2 = `**${int(rows.length)}** entry ${plural(rows.length, "point")} reach this change \xB7 **${int(untested.length)}** untested \xB7 **${int(unguarded.length)}** lack reliability guards.`;
+  lines.push(summary2, "");
+  lines.push("| Entry point | Tested | Missing guards |", "|---|:--:|---|");
+  for (const r of sorted.slice(0, MAX_ROWS)) {
+    const tested = r.tested ? "\u{1F7E2} yes" : "\u{1F534} **no**";
+    lines.push(`| \`${escapeCell2(r.root)}\` | ${tested} | ${missingGuards(r.missing)} |`);
+  }
+  if (sorted.length > MAX_ROWS) {
+    lines.push(`| *\u2026+${sorted.length - MAX_ROWS} more* | | |`);
+  }
+  lines.push("");
+  if (untested.length > 0) {
+    const names = untested.map((r) => r.root);
+    lines.push(`> **Before merge, add tests for:** ${inlineList(names, MAX_TESTLIST)}.`);
+  }
+  return lines.join("\n").trimEnd();
+}
+function missingGuards(missing) {
+  if (missing.length === 0) return "\u2014";
+  const shown = missing.slice(0, MAX_GUARDS).map(escapeCell2).join(", ");
+  return missing.length > MAX_GUARDS ? `${shown} *+${missing.length - MAX_GUARDS}*` : shown;
+}
+function escapeCell2(s) {
+  return s.replace(/\|/g, "\\|").replace(/`/g, "'");
 }
 
 // src/render/sections/ext.ts
@@ -24799,32 +25333,15 @@ function renderExt(ext, ctx) {
   ].join("\n");
 }
 
-// src/render/sections/legend.ts
-function renderLegend(techDebt) {
-  const cx = techDebt?.thresholds?.complexity ?? 10;
-  const loc = techDebt?.thresholds?.loc ?? 80;
-  const table = [
-    "| Symbol | Meaning |",
-    "|:--:|---|",
-    "| \u{1F534} / \u{1F7E2} / \u26AA | Axis direction \u2014 regression / improvement / no change |",
-    "| `\u2588\u2588\u258B\u2591\u2591` | Magnitude bar \u2014 \\|\u0394\\| relative to the largest axis, \u215B-block precision |",
-    "| \u{1F150} / \u{1F151} / \u{1F152} | Finding class \u2014 \u{1F150} optimization \xB7 \u{1F151} product correctness \xB7 \u{1F152} framework misuse |",
-    "| \u{1F534} / \u{1F7E1} / \u26AA | **Priority** \u2014 high (act now) / medium / low (cleanup); reflects *impact*, **not** confidence |",
-    "| `low` / `medium` / `high` | Model **confidence** in the estimate (independent of priority) |",
-    "| \u{1F534} Act before merge / \u{1F7E2} Acceptable | Risk quadrant \u2014 severity \xD7 likelihood |"
-  ].join("\n");
-  const archFlow = [
-    "**Architecture flow \u2014 two charts.** The flow diagram shows **\u{1F534} BEFORE** (the code as it *was* before this PR) and **\u{1F7E2} AFTER** (the code *now*) as two separate graphs. Node colours encode each file's diff status:",
-    "",
-    "| Colour | Status | Where |",
-    "|:--:|---|---|",
-    "| \u{1F7E9} green | **added** (new file) \u2014 also copies | AFTER only |",
-    "| \u{1F7E7} amber | **modified / renamed** | AFTER (BEFORE shows renamed files under their *old* name) |",
-    "| \u{1F5D1} red | **removed** (deleted file) | BEFORE only \u2014 a placeholder card |",
-    "| \u26AA grey | unchanged callee, or any node in the BEFORE-state graph | BEFORE / AFTER |"
-  ].join("\n");
-  const methodology = `**Methodology.** Each axis's \u0394% is computed against the merge base (formulas in the value card). Thresholds: complexity > ${cx}, long function > ${loc} LOC. A suggestion is surfaced only at confidence \u2265 75% with a supporting reference. Findings are **advisory** and never fail the check. Counts and reach come from a static call-graph; nodes the profiler can't name appear as \`\u2039anonymous@N\u203A\`.`;
-  return ["<details>", "<summary>\u{1F516} Legend &amp; methodology</summary>", "", table, "", archFlow, "", methodology, "", "</details>"].join("\n");
+// src/render/sections/before_merge.ts
+function renderBeforeMerge(facts, ctx) {
+  const items = buildChecklist(facts, ctx);
+  if (items.length === 0) {
+    return ["## \u2705 Before you merge", "", "_Nothing blocking \u2014 Drift found no gating issues. Advisory review only._"].join("\n");
+  }
+  const boxes = items.map((t) => `- [ ] ${t}`);
+  const readiness = `> **Merge readiness** &nbsp; \`${progressBar(0, items.length)}\` &nbsp; **0 / ${items.length}** \u2014 GitHub tallies the boxes above as you check them off.`;
+  return ["## \u2705 Before you merge", "", ...boxes, "", readiness].join("\n");
 }
 
 // src/render/sections/footer.ts
@@ -24834,9 +25351,21 @@ function escapeAttr(s) {
 function escapeText(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function renderFooter(gen, audioUrl) {
+function renderFooter(gen, audioUrl, audioMp4Url) {
   const url = audioUrl?.trim();
-  const audio = url ? ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen to the spoken summary</a> (Piper TTS \xB7 WAV)` : "";
+  const mp4 = audioMp4Url?.trim();
+  let audio = "";
+  if (url) {
+    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
+    if (mp4) {
+      audio += ` \xB7 <a href="${escapeAttr(mp4)}">MP4</a>`;
+    }
+    audio += " <sup>(sign in to GitHub to download";
+    if (mp4) {
+      audio += "; drop the MP4 into a reply for an inline player";
+    }
+    audio += ")</sup>";
+  }
   return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
 }
 
@@ -24844,12 +25373,29 @@ function renderFooter(gen, audioUrl) {
 var STICKY_MARKER = "<!-- drift:sticky-comment -->";
 var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
+var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
+var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="100%" /></p>`;
+var withImage = (file, alt, section) => `${sectionImage(file, alt)}
+
+${section}`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="100%" /></a></p>`;
 function renderOverview(report, opts = {}) {
-  const { ctx, priorState, audioUrl } = opts;
+  const { ctx, priorState, audioUrl, audioMp4Url } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
-  const header = renderHeader(report, ctx);
+  const confidence = mergeConfidence(facts);
+  const confTrend = appendConfHistory(priorState, confidence.score);
+  currentState.confHistory = confTrend;
+  const header = renderHeader(report, ctx, { confTrend });
+  const guide = renderReviewersGuide({
+    facts,
+    changedFiles: report.pr_scope.changed_files,
+    unreachable: report.pr_scope.unreachable_changes,
+    ctx,
+    priorState,
+    currentState
+  });
   const valueCard = renderValueCard({
     counts: review?.counts,
     card: review?.value_card,
@@ -24867,17 +25413,26 @@ function renderOverview(report, opts = {}) {
     deadCodeCount: facts.deadCode.length,
     ctx
   });
+  const blastRadius = renderBlastRadius(facts);
   const ext = renderExt(report.pr_review_ext, ctx);
-  const hasRich = [valueCard, suggestions, risks].some(Boolean);
-  const legend = hasRich ? renderLegend(report.pr_review_ext?.tech_debt) : null;
-  const sections = [header];
-  if (valueCard) sections.push(wrapSection(valueCard, { tldr: tldrValue(facts), open: true }));
-  if (suggestions) sections.push(wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true }));
+  const beforeMerge = renderBeforeMerge(facts, ctx);
+  const sections = [withImage("drift-review.png", "Drift review", header)];
+  if (architecture) sections.push(withImage("architecture.png", "Architecture", wrapSection(architecture, { tldr: tldrArchitecture(facts) })));
+  if (valueCard) sections.push(withImage("business-value.png", "Business value", wrapSection(valueCard, { tldr: tldrValue(facts), open: true })));
+  if (suggestions) sections.push(withImage("code-suggestions.png", "Code suggestions", wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true })));
+  if (blastRadius) {
+    const untested = facts.perRootCoverage.filter((r) => !r.tested).length;
+    sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts), open: untested > 0 }));
+  }
   if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts), open: facts.risksToAddress > 0 }));
-  if (architecture) sections.push(wrapSection(architecture, { tldr: tldrArchitecture(facts) }));
   if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
-  if (legend) sections.push(legend);
-  const footer = renderFooter(report.generator, audioUrl);
+  if (guide) sections.push(wrapSection(guide, { tldr: tldrGuide(facts, report.pr_scope.changed_files) }));
+  sections.push(beforeMerge);
+  const footer = [
+    sectionImage("andy.png", "Andy \u2014 your PR handoff assistant"),
+    audioUrl?.trim() ? audioBanner(audioUrl.trim()) : "",
+    renderFooter(report.generator, audioUrl, audioMp4Url)
+  ].filter(Boolean).join("\n\n");
   let body = `${STICKY_MARKER}
 ${sections.join("\n\n---\n\n")}`;
   body += `
@@ -24886,9 +25441,15 @@ ${sections.join("\n\n---\n\n")}`;
 
 ${footer}`;
   body += `
+${statusMarker(facts, confidence.score, reviewEffort(facts).score)}`;
+  body += `
 
 ${serializeState(currentState)}`;
   return guardSize(body);
+}
+function statusMarker(facts, confidence, effort) {
+  const drift = facts.overallPercent === null ? "na" : facts.overallPercent.toFixed(1);
+  return `<!-- drift:status v=1 confidence=${confidence} effort=${effort} correctness=${facts.correctness.length} gatingRisks=${facts.risksToAddress} drift=${drift} -->`;
 }
 function tldrValue(f) {
   if (f.overallPercent === null) return "Per-axis value dashboard";
@@ -24914,11 +25475,22 @@ function tldrRisks(f) {
   if (f.risksToAddress > 0) return `${f.risksToAddress} to address \xB7 ${f.totalRisks} total`;
   return `${f.totalRisks} ${plural(f.totalRisks, "risk")} \xB7 none gating`;
 }
+function tldrGuide(f, changedFiles) {
+  const issues = f.correctness.length > 0 ? `${int(f.correctness.length)} key ${plural(f.correctness.length, "issue")}` : `${int(f.passing.length)} ${plural(f.passing.length, "suggestion")}`;
+  return `At-a-glance triage \xB7 ${issues} \xB7 ${int(changedFiles.length)} changed ${plural(changedFiles.length, "file")}`;
+}
+function tldrBlastRadius(f) {
+  const reached = f.perRootCoverage.length;
+  const untested = f.perRootCoverage.filter((r) => !r.tested).length;
+  const unguarded = f.perRootCoverage.filter((r) => r.missing.length > 0).length;
+  const bits = [`${int(reached)} reached`];
+  if (untested > 0) bits.push(`${int(untested)} untested`);
+  if (unguarded > 0) bits.push(`${int(unguarded)} unguarded`);
+  return bits.join(" \xB7 ");
+}
 function tldrArchitecture(f) {
-  const n = f.affectedRoots;
-  const reach = n === 0 ? "no entry point reaches it" : `${int(n)} entry ${plural(n, "point")} ${n === 1 ? "reaches" : "reach"} it`;
-  const dead = f.unreachable > 0 ? ` \xB7 ${f.unreachable} unreachable` : "";
-  return `Before vs after \xB7 ${reach}${dead}`;
+  const dead = f.unreachable > 0 ? ` \xB7 ${int(f.unreachable)} unreachable` : "";
+  return `Before vs after diagrams${dead}`;
 }
 function tldrExt(f) {
   const bits = [];
@@ -25596,6 +26168,7 @@ async function main() {
     author: pr.author
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
+  const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || void 0;
   const deferInlineReview = process.env.DRIFT_DEFER_INLINE_REVIEW === "true";
   const tasks = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch(
@@ -25628,7 +26201,7 @@ async function main() {
     } catch (err) {
       warning(`could not read prior sticky comment: ${describeError(err)}`);
     }
-    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl });
+    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl, audioMp4Url });
     tasks.push(
       upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch(
         (err) => warning(`sticky comment failed: ${describeError(err)}`)
@@ -25641,7 +26214,7 @@ async function main() {
 
 > Drift tracking issue for ${prLink} \u2014 refreshed each time \`/drift issue\` runs.
 
-` + renderOverview(report, { ctx: prCtx, audioUrl });
+` + renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url });
     const issueTitle = `Drift findings \u2014 PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ""}`;
     tasks.push(
       upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch(

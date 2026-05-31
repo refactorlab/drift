@@ -1,9 +1,8 @@
-// Extended findings (wrapped in one <details>) + legend & methodology.
+// Extended findings (wrapped in one <details>).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderExt } from '../render/sections/ext.ts';
-import { renderLegend } from '../render/sections/legend.ts';
 import type { PrReviewExt } from '../report.ts';
 import type { PrContext } from '../render/context.ts';
 
@@ -40,17 +39,4 @@ test('ext: partial — only duplication present', () => {
   assert.match(out, /### 🧬 Duplication/);
   assert.doesNotMatch(out, /Uncovered entry points/);
   assert.doesNotMatch(out, /Reliability gaps/);
-});
-
-test('legend: static key + thresholds filled from the report', () => {
-  const out = renderLegend({ high_complexity: [], long_functions: [], summary_findings_top: [], thresholds: { complexity: 12, loc: 60 } });
-  assert.match(out, /<summary>🔖 Legend &amp; methodology<\/summary>/);
-  assert.match(out, /\| Symbol \| Meaning \|/);
-  assert.match(out, /Magnitude bar/);
-  assert.match(out, /complexity > 12, long function > 60 LOC/, 'thresholds from report');
-  assert.match(out, /Findings are \*\*advisory\*\* and never fail the check/);
-});
-
-test('legend: default thresholds when none provided', () => {
-  assert.match(renderLegend(), /complexity > 10, long function > 80 LOC/);
 });

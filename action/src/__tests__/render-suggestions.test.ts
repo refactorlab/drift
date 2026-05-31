@@ -30,7 +30,7 @@ test('suggestions: header count + priority table + CAUTION for cat-B', () => {
     ],
     CTX,
   )!;
-  assert.match(out, /## ⚠️ Suggestions \(2\)/);
+  assert.match(out, /## ⚠️ Code suggestions \(2\)/);
   assert.match(out, /\[!CAUTION\]/);
   assert.match(out, /\*\*1 product-correctness issue\*\* was flagged/);
   assert.match(out, /\| Priority \| Finding \| Location \| Confidence \|/);

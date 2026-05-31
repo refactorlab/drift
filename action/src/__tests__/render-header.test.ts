@@ -15,6 +15,9 @@ import type { PrContext } from '../render/context.ts';
 const fixtureDir = join(import.meta.dirname, '../../.dev');
 const CTX: PrContext = { owner: 'acme', repo: 'shop', sha: 'cafe1234', prTitle: 'feat: speed up checkout' };
 
+/** The Drift-review H2 title line — no longer line 0 now that a brand banner leads. */
+const titleLineOf = (h: string): string => h.split('\n').find((l) => l.startsWith('## ') && l.includes('Drift review')) ?? '';
+
 function makeReport(over: Partial<ScanPrOutput['pr_review']>, scope?: Partial<ScanPrOutput['pr_scope']>): ScanPrOutput {
   return {
     schema_version: '1.2',
@@ -38,36 +41,35 @@ function axis(name: ValueAxis['name'], delta: number, conf: ValueAxis['confidenc
 
 // ── real fixtures ────────────────────────────────────────────────────────────
 
-test('header(python): TIP verdict, all-up drift, full KPI row, checklist + readiness', () => {
+test('header(python): TIP verdict, all-up drift, full KPI row (checklist now lives at the END, not here)', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output.json')), CTX);
-  assert.match(h, /^## ▲ Drift review — `feat: speed up checkout`/, 'title with arrow + PR title');
+  assert.match(h, /^## ▲ Drift review$/m, 'title is just the arrow + "Drift review" (no PR-title suffix)');
   assert.match(h, /\[`acme\/shop`\]\(https:\/\/github\.com\/acme\/shop\)/, 'repo permalink');
   assert.match(h, /\[!TIP\]/, 'all-up → TIP');
   assert.match(h, /badge\/drift-%2B21\.0%25-2ea043/, 'green drift badge, + encoded');
   assert.match(h, /badge\/files-3-/, 'files KPI');
   assert.match(h, /badge\/net_LOC-/, 'net LOC KPI');
   assert.match(h, /badge\/new_tests-0-d1242f/, 'new-tests 0 → red');
-  assert.match(h, /### ✅ Before you merge/);
-  assert.match(h, /Add tests/, 'test-gap item');
-  assert.match(h, /Merge readiness/);
-  assert.match(h, /\*\*0 \/ \d+\*\*/, 'readiness x/N');
+  // The checklist + readiness bar moved out of the header → not here anymore.
+  assert.doesNotMatch(h, /Before you merge/, 'checklist is no longer in the header');
+  assert.doesNotMatch(h, /Merge readiness/, 'readiness bar is no longer in the header');
 });
 
-test('header(kotlin): cat-B → WARNING + product-correctness checklist item', () => {
+test('header(kotlin): cat-B → WARNING + amber badge + narrative (no checklist in header)', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
   assert.match(h, /\[!WARNING\]/);
   assert.match(h, /badge\/review-address_before_merge-d29922/, 'amber review badge');
-  assert.match(h, /Fix the product-correctness issue at \[`OrdersRepository\.kt:17`\]/);
   assert.match(h, /product-correctness issue\*\* flagged/, 'narrative mentions the finding');
+  assert.doesNotMatch(h, /Fix the product-correctness issue at/, 'checklist item is no longer in the header');
 });
 
 // ── context degradation ──────────────────────────────────────────────────────
 
 test('header(no context): no PR-title suffix, no repo link, code-span fallbacks', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')));
-  assert.match(h, /^## ▲ Drift review\n/, 'no — title suffix without a PR title');
+  assert.match(h, /^## ▲ Drift review$/m, 'no — title suffix without a PR title');
   assert.doesNotMatch(h, /📍/, 'no repo pin without owner/repo');
-  assert.match(h, /at `OrdersRepository\.kt:17`/, 'location is a code span, not a link');
+  assert.match(h, /Look here first:\*\* `OrdersRepository\.kt:17`/, 'focus location is a code span, not a link');
   assert.doesNotMatch(h, /\]\(https:\/\/github\.com/, 'no permalinks anywhere');
 });
 
@@ -103,7 +105,6 @@ test('header(no value model): NOTE verdict, factual narrative, no drift/LOC badg
   assert.match(h, /2 changed files, 1 entry point reached\./);
   assert.doesNotMatch(h, /badge\/drift-/, 'no drift badge without a value model');
   assert.doesNotMatch(h, /badge\/net_LOC-/, 'no net-LOC badge without money inputs');
-  assert.match(h, /Nothing blocking/, 'empty checklist → positive note');
 });
 
 test('header(clean improvement, tests added): no "Add tests" item', () => {
@@ -146,47 +147,6 @@ test('extractFacts: no money axis → netLoc null, newTestFiles null without cou
   assert.equal(f.newTestFiles, null);
 });
 
-test('header: PR title with hostile line-terminators cannot inject markdown headings', () => {
-  // Real-world: GitHub's PR API allows newlines in titles. A `\n## INJECTED` in
-  // the title would END the H2 line and let the rest of the title inject markdown.
-  const cases = [
-    { name: 'LF', t: 'fix: thing\n## INJECTED' },
-    { name: 'CRLF', t: 'fix: thing\r\n## INJECTED' },
-    { name: 'CR', t: 'fix: thing\rINJECT' },
-    { name: 'U+2028 LINE SEP', t: 'fix: thing INJECT' },
-    { name: 'U+2029 PARA SEP', t: 'fix: thing INJECT' },
-    { name: 'U+0085 NEL', t: 'fix: thingINJECT' },
-    { name: 'NUL', t: 'fix: thing\x00INJECT' },
-  ];
-  for (const c of cases) {
-    const h = renderHeader(makeReport({ value_card: { axes: [axis('customer', 1)] } }), { ...CTX, prTitle: c.t });
-    const titleLine = h.split('\n')[0];
-    // The H2 line must be EXACTLY one line — no embedded breaks.
-    assert.ok(titleLine.startsWith('## '), `[${c.name}] title is the first line`);
-    assert.ok(titleLine.endsWith('`'), `[${c.name}] code span closes on the same line: ${titleLine}`);
-    assert.ok(!titleLine.includes('\n'), `[${c.name}] no newlines in title line`);
-    // No DUPLICATE H2 lines anywhere in the body.
-    const h2Lines = h.split('\n').filter((l) => l.startsWith('## ') && l.includes('Drift review'));
-    assert.equal(h2Lines.length, 1, `[${c.name}] exactly one Drift-review H2 (got: ${h2Lines.length})`);
-  }
-});
-
-test('header: pathologically long PR title is truncated with an ellipsis', () => {
-  const long = 'feat: ' + 'x'.repeat(500);
-  const h = renderHeader(makeReport({ value_card: { axes: [axis('customer', 1)] } }), { ...CTX, prTitle: long });
-  const titleLine = h.split('\n')[0];
-  // Cap is TITLE_MAX_CHARS=200 chars (incl. the leading "feat: " prefix), then `…`.
-  assert.match(titleLine, /…`$/, `truncated with ellipsis + closed code span: ${titleLine}`);
-  // The line is finite-length: well under any reasonable budget.
-  assert.ok(titleLine.length < 250, `title H2 stays compact (${titleLine.length} chars)`);
-});
-
-test('header: backtick in PR title is replaced (code span stays intact)', () => {
-  const h = renderHeader(makeReport({ value_card: { axes: [axis('customer', 1)] } }), { ...CTX, prTitle: 'feat: use `code` here' });
-  const titleLine = h.split('\n')[0];
-  assert.match(titleLine, /^## (?:[▲▼—] )?Drift review — `feat: use 'code' here`$/);
-});
-
 test('buildChecklist orders product-correctness first and degrades links', () => {
   const f = extractFacts(makeReport({
     value_card: { axes: [axis('money', -3)] },
@@ -199,4 +159,18 @@ test('buildChecklist orders product-correctness first and degrades links', () =>
   assert.match(items[0], /^Fix the product-correctness issue at `repo\.kt:17` \(raw SQL concatenation\)$/);
   assert.ok(items.some((i) => /Add tests/.test(i)));
   assert.ok(items.some((i) => /regression/.test(i)));
+});
+
+test('header: the H2 never repeats the PR title (no injection surface), even for hostile titles', () => {
+  // The PR title is no longer rendered in the comment (GitHub already shows it
+  // at the top of the page), so a hostile title cannot reach the H2 at all.
+  const hostile = ['fix: thing\n## INJECTED', 'feat: use `code` here', 'x'.repeat(500), 'fix\x00INJECT'];
+  for (const t of hostile) {
+    const h = renderHeader(makeReport({ value_card: { axes: [axis('customer', 1)] } }), { ...CTX, prTitle: t });
+    const titleLine = titleLineOf(h);
+    assert.match(titleLine, /^## (?:[▲▼—] )?Drift review$/, `clean H2 with no title suffix: ${titleLine}`);
+    const h2Lines = h.split('\n').filter((l) => l.startsWith('## ') && l.includes('Drift review'));
+    assert.equal(h2Lines.length, 1, 'exactly one Drift-review H2');
+    assert.doesNotMatch(h, /## INJECTED/, 'no injected heading from the title');
+  }
 });

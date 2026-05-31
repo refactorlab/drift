@@ -31,6 +31,33 @@ export function magnitudeBar(value: number, max: number, cells = 10): string {
   return head + EMPTY.repeat(Math.max(0, cells - used));
 }
 
+// Sparkline blocks, low→high (eighths of height). Zero-dependency, renders in
+// any monospace context — used for the cross-push merge-confidence trend.
+const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
+
+/**
+ * A Unicode block sparkline of `nums`, scaled to the series' own min→max so the
+ * SHAPE of the trend is visible even for a narrow value range. With <2 points
+ * there's no trend to draw → empty string. Non-finite values are dropped.
+ *
+ * `sparkline([1,2,3,4,5]) → "▁▃▄▆█"`. Used for the merge-confidence trend across
+ * the last N pushes (each value already clamped 0–5 by the caller).
+ */
+export function sparkline(nums: number[]): string {
+  const xs = nums.filter((n) => Number.isFinite(n));
+  if (xs.length < 2) return '';
+  const lo = Math.min(...xs);
+  const hi = Math.max(...xs);
+  const span = hi - lo;
+  return xs
+    .map((n) => {
+      const frac = span === 0 ? 1 : (n - lo) / span; // flat series → mid/full bar
+      const idx = clamp(Math.round(frac * (SPARK.length - 1)), 0, SPARK.length - 1);
+      return SPARK[idx];
+    })
+    .join('');
+}
+
 /**
  * A simple filled/empty progress track: `progressBar(0,5) → "░░░░░░░░░░"`,
  * `progressBar(5,5) → "██████████"`. Used for the merge-readiness line, which

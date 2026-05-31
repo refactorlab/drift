@@ -28,7 +28,7 @@ function input(card: ValueCard | undefined, over: Partial<ValueCardInput> = {}):
 test('value card: HTML table with composite row, headers, bars, confidence', () => {
   const card: ValueCard = { axes: [axis('money', -15.9), axis('customer', 60), axis('runtime', -3), axis('runtime_ux', 0)] };
   const out = renderValueCard(input(card, { overallPercent: 10.3 }))!;
-  assert.match(out, /## 📊 Value card/);
+  assert.match(out, /## 📊 Business value/);
   assert.match(out, /<table>/);
   assert.match(out, /<caption>PR value drift/);
   assert.match(out, /colspan="4"[^>]*><strong>Composite&nbsp; 🟡 \+10\.3%/, 'mixed composite');
@@ -65,7 +65,7 @@ test('value card: since-last-review first-run placeholder without prior', () => 
   assert.match(out, /First run on this PR — no prior snapshot/);
 });
 
-test('value card: highlights + bottom line + bar-chart view', () => {
+test('value card: highlights + bottom line, and NO redundant bar-chart (dashboard bars already show it)', () => {
   const card: ValueCard = {
     axes: [axis('customer', 60)],
     bottom_line: 'Bottom line — all positive.',
@@ -81,8 +81,10 @@ test('value card: highlights + bottom line + bar-chart view', () => {
   assert.match(out, /\*\*Bottom line —\*\* all positive\./, 'strips the scanner prefix');
   assert.doesNotMatch(out, /Bottom line —\s*Bottom line —/);
   assert.match(out, /\*\*Highlights:\*\* ✨ \*\*3\*\* new features/);
-  assert.match(out, /<summary>📈 Bar-chart view<\/summary>/);
-  assert.match(out, /```mermaid\nxychart-beta/);
+  // The Mermaid bar-chart was removed as a duplicate of the dashboard's bars,
+  // even when the scanner supplies bars_mermaid.
+  assert.doesNotMatch(out, /📈 Bar-chart view/, 'no duplicate bar-chart view');
+  assert.doesNotMatch(out, /xychart-beta/, 'scanner bar-chart is not rendered');
 });
 
 test('value card: how-computed nests one <details> per axis with formula + inputs', () => {
