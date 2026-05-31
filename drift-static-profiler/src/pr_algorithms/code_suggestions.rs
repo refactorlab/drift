@@ -16,6 +16,7 @@ use crate::pr_algorithms::symbol_label::humanize_symbol_token;
 use crate::pr_algorithms::types::*;
 use crate::report::TopSymbol;
 use crate::tree::CallTreeNode;
+use std::collections::HashSet;
 use std::path::Path;
 
 const DEFAULT_THRESHOLD: f64 = 0.75;
@@ -957,6 +958,20 @@ pub fn compute(inputs: Inputs<'_>) -> Vec<CodeSuggestion> {
             .cmp(&severity_rank(&a.severity))
             .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
     });
+
+    // Cross-source dedupe — the invariant for the WHOLE list, not just the
+    // pr_signals slice. Each detector above walks independently, and S1's
+    // call-graph N+1 in particular emits one suggestion per matching tree
+    // *node*: a function reached from several roots (e.g. `build_graph_context`
+    // at api.rs:173) surfaces once per root and would otherwise render as N
+    // identical rows + detail blocks. Collapse to one suggestion per
+    // (file, line, kind). The sort above already placed the highest-severity /
+    // highest-confidence copy first, so keeping the first occurrence keeps the
+    // strongest. (`pr_signals::collect` dedupes its own walk by (file, kind,
+    // line); this lifts the same guarantee to the aggregate output.)
+    let mut seen: HashSet<(String, usize, String)> = HashSet::new();
+    out.retain(|s| seen.insert((s.file.clone(), s.line, s.kind.clone())));
+
     out
 }
 
@@ -1060,6 +1075,48 @@ mod tests {
         assert!(s.confidence >= 0.85);
         // db_count=6 triggers the `>= 6` branch → severity = "high".
         assert_eq!(s.severity, "high");
+    }
+
+    /// Regression: the same (file, line, kind) surfaces only once even when a
+    /// detector visits it multiple times. S1 walks every call-tree node, so a
+    /// function reached from several roots (modelled here as two roots at the
+    /// same `api.rs:173`) used to emit one identical N+1 suggestion per root.
+    #[test]
+    fn dedupes_identical_suggestions_across_tree_positions() {
+        let mk = || {
+            let mut n = mk_node("build_graph_context", "src/api.rs");
+            n.line = 173;
+            n.complexity = 4;
+            n.categories_reached.insert("db".into(), 6);
+            n
+        };
+        let entries = vec![mk(), mk(), mk()];
+        let r = compute_simple(&entries, None);
+        let n_plus_one = r
+            .iter()
+            .filter(|s| s.kind == "call_graph_n_plus_one" && s.file == "src/api.rs" && s.line == 173)
+            .count();
+        assert_eq!(n_plus_one, 1, "identical N+1 at api.rs:173 should dedupe to one; got {r:#?}");
+    }
+
+    /// Dedupe must NOT collapse genuinely distinct findings that share a
+    /// (file, line) but differ in kind — two findings on the same node header
+    /// line should both survive, since the key includes `kind`.
+    #[test]
+    fn dedupe_keeps_distinct_kinds_at_same_location() {
+        // A Python file so BOTH kinds resolve references (SQLAlchemy refs are
+        // Python-only); the two findings share file + line but differ in kind.
+        let n = node(
+            "svc",
+            "app/svc.py",
+            vec![
+                finding(FindingKind::SqlalchemyAntipattern, 0.9, Severity::High),
+                finding(FindingKind::AuthCryptoAntipattern, 0.9, Severity::High),
+            ],
+        );
+        let r = compute_simple(&[n], None);
+        let kinds: HashSet<&str> = r.iter().map(|s| s.kind.as_str()).collect();
+        assert!(kinds.len() >= 2, "distinct kinds at one location must both survive; got {kinds:?}");
     }
 
     /// S1: db count below threshold does NOT fire.

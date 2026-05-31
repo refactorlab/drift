@@ -116,23 +116,30 @@ async function startModelsStub(replies: string[]): Promise<ModelsStub> {
 type GitHubStub = {
   server: Server;
   baseUrl: string;
+  /** Inline PR reviews (pulls.createReview). MUST stay empty post-redesign. */
   posts: Array<{ url: string; body: unknown }>;
+  /** Sticky-comment writes — issues.createComment (POST) + issues.updateComment (PATCH). */
+  stickyWrites: Array<{ method: string; url: string; body: { body?: string } }>;
 };
 async function startGitHubStub(
   files: Array<{ filename: string; patch: string }>,
 ): Promise<GitHubStub> {
   const posts: GitHubStub['posts'] = [];
+  const stickyWrites: GitHubStub['stickyWrites'] = [];
   const server = createServer((req, res) => {
     let chunks = '';
     req.on('data', (c) => { chunks += c; });
     req.on('end', () => {
       const url = req.url ?? '';
-      if (req.method === 'GET' && /\/pulls\/\d+\/files/.test(url)) {
+      const method = req.method ?? '';
+      if (method === 'GET' && /\/pulls\/\d+\/files/.test(url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(files));
         return;
       }
-      if (req.method === 'POST' && /\/pulls\/\d+\/reviews/.test(url)) {
+      // REMOVED surface: the inline PR review. Recording it lets the tests
+      // assert it NEVER happens again.
+      if (method === 'POST' && /\/pulls\/\d+\/reviews/.test(url)) {
         let body: unknown = null;
         try { body = JSON.parse(chunks); } catch { body = chunks; }
         posts.push({ url, body });
@@ -140,12 +147,35 @@ async function startGitHubStub(
         res.end(JSON.stringify({ id: 1, state: 'COMMENTED' }));
         return;
       }
+      // findSticky: no prior sticky comment exists → empty list (create path).
+      if (method === 'GET' && /\/issues\/\d+\/comments/.test(url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+        return;
+      }
+      // The single suggestion surface: create (POST) or update (PATCH) the sticky.
+      if (method === 'POST' && /\/issues\/\d+\/comments/.test(url)) {
+        let body: { body?: string } = {};
+        try { body = JSON.parse(chunks); } catch { body = {}; }
+        stickyWrites.push({ method, url, body });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 555 }));
+        return;
+      }
+      if (method === 'PATCH' && /\/issues\/comments\/\d+/.test(url)) {
+        let body: { body?: string } = {};
+        try { body = JSON.parse(chunks); } catch { body = {}; }
+        stickyWrites.push({ method, url, body });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 555 }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{}');
     });
   });
   await new Promise<void>((rs) => server.listen(0, '127.0.0.1', rs));
-  return { server, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, posts };
+  return { server, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, posts, stickyWrites };
 }
 
 function stopServer(s: Server): Promise<void> {
@@ -195,7 +225,7 @@ function normalizeLog(s: string): string {
 
 // ─── THE TEST ─────────────────────────────────────────────────────────
 
-test('user-PR-snapshot: the EXACT scenario from the bug report → 3 reviews POSTed (matches expected log)', async () => {
+test('user-PR-snapshot: the EXACT scenario from the bug report → ONE sticky comment (matches expected log)', async () => {
   if (!existsSync(aiSuggestBundle)) return;
 
   // ── Stage the user's PR: 2 files, 3 dead-code findings ─────────────
@@ -326,7 +356,12 @@ test('user-PR-snapshot: the EXACT scenario from the bug report → 3 reviews POS
     assert.equal(r1.code, 0, `bash failed:\n${r1.stderr}\n${r1.stdout}`);
 
     // ── Run the post step (the user's PR runs this next) ────────────
+    // Post-redesign the step OWNS the single sticky comment, so it needs the
+    // defer flag + the report (it re-renders the whole overview into the one
+    // comment) on top of the AI envelope.
     const r2 = await runNode(aiSuggestBundle, {
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
+      DRIFT_REPORT_PATH: reportPath,
       AI_SUGGESTIONS_PATH: outPath,
       DRIFT_MAX_AI_SUGGESTIONS: '3',
       DRIFT_AI_MODEL: 'openai/gpt-4.1',
@@ -357,9 +392,13 @@ test('user-PR-snapshot: the EXACT scenario from the bug report → 3 reviews POS
     assert.match(normalized, /focal #3: app\/repos\.py:2 OrderRepository::find_by_id \[S2:dead-code\]/);
     assert.match(normalized, /focal #3: \+1 suggestion → app\/repos\.py:5/);
     assert.match(normalized, /✅ loop done — 3 suggestion\(s\) cleared the bar/);
-    // Phase-2 (post step):
-    assert.match(normalized, /🤖 openai\/gpt-4\.1: 3 candidate\(s\) → 3 pass quality bar → 3 on-diff → 3 posted \(cap=3\)/);
-    assert.match(normalized, /Posted AI review with 3 inline suggestion\(s\)/);
+    // Phase-2 (post step) — the SINGLE sticky comment, NO inline review:
+    assert.match(normalized, /🤖 openai\/gpt-4\.1: 3 candidate\(s\) → 3 pass quality bar → 3 on-diff → 3 AI-refined \(cap=3\)\./);
+    // 3 AI suggestions, but two anchor on app/db.py:3 → they dedupe by path:line,
+    // so the sticky carries 3 deterministic + 3 AI-refined merged in one comment.
+    assert.match(normalized, /🟣 Drift sticky comment: 3 deterministic \+ 3 AI-refined code suggestion\(s\) in ONE comment\./);
+    assert.match(normalized, /Created sticky comment 555/);
+    assert.match(normalized, /Sticky comment refreshed with 3 AI-refined suggestion\(s\) merged in\./);
 
     // ── EXPECTED OLD-LOG REGRESSION GUARDS ──────────────────────────
     // The old buggy log lines MUST NOT appear:
@@ -376,28 +415,26 @@ test('user-PR-snapshot: the EXACT scenario from the bug report → 3 reviews POS
       'REGRESSION: post step seeing 0 candidates — the user bug is back',
     );
 
-    // ── EXPECTED GITHUB POST PAYLOAD ────────────────────────────────
-    // The user's PR would receive ONE review with 3 inline comments.
-    assert.equal(githubStub.posts.length, 1, 'EXACTLY ONE createReview POST');
-    const post = githubStub.posts[0];
-    const body = post.body as {
-      event: string;
-      commit_id: string;
-      body: string;
-      comments: Array<{ path: string; line: number; side: string; body: string }>;
-    };
-    assert.equal(body.event, 'COMMENT');
-    assert.equal(body.commit_id, headSha);
-    assert.match(body.body, /openai\/gpt-4\.1.*3 suggestions/);
-    assert.equal(body.comments.length, 3, 'three inline suggestions');
-    for (const c of body.comments) {
-      assert.equal(c.side, 'RIGHT');
-      assert.match(c.body, /```suggestion/);
-    }
-    assert.deepEqual(
-      body.comments.map((c) => `${c.path}:${c.line}`).sort(),
-      ['app/db.py:3', 'app/db.py:3', 'app/repos.py:5'].sort(),
-    );
+    // ── EXPECTED GITHUB WRITE: ONE sticky comment, ZERO inline reviews ──
+    // The redesign collapses the suggestions onto a SINGLE surface — the
+    // Drift sticky comment. The old inline review (pulls.createReview) is
+    // GONE: this is the new hard invariant.
+    assert.equal(githubStub.posts.length, 0, 'ZERO inline reviews — pulls/reviews is removed');
+    assert.equal(githubStub.stickyWrites.length, 1, 'EXACTLY ONE sticky-comment write');
+    const sticky = githubStub.stickyWrites[0];
+    assert.equal(sticky.method, 'POST', 'no prior sticky → createComment (POST)');
+    const stickyBody = sticky.body.body ?? '';
+    // The single comment IS the sticky comment (hidden marker) …
+    assert.match(stickyBody, /<!-- drift:sticky-comment -->/);
+    // … carrying the AI-refined suggestions under their own heading …
+    assert.match(stickyBody, /### 🤖 AI-refined code suggestions \(\d+\)/);
+    assert.match(stickyBody, /<code>app\/db\.py:3<\/code>/);
+    assert.match(stickyBody, /<code>app\/repos\.py:5<\/code>/);
+    assert.match(stickyBody, /<code>openai\/gpt-4\.1<\/code>/);
+    // … AND the deterministic findings (db.py:1 + repos.py:2) in the same body.
+    assert.match(stickyBody, /<strong>⚠️ Code suggestions \(\d+\)<\/strong>/);
+    assert.match(stickyBody, /db\.py:1/);
+    assert.match(stickyBody, /repos\.py:2/);
 
     // ── BEFORE/AFTER COMPARISON ────────────────────────────────────
     // Document the diff for future readers: what the user used to see
@@ -417,10 +454,12 @@ test('user-PR-snapshot: the EXACT scenario from the bug report → 3 reviews POS
   }
 });
 
-test('user-PR-snapshot: WHEN the model returns zero passing suggestions → silence, no POST', async () => {
+test('user-PR-snapshot: WHEN the model returns zero passing suggestions → no AI block, no inline review', async () => {
   // Mirror behavior the user already expected ("silence > noise"):
-  // even with 3 findings, if every model reply fails the quality bar,
-  // the post step posts NOTHING. The diagnostic log explains why.
+  // even with 3 findings, if every model reply fails the quality bar, the
+  // model contributes NOTHING — no AI-refined block, no inline review. The
+  // single sticky comment still upserts (deterministic-only). The diagnostic
+  // log explains why.
   if (!existsSync(aiSuggestBundle)) return;
 
   const { root, baseSha, headSha } = makeRepo(
@@ -479,8 +518,10 @@ test('user-PR-snapshot: WHEN the model returns zero passing suggestions → sile
     assert.match(r1.stdout, /focal #1: 1 candidate\(s\) → 0 cleared the bar/);
     assert.match(r1.stdout, /✅ loop done — 0 suggestion/);
 
-    // Post step.
+    // Post step — owns the single sticky comment.
     const r2 = await runNode(aiSuggestBundle, {
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
+      DRIFT_REPORT_PATH: reportPath,
       AI_SUGGESTIONS_PATH: outPath,
       DRIFT_MAX_AI_SUGGESTIONS: '3',
       DRIFT_AI_MODEL: 'openai/gpt-4.1',
@@ -491,9 +532,19 @@ test('user-PR-snapshot: WHEN the model returns zero passing suggestions → sile
       GITHUB_EVENT_PATH: eventPath,
     });
     assert.equal(r2.code, 0);
-    // ai-suggest sees 0 candidates → no POST.
+    // ai-suggest sees 0 candidates → the model contributed NOTHING.
     assert.match(r2.stdout, /0 candidate\(s\) → 0 cleared the quality bar/);
-    assert.equal(githubStub.posts.length, 0, 'no POST on a zero-pass run');
+    // The model added nothing, so there is NO AI-refined block …
+    assert.match(r2.stdout, /🟣 Drift sticky comment: \d+ deterministic \+ 0 AI-refined code suggestion\(s\) in ONE comment\./);
+    // … and the surface is ONE sticky comment, NEVER an inline review.
+    assert.equal(githubStub.posts.length, 0, 'no inline review on a zero-pass run');
+    assert.equal(githubStub.stickyWrites.length, 1, 'a deterministic-only sticky still upserts');
+    const stickyBody = githubStub.stickyWrites[0].body.body ?? '';
+    assert.match(stickyBody, /<!-- drift:sticky-comment -->/);
+    assert.ok(
+      !/AI-refined code suggestions/.test(stickyBody),
+      'no AI-refined block when the model cleared nothing',
+    );
   } finally {
     await stopServer(modelsStub.server);
     await stopServer(githubStub.server);

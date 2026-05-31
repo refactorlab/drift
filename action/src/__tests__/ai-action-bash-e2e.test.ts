@@ -20,8 +20,8 @@
 //      └── writes envelope at $AI_OUT
 //
 // Then we run `dist/ai-suggest.js` (the post step) against the SAME
-// envelope, pointed at a stubGitHubServer that captures the
-// pulls.createReview POST. Two stub servers, one envelope, full path.
+// envelope, pointed at a stubGitHubServer that captures the sticky-comment
+// upsert (issues/comments). Two stub servers, one envelope, full path.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,8 +94,28 @@ async function startGitHubStub(
         return;
       }
       if (method === 'POST' && /\/pulls\/\d+\/reviews/.test(url)) {
+        // The old inline-review surface. The sticky-only contract NEVER hits
+        // this route — we keep it serving so a regression (an accidental
+        // review POST) is captured, not silently 404'd.
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ id: 1, state: 'COMMENTED' }));
+        return;
+      }
+      // Sticky-comment upsert routes (findSticky → create/update).
+      if (method === 'GET' && /\/issues\/\d+\/comments/.test(url)) {
+        // No prior sticky → create path.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+        return;
+      }
+      if (method === 'POST' && /\/issues\/\d+\/comments/.test(url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 9001 }));
+        return;
+      }
+      if (method === 'PATCH' && /\/issues\/comments\/\d+/.test(url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 9001 }));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -380,10 +400,11 @@ test('bash-e2e: AI_MAX cap clips a noisy report — 5 findings, cap=2 → 2 infe
   }
 });
 
-test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE review via GitHub stub', async () => {
+test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE sticky comment via GitHub stub', async () => {
   // The whole chain through bash AND the post bundle. Two stub servers,
   // one envelope file. End-to-end proof that the user's PR-log scenario
-  // produces a real GitHub review payload.
+  // produces a single Drift sticky comment carrying the 3 AI-refined
+  // suggestions — and NEVER the old inline pulls/reviews surface.
   if (!existsSync(aiInferBundle) || !existsSync(aiSuggestBundle)) {
     return; // smoke skip if dist isn't built
   }
@@ -394,7 +415,10 @@ test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE review via 
       'app/repos.py': 'def g():\n    pass\n',
     },
     {
-      'app/db.py': 'def f():\n    pass\n    log.info("A")\n',
+      // db.py adds TWO changed lines (3 and 4) so its two AI suggestions can
+      // anchor on DISTINCT on-diff lines — otherwise the sticky renderer
+      // dedupes same-path:line AI blocks and only one would survive.
+      'app/db.py': 'def f():\n    pass\n    log.info("A")\n    log.info("A2")\n',
       'app/repos.py': 'def g():\n    pass\n    log.info("B")\n',
     },
   );
@@ -442,7 +466,7 @@ test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE review via 
         after_code: '    log.info("FIXED_1")' }],
     }),
     JSON.stringify({
-      suggestions: [{ file: 'app/db.py', line: 3, category: 'A', confidence: 0.88,
+      suggestions: [{ file: 'app/db.py', line: 4, category: 'A', confidence: 0.88,
         why_it_matters: 'db.py second fix, load-bearing message',
         references: [{ url: 'https://example.com/x2' }],
         after_code: '    log.info("FIXED_2")' }],
@@ -457,7 +481,7 @@ test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE review via 
 
   // GitHub stub → ai-suggest.js
   const githubStub = await startGitHubStub([
-    { filename: 'app/db.py', patch: '@@ -1,2 +1,3 @@\n def f():\n     pass\n+    log.info("A")' },
+    { filename: 'app/db.py', patch: '@@ -1,2 +1,4 @@\n def f():\n     pass\n+    log.info("A")\n+    log.info("A2")' },
     { filename: 'app/repos.py', patch: '@@ -1,2 +1,3 @@\n def g():\n     pass\n+    log.info("B")' },
   ]);
 
@@ -489,13 +513,18 @@ test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE review via 
     const env = JSON.parse(readFileSync(outPath, 'utf8'));
     assert.equal(env.suggestions.length, 3, 'phase-1 must write 3 suggestions to the envelope');
 
-    // ── Phase 2: ai-suggest.js (post step) → POSTs the review ──────────
+    // ── Phase 2: ai-suggest.js (post step) → upserts the sticky ────────
     // Mirrors the action.yml step `node ${{ github.action_path }}/dist/ai-suggest.js`.
+    // The post step now OWNS the single Drift sticky comment: it requires
+    // DRIFT_DEFER_STICKY_COMMENT + DRIFT_REPORT_PATH, merges the on-diff AI
+    // suggestions into the report, and upserts ONE issues/comments body.
     const postResult = await new Promise<{ code: number | null; stdout: string; stderr: string }>(
       (resolve_, reject) => {
         const proc = spawn(process.execPath, [aiSuggestBundle], {
           env: {
             ...process.env,
+            DRIFT_DEFER_STICKY_COMMENT: 'true',
+            DRIFT_REPORT_PATH: reportPath,
             AI_SUGGESTIONS_PATH: outPath,
             DRIFT_MAX_AI_SUGGESTIONS: '3',
             DRIFT_AI_MODEL: 'openai/gpt-4o',
@@ -517,22 +546,43 @@ test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE review via 
     );
     assert.equal(postResult.code, 0, `phase-2 post failed:\n${postResult.stderr}\n${postResult.stdout}`);
 
-    // ── Final assertions: the review hit GitHub with 3 comments ───────
+    // ── Final assertions: ONE sticky comment, ZERO inline reviews ─────
+    // The post step still fetches the diff (to anchor + filter AI suggestions),
+    // reads the sticky list (findSticky), then creates the single comment.
     const list = githubStub.requests.find((r) => r.method === 'GET' && /\/pulls\/7\/files/.test(r.url));
-    const post = githubStub.requests.find((r) => r.method === 'POST' && /\/pulls\/7\/reviews/.test(r.url));
     assert.ok(list, 'phase-2 must fetch pulls/7/files');
-    assert.ok(post, 'phase-2 must POST pulls/7/reviews');
-    const body = post!.body as Record<string, unknown>;
-    const comments = body.comments as Array<Record<string, unknown>>;
-    assert.equal(comments.length, 3, 'all 3 envelope entries must reach GitHub');
-    assert.equal(body.event, 'COMMENT');
-    assert.equal(body.commit_id, headSha);
 
-    // Posted line stats — every comment anchors at the `+ log.info` line.
-    assert.deepEqual(
-      comments.map((c) => `${c.path}:${c.line}`).sort(),
-      ['app/db.py:3', 'app/db.py:3', 'app/repos.py:3'].sort(),
+    // The NEW invariant: the inline-review surface is dead. EXACTLY ZERO
+    // POSTs to /pulls/{n}/reviews.
+    const reviewPosts = githubStub.requests.filter(
+      (r) => r.method === 'POST' && /\/pulls\/\d+\/reviews/.test(r.url),
     );
+    assert.equal(reviewPosts.length, 0, 'sticky-only contract: ZERO pulls/reviews POST');
+
+    // EXACTLY ONE sticky write — no prior sticky in the stub → a create.
+    const stickyWrites = githubStub.requests.filter(
+      (r) =>
+        (r.method === 'POST' && /\/issues\/\d+\/comments/.test(r.url)) ||
+        (r.method === 'PATCH' && /\/issues\/comments\/\d+/.test(r.url)),
+    );
+    assert.equal(stickyWrites.length, 1, 'all 3 suggestions land in ONE sticky comment write');
+    const sticky = stickyWrites[0];
+    assert.equal(sticky.method, 'POST', 'no prior sticky → create (POST)');
+    assert.match(sticky.url, /\/issues\/7\/comments/, 'sticky upsert targets PR #7 issue comments');
+
+    // The single body carries the sticky marker AND all 3 AI-refined fixes.
+    const body = sticky.body as Record<string, unknown>;
+    const text = String(body.body ?? '');
+    assert.match(text, /<!-- drift:sticky-comment -->/, 'sticky marker present');
+    assert.match(text, /AI-refined code suggestions \(3\)/, 'all 3 AI suggestions surfaced');
+    assert.match(text, /FIXED_1/);
+    assert.match(text, /FIXED_2/);
+    assert.match(text, /FIXED_3/);
+
+    // The bundle's own breadcrumbs confirm the single-comment funnel.
+    assert.match(postResult.stdout, /3 on-diff → 3 AI-refined \(cap=3\)/);
+    assert.match(postResult.stdout, /in ONE comment/);
+    assert.match(postResult.stdout, /Created sticky comment 9001/);
   } finally {
     await stopServer(modelsStub.server);
     await stopServer(githubStub.server);

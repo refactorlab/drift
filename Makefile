@@ -50,7 +50,7 @@ RESET  := \033[0m
         action-scan-demo-self-current-branch \
         action-test action-build \
         action-render-comment action-render-comment-kotlin action-render-comments \
-        action-render-comment-self \
+        action-render-comment-self action-render-card-self \
         hello-test hello-test-clean
 
 # Internal: assert the Tauri signing key exists before invoking cargo. Cheaper
@@ -667,6 +667,8 @@ DRIFT_SELF_BRANCH  ?= $(shell b=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null);
 DRIFT_SELF_TMPDIR  ?= tmp/action-inputs-self
 DRIFT_SELF_OUTPUT  ?= tmp/scan-pr-output-self.json
 DRIFT_SELF_COMMENT ?= tmp/pr-comment-self.md
+DRIFT_SELF_CARD    ?= tmp/pr-card-self.svg
+DRIFT_SELF_CARD_MD ?= tmp/pr-card-inline.md
 action-scan-demo-self: ## scan-pr over THIS repo from a real branch diff vs main (dogfood)
 	@command -v jq >/dev/null 2>&1 || { printf "$(RED)✗$(RESET) jq required for this target — $(CYAN)brew install jq$(RESET)\n"; exit 1; }
 	@mkdir -p $$(dirname $(DRIFT_SELF_OUTPUT)) $(DRIFT_SELF_TMPDIR)
@@ -801,6 +803,29 @@ action-render-comment-self: ## Render tmp/scan-pr-output-self.json → tmp/pr-co
 	@node --experimental-strip-types --no-warnings \
 	  action/scripts/render-comment.ts $(DRIFT_SELF_OUTPUT) $(DRIFT_SELF_COMMENT) $(DRIFT_SELF_TMPDIR)/event.json \
 	  | sed 's/^/    /'
+
+# Render the merge-confidence CARD from the self-scan, two artifacts:
+#   1. $(DRIFT_SELF_CARD)    — the standalone SVG asset (open in a browser).
+#   2. $(DRIFT_SELF_CARD_MD) — an inline-SVG markdown TEST HARNESS that embeds
+#      the card three ways (inline <svg>, <img>→file, <img>→base64 data URI) so
+#      you can see where each renders.
+# NOTE: the SVG cannot be INLINED into a PR comment — GitHub strips <svg> (and
+# data: URIs). To USE it in a comment, host the SVG at a public image/svg+xml
+# URL and reference it as ![card](URL); the inline approaches are local-preview
+# only (VS Code renders them, github.com does not).
+action-render-card-self: ## Render self-scan → tmp/pr-card-self.svg + tmp/pr-card-inline.md (card SVG + inline-embed test harness)
+	@test -s $(DRIFT_SELF_OUTPUT) || { \
+	  printf "$(RED)✗$(RESET) $(DRIFT_SELF_OUTPUT) missing or empty — run $(CYAN)make action-scan-demo-self$(RESET) first\n"; \
+	  exit 1; }
+	@printf "$(BLUE)▶$(RESET) rendering merge-confidence card SVG ($(DRIFT_SELF_OUTPUT) → $(DRIFT_SELF_CARD))\n"
+	@node --experimental-strip-types --no-warnings \
+	  action/scripts/render-card-svg.ts $(DRIFT_SELF_OUTPUT) $(DRIFT_SELF_CARD) $(DRIFT_SELF_TMPDIR)/event.json \
+	  | sed 's/^/    /'
+	@printf "$(BLUE)▶$(RESET) rendering inline-SVG markdown harness ($(DRIFT_SELF_OUTPUT) → $(DRIFT_SELF_CARD_MD))\n"
+	@node --experimental-strip-types --no-warnings \
+	  action/scripts/render-card-md.ts $(DRIFT_SELF_OUTPUT) $(DRIFT_SELF_CARD_MD) $(DRIFT_SELF_TMPDIR)/event.json \
+	  | sed 's/^/    /'
+	@printf "    open SVG: $(CYAN)open $(DRIFT_SELF_CARD)$(RESET)   ·   preview MD: $(CYAN)code $(DRIFT_SELF_CARD_MD)$(RESET) (⇧⌘V)\n"
 
 action-build: ## Build the Drift Action bundle (action/src/* → dist/index.js via esbuild)
 	@printf "$(BLUE)▶$(RESET) npm run build (Drift Action)\n"

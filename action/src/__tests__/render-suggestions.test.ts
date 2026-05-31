@@ -133,3 +133,50 @@ test('suggestions: null when nothing clears the quality bar', () => {
   assert.equal(renderSuggestions([sug({ confidence: 0.5 })]), null, 'below confidence threshold');
   assert.equal(renderSuggestions([sug({ references: [] })]), null, 'no reference link');
 });
+
+test('suggestions: identical findings (same file+line+kind) collapse to one row + block', () => {
+  // Mirrors the real bug: a call-graph node reached from several roots emitted
+  // one identical N+1 suggestion per root, repeating verbatim in the comment.
+  const dupe = sug({
+    category: 'A',
+    severity: 'high',
+    file: 'src/api.rs',
+    line: 173,
+    confidence: 0.95,
+    kind: 'call_graph_n_plus_one',
+  } as Partial<CodeSuggestion>);
+  const out = renderSuggestions([dupe, { ...dupe }, { ...dupe }], CTX)!;
+  // Header count reflects distinct findings, not the 3 raw copies.
+  assert.match(out, /## ⚠️ Code suggestions \(1\)/);
+  // Exactly one table row references the location (link text is the basename).
+  const rows = out.split('\n').filter((l) => l.startsWith('|') && l.includes('`api.rs:173`'));
+  assert.equal(rows.length, 1, `expected one table row, got ${rows.length}`);
+  // Exactly one finding <summary> for the location (the per-block "Copy this
+  // prompt" summary does not carry the path, so it isn't matched).
+  const summaries = out.split('\n').filter((l) => l.startsWith('<summary>') && l.includes('api.rs:173'));
+  assert.equal(summaries.length, 1, `expected one detail block, got ${summaries.length}`);
+});
+
+test('suggestions: same file+line but different kind are both kept', () => {
+  // Distinct findings at one location (e.g. recursion + N+1 on a function
+  // header line) must NOT be collapsed — the dedupe key includes `kind`.
+  const base = { category: 'A', severity: 'high', file: 'src/api.rs', line: 433, confidence: 0.95 } as Partial<CodeSuggestion>;
+  const out = renderSuggestions(
+    [sug({ ...base, kind: 'recursive' }), sug({ ...base, kind: 'call_graph_n_plus_one' })],
+    CTX,
+  )!;
+  assert.match(out, /## ⚠️ Code suggestions \(2\)/);
+  const rows = out.split('\n').filter((l) => l.startsWith('|') && l.includes('`api.rs:433`'));
+  assert.equal(rows.length, 2, `both distinct kinds should render, got ${rows.length}`);
+});
+
+test('suggestions: dedupe keeps the highest-confidence copy', () => {
+  const lo = sug({ category: 'A', severity: 'high', file: 'src/api.rs', line: 173, confidence: 0.6, kind: 'call_graph_n_plus_one' } as Partial<CodeSuggestion>);
+  const hi = sug({ category: 'A', severity: 'high', file: 'src/api.rs', line: 173, confidence: 0.95, kind: 'call_graph_n_plus_one' } as Partial<CodeSuggestion>);
+  const out = renderSuggestions([lo, hi], CTX)!;
+  assert.match(out, /## ⚠️ Code suggestions \(1\)/);
+  // The surviving row carries 95%; the 60% copy is dropped.
+  const row = out.split('\n').find((l) => l.startsWith('|') && l.includes('`api.rs:173`'))!;
+  assert.match(row, /\| 95% \|/);
+  assert.doesNotMatch(out, /\| 60% \|/);
+});

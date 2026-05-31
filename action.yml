@@ -107,9 +107,11 @@ inputs:
           gpt-4o input limit on GitHub Models.
         - OUTPUT: suggestions actually posted to the PR, applied AFTER
           the quality bar (confidence, reference, category).
-      Defaults to 3 — small + noticeable beats large + ignored.
+      The per-suggestion inference loop runs strictly ONE focal point at a
+      time (never in parallel) — see step 11. Defaults to 1: a single
+      focused AI suggestion beats a batch that gets skimmed and ignored.
     required: false
-    default: '3'
+    default: '1'
   max-code-suggestions:
     description: |
       Hard cap on the number of SCANNER code suggestions kept in the
@@ -1156,17 +1158,56 @@ runs:
           *gpt-5*|*o1*|*o2*|*o3*|*o4*) tok='"max_completion_tokens":16' ;;
           *)                            tok='"max_tokens":1' ;;
         esac
-        body="$(mktemp)"
-        status="$(curl -s -o "$body" -w '%{http_code}' \
-          -X POST "${resolved}/chat/completions" \
-          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-          -H "Accept: application/vnd.github+json" \
-          -H "Content-Type: application/json" \
-          -H "X-GitHub-Api-Version: 2022-11-28" \
-          -d "{\"model\":\"${AI_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],${tok}}" \
-          2>/dev/null || echo "000")"
+        body="$(mktemp)"; hdr="$(mktemp)"
+        # ── Preflight WITH rate-limit backoff (wait, don't fail fast) ──
+        # This 1-token probe GATES the AI briefing (audio summary) AND the
+        # per-suggestion loop. The dominant real-world failure is HTTP 429:
+        # GitHub Models THROTTLES the org inference endpoint (secondary /
+        # anti-abuse rate limit) — a TRANSIENT condition, not a misconfig.
+        # Failing fast on the first 429 silently drops BOTH AI features and
+        # the audio degrades to the deterministic (commit/title-led) fallback
+        # — observed live on refactorlab/drift#68. So we WAIT and retry on the
+        # transient classes (429 / 5xx / connect-failure), honoring the
+        # server's Retry-After header (capped), up to PF_MAX attempts. The
+        # non-transient classes (400/401/403/404 — bad request, missing
+        # 'models: read', org-policy block, unknown model) are NOT retried:
+        # waiting can't fix them. Total added latency is bounded
+        # (≤ PF_MAX × PF_CAP ≈ 60s) and only paid when actually throttled —
+        # a healthy 200 returns on the first attempt with no delay.
+        PF_MAX=4
+        PF_CAP=20
+        pf_attempt=1
+        while : ; do
+          status="$(curl -s -o "$body" -D "$hdr" -w '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            -X POST "${resolved}/chat/completions" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d "{\"model\":\"${AI_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],${tok}}" \
+            2>/dev/null || echo "000")"
+          # Only 429 / 5xx / connect-failure are worth waiting on.
+          case "$status" in
+            429|500|502|503|504|000) : ;;
+            *) break ;;
+          esac
+          [ "$pf_attempt" -ge "$PF_MAX" ] && break
+          # Honor the server's Retry-After (seconds) when present; else a
+          # gentle 5/10/15/20s ramp. Capped at PF_CAP to bound CI runtime.
+          ra="$(grep -i '^retry-after:' "$hdr" 2>/dev/null | tail -n1 | tr -cd '0-9' || true)"
+          if [ -n "$ra" ] && [ "$ra" -ge 1 ] 2>/dev/null; then
+            wait_s="$ra"
+          else
+            wait_s=$(( pf_attempt * 5 ))
+          fi
+          [ "$wait_s" -gt "$PF_CAP" ] && wait_s="$PF_CAP"
+          echo "⏳ preflight HTTP ${status} — GitHub Models throttling (attempt ${pf_attempt}/${PF_MAX}); waiting ${wait_s}s then retrying."
+          sleep "$wait_s"
+          pf_attempt=$((pf_attempt + 1))
+        done
         snippet="$(tr -d '\n' < "$body" | head -c 400)"
-        echo "🔎 preflight POST ${resolved}/chat/completions → HTTP ${status}"
+        echo "🔎 preflight POST ${resolved}/chat/completions → HTTP ${status} (after ${pf_attempt} attempt(s))"
         [ -n "${snippet}" ] && echo "🔎 preflight body: ${snippet}"
         echo "preflight_status=${status}" >> "$GITHUB_OUTPUT"
 
@@ -1185,12 +1226,17 @@ runs:
             fi ;;
           404)
             echo "❌ 404 — endpoint or model id not found. Check ai-model / ai-endpoint." ;;
+          429)
+            echo "⏳ 429 Too Many Requests — GitHub Models is rate-limiting the ${OWNER} org inference endpoint (a transient throttle, NOT a misconfig)."
+            echo "   The preflight already backed off + retried ${PF_MAX}× above and was still limited, so the AI briefing + AI suggestions are skipped this run."
+            echo "   → Ride it out: the limit resets on its own; just re-run the workflow after the rate window."
+            echo "   → Reduce load to stop hitting it: each scan makes ~1 (briefing) + up to 'ai-max-suggestions' (suggestion) model calls. Lower ai-max-suggestions, set ai-suggestions: false on audio-only runs, or space pushes out." ;;
           000)
-            echo "⚠️  preflight curl failed to connect (network) — inference may still try." ;;
+            echo "⚠️  preflight could not connect after ${PF_MAX} attempt(s) (network/DNS) — AI briefing + suggestions skipped this run." ;;
           *)
             echo "⚠️  Unexpected preflight status ${status}." ;;
         esac
-        rm -f "$body"
+        rm -f "$body" "$hdr"
 
     # ─── 8b. Audio summary — cache + install Piper binary ────────────
     # Offline neural TTS. We cache the binary (keyed by version + arch) so
@@ -1440,7 +1486,8 @@ runs:
 
     # ─── 8d-pre. Generate the spoken-briefing SCRIPT (GitHub Models) ─
     # One inline model call (curl) over the PR title / description / commits /
-    # business-logic graph → a < 300-word, read-aloud handover script, to BRIEFING_PATH
+    # the real changed-file diff (status + churn) / business-logic graph
+    # → a < 300-word, read-aloud handover script, to BRIEFING_PATH
     # for the synth step below to feed to Piper. No bundle / no TypeScript: jq
     # builds the request body (handling ALL JSON escaping) and parses the
     # reply. Gated on a GREEN preflight (ai-ep); continue-on-error + writing
@@ -1461,6 +1508,12 @@ runs:
       env:
         BRIEFING_PATH: ${{ runner.temp }}/drift-pr-briefing.txt
         COMMITS_PATH:  ${{ steps.diff.outputs.commits_path }}
+        # The REAL change signal — what the PR actually touched — so the
+        # spoken briefing is grounded in the diff, not just the author's
+        # title/body. STATS_PATH = numstat (adds<TAB>dels<TAB>path);
+        # STATUS_PATH = name-status (A/M/D/R…). Both come from step 6b.
+        STATS_PATH:    ${{ steps.diff.outputs.stats_path }}
+        STATUS_PATH:   ${{ steps.diff.outputs.status_path }}
         AI_ENDPOINT:   ${{ steps.ai-ep.outputs.endpoint }}
         AI_MODEL:      ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
@@ -1481,13 +1534,38 @@ runs:
         PR_TITLE_CAPPED="$(printf '%s' "${PR_TITLE:-}" | head -c 1000)"
         PR_BODY_CAPPED="$(printf '%s' "${PR_BODY:-}" | head -c 16000)"
 
-        # PR context for the model = the scanner's business-logic call-graph
-        # (Mermaid) from the scan report, NOT a raw diff: a compact, semantically
-        # rich view of what the PR's code actually does. Byte-capped for safety
-        # (it's normally small) so the request stays under the Models input cap.
+        # The scanner's business-logic call-graph (Mermaid): a compact,
+        # semantically rich view of what the PR's code DOES (the reachable
+        # functions). Note it is status-AGNOSTIC — it shows structure, not
+        # what changed — which is why we ALSO pass the concrete file-level
+        # diff below. Byte-capped so the request stays under the Models cap.
         mermaid="$(jq -r '.pr_review.business_logic.mermaid // ""' "$DRIFT_REPORT_PATH" 2>/dev/null | head -c 8000 || true)"
         # Commit bodies the diff step wrote NUL-separated → a newline list.
         commits="$(tr '\0' '\n' < "$COMMITS_PATH" 2>/dev/null | head -c 3000 || true)"
+        # WHAT ACTUALLY CHANGED — the concrete file set + churn + status, so
+        # the model grounds "The Story" and "Main Code Locations" in the real
+        # diff instead of trusting an author-written (possibly sparse or
+        # misleading) description. awk joins the two diff-step artifacts:
+        #   pass 1 (STATUS_PATH, name-status): path → A/M/D/R/C/T status code.
+        #     R/C rows are `R<sim>\told\tnew` (NF≥3) so we key on the NEW path
+        #     ($3); plain rows are `<code>\tpath` (key $2).
+        #   pass 2 (STATS_PATH, numstat): `adds\tdels\tpath`. Binary files
+        #     report `-` for adds/dels → shown as "bin". churn = adds+dels
+        #     drives a busiest-first sort so the model sees the biggest
+        #     changes even after the cap. Rename numstat paths can read
+        #     `old => new` and won't match the status map → default "M";
+        #     a mislabelled rename in a spoken summary is harmless.
+        # Capped to 40 files / 3000 bytes — same budget discipline as commits.
+        # Fed to the model via jq --arg below, so no raw path is string-stuffed
+        # into JSON (same injection-safe escaping as title/body/commits).
+        changes="$(awk -F'\t' '
+            NR==FNR { s=substr($1,1,1); if (NF>=3) status[$3]=s; else status[$2]=s; next }
+            { p=$3; st=(p in status)?status[p]:"M";
+              a=($1=="-"?"bin":$1); d=($2=="-"?"bin":$2);
+              c=($1=="-"?0:$1)+($2=="-"?0:$2);
+              printf "%d\t%s %s (+%s/-%s)\n", c, st, p, a, d }
+          ' "$STATUS_PATH" "$STATS_PATH" 2>/dev/null \
+          | sort -rn | cut -f2- | head -n 40 | head -c 3000 || true)"
 
         # Instruction half of the prompt (static). cat-heredoc into a var
         # avoids the non-zero exit `read -d ''` returns at EOF.
@@ -1502,6 +1580,7 @@ runs:
         3. Risks & Edge Cases: the biggest potential point of failure based on the change — a performance concern, a potential false positive, or an edge case to watch in production.
         4. Future Work: based on the code (TODO comments, hardcoded temporary values, obvious next steps), what should be tackled next sprint.
         Constraints:
+        - Write the briefing in ENGLISH, regardless of the language of the title, description, or commits. The downstream voice engine is English-only and strips non-ASCII characters; a briefing written in another script would be reduced to nothing and the listener would hear silence (or the PR title). Translate any non-English source material into English prose.
         - Do not greet the user or include introductory or concluding AI fluff.
         - Write in the first-person plural ("we") or third-person ("the PR"), professional yet casual.
         - Keep the language natural and easy to read aloud. Avoid raw code snippets, long variable names, and exact line numbers.
@@ -1512,12 +1591,14 @@ runs:
         PROMPT
         )"
 
-        # Data half — the PR context: title, description, commits, and the
-        # scanner's business-logic diagram (Mermaid) in place of a raw diff.
-        # Uses *_CAPPED for title and body so a 65 KB PR description can't
-        # overflow the Models input-token budget.
-        user="$(printf 'Analyze the following Pull Request data:\n- Title: %s\n- Description: %s\n- Commits:\n%s\n- Business-logic diagram (Mermaid, from a static scan of the changed call-graph):\n%s\n' \
-          "${PR_TITLE_CAPPED:-(none provided)}" "${PR_BODY_CAPPED:-(none provided)}" "${commits:-(none provided)}" "${mermaid:-(none provided)}")"
+        # Data half — the PR context: title, description, commits, the REAL
+        # changed-file set (status + churn, busiest first), and the scanner's
+        # business-logic call-graph (Mermaid). The "Files changed" block is
+        # what grounds the briefing in what actually changed; the diagram adds
+        # the structural "what the code does" view. Uses *_CAPPED for title and
+        # body so a 65 KB PR description can't overflow the Models input cap.
+        user="$(printf 'Analyze the following Pull Request data:\n- Title: %s\n- Description: %s\n- Commits:\n%s\n- Files changed (status A/M/D/R, +added/-deleted lines, busiest first — this is what the PR ACTUALLY changed):\n%s\n- Business-logic call-graph (Mermaid, from a static scan — shows what the code does, not what changed):\n%s\n' \
+          "${PR_TITLE_CAPPED:-(none provided)}" "${PR_BODY_CAPPED:-(none provided)}" "${commits:-(none provided)}" "${changes:-(none provided)}" "${mermaid:-(none provided)}")"
 
         # Reasoning models (gpt-5 / o-series) require max_completion_tokens and
         # reject max_tokens; classic chat models (gpt-4.1 / gpt-4o) use max_tokens.
@@ -1544,27 +1625,59 @@ runs:
         # the workflow-level timeout (often hours). Both critical for
         # CI hygiene; absence has been observed to cause 90s+ stalls
         # in upstream incidents.
-        resp="$(curl -sS --connect-timeout 10 --max-time "$ai_maxtime" \
-          -X POST "${AI_ENDPOINT}/chat/completions" \
-          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-          -H "Accept: application/vnd.github+json" \
-          -H "Content-Type: application/json" \
-          -H "X-GitHub-Api-Version: 2022-11-28" \
-          -d "$req" 2>/tmp/ai-curl.err || true)"
-        ai_rc=$?
+        #
+        # Retry the GENERATION call: the spoken summary is the whole point
+        # of the audio, and the Models endpoint commonly answers a 429
+        # (rate-limit throttle) on the first hit even after a green
+        # preflight. Retry up to BRIEF_RETRIES times, waiting BRIEF_WAIT
+        # seconds between attempts, until we get a non-empty reply. A 429 /
+        # 5xx / transient error comes back as an error JSON → empty
+        # `.choices[0].message.content` → that's our retry trigger. We do
+        # NOT retry a curl timeout (exit 28): a slow model won't get faster
+        # by asking again, and retrying would multiply the wait by
+        # ai_maxtime each time. On persistent failure we fall through to the
+        # empty branch and the audio is skipped (AI-only policy in step 8d).
+        BRIEF_RETRIES=3
+        BRIEF_WAIT=5
+        script=""
+        brief_attempt=0
+        while : ; do
+          brief_attempt=$((brief_attempt + 1))
+          ai_rc=0
+          resp="$(curl -sS --connect-timeout 10 --max-time "$ai_maxtime" \
+            -X POST "${AI_ENDPOINT}/chat/completions" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d "$req" 2>/tmp/ai-curl.err)" || ai_rc=$?
+          script="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
+          # Got a usable reply, or exhausted retries → stop.
+          { [ -n "$script" ] || [ "$brief_attempt" -gt "$BRIEF_RETRIES" ]; } && break
+          # curl exit 28 = operation timed out: not throttling, retrying is
+          # futile and slow → stop now and let the empty branch report it.
+          if [ "${ai_rc:-0}" = "28" ]; then
+            echo "⚠️  AI briefing attempt ${brief_attempt} timed out after ${ai_maxtime}s — not retrying a timeout."
+            break
+          fi
+          # Defang the upstream-controlled reply (strip C0 controls; break any
+          # `::` workflow-command sigil) before echoing it into the log.
+          echo "⚠️  AI briefing attempt ${brief_attempt}/$((BRIEF_RETRIES + 1)) returned empty/failed (likely a 429 throttle) — waiting ${BRIEF_WAIT}s then retrying."
+          echo "    reply head: $(printf '%s' "$resp" | LC_ALL=C tr -d '\000-\037' | LC_ALL=C sed 's/::/:_:/g' | head -c 200)"
+          sleep "$BRIEF_WAIT"
+        done
 
-        script="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
         if [ -n "$script" ]; then
           printf '%s' "$script" > "$BRIEFING_PATH"
-          echo "🧠 AI briefing: wrote $(wc -c < "$BRIEFING_PATH" | tr -d ' ') chars → $BRIEFING_PATH"
+          echo "🧠 AI briefing: wrote $(wc -c < "$BRIEFING_PATH" | tr -d ' ') chars → $BRIEFING_PATH (attempt ${brief_attempt})"
         else
           # curl exit code 28 = "operation timed out" — make this visible
-          # so a reasoning-model timeout doesn't silently degrade to the
-          # scanner-summary fallback with no diagnostic.
+          # so a reasoning-model timeout doesn't silently degrade with no
+          # diagnostic.
           if [ "${ai_rc:-0}" = "28" ]; then
             echo "⚠️  AI call timed out after ${ai_maxtime}s — reasoning model may need a longer budget."
           fi
-          echo "⚠️  AI briefing: empty or failed reply — audio falls back to the scanner summary."
+          echo "⚠️  AI briefing: empty or failed reply after ${brief_attempt} attempt(s) — audio will be skipped (AI-only; no non-AI substitute)."
           # Strip control bytes AND defang any `::` workflow-command
           # sigil before echoing — the raw response is upstream-
           # controlled and a coerced model could embed `::error::owned`
@@ -1707,24 +1820,32 @@ runs:
         # step re-entry.
         PIPER_LOG="${RUNNER_TEMP}/piper-synth.log"
         : > "$PIPER_LOG"
-        # Text source, in priority order:
-        #   1. The AI handover briefing (BRIEFING_PATH) — a self-contained,
-        #      spoken-style script. Used VERBATIM: the prompt already forbids
-        #      intros/outros, so no "Drift pull request summary." lead-in.
-        #   2. The scanner's deterministic business_logic.summary.
-        #   3. The PR title.
-        # (2)/(3) keep the lead-in so a bare summary still sounds framed.
-        if [ -s "$BRIEFING_PATH" ]; then
-          text="$(cat "$BRIEFING_PATH")"
-          echo "🧠 using AI handover briefing ($(wc -c < "$BRIEFING_PATH" | tr -d ' ') chars)"
-        else
-          summary="$(jq -r '.pr_review.business_logic.summary // ""' "$DRIFT_REPORT_PATH" 2>/dev/null || echo "")"
-          if [ -z "$summary" ]; then
-            summary="${PR_TITLE:-This pull request}. See the Drift review for details."
-          fi
-          text="Drift pull request summary. ${summary}"
-          echo "📄 using deterministic scanner summary (no AI briefing present)"
+        # Text source — AI-ONLY, by design:
+        #   The spoken audio is ALWAYS the AI handover briefing (BRIEFING_PATH)
+        #   — a self-contained, spoken-style summarization of what the PR
+        #   actually changed — used VERBATIM (the prompt forbids intros/outros).
+        #   If that file is absent/empty, the AI summarization did NOT run, so
+        #   we SKIP audio entirely rather than speaking a non-AI substitute.
+        #   We deliberately do NOT fall back to the scanner's
+        #   business_logic.summary or the PR title: that text leads with the
+        #   commit subject and "sounds like the commit message", which is the
+        #   opposite of an AI handover. No briefing → no audio (no WAV, no 🔊
+        #   link); the rest of the review is unaffected (continue-on-error).
+        #   The briefing is written only when GitHub Models is reachable
+        #   (preflight 200 + 'models: read') and returns text — so an empty
+        #   file here means the AI step was skipped/failed upstream; check the
+        #   '🔎 preflight POST … → HTTP <status>' line in the 8a step log.
+        if [ ! -s "$BRIEFING_PATH" ]; then
+          _fire briefing_empty
+          echo "⏭️  No AI briefing present — skipping audio summary."
+          echo "    Audio ships ONLY when it is the AI summarization output (never the commit/scanner/title fallback)."
+          echo "    To get audio: ensure the run grants 'models: read' and the model is enabled — see the 8a preflight log line."
+          echo "synthesized=false" >> "$GITHUB_OUTPUT"
+          _emit_telemetry skipped
+          exit 0
         fi
+        text="$(cat "$BRIEFING_PATH")"
+        echo "🧠 using AI handover briefing ($(wc -c < "$BRIEFING_PATH" | tr -d ' ') chars)"
         # ── Sanitize for TTS ───────────────────────────────────────────
         # Piper feeds a single line of stdin to eSpeak-NG, which splits
         # into sentences using `.!?;:` as terminators. Each sentence is
@@ -1906,36 +2027,30 @@ runs:
         echo "🧹 TTS sanitize: ${before} → ${after} → ${capped} chars, ${terminators} sentences (longest=${maxsent} chars)"
         # Hard safety net: if the cap somehow missed and any single
         # sentence is over 150 chars (= MAXLEN + 25% slack), the SDP
-        # will likely collapse and we'll produce silent gibberish —
+        # will likely collapse and we'd produce silent gibberish —
         # measurably worse UX than no audio at all (the PR comment
         # loses the 🔊 link, but the rest of the review is unaffected
-        # because step 8d is continue-on-error). Fall back to the PR
-        # title fallback path, which is a short, single-sentence string
-        # guaranteed to be safe. Threshold lowered from 200 to 150 in
-        # lockstep with MAXLEN going 150 → 120 so the safety net stays
-        # proportional to the cap.
+        # because step 8d is continue-on-error). SKIP audio rather than
+        # synthesize gibberish — and rather than substitute a non-AI
+        # string (the AI-ONLY policy at the text-source block above). The
+        # empty-after-sanitisation branch below performs the actual skip.
+        # Threshold lowered from 200 to 150 in lockstep with MAXLEN going
+        # 150 → 120 so the safety net stays proportional to the cap.
         if [ "${maxsent}" -gt 150 ]; then
           _fire sanitize_maxsent_overflow
-          echo "⛔ Sentence-length cap missed: longest is ${maxsent} chars (>150). Falling back to PR-title-only audio to avoid synthesizing gibberish."
-          sanitized=""   # forces the empty-fallback branch below
+          echo "⛔ Sentence-length cap missed: longest is ${maxsent} chars (>150). Skipping audio to avoid synthesizing gibberish."
+          sanitized=""   # routes into the skip branch below
         fi
-        # Empty after sanitisation (all symbols / blank) → fall back to the
-        # PR title so Piper never receives an empty stdin. The fallback is
-        # itself sanitised so a symbol-only title can't sneak through.
+        # Empty after sanitisation (the AI briefing reduced to nothing —
+        # all-symbol content, or the maxsent net above cleared it). AI-ONLY
+        # policy: we never substitute the PR title / scanner text, and never
+        # feed Piper empty stdin → SKIP audio entirely.
         if [ -z "$sanitized" ]; then
-          sanitized="$(printf '%s' "${PR_TITLE:-This pull request}" \
-            | LC_ALL=C tr '\n\r\t' '   ' \
-            | LC_ALL=C tr -c "A-Za-z0-9.,!?;:' " ' ' \
-            | LC_ALL=C tr '!?;:' '.' \
-            | LC_ALL=C tr -s ' .' \
-            | LC_ALL=C sed -e 's/ \././g' -e 's/^[ .]*//' -e 's/[ ]*$//')"
-          [ -z "$sanitized" ] && sanitized="See the Drift review for details."
-          echo "⚠️  sanitised text was empty; using PR title fallback (${sanitized})"
-          # Refresh `after` — it was 0 (from the empty primary sanitize)
-          # but the fallback replaced $sanitized, so without this the
-          # preview line below would mis-report "0 chars" and the
-          # ellipsis-vs-no-ellipsis decision would use the wrong length.
-          after=$(printf '%s' "$sanitized" | wc -c | tr -d ' ')
+          _fire briefing_empty
+          echo "⏭️  AI briefing was empty after sanitisation (or tripped the sentence-length safety net) — skipping audio summary (AI-only; no non-AI substitute)."
+          echo "synthesized=false" >> "$GITHUB_OUTPUT"
+          _emit_telemetry skipped
+          exit 0
         fi
         text="$sanitized"
         # ── Log the exact text Piper will speak ────────────────────────
@@ -2626,13 +2741,14 @@ runs:
     #   - create a check run summarising the report
     #   - post inline review comments for code suggestions above the
     #     quality bar (confidence ≥ 0.75, category A/B/C, has ref link)
-    # When ai-suggestions is enabled, the inline-review surface is HANDED
-    # OFF to the combined poster (step 12: dist/ai-suggest.js) so the PR
-    # conversation shows ONE review thread with both deterministic and AI
-    # suggestions, not two. DRIFT_DEFER_INLINE_REVIEW=true tells main.ts
-    # to skip its own postReview; DRIFT_DEFER_STICKY_COMMENT=true likewise
-    # defers the sticky comment to step 12 so it can include the AI-refined
-    # suggestions. The check run + tracking issue still ship from this step.
+    # When ai-suggestions is enabled, ALL code suggestions land in ONE
+    # comment — the Drift sticky comment — so reviewers never see a second
+    # inline-review thread. DRIFT_DEFER_INLINE_REVIEW=true tells main.ts to
+    # skip its own inline review entirely; DRIFT_DEFER_STICKY_COMMENT=true
+    # defers the sticky comment to step 12 (dist/ai-suggest.js), which merges
+    # the AI-refined suggestions into the report and re-renders the sticky so
+    # the deterministic findings AND the AI ones share its "Code suggestions"
+    # section. The check run + tracking issue still ship from this step.
     # Skips when there's no PR context (push events, manual dispatch).
     - name: Post Drift PR review
       continue-on-error: true   # advisory: never fail the PR on our own error
@@ -2643,16 +2759,16 @@ runs:
         DRIFT_COMMENT:     'true'
         DRIFT_OPEN_ISSUE:  ${{ (steps.args.outputs.open-issue || inputs.open-issue) }}
         DRIFT_FAIL_THRESHOLD: ${{ (steps.args.outputs.fail-threshold || inputs.fail-threshold) }}
-        # Defer the inline review to step 12 (combined poster) when AI is on,
-        # so reviewers see one review thread instead of two. When AI is off
-        # we leave this empty and main.ts posts the deterministic inline
-        # review here as before.
+        # Suppress main.ts's inline review when AI is on — with AI enabled the
+        # single Drift sticky comment is the ONLY suggestion surface, so there
+        # is no inline review thread at all. When AI is off we leave this empty
+        # and main.ts posts the deterministic inline review here as before.
         DRIFT_DEFER_INLINE_REVIEW: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
-        # Likewise defer the STICKY COMMENT to step 12 when AI is on: the
-        # combined poster (dist/ai-suggest.js) merges the AI-refined suggestions
-        # into the report and re-renders the sticky so they appear in the "Code
-        # suggestions" section. main.ts still ships the check run + tracking
-        # issue + ::warning:: annotations from this step.
+        # Defer the STICKY COMMENT to step 12 when AI is on: that step
+        # (dist/ai-suggest.js) merges the AI-refined suggestions into the report
+        # and re-renders the sticky so they appear in the "Code suggestions"
+        # section alongside the deterministic findings. main.ts still ships the
+        # check run + tracking issue + ::warning:: annotations from this step.
         DRIFT_DEFER_STICKY_COMMENT: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
         # Artifact URL of the non-zipped WAV (empty when audio is disabled or
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
@@ -2803,6 +2919,11 @@ runs:
         limit="$total"
         [ "$total" -gt "$AI_MAX" ] 2>/dev/null && limit="$AI_MAX"
         echo "🔁 ${limit} of ${total} scanner finding(s) → one inference call each (model: ${AI_MODEL})"
+        # STRICTLY SEQUENTIAL — one focal point at a time, never in parallel.
+        # Each ai-infer-one.js does a read-modify-write append on the SHARED
+        # envelope ($AI_OUT); backgrounding these calls (a trailing `&`) would
+        # race and silently drop suggestions. Keep this a plain serial loop:
+        # the next call only starts after the previous one has fully returned.
         i=0
         while [ "$i" -lt "$limit" ]; do
           echo "──── inference $((i + 1))/${limit} ────"
@@ -2871,29 +2992,31 @@ runs:
         ────────────────────────────────────────────────────────────
         EOF
 
-    # ─── 12. Post combined inline review (deterministic + AI) ────────
+    # ─── 12. Post Drift sticky comment with AI suggestions ──────────
     # Runs the compiled bundle at dist/ai-suggest.js. The bundle reads
     # BOTH the deterministic scan report (DRIFT_REPORT_PATH) AND the AI
-    # envelope (AI_SUGGESTIONS_PATH), filters each set against the PR's
-    # diff lines, dedupes any path:line collisions (AI wins on overlap),
-    # and POSTs ONE pulls.createReview via Octokit — so the PR
-    # conversation shows a SINGLE review thread instead of two.
+    # envelope (AI_SUGGESTIONS_PATH), keeps the top `ai-max-suggestions`
+    # AI entries that anchor on a diff line, merges them into the report,
+    # and re-renders + upserts the ONE Drift sticky comment so its "Code
+    # suggestions" section carries BOTH the deterministic findings AND the
+    # AI-refined ones. No inline review thread is posted — everything lives
+    # in that single comment.
     #
     # Gate: runs whenever the scan produced a report AND we have PR
     # context. NOT gated on ai-loop succeeding — when the AI loop fails
     # (no models permission, model unavailable, …) the envelope is
-    # empty/missing and we still post the deterministic review, so the
-    # reviewer is never left without inline comments.
+    # empty/missing and we still render the deterministic-only sticky, so
+    # the reviewer always gets the overview.
     #
-    # Fail-soft: a non-fatal error here doesn't break the sticky
-    # overview comment or check run from step 9.
-    - name: Post combined inline review
+    # Fail-soft: a non-fatal error here doesn't break the check run from
+    # step 9.
+    - name: Post Drift sticky comment with AI suggestions
       continue-on-error: true   # advisory: never fail the PR on our own error
-      # Runs when AI is ENABLED: main.ts has already deferred to us, so we
-      # own the inline-review surface. NOT gated on ai-loop succeeding —
-      # a failed AI loop just leaves an empty envelope and we post
-      # deterministic only. When AI is disabled, main.ts already posted
-      # the deterministic review and we'd otherwise create a duplicate.
+      # Runs when AI is ENABLED: main.ts has already deferred the sticky to
+      # us, so we own that single comment. NOT gated on ai-loop succeeding —
+      # a failed AI loop just leaves an empty envelope and we render the
+      # deterministic-only sticky. When AI is disabled, main.ts posts the
+      # sticky itself and this step does not run.
       if: >-
         (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' &&
         steps.scan.outputs.scan_ran == 'true' &&
@@ -2904,11 +3027,11 @@ runs:
         # max-code-suggestions (default 10) so the worst-case is bounded.
         DRIFT_REPORT_PATH:        ${{ runner.temp }}/drift-report.json
         # The AI envelope: optional. Missing/empty when ai-suggestions is
-        # off or the AI loop failed; the bundle then posts deterministic-only.
+        # off or the AI loop failed; the bundle then renders deterministic-only.
         AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
         DRIFT_MAX_AI_SUGGESTIONS: ${{ (steps.args.outputs.ai-max-suggestions || inputs.ai-max-suggestions) }}
         DRIFT_AI_MODEL:           ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
-        # Sticky comment is deferred to THIS step when AI is on (mirrors
+        # The sticky comment is deferred to THIS step when AI is on (mirrors
         # DRIFT_DEFER_INLINE_REVIEW in step 9). dist/ai-suggest.js merges the
         # AI-refined suggestions into the report and re-renders the sticky so
         # they show in the "Code suggestions" section. The footer/artifact URLs

@@ -22,13 +22,19 @@
 //      • The defer flag is propagated through the SHIPPED bundle (not
 //        just the source) — guards against a dist/index.js out-of-sync.
 //
-//   C. Combined poster:
-//      • dist/ai-suggest.js with BOTH DRIFT_REPORT_PATH set AND a
-//        non-empty AI envelope → ONE pulls.createReview POST containing
-//        det + AI comments deduped by path:line (AI wins).
-//      • dist/ai-suggest.js with DRIFT_REPORT_PATH only (empty AI
-//        envelope) → ONE pulls.createReview POST containing
-//        deterministic comments — the failed-AI fallback path.
+//   C. Combined poster (ONE sticky comment — no inline review anymore):
+//      • dist/ai-suggest.js with DRIFT_DEFER_STICKY_COMMENT=true, a
+//        DRIFT_REPORT_PATH AND a non-empty AI envelope → ONE sticky
+//        comment (issues/N/comments POST|PATCH) whose body carries the
+//        deterministic findings AND the "🤖 AI-refined code suggestions"
+//        block (AI wins on path:line collision). ZERO pulls/N/reviews.
+//      • dist/ai-suggest.js with a report but an EMPTY AI envelope → ONE
+//        sticky comment with the deterministic findings only, NO AI block.
+//        ZERO pulls/N/reviews. (The AI-failure fallback.)
+//      • dist/ai-suggest.js with NO DRIFT_REPORT_PATH → the sticky cannot
+//        render without a report, so the step warns and posts NOTHING
+//        (no reviews, no comments). The old "AI-only review" back-compat
+//        surface is GONE — all suggestions live in the report-backed sticky.
 //
 // These are subprocess tests so a regression in either the action.yml
 // step body or the bundled JS surfaces here, not just in unit tests
@@ -461,7 +467,18 @@ test('e2e index.js: DRIFT_DEFER_INLINE_REVIEW=true with a 500-entry report → s
 
 // ─── C. COMBINED POSTER (subprocess against the SHIPPED dist/ai-suggest.js) ─
 
-async function startCombinedStub(filesPatch: string): Promise<Stub> {
+// Drift now posts ALL suggestions (deterministic + AI-refined) in ONE place:
+// the Drift sticky comment. There is no separate inline PR review anymore. This
+// stub therefore serves the sticky-comment upsert routes (issues/N/comments
+// GET → POST/PATCH) PLUS pulls/N/files (read for the AI red/green diff
+// reconstruction + on-diff filter). It STILL serves /pulls/N/reviews so that an
+// accidental createReview POST is recorded and the "ZERO reviews" invariant can
+// be asserted (it must never be hit). `existingSticky` toggles the
+// create-vs-update branch of the upsert.
+async function startCombinedStub(
+  filesPatch: string,
+  opts: { existingSticky?: { id: number; body: string } } = {},
+): Promise<Stub> {
   const requests: Recorded[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let buf = '';
@@ -479,13 +496,42 @@ async function startCombinedStub(filesPatch: string): Promise<Stub> {
         // Single file covers both deterministic (line 1) and AI (line 3) anchors.
         return j(200, [{ filename: 'src/payments/retry_0.py', patch: filesPatch }]);
       }
+      // The REMOVED inline-review endpoint — kept so a regression that
+      // reintroduces the POST is recorded (the test asserts ZERO of these).
       if (method === 'POST' && /\/pulls\/\d+\/reviews$/.test(url)) return j(200, { id: 99 });
+      // Sticky-comment upsert: findSticky → create (POST) | update (PATCH).
+      if (method === 'GET' && /\/issues\/\d+\/comments/.test(url)) {
+        return j(200, opts.existingSticky
+          ? [{ id: opts.existingSticky.id, body: opts.existingSticky.body }]
+          : [],
+        );
+      }
+      if (method === 'POST' && /\/issues\/\d+\/comments$/.test(url)) return j(201, { id: 3001 });
+      if (method === 'PATCH' && /\/issues\/comments\/\d+$/.test(url)) return j(200, { id: 3001 });
       return j(200, {});
     });
   });
   await new Promise<void>((rs) => server.listen(0, '127.0.0.1', rs));
   const addr = server.address() as AddressInfo;
   return { server, baseUrl: `http://127.0.0.1:${addr.port}`, requests };
+}
+
+/** All issues/comments writes (POST create + PATCH update) — the ONE sticky
+ *  surface. The new invariant: exactly one of these per run, never a pulls
+ *  review. */
+function stickyWrites(requests: Recorded[]): Recorded[] {
+  return requests.filter(
+    (q) =>
+      (q.method === 'POST' && /\/issues\/\d+\/comments$/.test(q.url)) ||
+      (q.method === 'PATCH' && /\/issues\/comments\/\d+$/.test(q.url)),
+  );
+}
+
+/** Every POST to the (now-removed) inline-review endpoint. Must always be empty. */
+function reviewPosts(requests: Recorded[]): Recorded[] {
+  return requests.filter(
+    (q) => q.method === 'POST' && /\/pulls\/\d+\/reviews$/.test(q.url),
+  );
 }
 
 function writeAIEnvelope(dir: string, suggestions: unknown[]): string {
@@ -506,13 +552,16 @@ function writeEventOnly(dir: string, prNumber: number, headSha: string): string 
   return p;
 }
 
-test('e2e ai-suggest.js: deterministic + AI in one report → ONE createReview with merged comments', async () => {
+test('e2e ai-suggest.js: deterministic + AI in one report → ONE sticky comment with deterministic + AI merged', async () => {
   // Real bundle, real stub. The combined poster MUST:
   //   1. Read deterministic suggestions from DRIFT_REPORT_PATH.
   //   2. Read AI suggestions from AI_SUGGESTIONS_PATH.
-  //   3. Filter each set by the PR diff.
-  //   4. Dedupe by path:line (AI wins).
-  //   5. POST ONE pulls.createReview with all surviving comments.
+  //   3. Filter the AI set to on-diff lines (pulls/N/files).
+  //   4. Merge them into the report, deduped by path:line (AI wins).
+  //   5. Upsert ONE Drift sticky comment (issues/N/comments) whose body
+  //      shows the deterministic findings AND the "🤖 AI-refined code
+  //      suggestions" block — ALL in that single comment.
+  //   6. Post ZERO inline reviews (pulls/N/reviews) — that surface is gone.
   const dir = mkdtempSync(join(tmpdir(), 'drift-combined-e2e-'));
   const reportPath = join(dir, 'report.json');
   // Custom report: 3 deterministic entries ALL on src/payments/retry_0.py
@@ -571,6 +620,7 @@ test('e2e ai-suggest.js: deterministic + AI in one report → ONE createReview w
   const stub = await startCombinedStub(patch);
   try {
     const r = await spawnBundle(AI_SUGGEST_BUNDLE, {
+      DRIFT_DEFER_STICKY_COMMENT: 'true',  // ← main.ts hands the sticky comment to this step
       DRIFT_REPORT_PATH: reportPath,
       AI_SUGGESTIONS_PATH: envelopePath,
       DRIFT_MAX_AI_SUGGESTIONS: '5',
@@ -583,53 +633,55 @@ test('e2e ai-suggest.js: deterministic + AI in one report → ONE createReview w
     });
     assert.equal(r.code, 0, `subprocess failed:\n${r.stderr}\n${r.stdout}`);
 
-    const posts = stub.requests.filter(
-      (q) => q.method === 'POST' && /\/pulls\/\d+\/reviews$/.test(q.url),
-    );
-    assert.equal(posts.length, 1, 'exactly ONE createReview POST — not two, not zero');
-
-    const body = posts[0].body as {
-      event: string;
-      commit_id: string;
-      body: string;
-      comments: Array<{ path: string; line: number; side: string; body: string }>;
-    };
-    assert.equal(body.event, 'COMMENT');
-    assert.equal(body.commit_id, 'head-sha-combined');
-
-    // Combined body wording: both det + AI present.
-    assert.match(body.body, /Drift.*\+.*openai\/gpt-4o.*added/);
-
-    // Comment count: det=3 anchors (lines 1,2,3) + AI=2 (lines 1,4).
-    // After dedupe (AI wins line 1): det keeps 2 (lines 2,3), AI keeps both.
-    // Total = 4.
+    // The new invariant: ZERO inline reviews — the inline surface is gone.
     assert.equal(
-      body.comments.length,
-      4,
-      `expected 4 comments (3 det − 1 collision + 2 AI); got ${body.comments.length}`,
+      reviewPosts(stub.requests).length,
+      0,
+      'inline review (pulls/N/reviews) is removed — must POST ZERO',
     );
 
-    // The collision: line 1 must carry the AI body, not the det body.
-    const line1 = body.comments.find(
-      (c) => c.path === 'src/payments/retry_0.py' && c.line === 1,
-    );
-    assert.ok(line1, 'merged review must include line 1');
-    assert.match(line1!.body, /AI-version/, 'AI wins on path:line collision');
-    assert.doesNotMatch(line1!.body, /Finding #0/, 'det body must not appear at the colliding line');
+    // EXACTLY ONE sticky write (no prior comment → a create POST). All
+    // suggestions land in this one comment body.
+    const writes = stickyWrites(stub.requests);
+    assert.equal(writes.length, 1, `exactly ONE sticky comment write; got ${writes.length}`);
+    const write = writes[0];
+    assert.equal(write.method, 'POST', 'no prior sticky → CREATE (POST)');
+    assert.match(write.url, /\/issues\/7\/comments$/, 'sticky write must target this PR');
 
-    // The unique AI line (4) must be present.
-    const line4 = body.comments.find(
-      (c) => c.path === 'src/payments/retry_0.py' && c.line === 4,
-    );
-    assert.ok(line4, 'AI-only line must ship');
-    assert.match(line4!.body, /AI-only/);
+    const stickyBody = (write.body as { body: string }).body;
+    // The sticky carries the dedupe marker so the next run finds + updates it.
+    assert.match(stickyBody, /<!-- drift:sticky-comment -->/);
 
-    // Diagnostics: combined-summary log line must appear with the right counts.
-    // det=3 anchors enter the merge (lines 1,2,3 all on-diff); AI=2 enter;
-    // after dedupe (AI wins on line 1) the merged count is 4.
-    assert.match(r.stdout, /combined review: 3 deterministic \+ 2 AI → 4 comment\(s\)/);
-    // AI funnel log line must still appear (legacy diagnostic preserved).
-    assert.match(r.stdout, /openai\/gpt-4o:.*2 candidate.*2 pass.*2 on-diff.*2 posted/);
+    // ── Deterministic findings render in the sticky's Code-suggestions section.
+    // det=3 (lines 1,2,3) + AI=2 (lines 1,4); AI wins line 1 → 4 total.
+    assert.match(stickyBody, /⚠️ Code suggestions \(4\)/, 'heading reflects 3 det − 1 collision + 2 AI');
+    // The surviving deterministic entries (lines 2 + 3) are present in the body.
+    assert.match(stickyBody, /det entry on line 2/, 'surviving det finding (line 2) renders');
+    assert.match(stickyBody, /det entry on line 3/, 'surviving det finding (line 3) renders');
+
+    // ── The AI-refined block is present in the SAME comment.
+    assert.match(
+      stickyBody,
+      /### 🤖 AI-refined code suggestions \(2\)/,
+      'AI-refined block heading must render the 2 merged AI suggestions',
+    );
+    // The collision: line 1 must carry the AI body, not the deterministic one.
+    assert.match(stickyBody, /AI-version/, 'AI text for the colliding line (1) must appear');
+    assert.doesNotMatch(stickyBody, /det entry on line 1/, 'AI wins on path:line collision — det line 1 must be dropped');
+    // The unique AI line (4) must be present too.
+    assert.match(stickyBody, /AI-only/, 'AI-only line (4) must ship in the sticky');
+
+    // ── Diagnostics: the combined sticky summary + AI funnel log lines.
+    assert.match(
+      r.stdout,
+      /🟣 Drift sticky comment: 3 deterministic \+ 2 AI-refined code suggestion\(s\) in ONE comment\./,
+    );
+    assert.match(
+      r.stdout,
+      /🤖 openai\/gpt-4o: 2 candidate\(s\) → 2 pass quality bar → 2 on-diff → 2 AI-refined \(cap=5\)\./,
+    );
+    assert.match(r.stdout, /Created sticky comment 3001/);
+    assert.match(r.stdout, /Sticky comment refreshed with 2 AI-refined suggestion\(s\) merged in\./);
 
     rmSync(dir, { recursive: true, force: true });
   } finally {
@@ -637,11 +689,13 @@ test('e2e ai-suggest.js: deterministic + AI in one report → ONE createReview w
   }
 });
 
-test('e2e ai-suggest.js: deterministic report + EMPTY AI envelope → posts det-only review (AI-failure fallback)', async () => {
+test('e2e ai-suggest.js: deterministic report + EMPTY AI envelope → renders det-only sticky', async () => {
   // This is the "AI loop failed (no models permission, model
   // unavailable, ...)" fallback path. The combined poster must still
-  // ship deterministic inline comments — without this, a misconfigured
-  // models permission would silently disable ALL inline review.
+  // ship the deterministic findings in the ONE sticky comment — without
+  // this, a misconfigured models permission would silently lose them.
+  // The sticky carries the det findings, NO AI-refined block, and there
+  // is ZERO inline review.
   const dir = mkdtempSync(join(tmpdir(), 'drift-combined-fallback-'));
   const reportPath = join(dir, 'report.json');
   const report: ScanPrOutput = {
@@ -674,6 +728,7 @@ test('e2e ai-suggest.js: deterministic report + EMPTY AI envelope → posts det-
   const stub = await startCombinedStub('@@ -0,0 +1,2 @@\n+l1\n+l2');
   try {
     const r = await spawnBundle(AI_SUGGEST_BUNDLE, {
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
       DRIFT_REPORT_PATH: reportPath,
       AI_SUGGESTIONS_PATH: envelopePath,
       DRIFT_MAX_AI_SUGGESTIONS: '5',
@@ -686,18 +741,35 @@ test('e2e ai-suggest.js: deterministic report + EMPTY AI envelope → posts det-
     });
     assert.equal(r.code, 0, r.stderr);
 
-    const posts = stub.requests.filter(
-      (q) => q.method === 'POST' && /\/pulls\/\d+\/reviews$/.test(q.url),
+    // No inline review — that surface is gone.
+    assert.equal(reviewPosts(stub.requests).length, 0, 'fallback path must POST ZERO inline reviews');
+
+    // EXACTLY ONE sticky write (no prior → create POST) carrying both det entries.
+    const writes = stickyWrites(stub.requests);
+    assert.equal(writes.length, 1, 'fallback path must still write exactly ONE sticky comment');
+    assert.equal(writes[0].method, 'POST', 'no prior sticky → CREATE (POST)');
+
+    const stickyBody = (writes[0].body as { body: string }).body;
+    assert.match(stickyBody, /<!-- drift:sticky-comment -->/);
+    // Both deterministic entries render; the heading reflects exactly 2.
+    assert.match(stickyBody, /⚠️ Code suggestions \(2\)/, 'both det entries must ship');
+    assert.match(stickyBody, /det entry on line 1/);
+    assert.match(stickyBody, /det entry on line 2/);
+    // Empty AI envelope → NO AI-refined block in the sticky.
+    assert.doesNotMatch(
+      stickyBody,
+      /AI-refined code suggestions/,
+      'empty AI envelope must not render an AI-refined block',
     );
-    assert.equal(posts.length, 1, 'fallback path must still post exactly ONE review');
-    const body = posts[0].body as {
-      body: string;
-      comments: Array<{ path: string; line: number }>;
-    };
-    assert.equal(body.comments.length, 2, 'both det entries must ship');
-    // Body wording in det-only mode says "Drift has N suggestions", not "added".
-    assert.match(body.body, /🟣\s*\*\*Drift\*\*\s*has\s+2\s+suggestion/);
-    assert.doesNotMatch(body.body, /added/i, 'det-only path must not say "added" (that\'s the combined wording)');
+
+    // Diagnostics: det-only summary (0 AI-refined), and the empty-envelope
+    // breadcrumb the AI loop writes when zero candidates clear the bar.
+    assert.match(
+      r.stdout,
+      /🟣 Drift sticky comment: 2 deterministic \+ 0 AI-refined code suggestion\(s\) in ONE comment\./,
+    );
+    assert.match(r.stdout, /0 candidate\(s\) → 0 cleared the quality bar/);
+    assert.match(r.stdout, /Created sticky comment 3001/);
 
     rmSync(dir, { recursive: true, force: true });
   } finally {
@@ -705,12 +777,15 @@ test('e2e ai-suggest.js: deterministic report + EMPTY AI envelope → posts det-
   }
 });
 
-test('e2e ai-suggest.js: NO report path + AI envelope only → posts AI-only review (back-compat)', async () => {
-  // Legacy path: when DRIFT_REPORT_PATH is unset (e.g., consumer that
-  // doesn't have main.ts in their workflow), the bundle still posts AI
-  // suggestions correctly. This protects ai-suggest.js as a
-  // standalone consumer.
-  const dir = mkdtempSync(join(tmpdir(), 'drift-ai-only-e2e-'));
+test('e2e ai-suggest.js: NO report path → sticky cannot render, posts NOTHING (no back-compat AI-only)', async () => {
+  // The old "AI-only review" back-compat surface is GONE. The single
+  // sticky comment re-renders the WHOLE scan overview, which it cannot do
+  // without a report. So with DRIFT_DEFER_STICKY_COMMENT set but NO
+  // DRIFT_REPORT_PATH, the bundle warns and posts NOTHING — no inline
+  // review (that surface is removed) AND no sticky comment (no report to
+  // render from). A consumer who wants suggestions must run main.ts (which
+  // sets DRIFT_REPORT_PATH) — there is no standalone AI-only path anymore.
+  const dir = mkdtempSync(join(tmpdir(), 'drift-no-report-e2e-'));
   const envelopePath = writeAIEnvelope(dir, [
     {
       file: 'src/payments/retry_0.py',
@@ -727,7 +802,8 @@ test('e2e ai-suggest.js: NO report path + AI envelope only → posts AI-only rev
   const stub = await startCombinedStub('@@ -0,0 +1,2 @@\n+l1\n+l2');
   try {
     const r = await spawnBundle(AI_SUGGEST_BUNDLE, {
-      // No DRIFT_REPORT_PATH.
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
+      // No DRIFT_REPORT_PATH → the sticky has nothing to render.
       AI_SUGGESTIONS_PATH: envelopePath,
       DRIFT_MAX_AI_SUGGESTIONS: '5',
       DRIFT_AI_MODEL: 'openai/gpt-4o',
@@ -737,22 +813,26 @@ test('e2e ai-suggest.js: NO report path + AI envelope only → posts AI-only rev
       GITHUB_EVENT_NAME: 'pull_request',
       GITHUB_EVENT_PATH: eventPath,
     });
+    // Fail-soft: a missing report is a warn-and-exit-0, never a crash.
     assert.equal(r.code, 0, r.stderr);
 
-    const posts = stub.requests.filter(
-      (q) => q.method === 'POST' && /\/pulls\/\d+\/reviews$/.test(q.url),
+    // The warning chain: loadReportSafe explains "DRIFT_REPORT_PATH not
+    // set …" first, then aiMain warns the sticky can't be refreshed.
+    assert.match(
+      r.stdout + r.stderr,
+      /DRIFT_REPORT_PATH not set/,
+      'loadReportSafe must explain the missing report path first',
     );
-    assert.equal(
-      posts.length,
-      1,
-      `AI-only path must still post one review\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`,
+    assert.match(
+      r.stdout + r.stderr,
+      /Scan report unreadable — cannot refresh the sticky comment\./,
+      'no report → the sticky-refresh warning must fire',
     );
-    const body = posts[0].body as {
-      body: string;
-      comments: Array<{ path: string }>;
-    };
-    assert.equal(body.comments.length, 1);
-    assert.match(body.body, /openai\/gpt-4o.*has.*1\s+suggestion/);
+
+    // The hard invariant: ZERO writes of any kind. No inline review, no
+    // sticky create/update — there is nothing to post.
+    assert.equal(reviewPosts(stub.requests).length, 0, 'must POST ZERO inline reviews');
+    assert.equal(stickyWrites(stub.requests).length, 0, 'no report → must NOT write any sticky comment');
 
     rmSync(dir, { recursive: true, force: true });
   } finally {

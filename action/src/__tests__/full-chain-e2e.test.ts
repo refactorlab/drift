@@ -7,17 +7,22 @@
 //   1. Scanner output → write a 500-entry report.json (simulates a heavy
 //      refactor PR that previously caused the truncation bug).
 //   2. action.yml "Cap code suggestions" step body → caps to 10 in place.
-//   3. dist/index.js (main.ts) with DRIFT_DEFER_INLINE_REVIEW=true →
-//      posts sticky + check; SKIPS deterministic inline review.
-//   4. dist/ai-suggest.js (combined poster) with the same report + an AI
-//      envelope → posts ONE combined review with both sets of comments.
+//   3. dist/index.js (main.ts) with DRIFT_DEFER_INLINE_REVIEW=true AND
+//      DRIFT_DEFER_STICKY_COMMENT=true (mirrors action.yml when AI is on) →
+//      posts ONLY the check run; SKIPS the deterministic inline review AND
+//      defers the sticky comment to step 12.
+//   4. dist/ai-suggest.js (the sticky-comment poster) with the same report +
+//      an AI envelope → upserts ONE Drift sticky comment whose "Code
+//      suggestions" section carries BOTH the deterministic findings AND the
+//      AI-refined ones. It posts NO inline review.
 //
 // What the test asserts at the FINISH line:
-//   • Exactly ONE pulls.createReview POST (proves "same comment" — not
-//     two review threads in the PR conversation).
-//   • That single review contains merged + deduped comments.
+//   • EXACTLY ZERO pulls.createReview POSTs end-to-end (main.ts deferred its
+//     review; ai-suggest no longer posts one — all suggestions live in the
+//     single sticky comment, not a second inline-review thread).
 //   • Exactly ONE sticky comment POST (idempotent marker — proves no
-//     duplicate sticky from multiple runs).
+//     duplicate sticky from multiple runs), carrying the deterministic
+//     priority table AND the AI-refined code-suggestion block.
 //   • Exactly ONE check-runs POST.
 //   • Sticky body under the 60 KB budget (proves "no truncation").
 //
@@ -161,7 +166,7 @@ function spawnBundle(bundle: string, env: Record<string, string>): Promise<{
 
 // ─── THE END-TO-END TEST ───────────────────────────────────────────────
 
-test('full chain: scan(500) → cap(10) → main.ts(defer) → ai-suggest(combined) → ONE review, ONE sticky, bounded body', async () => {
+test('full chain: scan(500) → cap(10) → main.ts(defer) → ai-suggest(combined) → ZERO reviews, ONE sticky, bounded body', async () => {
   // SETUP — fresh tmp dir per run; everything lives here so we can assert
   // on the on-disk artifacts the steps produce.
   const dir = mkdtempSync(join(tmpdir(), 'drift-full-chain-'));
@@ -249,11 +254,15 @@ test('full chain: scan(500) → cap(10) → main.ts(defer) → ai-suggest(combin
   const stub = await startStub(patch);
 
   try {
-    // ── Step 4a: dist/index.js with DRIFT_DEFER_INLINE_REVIEW=true ──
+    // ── Step 4a: dist/index.js with DRIFT_DEFER_INLINE_REVIEW=true AND
+    //    DRIFT_DEFER_STICKY_COMMENT=true (exactly what action.yml step 9 sets
+    //    when AI is on): main.ts skips its own inline review AND defers the
+    //    sticky comment to step 12 below, so it posts ONLY the check run. ──
     const mainResult = await spawnBundle(INDEX_BUNDLE, {
       DRIFT_REPORT_PATH: reportPath,
       DRIFT_COMMENT: 'true',
       DRIFT_DEFER_INLINE_REVIEW: 'true',
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
       GITHUB_TOKEN: 'test-token',
       GITHUB_API_URL: stub.baseUrl,
       GITHUB_REPOSITORY: 'acme/shop',
@@ -270,12 +279,16 @@ test('full chain: scan(500) → cap(10) → main.ts(defer) → ai-suggest(combin
     // Defer flag took effect.
     assert.match(mainResult.stdout, /skipping deterministic inline review/);
 
-    // ── Step 4b: dist/ai-suggest.js (combined poster) ──
+    // ── Step 4b: dist/ai-suggest.js (the sticky-comment poster). With
+    //    DRIFT_DEFER_STICKY_COMMENT=true (action.yml step 12) it OWNS the
+    //    single Drift sticky comment: it merges the AI-refined suggestions
+    //    into the report and upserts the sticky. It posts NO inline review. ──
     const aiResult = await spawnBundle(AI_SUGGEST_BUNDLE, {
       DRIFT_REPORT_PATH: reportPath,
       AI_SUGGESTIONS_PATH: envelopePath,
       DRIFT_MAX_AI_SUGGESTIONS: '5',
       DRIFT_AI_MODEL: 'openai/gpt-4o',
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
       GITHUB_TOKEN: 'test-token',
       GITHUB_API_URL: stub.baseUrl,
       GITHUB_REPOSITORY: 'acme/shop',
@@ -292,87 +305,80 @@ test('full chain: scan(500) → cap(10) → main.ts(defer) → ai-suggest(combin
     // ASSERT FINAL STATE — what a GitHub user would see on the PR.
     // ───────────────────────────────────────────────────────────────────
 
-    // 1) EXACTLY ONE PR review (the user's bug #2: "same comment, not
-    //    in other comments"). Two reviews = the bug regression.
+    // 1) EXACTLY ZERO PR reviews end-to-end (the user's bug #2: "same
+    //    comment, not in other comments"). main.ts deferred its inline
+    //    review; ai-suggest no longer posts one — every code suggestion now
+    //    lives in the SINGLE sticky comment, never a second review thread.
+    //    Any pulls.createReview POST = the bug regression.
     const reviewPosts = stub.requests.filter(
       (q) => q.method === 'POST' && /\/pulls\/\d+\/reviews$/.test(q.url),
     );
     assert.equal(
       reviewPosts.length,
-      1,
-      `expected exactly ONE pulls.createReview POST end-to-end; got ${reviewPosts.length} — ` +
-        `defer-flag wiring or combined-poster guard regressed`,
+      0,
+      `expected ZERO pulls.createReview POSTs end-to-end; got ${reviewPosts.length} — ` +
+        `defer-flag wiring or the combined-poster's no-inline-review guard regressed`,
     );
 
-    // The single review contains BOTH deterministic and AI comments,
-    // deduped on path:line (AI wins on the collision).
-    const reviewBody = reviewPosts[0].body as {
-      event: string;
-      commit_id: string;
-      body: string;
-      comments: Array<{ path: string; line: number; body: string }>;
-    };
-    assert.equal(reviewBody.event, 'COMMENT');
-
-    // Comments arithmetic:
-    //   det = 10 cap-survivors all on src/big_pr/refactor.py.
-    //         BUT the bigReport builder placed them at lines 1..10 only
-    //         for the first 10 entries (which are the cap-survivors),
-    //         so all 10 anchor on-diff.
-    //   AI  = 3 entries (lines 1, 8, 9) — all on-diff.
-    //   Dedupe: AI wins on line 1, line 8, line 9 (collisions on each).
-    //         det keeps lines 2..7 + 10 = 7 entries.
-    //   Total = 7 det + 3 AI = 10.
-    assert.equal(
-      reviewBody.comments.length,
-      10,
-      `expected 10 comments after dedupe (7 det + 3 AI); got ${reviewBody.comments.length}`,
-    );
-
-    // The collision lines carry AI bodies, not det.
-    for (const aiLine of [1, 8, 9]) {
-      const c = reviewBody.comments.find(
-        (x) => x.path === 'src/big_pr/refactor.py' && x.line === aiLine,
-      );
-      assert.ok(c, `line ${aiLine} must be present in the merged review`);
-      assert.match(c!.body, new RegExp(`AI patch for line ${aiLine}`), `AI wins on line ${aiLine}`);
-    }
-    // The non-colliding det lines carry det bodies.
-    for (const detLine of [2, 3, 4, 5, 6, 7, 10]) {
-      const c = reviewBody.comments.find(
-        (x) => x.path === 'src/big_pr/refactor.py' && x.line === detLine,
-      );
-      assert.ok(c, `det line ${detLine} must survive dedupe`);
-      assert.match(c!.body, /Finding #/, `det body at line ${detLine}`);
-    }
-    // Body wording reflects combined mode.
-    assert.match(reviewBody.body, /Drift.*\+.*openai\/gpt-4o.*added/);
-
-    // 2) EXACTLY ONE sticky comment POST (the user's bug #1: "report was
-    //    truncated"). And the sticky body fits under the 60 KB budget.
+    // 2) EXACTLY ONE sticky comment POST — the ai-suggest.js issues/comments
+    //    create (main.ts deferred its sticky, so this is the only write). It
+    //    carries BOTH the deterministic priority table AND the AI-refined
+    //    code-suggestion block, deduped on path:line (AI wins on line 1).
     const stickyPosts = stub.requests.filter(
       (q) => q.method === 'POST' && /\/issues\/\d+\/comments$/.test(q.url),
     );
     assert.equal(stickyPosts.length, 1, `expected exactly ONE sticky comment POST; got ${stickyPosts.length}`);
-    const stickyLen = (stickyPosts[0].body as { body: string }).body.length;
+    const stickyText = (stickyPosts[0].body as { body: string }).body;
+
+    // The sticky carries the idempotent marker (proves it's THE sticky).
+    assert.match(stickyText, /<!-- drift:sticky-comment -->/, 'sticky must carry the dedupe marker');
+
+    // The deterministic priority table is present. renderOverview wraps the
+    // section in a <details> accordion, so the heading shows as the <summary>.
+    assert.match(stickyText, /⚠️ Code suggestions \(\d+\)/, 'sticky carries the Code suggestions section');
+    assert.match(stickyText, /\| Priority \| Finding \| Location \| Confidence \|/, 'sticky carries the deterministic priority table');
+
+    // The AI-refined block is present with all 3 AI suggestions, and the
+    // collision line (1) carries the AI body — AI won the dedupe in
+    // mergeAiSuggestionsIntoReport.
+    assert.match(stickyText, /### 🤖 AI-refined code suggestions \(3\)/, 'sticky carries the AI-refined block with all 3 AI suggestions');
+    for (const aiLine of [1, 8, 9]) {
+      assert.match(
+        stickyText,
+        new RegExp(`AI patch for line ${aiLine}`),
+        `AI suggestion for line ${aiLine} must render in the sticky (AI wins on the line-1 collision)`,
+      );
+    }
+    // The non-colliding deterministic findings still render in the same
+    // comment (they were NOT replaced by AI).
+    assert.match(stickyText, /Finding #/, 'sticky still carries the deterministic findings alongside the AI block');
+
+    // Sticky body fits under the 60 KB budget (the user's bug #1: "report
+    // was truncated") — no size-guard footer, no collapsed details.
+    const stickyLen = stickyText.length;
     assert.ok(
       stickyLen < BODY_SIZE_BUDGET,
       `sticky body must fit under ${BODY_SIZE_BUDGET} bytes after cap; got ${stickyLen}`,
     );
-    const stickyText = (stickyPosts[0].body as { body: string }).body;
     assert.doesNotMatch(stickyText, /report truncated/, 'sticky must NOT carry the size-guard footer');
     assert.doesNotMatch(stickyText, /_collapsed \(size guard\)_/, 'sticky must NOT collapse details');
 
-    // 3) EXACTLY ONE check-runs POST.
+    // 3) EXACTLY ONE check-runs POST (still owned by main.ts).
     const checkPosts = stub.requests.filter(
       (q) => q.method === 'POST' && /\/check-runs$/.test(q.url),
     );
     assert.equal(checkPosts.length, 1, `expected exactly ONE check-runs POST; got ${checkPosts.length}`);
 
-    // 4) Log surface — combined-summary line is present and accurate.
+    // 4) Log surface — the combined sticky-summary line is present and
+    //    accurate (10 deterministic findings + 3 AI-refined, in ONE comment).
     assert.match(
       aiResult.stdout,
-      /combined review: 10 deterministic \+ 3 AI → 10 comment\(s\)/,
+      /🟣 Drift sticky comment: 10 deterministic \+ 3 AI-refined code suggestion\(s\) in ONE comment\./,
+    );
+    assert.match(
+      aiResult.stdout,
+      /Created sticky comment 3/,
+      'ai-suggest must create (not just dry-run) the single sticky comment',
     );
   } finally {
     await stopServer(stub.server);

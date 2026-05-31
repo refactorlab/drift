@@ -133,7 +133,7 @@ jobs:
           audio-summary:      ${{ steps.args.outputs.audio-summary      || 'true' }}
           ai-model:           ${{ steps.args.outputs.ai-model           || 'openai/gpt-4.1' }}
           fail-threshold:     ${{ steps.args.outputs.fail-threshold     || '' }}
-          ai-max-suggestions: ${{ steps.args.outputs.ai-max-suggestions || '3' }}
+          ai-max-suggestions: ${{ steps.args.outputs.ai-max-suggestions || '1' }}
           open-issue:         ${{ steps.args.outputs.open-issue         || 'false' }}
 
       - name: React 🚀 on success

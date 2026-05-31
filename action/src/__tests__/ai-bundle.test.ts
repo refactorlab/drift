@@ -120,13 +120,19 @@ test('bundle: dist/ai-suggest.js exists and reads the same envelope path', () =>
   );
 });
 
-test('bundle: ai-suggest carries the filter+cap chain identifiers', () => {
+test('bundle: ai-suggest carries the filter+merge+sticky chain identifiers', () => {
   const src = readFileSync(suggestBundle, 'utf8');
-  // These three functions are the load-bearing pipeline:
-  //   parseAIOutput → filterByDiff → buildReviewComments
-  // If any drops out (a refactor renames it, a tree-shake misses
-  // it), the post step silently produces an empty review.
-  for (const fn of ['parseAIOutput', 'filterByDiff', 'buildReviewComments']) {
+  // These functions are the load-bearing pipeline for the single sticky
+  // comment:
+  //   parseAIOutput → filterByDiff → mergeAiSuggestionsIntoReport → buildAndUpsertSticky
+  // If any drops out (a refactor renames it, a tree-shake misses it), the
+  // sticky comment silently loses its AI-refined suggestions.
+  for (const fn of [
+    'parseAIOutput',
+    'filterByDiff',
+    'mergeAiSuggestionsIntoReport',
+    'buildAndUpsertSticky',
+  ]) {
     assert.ok(src.includes(fn), `ai-suggest.js missing pipeline function: ${fn}`);
   }
 });

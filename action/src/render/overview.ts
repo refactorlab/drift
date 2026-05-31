@@ -54,9 +54,11 @@ const SCREENSHOTS = 'https://raw.githubusercontent.com/refactorlab/andy/main/doc
 // dominate the comment, so every banner is pinned to a small FIXED width
 // (height auto-scales, preserving aspect ratio). Deliberately kept compact so a
 // banner reads as a section marker, not a hero that pushes the content below
-// the fold. Two knobs only: section + audio banners share BANNER_WIDTH; the
-// Andy sign-off is smaller still.
+// the fold. Section banners share BANNER_WIDTH; the audio button is the one
+// call-to-action banner so it's pinned WIDER (AUDIO_BANNER_WIDTH) to draw the
+// eye; the Andy sign-off is smaller still.
 const BANNER_WIDTH = 120;
+const AUDIO_BANNER_WIDTH = 200;
 const ANDY_WIDTH = 64;
 const sectionImage = (file: string, alt: string): string =>
   `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
@@ -70,7 +72,7 @@ const withImage = (file: string, alt: string, section: string): string => `${sec
  * audio URL exists; same artifact caveat as the footer's text link.
  */
 const audioBanner = (url: string): string =>
-  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
+  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
 
 /**
  * Andy sign-off — a small mascot banner pinned to the VERY END of the comment,

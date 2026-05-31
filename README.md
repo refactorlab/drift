@@ -309,7 +309,7 @@ If you'd rather keep the comment trigger isolated (e.g. to grant `issues:write` 
 | `ai-suggestions` | `true` | `/drift ai-suggestions=false` |
 | `audio-summary` | `true` | `/drift audio-summary=false` |
 | `ai-model` | `openai/gpt-4.1` | `/drift ai-model=openai/gpt-5` |
-| `ai-max-suggestions` | `3` | `/drift ai-max-suggestions=5` |
+| `ai-max-suggestions` | `1` | `/drift ai-max-suggestions=5` |
 | `fail-threshold` | _(empty)_ | `/drift fail-threshold=0` |
 | `profiler-release-tag` | _(latest)_ | `/drift profiler-release-tag=drift-static-profiler-v0.6.0` |
 | `piper-voice` | `en_US-ryan-medium` | `/drift piper-voice=en_GB-alba-medium` |

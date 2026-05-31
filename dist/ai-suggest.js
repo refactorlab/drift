@@ -8,10 +8,6 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -28,7 +24,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/tunnel/lib/tunnel.js
 var require_tunnel = __commonJS({
@@ -19575,12 +19570,6 @@ var require_dist = __commonJS({
 });
 
 // src/ai-index.ts
-var ai_index_exports = {};
-__export(ai_index_exports, {
-  buildDeterministicComments: () => buildDeterministicComments,
-  mergeAndDedupe: () => mergeAndDedupe
-});
-module.exports = __toCommonJS(ai_index_exports);
 var import_node_fs2 = require("node:fs");
 
 // node_modules/@actions/core/lib/command.js
@@ -23803,65 +23792,6 @@ function passesQualityBar(s) {
   return s.confidence >= SUGGESTION_CONFIDENCE_THRESHOLD && hasRef && validCategory;
 }
 
-// src/suggestion-fence.ts
-function suggestionBlock(code) {
-  const runs = code.match(/`+/g) ?? [];
-  const longest = runs.reduce((m, r) => Math.max(m, r.length), 0);
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}suggestion
-${code}
-${fence}`;
-}
-function unwrapFence(raw) {
-  const s = raw.replace(/\r\n/g, "\n");
-  const m = s.match(/^\s*`{3,}[^\n]*\n([\s\S]*?)\n`{3,}\s*$/);
-  return m ? m[1] : raw;
-}
-
-// src/render/suggestion.ts
-var CATEGORY_BADGE = {
-  A: "\u{1F150} Optimization",
-  B: "\u{1F151} Product correctness",
-  C: "\u{1F152} Framework misuse"
-};
-function renderSuggestionBody(s) {
-  const confidencePct = Math.round(s.confidence * 100);
-  const lines = [
-    `**${CATEGORY_BADGE[s.category]}${s.category_label ? ` \u2014 ${s.category_label}` : ""}** \xB7 confidence ${confidencePct}%`,
-    "",
-    s.why_it_matters
-  ];
-  if (s.references && s.references.length) {
-    const ref = s.references[0];
-    lines.push("", `Reference: [${ref.title ?? shortenUrl(ref.url)}](${ref.url})`);
-  }
-  const after = extractAfterCode(s);
-  if (after) {
-    lines.push("", suggestionBlock(after));
-  }
-  if (s.notes) {
-    lines.push("", `> ${s.notes}`);
-  }
-  return lines.join("\n");
-}
-function extractAfterCode(s) {
-  if (s.diff?.after_lines && s.diff.after_lines.length) {
-    return s.diff.after_lines.map((l) => l.code).join("\n");
-  }
-  if (s.diff?.unified) {
-    return s.diff.unified.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
-  }
-  return null;
-}
-function shortenUrl(url) {
-  try {
-    const u = new URL(url);
-    return `${u.hostname}${u.pathname}`.replace(/\/$/, "");
-  } catch {
-    return url;
-  }
-}
-
 // src/ai/schema.ts
 var AI_QUALITY_BAR = {
   minConfidence: 0.75,
@@ -23961,37 +23891,6 @@ function parseAIOutput(raw) {
     total,
     passing: passing.length
   };
-}
-
-// src/ai/render.ts
-var CATEGORY_BADGE2 = {
-  A: "\u{1F150} Optimization",
-  B: "\u{1F151} Product correctness",
-  C: "\u{1F152} Framework misuse"
-};
-function renderAISuggestionBody(s, model) {
-  const confidencePct = Math.floor(s.confidence * 100);
-  const ref = s.references[0];
-  const refLabel = ref.title ?? shortenUrl2(ref.url);
-  return [
-    `${CATEGORY_BADGE2[s.category]} \xB7 \u{1F916} \`${model}\` \xB7 confidence ${confidencePct}%`,
-    "",
-    s.why_it_matters,
-    "",
-    `Reference: [${refLabel}](${ref.url})`,
-    "",
-    // Dynamic fence so backticks inside the replacement code can't terminate
-    // the suggestion early; unwrap a fence the model may have added itself.
-    suggestionBlock(unwrapFence(s.after_code))
-  ].join("\n");
-}
-function shortenUrl2(url) {
-  try {
-    const u = new URL(url);
-    return `${u.hostname}${u.pathname}`.replace(/\/$/, "");
-  } catch {
-    return url;
-  }
 }
 
 // node_modules/diff/libesm/patch/parse.js
@@ -24353,18 +24252,6 @@ function parseCommentableLines(patch) {
   }
   return lines;
 }
-function nearestCommentableLine(set, target) {
-  let best;
-  let bestDist = Infinity;
-  for (const n of set) {
-    const dist = Math.abs(n - target);
-    if (dist < bestDist || dist === bestDist && (best === void 0 || n < best)) {
-      best = n;
-      bestDist = dist;
-    }
-  }
-  return best;
-}
 function lookupCommentable(map, file) {
   if (map.has(file)) return map.get(file);
   let best;
@@ -24413,19 +24300,6 @@ function filterByDiff(suggestions, commentableByFile) {
 }
 
 // src/ai/post.ts
-async function fetchCommentableLines(octokit, owner, repo, prNumber) {
-  const { data } = await octokit.rest.pulls.listFiles({
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100
-  });
-  const map = /* @__PURE__ */ new Map();
-  for (const f of data) {
-    if (f.patch) map.set(f.filename, parseCommentableLines(f.patch));
-  }
-  return map;
-}
 async function fetchPrFiles(octokit, owner, repo, prNumber) {
   const { data } = await octokit.rest.pulls.listFiles({
     owner,
@@ -24442,22 +24316,6 @@ async function fetchPrFiles(octokit, owner, repo, prNumber) {
     }
   }
   return { commentable, patches };
-}
-function buildReviewComments(suggestions, model) {
-  return suggestions.map((s) => {
-    const body = renderAISuggestionBody(s, model);
-    const comment = {
-      path: s.file,
-      line: s.line,
-      side: "RIGHT",
-      body
-    };
-    if (typeof s.start_line === "number" && s.start_line < s.line) {
-      comment.start_line = s.start_line;
-      comment.start_side = "RIGHT";
-    }
-    return comment;
-  });
 }
 
 // src/ai/to-code-suggestion.ts
@@ -25721,8 +25579,17 @@ function resolveMax(max) {
   if (max === void 0 || !Number.isFinite(max) || max < 1) return DEFAULT_MAX_SUGGESTIONS;
   return Math.floor(max);
 }
+function dedupeSuggestions(items) {
+  const best = /* @__PURE__ */ new Map();
+  for (const s of items) {
+    const key = `${s.source ?? "scanner"}\0${s.file}\0${s.line ?? 0}\0${s.kind ?? ""}`;
+    const prev = best.get(key);
+    if (!prev || s.confidence > prev.confidence) best.set(key, s);
+  }
+  return [...best.values()];
+}
 function renderSuggestions(suggestions, ctx, opts = {}) {
-  const passing = (suggestions ?? []).filter(passesQualityBar);
+  const passing = dedupeSuggestions((suggestions ?? []).filter(passesQualityBar));
   if (passing.length === 0) return null;
   const aiSugg = passing.filter((s) => s.source === "ai");
   const detSugg = passing.filter((s) => s.source !== "ai");
@@ -25761,7 +25628,7 @@ function renderSuggestions(suggestions, ctx, opts = {}) {
     lines.push(
       `### \u{1F916} AI-refined code suggestions (${aiSugg.length})`,
       "",
-      "<sub>Model-generated patches grounded in the scanner findings \u2014 each carries an **Apply** button on its matching inline review comment.</sub>",
+      "<sub>Model-generated patches grounded in the scanner findings \u2014 copy the suggested change, or hand the prompt below to your AI agent.</sub>",
       ""
     );
     for (const s of aiSugg) lines.push(renderAIDetail(s, ctx), "");
@@ -26215,12 +26082,13 @@ var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
 var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
 var BANNER_WIDTH = 120;
+var AUDIO_BANNER_WIDTH = 200;
 var ANDY_WIDTH = 64;
 var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
 var withImage = (file, alt, section) => `${sectionImage(file, alt)}
 
 ${section}`;
-var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
 var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 function renderOverview(report, opts = {}) {
   const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
@@ -26398,6 +26266,12 @@ async function buildAndUpsertSticky(args) {
     scanContextUrl: args.scanContextUrl,
     maxSuggestions: args.maxSuggestions
   });
+  if (args.dryRun) {
+    info(
+      `[dry-run] would upsert sticky comment (${body.length} bytes)${existingId ? ` to comment ${existingId}` : " (new)"}.`
+    );
+    return;
+  }
   await upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId });
 }
 function describe(err) {
@@ -26446,23 +26320,28 @@ function optEnv(name) {
 async function aiMain() {
   const model = process.env.DRIFT_AI_MODEL || "openai/gpt-4o";
   const dryRun = process.env.DRIFT_DRY_RUN === "true";
-  const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
+  const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 1);
   const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === "true";
   const report = loadReportSafe();
-  const detSuggestions = (report?.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
   const { suggestions: aiSuggestions, funnel: aiFunnel } = readAISuggestions();
-  if (detSuggestions.length === 0 && aiSuggestions.length === 0 && !deferSticky) {
-    info("No deterministic or AI suggestions to post \u2014 skipping combined review.");
+  if (!deferSticky) {
+    info(
+      "DRIFT_DEFER_STICKY_COMMENT not set \u2014 main.ts owns the sticky comment; this step has nothing to post."
+    );
+    return;
+  }
+  if (!report) {
+    warning("Scan report unreadable \u2014 cannot refresh the sticky comment.");
     return;
   }
   const pr = resolvePrContext();
   if (!pr) {
-    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 skipping combined review.");
+    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 skipping sticky comment.");
     return;
   }
   const token = process.env.GITHUB_TOKEN ?? "";
   if (!token && !dryRun) {
-    warning("No GITHUB_TOKEN \u2014 skipping combined review post.");
+    warning("No GITHUB_TOKEN \u2014 skipping sticky comment.");
     return;
   }
   const octokit = getOctokit(token || "dry-run-stub-token");
@@ -26470,55 +26349,27 @@ async function aiMain() {
   let commentable = null;
   let patches = null;
   try {
-    if (deferSticky) {
-      const f = await fetchPrFiles(octokit, owner, repo, pr.number);
-      commentable = f.commentable;
-      patches = f.patches;
-    } else {
-      commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
-    }
+    const f = await fetchPrFiles(octokit, owner, repo, pr.number);
+    commentable = f.commentable;
+    patches = f.patches;
   } catch (e) {
-    warning(`Could not fetch PR diff to validate lines (${describe2(e)}); posting unfiltered.`);
+    warning(`Could not fetch PR diff (${describe2(e)}); AI suggestion diffs will be after-only.`);
   }
-  const detComments = buildDeterministicComments(detSuggestions, commentable);
   const aiOnDiff = filterAIByDiff(aiSuggestions, commentable);
   const aiPostable = aiOnDiff.slice(0, maxAi);
-  const aiComments = aiPostable.length > 0 ? buildReviewComments(aiPostable, model) : [];
-  const merged = mergeAndDedupe(detComments, aiComments);
   if (aiFunnel.total > 0) {
     info(
-      `\u{1F916} ${model}: ${aiFunnel.total} candidate(s) \u2192 ${aiFunnel.passing} pass quality bar \u2192 ${aiOnDiff.length} on-diff \u2192 ${aiPostable.length} posted (cap=${maxAi})`
+      `\u{1F916} ${model}: ${aiFunnel.total} candidate(s) \u2192 ${aiFunnel.passing} pass quality bar \u2192 ${aiOnDiff.length} on-diff \u2192 ${aiPostable.length} AI-refined (cap=${maxAi}).`
     );
   }
+  const detCount = (report.pr_review?.code_suggestions ?? []).filter(passesQualityBar).length;
   info(
-    `\u{1F7E3} combined review: ${detComments.length} deterministic + ${aiComments.length} AI \u2192 ${merged.length} comment(s) after dedupe`
+    `\u{1F7E3} Drift sticky comment: ${detCount} deterministic + ${aiPostable.length} AI-refined code suggestion(s) in ONE comment.`
   );
-  if (merged.length === 0) {
-    if (aiFunnel.total > 0 && detComments.length === 0) {
-      info("No AI suggestion landed on a diff line \u2014 nothing to post inline.");
-    } else {
-      info("No on-diff anchors \u2014 skipping inline review (suggestions still in the sticky comment).");
-    }
-  } else {
-    await postCombinedReview({
-      octokit,
-      owner,
-      repo,
-      prNumber: pr.number,
-      headSha: pr.headSha,
-      comments: merged,
-      detCount: detComments.length,
-      aiCount: aiComments.length,
-      model,
-      dryRun
-    });
-  }
-  if (deferSticky) {
-    try {
-      await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model });
-    } catch (e) {
-      warning(`Deferred sticky comment failed (non-fatal): ${describe2(e)}`);
-    }
+  try {
+    await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model, dryRun });
+  } catch (e) {
+    warning(`Sticky comment refresh failed (non-fatal): ${describe2(e)}`);
   }
 }
 async function postDeferredSticky(args) {
@@ -26548,7 +26399,8 @@ async function postDeferredSticky(args) {
     audioUrl: optEnv2("DRIFT_AUDIO_URL"),
     audioMp4Url: optEnv2("DRIFT_AUDIO_MP4_URL"),
     scanJsonUrl: optEnv2("DRIFT_SCAN_JSON_URL"),
-    scanContextUrl: optEnv2("DRIFT_SCAN_CONTEXT_URL")
+    scanContextUrl: optEnv2("DRIFT_SCAN_CONTEXT_URL"),
+    dryRun: args.dryRun
   });
   info(`Sticky comment refreshed with ${args.aiPostable.length} AI-refined suggestion(s) merged in.`);
 }
@@ -26627,107 +26479,6 @@ ${parsed.rawPreview}`);
     funnel: { total: parsed.total, passing: parsed.passing }
   };
 }
-function buildDeterministicComments(suggestions, commentable) {
-  const anchored = suggestions.filter((s) => typeof s.line === "number").map((s) => ({
-    suggestion: s,
-    comment: {
-      path: s.file,
-      line: s.line,
-      side: "RIGHT",
-      body: renderSuggestionBody(s)
-    },
-    // An Apply block makes the anchor line-sensitive — never snap those.
-    hasApplyBlock: extractAfterCode(s) !== null
-  }));
-  if (!commentable) return anchored.map((a) => a.comment);
-  const kept = [];
-  let dropped = 0;
-  let snapped = 0;
-  for (const { comment, hasApplyBlock } of anchored) {
-    const set = lookupCommentable(commentable, comment.path);
-    if (!set || set.size === 0) {
-      dropped += 1;
-      continue;
-    }
-    if (set.has(comment.line)) {
-      kept.push(comment);
-      continue;
-    }
-    if (hasApplyBlock) {
-      dropped += 1;
-      continue;
-    }
-    const near = nearestCommentableLine(set, comment.line);
-    if (near === void 0) {
-      dropped += 1;
-      continue;
-    }
-    kept.push({
-      ...comment,
-      line: near,
-      body: withSnapNote(comment.body, comment.path, comment.line)
-    });
-    snapped += 1;
-  }
-  if (snapped > 0) {
-    info(
-      `Re-anchored ${snapped} deterministic suggestion(s) to the nearest PR-diff line (exact line was outside the diff hunks).`
-    );
-  }
-  if (dropped > 0) {
-    info(
-      `Dropped ${dropped} deterministic suggestion(s) not on a PR-diff line (still mirrored in the Drift sticky comment).`
-    );
-  }
-  return kept;
-}
-function withSnapNote(body, path, originalLine) {
-  return `${body}
-
-> \u{1F4CD} Anchored to the nearest changed line; the finding is at \`${path}:${originalLine}\`.`;
-}
-function mergeAndDedupe(det, ai) {
-  const key = (c) => `${c.path}:${c.line}`;
-  const aiKeys = new Set(ai.map(key));
-  const detKept = det.filter((c) => !aiKeys.has(key(c)));
-  return [...detKept, ...ai];
-}
-async function postCombinedReview(args) {
-  const { octokit, owner, repo, prNumber, headSha, comments, detCount, aiCount, model, dryRun } = args;
-  const total = comments.length;
-  let body;
-  if (detCount > 0 && aiCount > 0) {
-    body = `\u{1F7E3} **Drift** has ${detCount} + \u{1F916} **${model}** added ${aiCount} suggestion${total === 1 ? "" : "s"} to apply.`;
-  } else if (aiCount > 0) {
-    body = `\u{1F916} **${model}** has ${aiCount} suggestion${aiCount === 1 ? "" : "s"} to apply.`;
-  } else {
-    body = `\u{1F7E3} **Drift** has ${detCount} suggestion${detCount === 1 ? "" : "s"} to apply.`;
-  }
-  const payload = {
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: "COMMENT",
-    body,
-    comments
-  };
-  if (dryRun) {
-    info(`[dry-run] Would POST pulls.createReview with ${total} comment(s).`);
-    info(JSON.stringify(payload, null, 2));
-    return;
-  }
-  try {
-    await octokit.rest.pulls.createReview(payload);
-    let kind;
-    if (detCount > 0 && aiCount > 0) kind = "combined PR review";
-    else if (aiCount > 0) kind = "AI review";
-    else kind = "PR review";
-    info(`Posted ${kind} with ${total} inline suggestion(s).`);
-  } catch (e) {
-    warning(`Combined review POST failed (non-fatal): ${describe2(e)}`);
-  }
-}
 function parseMax(v, fallback) {
   if (!v) return fallback;
   const n = Number.parseInt(v, 10);
@@ -26742,11 +26493,6 @@ function isNotFound(e) {
 }
 aiMain().catch((err) => {
   warning(`Unhandled combined-review error: ${describe2(err)}`);
-});
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  buildDeterministicComments,
-  mergeAndDedupe
 });
 /*! Bundled license information:
 

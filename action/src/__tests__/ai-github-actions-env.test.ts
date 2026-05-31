@@ -205,22 +205,55 @@ test('GA-env: ai-suggest.js parses GITHUB_REPOSITORY into context.repo (owner/na
       after_code: '    fixed',
     }],
   }));
+  // The sticky path needs a readable scan report (it re-renders the
+  // whole overview). makeRepo()/writeReport() build a valid one.
+  const { root } = makeRepo();
+  const reportPath = writeReport(root);
   const eventPath = join(tmp, 'event.json');
   writeFileSync(eventPath, JSON.stringify({
     pull_request: { number: 77, head: { sha: 'ga-sha' }, base: { sha: 'base' } },
   }));
 
   // Capture the GitHub stub URL request paths — they should include
-  // the owner/name parsed from GITHUB_REPOSITORY.
+  // the owner/name parsed from GITHUB_REPOSITORY. The new contract posts
+  // ALL suggestions in the ONE sticky comment (issues/comments), and NEVER
+  // posts a separate inline review (pulls/reviews).
   const seen: string[] = [];
+  let reviewSeen = false;
+  let stickyWrite = false;
   const server = createServer((req, res) => {
     let chunks = '';
     req.on('data', (c) => { chunks += c; });
     req.on('end', () => {
-      seen.push(req.url ?? '');
-      if (req.method === 'GET' && /\/pulls\/77\/files/.test(req.url ?? '')) {
+      const url = req.url ?? '';
+      seen.push(url);
+      // The removed surface: an inline PR review must NEVER be posted.
+      if (req.method === 'POST' && /\/pulls\/77\/reviews/.test(url)) {
+        reviewSeen = true;
+      }
+      if (req.method === 'GET' && /\/pulls\/77\/files/.test(url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify([{ filename: 'app/db.py', patch: '@@ -1,2 +1,3 @@\n a\n b\n+c' }]));
+        return;
+      }
+      // findSticky → no prior comment (empty list) → triggers a create POST.
+      if (req.method === 'GET' && /\/issues\/77\/comments/.test(url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+        return;
+      }
+      // The single surface: the sticky comment is created (no prior) here.
+      if (req.method === 'POST' && /\/issues\/77\/comments/.test(url)) {
+        stickyWrite = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 4242 }));
+        return;
+      }
+      // A prior-sticky update path, served for completeness.
+      if (req.method === 'PATCH' && /\/issues\/comments\/\d+/.test(url)) {
+        stickyWrite = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 4242 }));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -243,16 +276,26 @@ test('GA-env: ai-suggest.js parses GITHUB_REPOSITORY into context.repo (owner/na
       GITHUB_EVENT_NAME: 'pull_request',
       GITHUB_EVENT_PATH: eventPath,
       GITHUB_ACTIONS: 'true',
+      // Drive the sticky-comment path: this step OWNS the one comment.
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
+      DRIFT_REPORT_PATH: reportPath,
     });
     assert.equal(result.code, 0);
-    // The URL paths Octokit hits should NOT include the org prefix
-    // (the @actions/github client builds the URL from GITHUB_API_URL +
-    // route — the repo path is part of the GET/POST route).
+    // The URL paths Octokit hits include the owner/name parsed from
+    // GITHUB_REPOSITORY — proven by listFiles hitting the correct route.
     const listFilesCall = seen.find((u) => /\/repos\/octo-org\/my-repo\/pulls\/77\/files/.test(u));
     assert.ok(listFilesCall, `listFiles call must use repo from GITHUB_REPOSITORY; saw: ${seen.join(', ')}`);
+    // The sticky upsert ALSO proves the owner/name split — it hits the
+    // /repos/{owner}/{repo}/issues/77/comments route.
+    const stickyCall = seen.find((u) => /\/repos\/octo-org\/my-repo\/issues\/77\/comments/.test(u));
+    assert.ok(stickyCall, `sticky comment call must use repo from GITHUB_REPOSITORY; saw: ${seen.join(', ')}`);
+    assert.ok(stickyWrite, 'suggestions must be posted to the ONE sticky comment (issues/comments)');
+    // The new invariant: EXACTLY ZERO inline PR review.
+    assert.ok(!reviewSeen, 'must NOT post a separate inline review (pulls/reviews removed)');
   } finally {
     await new Promise<void>((rs) => server.close(() => rs()));
     rmSync(tmp, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -276,20 +319,47 @@ test('GA-env: ai-suggest.js with NO event payload but DRIFT_PR_* set → still r
   // Empty event payload (issue_comment event has no pull_request)
   const eventPath = join(tmp, 'event.json');
   writeFileSync(eventPath, JSON.stringify({ issue: { pull_request: { url: '…' } } }));
+  // The sticky path needs a readable scan report (it re-renders the overview).
+  const { root } = makeRepo();
+  const reportPath = writeReport(root);
 
-  let postSeen = false;
+  let reviewSeen = false;
+  let stickyWrite = false;
+  const seen: string[] = [];
   const server = createServer((req, res) => {
     let chunks = '';
     req.on('data', (c) => { chunks += c; });
     req.on('end', () => {
       void chunks;
-      if (req.method === 'GET' && /\/pulls\/55\/files/.test(req.url ?? '')) {
+      const url = req.url ?? '';
+      seen.push(url);
+      // The removed surface: an inline PR review must NEVER be posted.
+      if (req.method === 'POST' && /\/pulls\/55\/reviews/.test(url)) {
+        reviewSeen = true;
+      }
+      if (req.method === 'GET' && /\/pulls\/55\/files/.test(url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify([{ filename: 'app/db.py', patch: '@@ -1,2 +1,3 @@\n a\n b\n+c' }]));
         return;
       }
-      if (req.method === 'POST' && /\/pulls\/55\/reviews/.test(req.url ?? '')) {
-        postSeen = true;
+      // findSticky → no prior comment → create POST. Proves PR #55 was
+      // resolved via the DRIFT_PR_* env fallback (no payload PR object).
+      if (req.method === 'GET' && /\/issues\/55\/comments/.test(url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+        return;
+      }
+      if (req.method === 'POST' && /\/issues\/55\/comments/.test(url)) {
+        stickyWrite = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 5555 }));
+        return;
+      }
+      if (req.method === 'PATCH' && /\/issues\/comments\/\d+/.test(url)) {
+        stickyWrite = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 5555 }));
+        return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end('{}');
@@ -313,12 +383,22 @@ test('GA-env: ai-suggest.js with NO event payload but DRIFT_PR_* set → still r
       DRIFT_PR_NUMBER: '55',
       DRIFT_HEAD_SHA: 'comment-mode-head-sha',
       GITHUB_ACTIONS: 'true',
+      // Drive the sticky-comment path: this step OWNS the one comment.
+      DRIFT_DEFER_STICKY_COMMENT: 'true',
+      DRIFT_REPORT_PATH: reportPath,
     });
     assert.equal(result.code, 0);
-    assert.ok(postSeen, 'post step must resolve PR via DRIFT_PR_* env fallback');
+    // The PR was resolved via DRIFT_PR_* env fallback and the suggestions
+    // were upserted into the ONE sticky comment (issues/55/comments).
+    assert.ok(stickyWrite, 'post step must resolve PR via DRIFT_PR_* env fallback and upsert the sticky comment');
+    const stickyCall = seen.find((u) => /\/repos\/octo-org\/my-repo\/issues\/55\/comments/.test(u));
+    assert.ok(stickyCall, `sticky upsert must hit issues/55/comments; saw: ${seen.join(', ')}`);
+    // The new invariant: EXACTLY ZERO inline PR review.
+    assert.ok(!reviewSeen, 'must NOT post a separate inline review (pulls/reviews removed)');
   } finally {
     await new Promise<void>((rs) => server.close(() => rs()));
     rmSync(tmp, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

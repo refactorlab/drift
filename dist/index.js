@@ -24962,8 +24962,17 @@ function resolveMax(max) {
   if (max === void 0 || !Number.isFinite(max) || max < 1) return DEFAULT_MAX_SUGGESTIONS;
   return Math.floor(max);
 }
+function dedupeSuggestions(items) {
+  const best = /* @__PURE__ */ new Map();
+  for (const s of items) {
+    const key = `${s.source ?? "scanner"}\0${s.file}\0${s.line ?? 0}\0${s.kind ?? ""}`;
+    const prev = best.get(key);
+    if (!prev || s.confidence > prev.confidence) best.set(key, s);
+  }
+  return [...best.values()];
+}
 function renderSuggestions(suggestions, ctx, opts = {}) {
-  const passing = (suggestions ?? []).filter(passesQualityBar);
+  const passing = dedupeSuggestions((suggestions ?? []).filter(passesQualityBar));
   if (passing.length === 0) return null;
   const aiSugg = passing.filter((s) => s.source === "ai");
   const detSugg = passing.filter((s) => s.source !== "ai");
@@ -25002,7 +25011,7 @@ function renderSuggestions(suggestions, ctx, opts = {}) {
     lines.push(
       `### \u{1F916} AI-refined code suggestions (${aiSugg.length})`,
       "",
-      "<sub>Model-generated patches grounded in the scanner findings \u2014 each carries an **Apply** button on its matching inline review comment.</sub>",
+      "<sub>Model-generated patches grounded in the scanner findings \u2014 copy the suggested change, or hand the prompt below to your AI agent.</sub>",
       ""
     );
     for (const s of aiSugg) lines.push(renderAIDetail(s, ctx), "");
@@ -25456,12 +25465,13 @@ var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
 var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
 var BANNER_WIDTH = 120;
+var AUDIO_BANNER_WIDTH = 200;
 var ANDY_WIDTH = 64;
 var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
 var withImage = (file, alt, section) => `${sectionImage(file, alt)}
 
 ${section}`;
-var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
 var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 function renderOverview(report, opts = {}) {
   const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
@@ -25639,6 +25649,12 @@ async function buildAndUpsertSticky(args) {
     scanContextUrl: args.scanContextUrl,
     maxSuggestions: args.maxSuggestions
   });
+  if (args.dryRun) {
+    info(
+      `[dry-run] would upsert sticky comment (${body.length} bytes)${existingId ? ` to comment ${existingId}` : " (new)"}.`
+    );
+    return;
+  }
   await upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId });
 }
 function describe(err) {
