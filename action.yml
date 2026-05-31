@@ -1668,7 +1668,8 @@ runs:
         # NOT retry a curl timeout (exit 28): a slow model won't get faster
         # by asking again, and retrying would multiply the wait by
         # ai_maxtime each time. On persistent failure we fall through to the
-        # empty branch and the audio is skipped (AI-only policy in step 8d).
+        # empty branch (no AI briefing) — step 8d-fb then composes a
+        # commit-based fallback so the audio still ships.
         BRIEF_RETRIES=3
         BRIEF_WAIT=5
         script=""
@@ -1709,7 +1710,7 @@ runs:
           if [ "${ai_rc:-0}" = "28" ]; then
             echo "⚠️  AI call timed out after ${ai_maxtime}s — reasoning model may need a longer budget."
           fi
-          echo "⚠️  AI briefing: empty or failed reply after ${brief_attempt} attempt(s) — audio will be skipped (AI-only; no non-AI substitute)."
+          echo "⚠️  AI briefing: empty or failed reply after ${brief_attempt} attempt(s) — audio will fall back to a commit-based briefing (step 8d-fb)."
           # Strip control bytes AND defang any `::` workflow-command
           # sigil before echoing — the raw response is upstream-
           # controlled and a coerced model could embed `::error::owned`
@@ -2193,8 +2194,8 @@ runs:
         # measurably worse UX than no audio at all (the PR comment
         # loses the 🔊 link, but the rest of the review is unaffected
         # because step 8d is continue-on-error). SKIP audio rather than
-        # synthesize gibberish — and rather than substitute a non-AI
-        # string (the AI-ONLY policy at the text-source block above). The
+        # synthesize gibberish — and rather than substitute a title-only
+        # string (the text-source policy at the selection block above). The
         # empty-after-sanitisation branch below performs the actual skip.
         # Threshold lowered from 200 to 150 in lockstep with MAXLEN going
         # 150 → 120 so the safety net stays proportional to the cap.
