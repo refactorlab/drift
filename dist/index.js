@@ -24334,13 +24334,16 @@ function subLine(ctx) {
 function decideVerdict(facts, composite) {
   const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
   if (needsAttention) {
-    const netRegression = facts.overallDirection === "down" && !composite.mixed;
+    const netRegression = composite.label === "regressed" || facts.overallDirection === "down" && !composite.mixed;
     return {
       alert: "WARNING",
       emoji: netRegression ? "\u{1F534}" : "\u{1F7E1}",
       tldr: "address before merge",
       statusMessage: "address before merge",
-      statusColor: COLOR.amber
+      // The review-status pill tracks the hero dot: red for a pure net
+      // regression, amber for a mixed/attention case — so the badge and the dot
+      // never tell different stories.
+      statusColor: netRegression ? COLOR.red : COLOR.amber
     };
   }
   if (facts.overallDirection === "up") {
@@ -25235,7 +25238,7 @@ function renderArchitecture(input) {
   const details = [];
   const pair = beforeAfterPair(arch2);
   if (pair) {
-    const anonNote = "> Nodes labelled `\u2039anonymous@N\u203A` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.";
+    const anonNote = "> Nodes labelled `anon \u2039file:line\u203A` are anonymous functions/callbacks (arrows, lambdas, closures) the profiler could not name; the `file:line` marks where each is defined. A file-level entry shows as its filename.";
     const inner = [];
     if ("combined" in pair) {
       inner.push(anonNote, "", "```mermaid", pair.combined, "```");
