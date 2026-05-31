@@ -24927,6 +24927,61 @@ function progressBar(done, total, cells = 10) {
   return FULL.repeat(filled) + EMPTY.repeat(cells - filled);
 }
 
+// src/render/lib/gauge.ts
+var ARC = {
+  green: { dark: "#4ae3b0", light: "#0f7a52" },
+  blue: { dark: "#79c0ff", light: "#0860c4" },
+  amber: { dark: "#e3b341", light: "#9a7700" },
+  red: { dark: "#ff7b6b", light: "#b02407" },
+  grey: { dark: "#9aa5b1", light: "#5e6772" }
+};
+var TRACK = { dark: "#2d333b", light: "#e7ecf0" };
+var TITLE = { dark: "#9aa5b1", light: "#5e6772" };
+function centerFont(text) {
+  if (text.includes("%")) return 26;
+  if (text.includes("/")) return 40;
+  if (text.length <= 1) return 46;
+  if (text.length === 2) return 44;
+  return 32;
+}
+function chartUrl(g, arc, track, title) {
+  const config = {
+    type: "radialGauge",
+    data: { datasets: [{ data: [Math.max(0, Math.min(100, g.arc))], backgroundColor: arc }] },
+    options: {
+      domain: [0, 100],
+      trackColor: track,
+      roundedCorners: true,
+      centerPercentage: 82,
+      centerArea: { text: g.center, fontColor: arc, fontSize: centerFont(g.center) },
+      title: { display: true, text: g.title, fontColor: title, fontSize: 13, fontStyle: "bold" }
+    }
+  };
+  return `https://quickchart.io/chart?w=260&h=240&bkg=transparent&c=${encodeURIComponent(JSON.stringify(config))}`;
+}
+function gaugeCell(g) {
+  const c = ARC[g.color];
+  const dark = chartUrl(g, c.dark, TRACK.dark, TITLE.dark);
+  const light = chartUrl(g, c.light, TRACK.light, TITLE.light);
+  const alt = `${g.title} ${g.center}`;
+  return `<picture><source media="(prefers-color-scheme: dark)" srcset="${dark}"><img width="150" alt="${alt}" src="${light}" /></picture>`;
+}
+function gaugeTable(gauges, cols = 4) {
+  if (gauges.length === 0) return "";
+  const width = Math.min(cols, gauges.length);
+  const rows = [];
+  for (let i = 0; i < gauges.length; i += cols) {
+    const cells = gauges.slice(i, i + cols).map((g) => `<td align="center">${gaugeCell(g)}</td>`);
+    while (cells.length < width) cells.push("<td></td>");
+    rows.push(`<tr>
+${cells.join("\n")}
+</tr>`);
+  }
+  return `<table>
+${rows.join("\n")}
+</table>`;
+}
+
 // src/render/sections/header.ts
 function renderHeader(report, ctx, opts = {}) {
   const facts = extractFacts(report);
@@ -24936,7 +24991,7 @@ function renderHeader(report, ctx, opts = {}) {
   const confidence = mergeConfidence(facts);
   const blocks = [
     bottomLine(verdict, facts),
-    badgeRow(facts, verdict, effort, confidence),
+    gaugeDashboard(facts, effort, confidence),
     trendLine(opts.confTrend),
     subLine(ctx),
     calloutBlock(verdict, facts, composite, ctx)
@@ -24946,7 +25001,7 @@ function renderHeader(report, ctx, opts = {}) {
 function subLine(ctx) {
   const slug = repoSlug(ctx);
   const repo = slug ? `\u{1F4CD} [\`${slug}\`](https://github.com/${ctx.owner}/${ctx.repo}) &nbsp;\xB7&nbsp; ` : "";
-  return `<sub>${repo}sticky review comment \u2014 re-rendered on every push</sub>`;
+  return `<sub>${repo}advisory \u2014 does not gate the merge &nbsp;\xB7&nbsp; sticky review comment \u2014 re-rendered on every push</sub>`;
 }
 function decideVerdict(facts, composite) {
   const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
@@ -25086,46 +25141,37 @@ function narrative(facts, composite) {
   }
   return lines;
 }
-function badgeRow(facts, verdict, effort, confidence) {
-  const verdictGroup = [
-    badge("Review status", "review", verdict.statusMessage, verdict.statusColor),
-    badge(`Merge confidence ${confidence.score}/5`, "merge confidence", `${confidence.score}/5 \xB7 ${confidence.label}`, confidence.color),
-    badge(`Review effort ${effort.score}/5`, "review effort", `${effort.score}/5 \xB7 ${bareMinutes(effort.minutes)}`, effort.color),
-    badge("Advisory \u2014 does not gate the merge", "advisory", "does not gate", COLOR.grey)
+function gaugeDashboard(facts, effort, confidence) {
+  const gauges = [
+    { title: "MERGE CONFIDENCE", center: `${confidence.score}/5`, arc: confidence.score / 5 * 100, color: gaugeColor(confidence.color) },
+    { title: "REVIEW EFFORT", center: `${effort.score}/5`, arc: effort.score / 5 * 100, color: gaugeColor(effort.color) }
   ];
-  const sizeGroup = [];
-  if (facts.overallPercent !== null) {
-    const color = facts.overallDirection === "up" ? COLOR.green : facts.overallDirection === "down" ? COLOR.red : COLOR.grey;
-    sizeGroup.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, "drift", signedPercent(facts.overallPercent), color));
-  }
-  sizeGroup.push(badge(`Files ${facts.changedFiles}`, "files", int(facts.changedFiles), COLOR.blue));
-  if (facts.netLoc !== null) {
-    sizeGroup.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, "net LOC", signedInt(facts.netLoc), COLOR.grey));
-  }
-  const findingsGroup = [
-    badge(`Suggestions ${facts.passing.length}`, "suggestions", int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey)
-  ];
-  if (facts.passing.length > 0) {
-    findingsGroup.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, "agent-ready", `${int(facts.passing.length)} fix prompts`, COLOR.brand));
-  }
   if (facts.totalRisks > 0) {
-    const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
-    findingsGroup.push(badge(`Risks: ${facts.risksToAddress} to address`, "risks", `${facts.risksToAddress} to address`, color));
+    gauges.push({ title: "RISKS", center: int(facts.risksToAddress), arc: 100, color: facts.risksToAddress > 0 ? "red" : "green" });
   }
+  if (facts.overallPercent !== null) {
+    const color = facts.overallDirection === "up" ? "green" : facts.overallDirection === "down" ? "red" : "grey";
+    gauges.push({ title: "DRIFT", center: signedPercent(facts.overallPercent), arc: 100, color });
+  }
+  gauges.push({ title: "SUGGESTIONS", center: int(facts.passing.length), arc: 100, color: facts.passing.length > 0 ? "blue" : "grey" });
   if (facts.newTestFiles !== null) {
-    const color = facts.newTestFiles > 0 ? COLOR.green : COLOR.red;
-    findingsGroup.push(badge(`New tests: ${facts.newTestFiles}`, "new tests", int(facts.newTestFiles), color));
+    gauges.push({ title: "NEW TESTS", center: int(facts.newTestFiles), arc: 100, color: facts.newTestFiles > 0 ? "green" : "red" });
   }
-  return [verdictGroup, sizeGroup, findingsGroup].map((group) => group.join(" &nbsp;")).filter(Boolean).join("\n");
+  return gaugeTable(gauges);
 }
-function bareMinutes(minutes) {
-  return minutes.replace(/^≈\s*/, "");
-}
-function badge(alt, label, message, color) {
-  return `![${alt}](https://img.shields.io/badge/${shields(label)}-${shields(message)}-${color}?style=flat-square)`;
-}
-function shields(s) {
-  return encodeURIComponent(s.replace(/_/g, "__").replace(/-/g, "--").replace(/ /g, "_"));
+function gaugeColor(shieldsHex) {
+  switch (shieldsHex) {
+    case COLOR.green:
+      return "green";
+    case COLOR.amber:
+      return "amber";
+    case COLOR.red:
+      return "red";
+    case COLOR.blue:
+      return "blue";
+    default:
+      return "grey";
+  }
 }
 function joinClauses(parts) {
   if (parts.length <= 1) return parts.join("");

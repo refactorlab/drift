@@ -36,6 +36,14 @@ function axis(name: ValueAxis['name'], delta: number): ValueAxis {
   };
 }
 
+// The KPI dashboard is a table of quickchart radialGauge tiles; this returns the
+// one `<picture>` whose ALL-CAPS title matches, so a test can assert its arc
+// colour (dark `backgroundColor` hex, percent-encoded as `%23<hex>`).
+function tile(html: string, title: string): string {
+  const cell = html.split('</picture>').find((c) => c.includes(`alt="${title} `));
+  return cell ? `${cell}</picture>` : '';
+}
+
 // ── effort scoring ────────────────────────────────────────────────────────────
 
 test('effort: a tiny clean PR scores 1/5 with an honest driver', () => {
@@ -86,15 +94,12 @@ test('header: hero bottom-line leads with a verdict dot and the move', () => {
   assert.match(heroLine, /^> (🟢|🟡|🔴|🔵) /, 'hero line opens with a status dot');
 });
 
-test('header: badge dashboard carries both 0–5 gauges and folds the effort time band into the effort pill', () => {
+test('header: dashboard carries both 0–5 gauge tiles (confidence + effort), no prose signal line', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  // The gauges live ONLY as badges now — no prose "signal line" duplicating them.
+  // The gauges live ONLY as tiles now — no prose "signal line" duplicating them.
   assert.doesNotMatch(h, /🛡️ \*\*Merge confidence/, 'no prose merge-confidence signal line');
-  assert.match(h, /badge\/merge_confidence-\d%2F5/, 'merge-confidence gauge badge');
-  assert.match(h, /badge\/review_effort-\d%2F5/, 'review-effort gauge badge');
-  assert.match(h, /badge\/review_effort-\d%2F5[^)]*min/, 'effort badge folds in the time band');
-  // bareMinutes() strips the leading "≈ " (U+2248 → %E2%89%88) so the band fits the pill.
-  assert.doesNotMatch(h, /badge\/review_effort-[^)]*%E2%89%88/, 'the ≈ prefix is stripped from the folded time band');
+  assert.match(tile(h, 'MERGE CONFIDENCE'), /alt="MERGE CONFIDENCE \d\/5"/, 'merge-confidence gauge tile (N/5)');
+  assert.match(tile(h, 'REVIEW EFFORT'), /alt="REVIEW EFFORT \d\/5"/, 'review-effort gauge tile (N/5)');
 });
 
 test('header: confidence trend sparkline renders only with ≥2 pushes of history', () => {
@@ -109,10 +114,10 @@ test('header: confidence trend sparkline renders only with ≥2 pushes of histor
   );
 });
 
-test('header: effort + confidence KPI badges render next to the verdict badge', () => {
+test('header: effort + confidence KPI gauge tiles render in the dashboard', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  assert.match(h, /badge\/review_effort-\d%2F5/, 'review-effort badge present');
-  assert.match(h, /badge\/merge_confidence-\d%2F5/, 'merge-confidence badge present');
+  assert.notEqual(tile(h, 'REVIEW EFFORT'), '', 'review-effort tile present');
+  assert.notEqual(tile(h, 'MERGE CONFIDENCE'), '', 'merge-confidence tile present');
 });
 
 test('header: "Look here first" points at the top correctness finding with a permalink', () => {
@@ -128,12 +133,12 @@ test('header: callout TL;DR no longer restates the recommendation (hero owns it)
   const inCallout = h.split('[!WARNING]')[1] ?? '';
   const tldrPara = inCallout.split('\n').find((l) => /\*\*TL;DR/.test(l)) ?? '';
   assert.doesNotMatch(tldrPara, /address before merge/i, 'TL;DR paragraph does not echo the recommendation');
-  // The advisory status is a badge now, not a prose note inside the TL;DR.
+  // The advisory status rides the sub-line now, not a prose note inside the TL;DR.
   assert.doesNotMatch(tldrPara, /Advisory — does not fail the check/, 'advisory note no longer rides in the TL;DR');
-  assert.match(h, /badge\/advisory-does_not_gate/, 'advisory is surfaced as a badge');
+  assert.match(h, /advisory — does not gate the merge/, 'advisory is surfaced in the sub-line');
 });
 
-test('header: clean improvement → green dot, "ship it", effort badge still present', () => {
+test('header: clean improvement → green dot, "ship it", effort gauge still present', () => {
   const r = makeReport({
     overall_drift: { percent: 8, direction: 'up', confidence: 'high' },
     value_card: { axes: [axis('customer', 8)] },
@@ -143,5 +148,6 @@ test('header: clean improvement → green dot, "ship it", effort badge still pre
   const heroLine = h.split('\n').find((l) => /Looks good/.test(l)) ?? '';
   assert.match(heroLine, /^> 🟢 /, 'green dot for a clean improvement');
   assert.match(heroLine, /ship it/i);
-  assert.match(h, /badge\/review_effort-1%2F5[^)]*-2ea043/, '1/5 effort, green');
+  assert.match(tile(h, 'REVIEW EFFORT'), /alt="REVIEW EFFORT 1\/5"/, '1/5 effort tile');
+  assert.match(tile(h, 'REVIEW EFFORT'), /%234ae3b0/, '1/5 effort → green');
 });
