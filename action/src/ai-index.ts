@@ -1,39 +1,39 @@
-// Entry point for the combined-suggestion post step.
+// Entry point for the AI-suggestion post step.
 //
-// This module owns the SINGLE inline PR review that reviewers see.
-// Both deterministic scanner suggestions (from DRIFT_REPORT_PATH) AND
-// AI-generated suggestions (from AI_SUGGESTIONS_PATH) are merged into
-// ONE `pulls.createReview` call so the PR conversation shows one
-// review thread instead of two. main.ts skips its own postReview when
-// `DRIFT_DEFER_INLINE_REVIEW=true`, handing the inline-review surface
-// to this module.
+// This module owns the SINGLE Drift sticky comment reviewers see when AI
+// suggestions are enabled. ALL code suggestions — the deterministic scanner
+// findings (from DRIFT_REPORT_PATH) AND the top `maxAi` AI-refined ones (from
+// AI_SUGGESTIONS_PATH) — render in that ONE comment's "Code suggestions"
+// section. We deliberately do NOT post a second inline PR review: reviewers get
+// a single comment, not two surfaces. main.ts defers the sticky comment to this
+// step (`DRIFT_DEFER_STICKY_COMMENT=true`) so the comment can include the
+// AI-refined suggestions, which don't exist yet at main.ts's step.
 //
 // Inputs (env):
 //   AI_SUGGESTIONS_PATH        — path to the model's response file (optional;
-//                                 if missing/empty we post deterministic only)
-//   DRIFT_REPORT_PATH          — path to the scanner's JSON report (used to
-//                                 read deterministic code_suggestions); when
-//                                 absent or unreadable we post AI-only
-//   DRIFT_MAX_AI_SUGGESTIONS   — hard cap on AI entries (default 3)
-//   DRIFT_AI_MODEL             — model id, used in the review body
-//   DRIFT_DRY_RUN              — "true" → log payload, don't POST
+//                                 if missing/empty the sticky is deterministic-only)
+//   DRIFT_REPORT_PATH          — path to the scanner's JSON report (the
+//                                 deterministic code_suggestions + the rest of
+//                                 the overview the sticky re-renders)
+//   DRIFT_MAX_AI_SUGGESTIONS   — hard cap on AI entries (default 1)
+//   DRIFT_AI_MODEL             — model id, shown on each AI suggestion block
+//   DRIFT_DRY_RUN              — "true" → render + log, don't POST
 //   GITHUB_TOKEN               — auth (required unless DRIFT_DRY_RUN)
+//   DRIFT_AUDIO_URL / DRIFT_AUDIO_MP4_URL / DRIFT_SCAN_JSON_URL /
+//   DRIFT_SCAN_CONTEXT_URL     — footer/artifact links threaded into the sticky
 //
 // Failure policy: fail-soft. Any unrecoverable error logs a warning and
-// exits 0; the sticky overview comment (posted by main.ts) is the
-// authoritative outcome surface.
+// exits 0; the check run (posted by main.ts) is the authoritative gate.
 
 import { readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
-import { loadReport, passesQualityBar, type CodeSuggestion, type ScanPrOutput } from './report.ts';
-import { renderSuggestionBody, extractAfterCode } from './render/suggestion.ts';
+import { loadReport, passesQualityBar, type ScanPrOutput } from './report.ts';
 import { parseAIOutput } from './ai/parse.ts';
-import { fetchCommentableLines, fetchPrFiles, buildReviewComments } from './ai/post.ts';
-import { filterByDiff, lookupCommentable, nearestCommentableLine } from './ai/diff-lines.ts';
+import { fetchPrFiles } from './ai/post.ts';
+import { filterByDiff } from './ai/diff-lines.ts';
 import { mergeAiSuggestionsIntoReport } from './ai/to-code-suggestion.ts';
 import { buildAndUpsertSticky } from './github/sticky-post.ts';
-import type { ReviewComment } from './contract/github.ts';
 import type { AISuggestion } from './ai/schema.ts';
 import type { PrContext } from './render/context.ts';
 import { resolvePrContext, type ResolvedPr } from './pr-context.ts';
@@ -48,134 +48,86 @@ type AIFunnel = {
 async function aiMain(): Promise<void> {
   const model = process.env.DRIFT_AI_MODEL || 'openai/gpt-4o';
   const dryRun = process.env.DRIFT_DRY_RUN === 'true';
-  const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
-  // When set, main.ts deferred the sticky comment to THIS step so it can
-  // include the AI-refined suggestions (which don't exist yet at step 9). We
-  // then own the sticky post and must always reach it — even when there are no
-  // inline comments to anchor.
+  const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 1);
+  // main.ts defers the sticky comment to THIS step whenever AI suggestions are
+  // enabled, so the comment can carry the AI-refined suggestions (which don't
+  // exist yet at main.ts's step). This step then OWNS that single comment.
   const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === 'true';
 
-  // 1. Deterministic suggestions from the scan report. Optional — when the
-  //    report path is missing/unreadable, we post AI-only (preserving the
-  //    pre-combined behavior). The cap step in action.yml already trims
-  //    code_suggestions to max-code-suggestions, so the worst-case here is
-  //    bounded by that cap, not by the scanner. We keep the WHOLE report too —
-  //    the deferred sticky render needs it.
+  // Deterministic suggestions live in the report; AI suggestions in the
+  // envelope. Both feed the ONE sticky comment. The AI envelope is optional —
+  // a missing/failed AI loop just yields a deterministic-only sticky.
   const report = loadReportSafe();
-  const detSuggestions = (report?.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
-
-  // 2. AI suggestions from the envelope. Optional — when the envelope is
-  //    missing/empty (AI loop failed, no models permission, …), we still
-  //    post the deterministic review so the reviewer isn't left without
-  //    inline comments. NO CAP yet — we cap AFTER the diff filter so the
-  //    cap counts POSTABLE entries (legacy contract).
   const { suggestions: aiSuggestions, funnel: aiFunnel } = readAISuggestions();
 
-  // Nothing to post AND we don't own the sticky → the original fast exit. When
-  // we DO own the sticky we must continue so it ships (deterministic / empty).
-  if (detSuggestions.length === 0 && aiSuggestions.length === 0 && !deferSticky) {
-    core.info('No deterministic or AI suggestions to post — skipping combined review.');
+  // This step posts exactly ONE surface: the sticky comment. When main.ts owns
+  // it instead (deferSticky unset — the AI-disabled path), there's nothing for
+  // this step to do.
+  if (!deferSticky) {
+    core.info(
+      'DRIFT_DEFER_STICKY_COMMENT not set — main.ts owns the sticky comment; this step has nothing to post.',
+    );
+    return;
+  }
+  if (!report) {
+    // loadReportSafe already explained why; without it we can't render the overview.
+    core.warning('Scan report unreadable — cannot refresh the sticky comment.');
     return;
   }
 
   const pr = resolvePrContext();
   if (!pr) {
-    core.info('No PR context (pull_request payload or DRIFT_PR_* env vars) — skipping combined review.');
+    core.info('No PR context (pull_request payload or DRIFT_PR_* env vars) — skipping sticky comment.');
     return;
   }
 
   const token = process.env.GITHUB_TOKEN ?? '';
   if (!token && !dryRun) {
-    core.warning('No GITHUB_TOKEN — skipping combined review post.');
+    core.warning('No GITHUB_TOKEN — skipping sticky comment.');
     return;
   }
   const octokit = getOctokit(token || 'dry-run-stub-token');
   const { owner, repo } = context.repo;
 
-  // Anchor to the diff: drop suggestions whose lines GitHub would reject
-  // (422). Pulls.createReview is ATOMIC — one off-diff anchor sinks the
-  // ENTIRE review and every inline comment is lost. Best-effort: if the
-  // diff fetch fails, proceed unfiltered and let the fail-soft POST handle
-  // it. When we own the sticky we ALSO need the raw patches (to reconstruct
-  // each AI suggestion's red/green diff), so one listFiles backs both.
+  // One pulls.listFiles pass backs the AI merge: `commentable` keeps only AI
+  // suggestions that anchor to a real diff line (so the reconstructed red/green
+  // diff is exact), and `patches` is what reconstructDiff reads. Best-effort —
+  // on failure the AI suggestion diffs degrade to after-only.
   let commentable: Map<string, Set<number>> | null = null;
   let patches: Map<string, string> | null = null;
   try {
-    if (deferSticky) {
-      const f = await fetchPrFiles(octokit, owner, repo, pr.number);
-      commentable = f.commentable;
-      patches = f.patches;
-    } else {
-      commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
-    }
+    const f = await fetchPrFiles(octokit, owner, repo, pr.number);
+    commentable = f.commentable;
+    patches = f.patches;
   } catch (e) {
-    core.warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
+    core.warning(`Could not fetch PR diff (${describe(e)}); AI suggestion diffs will be after-only.`);
   }
 
-  const detComments = buildDeterministicComments(detSuggestions, commentable);
-
-  // AI: filter by diff FIRST, THEN cap. The cap counts POSTABLE entries
-  // (the contract the legacy log line documents) so a high-cap user with
-  // off-diff AI hallucinations doesn't have their cap silently eaten.
+  // AI: keep only on-diff suggestions, then cap to maxAi. The top `maxAi`
+  // findings become the AI-refined "code suggestion" blocks; everything else
+  // stays a deterministic row in the SAME sticky "Code suggestions" section.
   const aiOnDiff = filterAIByDiff(aiSuggestions, commentable);
   const aiPostable = aiOnDiff.slice(0, maxAi);
-  const aiComments = aiPostable.length > 0 ? buildReviewComments(aiPostable, model) : [];
-
-  // Dedupe by `path:line`. When AI and deterministic anchors collide, the
-  // AI one wins — it has the freshest, model-generated patch (the
-  // deterministic suggestion is already mirrored in the sticky overview).
-  const merged = mergeAndDedupe(detComments, aiComments);
 
   // AI funnel — the diagnostic readers rely on to spot dropped AI entries.
-  // total → passing → on-diff → posted (cap applied at the end).
   if (aiFunnel.total > 0) {
     core.info(
       `🤖 ${model}: ${aiFunnel.total} candidate(s) → ${aiFunnel.passing} pass quality bar → ` +
-        `${aiOnDiff.length} on-diff → ${aiPostable.length} posted (cap=${maxAi})`,
+        `${aiOnDiff.length} on-diff → ${aiPostable.length} AI-refined (cap=${maxAi}).`,
     );
   }
+  const detCount = (report.pr_review?.code_suggestions ?? []).filter(passesQualityBar).length;
   core.info(
-    `🟣 combined review: ${detComments.length} deterministic + ${aiComments.length} AI → ` +
-      `${merged.length} comment(s) after dedupe`,
+    `🟣 Drift sticky comment: ${detCount} deterministic + ${aiPostable.length} AI-refined ` +
+      `code suggestion(s) in ONE comment.`,
   );
 
-  // Inline review — only when there's something to anchor. This is NOT a
-  // function-level return anymore: the deferred sticky post below must still
-  // run even when no inline comment lands on the diff.
-  if (merged.length === 0) {
-    if (aiFunnel.total > 0 && detComments.length === 0) {
-      // Preserve the original "no AI landed on diff" message so the user
-      // sees the right narrative when AI was the sole source.
-      core.info('No AI suggestion landed on a diff line — nothing to post inline.');
-    } else {
-      core.info('No on-diff anchors — skipping inline review (suggestions still in the sticky comment).');
-    }
-  } else {
-    await postCombinedReview({
-      octokit,
-      owner,
-      repo,
-      prNumber: pr.number,
-      headSha: pr.headSha,
-      comments: merged,
-      detCount: detComments.length,
-      aiCount: aiComments.length,
-      model,
-      dryRun,
-    });
-  }
-
-  // Sticky comment — when deferred, render it HERE with the AI-refined
-  // suggestions merged into the report so they surface in the "Code
-  // suggestions" section as expanded "code suggestion" blocks (narrative +
-  // red/green diff). Independent try/catch so a sticky failure never masks a
-  // successful inline post, or vice-versa.
-  if (deferSticky) {
-    try {
-      await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model });
-    } catch (e) {
-      core.warning(`Deferred sticky comment failed (non-fatal): ${describe(e)}`);
-    }
+  // The single surface: render the sticky with the AI-refined suggestions
+  // merged into the report so they show in the "Code suggestions" section.
+  try {
+    await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model, dryRun });
+  } catch (e) {
+    core.warning(`Sticky comment refresh failed (non-fatal): ${describe(e)}`);
   }
 }
 
@@ -195,6 +147,7 @@ async function postDeferredSticky(args: {
   aiPostable: AISuggestion[];
   patches: Map<string, string> | null;
   model: string;
+  dryRun?: boolean;
 }): Promise<void> {
   const { report, pr } = args;
   if (!report) {
@@ -231,6 +184,7 @@ async function postDeferredSticky(args: {
     audioMp4Url: optEnv('DRIFT_AUDIO_MP4_URL'),
     scanJsonUrl: optEnv('DRIFT_SCAN_JSON_URL'),
     scanContextUrl: optEnv('DRIFT_SCAN_CONTEXT_URL'),
+    dryRun: args.dryRun,
   });
   core.info(`Sticky comment refreshed with ${args.aiPostable.length} AI-refined suggestion(s) merged in.`);
 }
@@ -331,178 +285,6 @@ function readAISuggestions(): { suggestions: AISuggestion[]; funnel: AIFunnel } 
     suggestions: parsed.suggestions,
     funnel: { total: parsed.total, passing: parsed.passing },
   };
-}
-
-/**
- * Build review comments for deterministic suggestions, anchoring each to a
- * PR-diff line (when we know the commentable lines).
- *
- * The scanner anchors a finding at its SYMBOL's definition line (e.g. a dead
- * function), which lives in a changed file but is frequently NOT itself a line
- * in the PR's diff hunks — so a naive exact-line filter drops every such
- * finding and the inline review comes back empty (the failure this fixes).
- *
- * Policy, in order:
- *   1. File lookup is suffix-tolerant (`lookupCommentable`) — same as the AI
- *      path — so a monorepo / differently-rooted scanner path still resolves.
- *   2. Exact line is commentable → keep as-is.
- *   3. Exact line is OFF-diff but the finding is ADVISORY (no ```suggestion```
- *      Apply block) → SNAP to the nearest commentable line in the same file,
- *      and append a note pointing at the true location. The Apply button is
- *      what makes the anchor line-sensitive; advisory comments carry none, so
- *      moving them is safe and strictly better than zero inline coverage.
- *   4. Exact line is OFF-diff AND the finding carries an Apply block → DROP.
- *      Snapping would make GitHub's "Apply" rewrite the WRONG line. It stays
- *      in the sticky comment.
- *   5. File not in the diff at all → DROP (sticky-only).
- */
-export function buildDeterministicComments(
-  suggestions: CodeSuggestion[],
-  commentable: Map<string, Set<number>> | null,
-): ReviewComment[] {
-  const anchored = suggestions
-    .filter((s) => typeof s.line === 'number')
-    .map((s) => ({
-      suggestion: s,
-      comment: {
-        path: s.file,
-        line: s.line as number,
-        side: 'RIGHT' as const,
-        body: renderSuggestionBody(s),
-      } satisfies ReviewComment,
-      // An Apply block makes the anchor line-sensitive — never snap those.
-      hasApplyBlock: extractAfterCode(s) !== null,
-    }));
-
-  if (!commentable) return anchored.map((a) => a.comment);
-
-  const kept: ReviewComment[] = [];
-  let dropped = 0;
-  let snapped = 0;
-  for (const { comment, hasApplyBlock } of anchored) {
-    const set = lookupCommentable(commentable, comment.path);
-    if (!set || set.size === 0) {
-      dropped += 1; // file not in the PR diff at all
-      continue;
-    }
-    if (set.has(comment.line)) {
-      kept.push(comment);
-      continue;
-    }
-    if (hasApplyBlock) {
-      dropped += 1; // can't move an Apply-button anchor without corrupting it
-      continue;
-    }
-    const near = nearestCommentableLine(set, comment.line);
-    if (near === undefined) {
-      dropped += 1;
-      continue;
-    }
-    kept.push({
-      ...comment,
-      line: near,
-      body: withSnapNote(comment.body, comment.path, comment.line),
-    });
-    snapped += 1;
-  }
-  if (snapped > 0) {
-    core.info(
-      `Re-anchored ${snapped} deterministic suggestion(s) to the nearest PR-diff line ` +
-        `(exact line was outside the diff hunks).`,
-    );
-  }
-  if (dropped > 0) {
-    core.info(
-      `Dropped ${dropped} deterministic suggestion(s) not on a PR-diff line ` +
-        `(still mirrored in the Drift sticky comment).`,
-    );
-  }
-  return kept;
-}
-
-/** Append an honest "this anchor was moved" note so a reader is never misled
- *  about where the finding actually lives. Kept as a `>` blockquote so it
- *  reads as metadata below the suggestion body. */
-function withSnapNote(body: string, path: string, originalLine: number): string {
-  return `${body}\n\n> 📍 Anchored to the nearest changed line; the finding is at \`${path}:${originalLine}\`.`;
-}
-
-/** Merge deterministic + AI comments, deduping by `path:line`. AI wins on
- *  collision because it carries a freshly-generated patch. */
-export function mergeAndDedupe(
-  det: ReviewComment[],
-  ai: ReviewComment[],
-): ReviewComment[] {
-  const key = (c: ReviewComment) => `${c.path}:${c.line}`;
-  const aiKeys = new Set(ai.map(key));
-  const detKept = det.filter((c) => !aiKeys.has(key(c)));
-  // Order: deterministic first (severity-ranked by the scanner), AI after.
-  // Inside each group the original order is preserved.
-  return [...detKept, ...ai];
-}
-
-async function postCombinedReview(args: {
-  octokit: Octokit;
-  owner: string;
-  repo: string;
-  prNumber: number;
-  headSha: string;
-  comments: ReviewComment[];
-  detCount: number;
-  aiCount: number;
-  model: string;
-  dryRun: boolean;
-}): Promise<void> {
-  const { octokit, owner, repo, prNumber, headSha, comments, detCount, aiCount, model, dryRun } = args;
-  const total = comments.length;
-  // Body wording adapts to what we're posting:
-  //   - AI only   → "🤖 openai/gpt-4.1 has N suggestion(s) to apply."
-  //   - Det only  → "🟣 Drift has N suggestion(s) to apply."
-  //   - Both      → "🟣 Drift has N + 🤖 openai/gpt-4.1 added M suggestion(s) to apply."
-  // Keeping the AI-only and Det-only shapes byte-identical to the legacy
-  // wording so consumers that grep the review body don't regress.
-  let body: string;
-  if (detCount > 0 && aiCount > 0) {
-    body =
-      `🟣 **Drift** has ${detCount} + 🤖 **${model}** added ${aiCount} ` +
-      `suggestion${total === 1 ? '' : 's'} to apply.`;
-  } else if (aiCount > 0) {
-    body = `🤖 **${model}** has ${aiCount} suggestion${aiCount === 1 ? '' : 's'} to apply.`;
-  } else {
-    body = `🟣 **Drift** has ${detCount} suggestion${detCount === 1 ? '' : 's'} to apply.`;
-  }
-
-  const payload = {
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: 'COMMENT' as const,
-    body,
-    comments,
-  };
-
-  if (dryRun) {
-    core.info(`[dry-run] Would POST pulls.createReview with ${total} comment(s).`);
-    core.info(JSON.stringify(payload, null, 2));
-    return;
-  }
-
-  try {
-    await octokit.rest.pulls.createReview(payload);
-    // Log line adapts so the user sees the right narrative. The legacy
-    // ai-suggest tests assert "Posted AI review with N inline suggestion(s)";
-    // a combined post says "combined PR review".
-    let kind: string;
-    if (detCount > 0 && aiCount > 0) kind = 'combined PR review';
-    else if (aiCount > 0)            kind = 'AI review';
-    else                             kind = 'PR review';
-    core.info(`Posted ${kind} with ${total} inline suggestion(s).`);
-  } catch (e) {
-    // 422 on out-of-diff line numbers — known, benign; the sticky comment
-    // already mirrors every deterministic suggestion.
-    core.warning(`Combined review POST failed (non-fatal): ${describe(e)}`);
-  }
 }
 
 function parseMax(v: string | undefined, fallback: number): number {

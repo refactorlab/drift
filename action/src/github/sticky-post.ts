@@ -34,6 +34,8 @@ export type StickyPostArgs = {
   scanJsonUrl?: string;
   scanContextUrl?: string;
   maxSuggestions?: number;
+  /** When true, render + log the would-be body but skip the upsert POST. */
+  dryRun?: boolean;
 };
 
 /**
@@ -64,6 +66,14 @@ export async function buildAndUpsertSticky(args: StickyPostArgs): Promise<void> 
     scanContextUrl: args.scanContextUrl,
     maxSuggestions: args.maxSuggestions,
   });
+
+  if (args.dryRun) {
+    core.info(
+      `[dry-run] would upsert sticky comment (${body.length} bytes)` +
+        `${existingId ? ` to comment ${existingId}` : ' (new)'}.`,
+    );
+    return;
+  }
 
   await upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId });
 }

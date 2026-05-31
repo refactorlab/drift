@@ -342,14 +342,48 @@ test('text source priority: BRIEFING_PATH wins over scanner summary', () => {
   assert.doesNotMatch(r.stdout, /📄 using deterministic scanner summary/);
 });
 
-test('text source fallback: empty BRIEFING_PATH falls back to scanner summary', () => {
+test('AI-only: empty BRIEFING_PATH SKIPS audio (no commit/scanner/title fallback)', () => {
+  // Policy: the spoken audio is ALWAYS the AI summarization output, or there
+  // is no audio. With no AI briefing the step must NOT speak the deterministic
+  // business_logic.summary (which leads with the commit subject) or the PR
+  // title — it must skip entirely. Regression guard for refactorlab/drift#68,
+  // where a rate-limited (429) AI step made the audio speak the
+  // commit-message-like fallback.
   const h = buildHarness();
-  // Wipe the briefing — fallback path is the deterministic summary.
-  writeFileSync(h.env.BRIEFING_PATH, '');
+  writeFileSync(h.env.BRIEFING_PATH, ''); // AI summarization did not run
   const r = runStep(h);
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /📄 using deterministic scanner summary/);
+  assert.match(r.stdout, /⏭️  No AI briefing present — skipping audio summary/);
+  assert.equal(r.outputs.synthesized, 'false');
+  // Neither the old deterministic-fallback line nor any synthesis ran.
+  assert.doesNotMatch(r.stdout, /📄 using deterministic scanner summary/);
   assert.doesNotMatch(r.stdout, /🧠 using AI handover briefing/);
+  assert.doesNotMatch(r.stdout, /🗣️\s+synthesizing/);
+});
+
+test("AI briefing CONTENT reaches Piper's stdin — not just the branch", () => {
+  // The branch-emoji tests above prove WHICH source was selected; they do
+  // NOT prove the briefing's words actually survive sanitize+cap and reach
+  // the piper invocation. This is the end-to-end "Piper speaks the AI
+  // output" guarantee. We plant a distinctive sentinel in the briefing and
+  // a DIFFERENT sentinel in PR_TITLE (the fallback source), then assert the
+  // logged Piper input contains the briefing sentinel and NOT the title
+  // sentinel. The step echoes the full text inside a `::group::🎙️ Piper
+  // input — full text` block, so stdout carries exactly what piper was fed.
+  const h = buildHarness({ PR_TITLE: 'Quokka feature work' });
+  writeFileSync(
+    h.env.BRIEFING_PATH,
+    'We refactored the Zebrafish handler module. It now batches writes. The change is safe.',
+  );
+  const r = runStep(h);
+  assert.equal(r.status, 0, `step failed: ${r.stderr}`);
+  assert.match(r.stdout, /🧠 using AI handover briefing/);
+  // Briefing words reached the synthesizer (case-insensitive: the sanitizer
+  // lowercases runs of 2+ capitals, so match loosely).
+  assert.match(r.stdout, /zebrafish/i, `briefing content did not reach Piper:\n${r.stdout}`);
+  // The PR-title fallback sentinel must be absent — proves the briefing,
+  // not the title, is what gets spoken.
+  assert.doesNotMatch(r.stdout, /quokka/i, `PR-title fallback leaked into Piper input:\n${r.stdout}`);
 });
 
 test('WAV basename is {repo}-{branch}.wav and sanitises slashes in branch', () => {

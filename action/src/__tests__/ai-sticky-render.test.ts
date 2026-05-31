@@ -251,8 +251,8 @@ test('action.yml: step 9 defers the sticky comment only when AI is on', () => {
   assert.match(env.DRIFT_DEFER_STICKY_COMMENT, /ai-suggestions.*== 'true'.*'true'.*''/s);
 });
 
-test('action.yml: combined poster receives the defer flag + footer/artifact env', () => {
-  const env = stepByName('Post combined inline review')!.env as Record<string, string>;
+test('action.yml: sticky poster receives the defer flag + footer/artifact env', () => {
+  const env = stepByName('Post Drift sticky comment with AI suggestions')!.env as Record<string, string>;
   for (const key of [
     'DRIFT_DEFER_STICKY_COMMENT',
     'DRIFT_AUDIO_URL',
@@ -260,6 +260,6 @@ test('action.yml: combined poster receives the defer flag + footer/artifact env'
     'DRIFT_SCAN_JSON_URL',
     'DRIFT_SCAN_CONTEXT_URL',
   ]) {
-    assert.ok(key in env, `combined poster step must receive ${key}`);
+    assert.ok(key in env, `sticky poster step must receive ${key}`);
   }
 });
