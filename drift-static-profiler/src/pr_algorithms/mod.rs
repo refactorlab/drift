@@ -37,6 +37,7 @@ pub mod mermaid;
 pub mod merge;
 pub mod nfr_edge_cases;
 pub mod pr_signals;
+pub mod symbol_label;
 pub mod tech_debt;
 pub mod tests_in_graph;
 pub mod types;
@@ -136,6 +137,11 @@ pub(crate) mod test_helpers {
 
     pub fn with_loc(mut node: CallTreeNode, loc: usize) -> CallTreeNode {
         node.loc = loc;
+        node
+    }
+
+    pub fn with_line(mut node: CallTreeNode, line: usize) -> CallTreeNode {
+        node.line = line;
         node
     }
 

@@ -740,7 +740,12 @@ fn format_anonymous_symbol_name(line: usize) -> String {
 /// `@def.anonymous`. Detection is a prefix check against
 /// [`ANONYMOUS_SYMBOL_PREFIX`] — see that constant for why the prefix is
 /// guaranteed not to collide with real identifiers.
-fn is_anonymous_symbol_name(name: &str) -> bool {
+///
+/// `pub(crate)` so the presentation layer
+/// (`pr_algorithms::symbol_label`) can recognize these synthetic names
+/// without re-deriving the encoding — keeping this module the single
+/// source of truth for what an anonymous symbol IS.
+pub(crate) fn is_anonymous_symbol_name(name: &str) -> bool {
     name.starts_with(ANONYMOUS_SYMBOL_PREFIX)
 }
 
@@ -1036,7 +1041,11 @@ fn resolve_containment(symbols: &mut [Symbol], references: &mut [Reference]) {
 /// True for profiler-internal synthetic symbol names — currently just
 /// `<module>`. The leading `<` makes these unambiguous: no real
 /// identifier in any of the seven supported languages can contain it.
-fn is_synthetic_module_name(name: &str) -> bool {
+///
+/// `pub(crate)` so the presentation layer
+/// (`pr_algorithms::symbol_label`) can detect the module entry and render
+/// it as the file basename — keeping the `<module>` literal owned here.
+pub(crate) fn is_synthetic_module_name(name: &str) -> bool {
     name == "<module>"
 }
 

@@ -433,6 +433,61 @@ fn architecture_flow_pipeline_validates_for_adversarial_repos() {
     }
 }
 
+/// END-TO-END: synthetic-name nodes (`<module>` / `<anonymous@N>`, incl. an
+/// anon nested in an anon and an anon under a named parent) flow through the
+/// REAL `architecture_flow::compute` and the resulting mermaid must (a) carry
+/// the human-readable `anon ‹basename:line›` / basename labels — never a raw
+/// `‹anonymous@N›` / `‹module›` — and (b) PARSE in the real mermaid renderer.
+/// This is the load-bearing proof that the chosen bracket glyph survives the
+/// renderer (it relies on `safe_label` mapping `<>` → guillemets).
+#[test]
+fn architecture_flow_humanizes_synthetic_names_and_stays_parseable() {
+    let mut anon_child = mk_node("<anonymous@5>", "src/audio/keymap.ts");
+    anon_child.line = 5;
+    anon_child.parent_class = Some("<anonymous@4>".into()); // anon-in-anon → parent dropped
+    let mut anon_under_named = mk_node("<anonymous@42>", "src/audio/keymap.ts");
+    anon_under_named.line = 42;
+    anon_under_named.parent_class = Some("evaluateLowPower".into()); // named parent kept
+    let mut module_root = mk_node("<module>", "src/audio/keymap.ts");
+    module_root.line = 1;
+
+    let roots = vec![
+        with_children(
+            {
+                let mut n = mk_node("<anonymous@4>", "src/audio/keymap.ts");
+                n.line = 4;
+                n
+            },
+            vec![anon_child, anon_under_named],
+        ),
+        module_root,
+    ];
+    let changed_files = vec!["src/audio/keymap.ts".to_string()];
+    let arch = architecture_flow::compute(&roots, &changed_files);
+
+    for (label, m) in [
+        ("after", arch.after_mermaid.as_str()),
+        ("before", arch.before_mermaid.as_str()),
+        ("combined", arch.combined_mermaid.as_deref().unwrap_or("")),
+    ] {
+        if m.is_empty() {
+            continue;
+        }
+        // Human-readable forms present; raw synthetic forms absent.
+        assert!(
+            m.contains("anon ‹keymap.ts:5›") && m.contains("anon ‹keymap.ts:42›"),
+            "{label}: missing humanized anon labels:\n{m}"
+        );
+        assert!(m.contains("keymap.ts"), "{label}: module entry should show basename:\n{m}");
+        assert!(
+            !m.contains("‹anonymous@") && !m.contains("‹module›"),
+            "{label}: raw synthetic name leaked into rendered mermaid:\n{m}"
+        );
+        // …and it must actually parse in the real mermaid renderer.
+        validate_pipeline(&format!("arch.{label}_mermaid (synthetic names)"), m);
+    }
+}
+
 #[test]
 fn architecture_flow_pipeline_validates_with_zero_entries() {
     // Empty PR (no resolved entry points) — a very common real-world case.

@@ -3591,8 +3591,8 @@ var require_webidl = __commonJS({
       return new TypeError(`${message.header}: ${message.message}`);
     };
     webidl.errors.conversionFailed = function(context3) {
-      const plural = context3.types.length === 1 ? "" : " one of";
-      const message = `${context3.argument} could not be converted to${plural}: ${context3.types.join(", ")}.`;
+      const plural2 = context3.types.length === 1 ? "" : " one of";
+      const message = `${context3.argument} could not be converted to${plural2}: ${context3.types.join(", ")}.`;
       return webidl.errors.exception({
         header: context3.prefix,
         message
@@ -3735,10 +3735,10 @@ var require_webidl = __commonJS({
       }
     };
     webidl.sequenceConverter = function(converter) {
-      return (V, prefix, argument, Iterable) => {
+      return (V, prefix2, argument, Iterable) => {
         if (webidl.util.Type(V) !== "Object") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `${argument} (${webidl.util.Stringify(V)}) is not iterable.`
           });
         }
@@ -3747,7 +3747,7 @@ var require_webidl = __commonJS({
         let index = 0;
         if (method === void 0 || typeof method.next !== "function") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `${argument} is not iterable.`
           });
         }
@@ -3756,16 +3756,16 @@ var require_webidl = __commonJS({
           if (done) {
             break;
           }
-          seq.push(converter(value, prefix, `${argument}[${index++}]`));
+          seq.push(converter(value, prefix2, `${argument}[${index++}]`));
         }
         return seq;
       };
     };
     webidl.recordConverter = function(keyConverter, valueConverter) {
-      return (O, prefix, argument) => {
+      return (O, prefix2, argument) => {
         if (webidl.util.Type(O) !== "Object") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `${argument} ("${webidl.util.Type(O)}") is not an Object.`
           });
         }
@@ -3773,8 +3773,8 @@ var require_webidl = __commonJS({
         if (!types.isProxy(O)) {
           const keys2 = [...Object.getOwnPropertyNames(O), ...Object.getOwnPropertySymbols(O)];
           for (const key of keys2) {
-            const typedKey = keyConverter(key, prefix, argument);
-            const typedValue = valueConverter(O[key], prefix, argument);
+            const typedKey = keyConverter(key, prefix2, argument);
+            const typedValue = valueConverter(O[key], prefix2, argument);
             result[typedKey] = typedValue;
           }
           return result;
@@ -3783,8 +3783,8 @@ var require_webidl = __commonJS({
         for (const key of keys) {
           const desc = Reflect.getOwnPropertyDescriptor(O, key);
           if (desc?.enumerable) {
-            const typedKey = keyConverter(key, prefix, argument);
-            const typedValue = valueConverter(O[key], prefix, argument);
+            const typedKey = keyConverter(key, prefix2, argument);
+            const typedValue = valueConverter(O[key], prefix2, argument);
             result[typedKey] = typedValue;
           }
         }
@@ -3792,10 +3792,10 @@ var require_webidl = __commonJS({
       };
     };
     webidl.interfaceConverter = function(i) {
-      return (V, prefix, argument, opts) => {
+      return (V, prefix2, argument, opts) => {
         if (opts?.strict !== false && !(V instanceof i)) {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `Expected ${argument} ("${webidl.util.Stringify(V)}") to be an instance of ${i.name}.`
           });
         }
@@ -3803,14 +3803,14 @@ var require_webidl = __commonJS({
       };
     };
     webidl.dictionaryConverter = function(converters) {
-      return (dictionary, prefix, argument) => {
+      return (dictionary, prefix2, argument) => {
         const type = webidl.util.Type(dictionary);
         const dict = {};
         if (type === "Null" || type === "Undefined") {
           return dict;
         } else if (type !== "Object") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: `Expected ${dictionary} to be one of: Null, Undefined, Object.`
           });
         }
@@ -3819,7 +3819,7 @@ var require_webidl = __commonJS({
           if (required === true) {
             if (!Object.hasOwn(dictionary, key)) {
               throw webidl.errors.exception({
-                header: prefix,
+                header: prefix2,
                 message: `Missing required key "${key}".`
               });
             }
@@ -3830,10 +3830,10 @@ var require_webidl = __commonJS({
             value ??= defaultValue();
           }
           if (required || hasDefault || value !== void 0) {
-            value = converter(value, prefix, `${argument}.${key}`);
+            value = converter(value, prefix2, `${argument}.${key}`);
             if (options.allowedValues && !options.allowedValues.includes(value)) {
               throw webidl.errors.exception({
-                header: prefix,
+                header: prefix2,
                 message: `${value} is not an accepted type. Expected one of ${options.allowedValues.join(", ")}.`
               });
             }
@@ -3844,27 +3844,27 @@ var require_webidl = __commonJS({
       };
     };
     webidl.nullableConverter = function(converter) {
-      return (V, prefix, argument) => {
+      return (V, prefix2, argument) => {
         if (V === null) {
           return V;
         }
-        return converter(V, prefix, argument);
+        return converter(V, prefix2, argument);
       };
     };
-    webidl.converters.DOMString = function(V, prefix, argument, opts) {
+    webidl.converters.DOMString = function(V, prefix2, argument, opts) {
       if (V === null && opts?.legacyNullToEmptyString) {
         return "";
       }
       if (typeof V === "symbol") {
         throw webidl.errors.exception({
-          header: prefix,
+          header: prefix2,
           message: `${argument} is a symbol, which cannot be converted to a DOMString.`
         });
       }
       return String(V);
     };
-    webidl.converters.ByteString = function(V, prefix, argument) {
-      const x = webidl.converters.DOMString(V, prefix, argument);
+    webidl.converters.ByteString = function(V, prefix2, argument) {
+      const x = webidl.converters.DOMString(V, prefix2, argument);
       for (let index = 0; index < x.length; index++) {
         if (x.charCodeAt(index) > 255) {
           throw new TypeError(
@@ -3882,26 +3882,26 @@ var require_webidl = __commonJS({
     webidl.converters.any = function(V) {
       return V;
     };
-    webidl.converters["long long"] = function(V, prefix, argument) {
-      const x = webidl.util.ConvertToInt(V, 64, "signed", void 0, prefix, argument);
+    webidl.converters["long long"] = function(V, prefix2, argument) {
+      const x = webidl.util.ConvertToInt(V, 64, "signed", void 0, prefix2, argument);
       return x;
     };
-    webidl.converters["unsigned long long"] = function(V, prefix, argument) {
-      const x = webidl.util.ConvertToInt(V, 64, "unsigned", void 0, prefix, argument);
+    webidl.converters["unsigned long long"] = function(V, prefix2, argument) {
+      const x = webidl.util.ConvertToInt(V, 64, "unsigned", void 0, prefix2, argument);
       return x;
     };
-    webidl.converters["unsigned long"] = function(V, prefix, argument) {
-      const x = webidl.util.ConvertToInt(V, 32, "unsigned", void 0, prefix, argument);
+    webidl.converters["unsigned long"] = function(V, prefix2, argument) {
+      const x = webidl.util.ConvertToInt(V, 32, "unsigned", void 0, prefix2, argument);
       return x;
     };
-    webidl.converters["unsigned short"] = function(V, prefix, argument, opts) {
-      const x = webidl.util.ConvertToInt(V, 16, "unsigned", opts, prefix, argument);
+    webidl.converters["unsigned short"] = function(V, prefix2, argument, opts) {
+      const x = webidl.util.ConvertToInt(V, 16, "unsigned", opts, prefix2, argument);
       return x;
     };
-    webidl.converters.ArrayBuffer = function(V, prefix, argument, opts) {
+    webidl.converters.ArrayBuffer = function(V, prefix2, argument, opts) {
       if (webidl.util.Type(V) !== "Object" || !types.isAnyArrayBuffer(V)) {
         throw webidl.errors.conversionFailed({
-          prefix,
+          prefix: prefix2,
           argument: `${argument} ("${webidl.util.Stringify(V)}")`,
           types: ["ArrayBuffer"]
         });
@@ -3920,10 +3920,10 @@ var require_webidl = __commonJS({
       }
       return V;
     };
-    webidl.converters.TypedArray = function(V, T, prefix, name, opts) {
+    webidl.converters.TypedArray = function(V, T, prefix2, name, opts) {
       if (webidl.util.Type(V) !== "Object" || !types.isTypedArray(V) || V.constructor.name !== T.name) {
         throw webidl.errors.conversionFailed({
-          prefix,
+          prefix: prefix2,
           argument: `${name} ("${webidl.util.Stringify(V)}")`,
           types: [T.name]
         });
@@ -3942,10 +3942,10 @@ var require_webidl = __commonJS({
       }
       return V;
     };
-    webidl.converters.DataView = function(V, prefix, name, opts) {
+    webidl.converters.DataView = function(V, prefix2, name, opts) {
       if (webidl.util.Type(V) !== "Object" || !types.isDataView(V)) {
         throw webidl.errors.exception({
-          header: prefix,
+          header: prefix2,
           message: `${name} is not a DataView.`
         });
       }
@@ -3963,18 +3963,18 @@ var require_webidl = __commonJS({
       }
       return V;
     };
-    webidl.converters.BufferSource = function(V, prefix, name, opts) {
+    webidl.converters.BufferSource = function(V, prefix2, name, opts) {
       if (types.isAnyArrayBuffer(V)) {
-        return webidl.converters.ArrayBuffer(V, prefix, name, { ...opts, allowShared: false });
+        return webidl.converters.ArrayBuffer(V, prefix2, name, { ...opts, allowShared: false });
       }
       if (types.isTypedArray(V)) {
-        return webidl.converters.TypedArray(V, V.constructor, prefix, name, { ...opts, allowShared: false });
+        return webidl.converters.TypedArray(V, V.constructor, prefix2, name, { ...opts, allowShared: false });
       }
       if (types.isDataView(V)) {
-        return webidl.converters.DataView(V, prefix, name, { ...opts, allowShared: false });
+        return webidl.converters.DataView(V, prefix2, name, { ...opts, allowShared: false });
       }
       throw webidl.errors.conversionFailed({
-        prefix,
+        prefix: prefix2,
         argument: `${name} ("${webidl.util.Stringify(V)}")`,
         types: ["BufferSource"]
       });
@@ -4968,31 +4968,31 @@ var require_formdata = __commonJS({
       }
       append(name, value, filename = void 0) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.append";
-        webidl.argumentLengthCheck(arguments, 2, prefix);
+        const prefix2 = "FormData.append";
+        webidl.argumentLengthCheck(arguments, 2, prefix2);
         if (arguments.length === 3 && !isBlobLike(value)) {
           throw new TypeError(
             "Failed to execute 'append' on 'FormData': parameter 2 is not of type 'Blob'"
           );
         }
-        name = webidl.converters.USVString(name, prefix, "name");
-        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix, "value", { strict: false }) : webidl.converters.USVString(value, prefix, "value");
-        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix, "filename") : void 0;
+        name = webidl.converters.USVString(name, prefix2, "name");
+        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix2, "value", { strict: false }) : webidl.converters.USVString(value, prefix2, "value");
+        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix2, "filename") : void 0;
         const entry = makeEntry(name, value, filename);
         this[kState].push(entry);
       }
       delete(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.delete";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.delete";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         this[kState] = this[kState].filter((entry) => entry.name !== name);
       }
       get(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.get";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.get";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         const idx = this[kState].findIndex((entry) => entry.name === name);
         if (idx === -1) {
           return null;
@@ -5001,30 +5001,30 @@ var require_formdata = __commonJS({
       }
       getAll(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.getAll";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.getAll";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         return this[kState].filter((entry) => entry.name === name).map((entry) => entry.value);
       }
       has(name) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.has";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        name = webidl.converters.USVString(name, prefix, "name");
+        const prefix2 = "FormData.has";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        name = webidl.converters.USVString(name, prefix2, "name");
         return this[kState].findIndex((entry) => entry.name === name) !== -1;
       }
       set(name, value, filename = void 0) {
         webidl.brandCheck(this, _FormData);
-        const prefix = "FormData.set";
-        webidl.argumentLengthCheck(arguments, 2, prefix);
+        const prefix2 = "FormData.set";
+        webidl.argumentLengthCheck(arguments, 2, prefix2);
         if (arguments.length === 3 && !isBlobLike(value)) {
           throw new TypeError(
             "Failed to execute 'set' on 'FormData': parameter 2 is not of type 'Blob'"
           );
         }
-        name = webidl.converters.USVString(name, prefix, "name");
-        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix, "name", { strict: false }) : webidl.converters.USVString(value, prefix, "name");
-        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix, "name") : void 0;
+        name = webidl.converters.USVString(name, prefix2, "name");
+        value = isBlobLike(value) ? webidl.converters.Blob(value, prefix2, "name", { strict: false }) : webidl.converters.USVString(value, prefix2, "name");
+        filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix2, "name") : void 0;
         const entry = makeEntry(name, value, filename);
         const idx = this[kState].findIndex((entry2) => entry2.name === name);
         if (idx !== -1) {
@@ -5421,7 +5421,7 @@ var require_body = __commonJS({
         source = new Uint8Array(object.buffer.slice(object.byteOffset, object.byteOffset + object.byteLength));
       } else if (util.isFormDataLike(object)) {
         const boundary = `----formdata-undici-0${`${random(1e11)}`.padStart(11, "0")}`;
-        const prefix = `--${boundary}\r
+        const prefix2 = `--${boundary}\r
 Content-Disposition: form-data`;
         const escape = (str) => str.replace(/\n/g, "%0A").replace(/\r/g, "%0D").replace(/"/g, "%22");
         const normalizeLinefeeds = (value) => value.replace(/\r?\n|\r/g, "\r\n");
@@ -5431,14 +5431,14 @@ Content-Disposition: form-data`;
         let hasUnknownSizeValue = false;
         for (const [name, value] of object) {
           if (typeof value === "string") {
-            const chunk2 = textEncoder.encode(prefix + `; name="${escape(normalizeLinefeeds(name))}"\r
+            const chunk2 = textEncoder.encode(prefix2 + `; name="${escape(normalizeLinefeeds(name))}"\r
 \r
 ${normalizeLinefeeds(value)}\r
 `);
             blobParts.push(chunk2);
             length += chunk2.byteLength;
           } else {
-            const chunk2 = textEncoder.encode(`${prefix}; name="${escape(normalizeLinefeeds(name))}"` + (value.name ? `; filename="${escape(value.name)}"` : "") + `\r
+            const chunk2 = textEncoder.encode(`${prefix2}; name="${escape(normalizeLinefeeds(name))}"` + (value.name ? `; filename="${escape(value.name)}"` : "") + `\r
 Content-Type: ${value.type || "application/octet-stream"}\r
 \r
 `);
@@ -10995,9 +10995,9 @@ var require_pluralizer = __commonJS({
       this: "these"
     };
     module2.exports = class Pluralizer {
-      constructor(singular, plural) {
+      constructor(singular, plural2) {
         this.singular = singular;
-        this.plural = plural;
+        this.plural = plural2;
       }
       pluralize(count) {
         const one = count === 1;
@@ -11946,17 +11946,17 @@ var require_headers = __commonJS({
       append(name, value) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 2, "Headers.append");
-        const prefix = "Headers.append";
-        name = webidl.converters.ByteString(name, prefix, "name");
-        value = webidl.converters.ByteString(value, prefix, "value");
+        const prefix2 = "Headers.append";
+        name = webidl.converters.ByteString(name, prefix2, "name");
+        value = webidl.converters.ByteString(value, prefix2, "value");
         return appendHeader(this, name, value);
       }
       // https://fetch.spec.whatwg.org/#dom-headers-delete
       delete(name) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 1, "Headers.delete");
-        const prefix = "Headers.delete";
-        name = webidl.converters.ByteString(name, prefix, "name");
+        const prefix2 = "Headers.delete";
+        name = webidl.converters.ByteString(name, prefix2, "name");
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
             prefix: "Headers.delete",
@@ -11976,11 +11976,11 @@ var require_headers = __commonJS({
       get(name) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 1, "Headers.get");
-        const prefix = "Headers.get";
-        name = webidl.converters.ByteString(name, prefix, "name");
+        const prefix2 = "Headers.get";
+        name = webidl.converters.ByteString(name, prefix2, "name");
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value: name,
             type: "header name"
           });
@@ -11991,11 +11991,11 @@ var require_headers = __commonJS({
       has(name) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 1, "Headers.has");
-        const prefix = "Headers.has";
-        name = webidl.converters.ByteString(name, prefix, "name");
+        const prefix2 = "Headers.has";
+        name = webidl.converters.ByteString(name, prefix2, "name");
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value: name,
             type: "header name"
           });
@@ -12006,19 +12006,19 @@ var require_headers = __commonJS({
       set(name, value) {
         webidl.brandCheck(this, _Headers);
         webidl.argumentLengthCheck(arguments, 2, "Headers.set");
-        const prefix = "Headers.set";
-        name = webidl.converters.ByteString(name, prefix, "name");
-        value = webidl.converters.ByteString(value, prefix, "value");
+        const prefix2 = "Headers.set";
+        name = webidl.converters.ByteString(name, prefix2, "name");
+        value = webidl.converters.ByteString(value, prefix2, "value");
         value = headerValueNormalize(value);
         if (!isValidHeaderName(name)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value: name,
             type: "header name"
           });
         } else if (!isValidHeaderValue(value)) {
           throw webidl.errors.invalidArgument({
-            prefix,
+            prefix: prefix2,
             value,
             type: "header value"
           });
@@ -12098,7 +12098,7 @@ var require_headers = __commonJS({
         enumerable: false
       }
     });
-    webidl.converters.HeadersInit = function(V, prefix, argument) {
+    webidl.converters.HeadersInit = function(V, prefix2, argument) {
       if (webidl.util.Type(V) === "Object") {
         const iterator2 = Reflect.get(V, Symbol.iterator);
         if (!util.types.isProxy(V) && iterator2 === Headers2.prototype.entries) {
@@ -12108,9 +12108,9 @@ var require_headers = __commonJS({
           }
         }
         if (typeof iterator2 === "function") {
-          return webidl.converters["sequence<sequence<ByteString>>"](V, prefix, argument, iterator2.bind(V));
+          return webidl.converters["sequence<sequence<ByteString>>"](V, prefix2, argument, iterator2.bind(V));
         }
-        return webidl.converters["record<ByteString, ByteString>"](V, prefix, argument);
+        return webidl.converters["record<ByteString, ByteString>"](V, prefix2, argument);
       }
       throw webidl.errors.conversionFailed({
         prefix: "Headers constructor",
@@ -12475,32 +12475,32 @@ var require_response = __commonJS({
     webidl.converters.URLSearchParams = webidl.interfaceConverter(
       URLSearchParams
     );
-    webidl.converters.XMLHttpRequestBodyInit = function(V, prefix, name) {
+    webidl.converters.XMLHttpRequestBodyInit = function(V, prefix2, name) {
       if (typeof V === "string") {
-        return webidl.converters.USVString(V, prefix, name);
+        return webidl.converters.USVString(V, prefix2, name);
       }
       if (isBlobLike(V)) {
-        return webidl.converters.Blob(V, prefix, name, { strict: false });
+        return webidl.converters.Blob(V, prefix2, name, { strict: false });
       }
       if (ArrayBuffer.isView(V) || types.isArrayBuffer(V)) {
-        return webidl.converters.BufferSource(V, prefix, name);
+        return webidl.converters.BufferSource(V, prefix2, name);
       }
       if (util.isFormDataLike(V)) {
-        return webidl.converters.FormData(V, prefix, name, { strict: false });
+        return webidl.converters.FormData(V, prefix2, name, { strict: false });
       }
       if (V instanceof URLSearchParams) {
-        return webidl.converters.URLSearchParams(V, prefix, name);
+        return webidl.converters.URLSearchParams(V, prefix2, name);
       }
-      return webidl.converters.DOMString(V, prefix, name);
+      return webidl.converters.DOMString(V, prefix2, name);
     };
-    webidl.converters.BodyInit = function(V, prefix, argument) {
+    webidl.converters.BodyInit = function(V, prefix2, argument) {
       if (V instanceof ReadableStream) {
-        return webidl.converters.ReadableStream(V, prefix, argument);
+        return webidl.converters.ReadableStream(V, prefix2, argument);
       }
       if (V?.[Symbol.asyncIterator]) {
         return V;
       }
-      return webidl.converters.XMLHttpRequestBodyInit(V, prefix, argument);
+      return webidl.converters.XMLHttpRequestBodyInit(V, prefix2, argument);
     };
     webidl.converters.ResponseInit = webidl.dictionaryConverter([
       {
@@ -12641,10 +12641,10 @@ var require_request2 = __commonJS({
         if (input === kConstruct) {
           return;
         }
-        const prefix = "Request constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        input = webidl.converters.RequestInfo(input, prefix, "input");
-        init = webidl.converters.RequestInit(init, prefix, "init");
+        const prefix2 = "Request constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        input = webidl.converters.RequestInfo(input, prefix2, "input");
+        init = webidl.converters.RequestInit(init, prefix2, "init");
         let request2 = null;
         let fallbackMode = null;
         const baseUrl2 = environmentSettingsObject.settingsObject.baseUrl;
@@ -13169,14 +13169,14 @@ var require_request2 = __commonJS({
     webidl.converters.Request = webidl.interfaceConverter(
       Request
     );
-    webidl.converters.RequestInfo = function(V, prefix, argument) {
+    webidl.converters.RequestInfo = function(V, prefix2, argument) {
       if (typeof V === "string") {
-        return webidl.converters.USVString(V, prefix, argument);
+        return webidl.converters.USVString(V, prefix2, argument);
       }
       if (V instanceof Request) {
-        return webidl.converters.Request(V, prefix, argument);
+        return webidl.converters.Request(V, prefix2, argument);
       }
-      return webidl.converters.USVString(V, prefix, argument);
+      return webidl.converters.USVString(V, prefix2, argument);
     };
     webidl.converters.AbortSignal = webidl.interfaceConverter(
       AbortSignal
@@ -15217,10 +15217,10 @@ var require_cache = __commonJS({
       }
       async match(request2, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.match";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.match";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         const p = this.#internalMatchAll(request2, options, 1);
         if (p.length === 0) {
           return;
@@ -15229,30 +15229,30 @@ var require_cache = __commonJS({
       }
       async matchAll(request2 = void 0, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.matchAll";
-        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.matchAll";
+        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         return this.#internalMatchAll(request2, options);
       }
       async add(request2) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.add";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
+        const prefix2 = "Cache.add";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
         const requests = [request2];
         const responseArrayPromise = this.addAll(requests);
         return await responseArrayPromise;
       }
       async addAll(requests) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.addAll";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
+        const prefix2 = "Cache.addAll";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
         const responsePromises = [];
         const requestList = [];
         for (let request2 of requests) {
           if (request2 === void 0) {
             throw webidl.errors.conversionFailed({
-              prefix,
+              prefix: prefix2,
               argument: "Argument 1",
               types: ["undefined is not allowed"]
             });
@@ -15264,7 +15264,7 @@ var require_cache = __commonJS({
           const r = request2[kState];
           if (!urlIsHttpHttpsScheme(r.url) || r.method !== "GET") {
             throw webidl.errors.exception({
-              header: prefix,
+              header: prefix2,
               message: "Expected http/s scheme when method is not GET."
             });
           }
@@ -15274,7 +15274,7 @@ var require_cache = __commonJS({
           const r = new Request(request2)[kState];
           if (!urlIsHttpHttpsScheme(r.url)) {
             throw webidl.errors.exception({
-              header: prefix,
+              header: prefix2,
               message: "Expected http/s scheme."
             });
           }
@@ -15350,10 +15350,10 @@ var require_cache = __commonJS({
       }
       async put(request2, response) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.put";
-        webidl.argumentLengthCheck(arguments, 2, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        response = webidl.converters.Response(response, prefix, "response");
+        const prefix2 = "Cache.put";
+        webidl.argumentLengthCheck(arguments, 2, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        response = webidl.converters.Response(response, prefix2, "response");
         let innerRequest = null;
         if (request2 instanceof Request) {
           innerRequest = request2[kState];
@@ -15362,14 +15362,14 @@ var require_cache = __commonJS({
         }
         if (!urlIsHttpHttpsScheme(innerRequest.url) || innerRequest.method !== "GET") {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: "Expected an http/s scheme when method is not GET"
           });
         }
         const innerResponse = response[kState];
         if (innerResponse.status === 206) {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: "Got 206 status"
           });
         }
@@ -15378,7 +15378,7 @@ var require_cache = __commonJS({
           for (const fieldValue of fieldValues) {
             if (fieldValue === "*") {
               throw webidl.errors.exception({
-                header: prefix,
+                header: prefix2,
                 message: "Got * vary field value"
               });
             }
@@ -15386,7 +15386,7 @@ var require_cache = __commonJS({
         }
         if (innerResponse.body && (isDisturbed(innerResponse.body.stream) || innerResponse.body.stream.locked)) {
           throw webidl.errors.exception({
-            header: prefix,
+            header: prefix2,
             message: "Response body is locked or disturbed"
           });
         }
@@ -15431,10 +15431,10 @@ var require_cache = __commonJS({
       }
       async delete(request2, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.delete";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.delete";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         let r = null;
         if (request2 instanceof Request) {
           r = request2[kState];
@@ -15477,9 +15477,9 @@ var require_cache = __commonJS({
        */
       async keys(request2 = void 0, options = {}) {
         webidl.brandCheck(this, _Cache);
-        const prefix = "Cache.keys";
-        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix, "request");
-        options = webidl.converters.CacheQueryOptions(options, prefix, "options");
+        const prefix2 = "Cache.keys";
+        if (request2 !== void 0) request2 = webidl.converters.RequestInfo(request2, prefix2, "request");
+        options = webidl.converters.CacheQueryOptions(options, prefix2, "options");
         let r = null;
         if (request2 !== void 0) {
           if (request2 instanceof Request) {
@@ -15781,9 +15781,9 @@ var require_cachestorage = __commonJS({
        */
       async has(cacheName) {
         webidl.brandCheck(this, _CacheStorage);
-        const prefix = "CacheStorage.has";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
+        const prefix2 = "CacheStorage.has";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        cacheName = webidl.converters.DOMString(cacheName, prefix2, "cacheName");
         return this.#caches.has(cacheName);
       }
       /**
@@ -15793,9 +15793,9 @@ var require_cachestorage = __commonJS({
        */
       async open(cacheName) {
         webidl.brandCheck(this, _CacheStorage);
-        const prefix = "CacheStorage.open";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
+        const prefix2 = "CacheStorage.open";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        cacheName = webidl.converters.DOMString(cacheName, prefix2, "cacheName");
         if (this.#caches.has(cacheName)) {
           const cache2 = this.#caches.get(cacheName);
           return new Cache(kConstruct, cache2);
@@ -15811,9 +15811,9 @@ var require_cachestorage = __commonJS({
        */
       async delete(cacheName) {
         webidl.brandCheck(this, _CacheStorage);
-        const prefix = "CacheStorage.delete";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
+        const prefix2 = "CacheStorage.delete";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        cacheName = webidl.converters.DOMString(cacheName, prefix2, "cacheName");
         return this.#caches.delete(cacheName);
       }
       /**
@@ -16190,9 +16190,9 @@ var require_cookies = __commonJS({
     }
     function deleteCookie(headers, name, attributes) {
       webidl.brandCheck(headers, Headers2, { strict: false });
-      const prefix = "deleteCookie";
-      webidl.argumentLengthCheck(arguments, 2, prefix);
-      name = webidl.converters.DOMString(name, prefix, "name");
+      const prefix2 = "deleteCookie";
+      webidl.argumentLengthCheck(arguments, 2, prefix2);
+      name = webidl.converters.DOMString(name, prefix2, "name");
       attributes = webidl.converters.DeleteCookieAttributes(attributes);
       setCookie(headers, {
         name,
@@ -16311,10 +16311,10 @@ var require_events = __commonJS({
           webidl.util.markAsUncloneable(this);
           return;
         }
-        const prefix = "MessageEvent constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        type = webidl.converters.DOMString(type, prefix, "type");
-        eventInitDict = webidl.converters.MessageEventInit(eventInitDict, prefix, "eventInitDict");
+        const prefix2 = "MessageEvent constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        type = webidl.converters.DOMString(type, prefix2, "type");
+        eventInitDict = webidl.converters.MessageEventInit(eventInitDict, prefix2, "eventInitDict");
         super(type, eventInitDict);
         this.#eventInit = eventInitDict;
         webidl.util.markAsUncloneable(this);
@@ -16371,9 +16371,9 @@ var require_events = __commonJS({
     var CloseEvent = class _CloseEvent extends Event {
       #eventInit;
       constructor(type, eventInitDict = {}) {
-        const prefix = "CloseEvent constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        type = webidl.converters.DOMString(type, prefix, "type");
+        const prefix2 = "CloseEvent constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        type = webidl.converters.DOMString(type, prefix2, "type");
         eventInitDict = webidl.converters.CloseEventInit(eventInitDict);
         super(type, eventInitDict);
         this.#eventInit = eventInitDict;
@@ -16395,11 +16395,11 @@ var require_events = __commonJS({
     var ErrorEvent = class _ErrorEvent extends Event {
       #eventInit;
       constructor(type, eventInitDict) {
-        const prefix = "ErrorEvent constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
+        const prefix2 = "ErrorEvent constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
         super(type, eventInitDict);
         webidl.util.markAsUncloneable(this);
-        type = webidl.converters.DOMString(type, prefix, "type");
+        type = webidl.converters.DOMString(type, prefix2, "type");
         eventInitDict = webidl.converters.ErrorEventInit(eventInitDict ?? {});
         this.#eventInit = eventInitDict;
       }
@@ -17638,10 +17638,10 @@ var require_websocket = __commonJS({
       constructor(url, protocols = []) {
         super();
         webidl.util.markAsUncloneable(this);
-        const prefix = "WebSocket constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        const options = webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"](protocols, prefix, "options");
-        url = webidl.converters.USVString(url, prefix, "url");
+        const prefix2 = "WebSocket constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        const options = webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"](protocols, prefix2, "options");
+        url = webidl.converters.USVString(url, prefix2, "url");
         protocols = options.protocols;
         const baseURL = environmentSettingsObject.settingsObject.baseUrl;
         let urlRecord;
@@ -17694,12 +17694,12 @@ var require_websocket = __commonJS({
        */
       close(code = void 0, reason = void 0) {
         webidl.brandCheck(this, _WebSocket);
-        const prefix = "WebSocket.close";
+        const prefix2 = "WebSocket.close";
         if (code !== void 0) {
-          code = webidl.converters["unsigned short"](code, prefix, "code", { clamp: true });
+          code = webidl.converters["unsigned short"](code, prefix2, "code", { clamp: true });
         }
         if (reason !== void 0) {
-          reason = webidl.converters.USVString(reason, prefix, "reason");
+          reason = webidl.converters.USVString(reason, prefix2, "reason");
         }
         if (code !== void 0) {
           if (code !== 1e3 && (code < 3e3 || code > 4999)) {
@@ -17724,9 +17724,9 @@ var require_websocket = __commonJS({
        */
       send(data) {
         webidl.brandCheck(this, _WebSocket);
-        const prefix = "WebSocket.send";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
-        data = webidl.converters.WebSocketSendData(data, prefix, "data");
+        const prefix2 = "WebSocket.send";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
+        data = webidl.converters.WebSocketSendData(data, prefix2, "data");
         if (isConnecting(this)) {
           throw new DOMException("Sent before connected.", "InvalidStateError");
         }
@@ -17915,11 +17915,11 @@ var require_websocket = __commonJS({
     webidl.converters["sequence<DOMString>"] = webidl.sequenceConverter(
       webidl.converters.DOMString
     );
-    webidl.converters["DOMString or sequence<DOMString>"] = function(V, prefix, argument) {
+    webidl.converters["DOMString or sequence<DOMString>"] = function(V, prefix2, argument) {
       if (webidl.util.Type(V) === "Object" && Symbol.iterator in V) {
         return webidl.converters["sequence<DOMString>"](V);
       }
-      return webidl.converters.DOMString(V, prefix, argument);
+      return webidl.converters.DOMString(V, prefix2, argument);
     };
     webidl.converters.WebSocketInit = webidl.dictionaryConverter([
       {
@@ -18279,16 +18279,16 @@ var require_eventsource = __commonJS({
       constructor(url, eventSourceInitDict = {}) {
         super();
         webidl.util.markAsUncloneable(this);
-        const prefix = "EventSource constructor";
-        webidl.argumentLengthCheck(arguments, 1, prefix);
+        const prefix2 = "EventSource constructor";
+        webidl.argumentLengthCheck(arguments, 1, prefix2);
         if (!experimentalWarned) {
           experimentalWarned = true;
           process.emitWarning("EventSource is experimental, expect them to change at any time.", {
             code: "UNDICI-ES"
           });
         }
-        url = webidl.converters.USVString(url, prefix, "url");
-        eventSourceInitDict = webidl.converters.EventSourceInitDict(eventSourceInitDict, prefix, "eventSourceInitDict");
+        url = webidl.converters.USVString(url, prefix2, "url");
+        eventSourceInitDict = webidl.converters.EventSourceInitDict(eventSourceInitDict, prefix2, "eventSourceInitDict");
         this.#dispatcher = eventSourceInitDict.dispatcher;
         this.#state = {
           lastEventId: "",
@@ -19894,11 +19894,11 @@ var Summary = class {
    */
   addTable(rows) {
     const tableBody = rows.map((row) => {
-      const cells = row.map((cell) => {
-        if (typeof cell === "string") {
-          return this.wrap("td", cell);
+      const cells = row.map((cell3) => {
+        if (typeof cell3 === "string") {
+          return this.wrap("td", cell3);
         }
-        const { header, data, colspan, rowspan } = cell;
+        const { header, data, colspan, rowspan } = cell3;
         const tag = header ? "th" : "td";
         const attrs = Object.assign(Object.assign({}, colspan && { colspan }), rowspan && { rowspan });
         return this.wrap(tag, data, attrs);
@@ -23907,6 +23907,8 @@ function validateSuggestion(s, idx) {
     return `suggestions[${idx}].category must be 'A' | 'B' | 'C'`;
   if (typeof o.confidence !== "number" || o.confidence < 0 || o.confidence > 1)
     return `suggestions[${idx}].confidence must be a number in [0,1]`;
+  if (o.summary !== void 0 && typeof o.summary !== "string")
+    return `suggestions[${idx}].summary must be a string when present`;
   if (typeof o.why_it_matters !== "string" || o.why_it_matters.length < 10)
     return `suggestions[${idx}].why_it_matters must be a string of \u2265 10 chars`;
   if (!Array.isArray(o.references) || o.references.length === 0)
@@ -24254,14 +24256,14 @@ function parsePatch(uniDiff) {
   function parseFileHeader(index) {
     const fileHeaderMatch = /^(---|\+\+\+)\s+/.exec(diffstr[i]);
     if (fileHeaderMatch) {
-      const prefix = fileHeaderMatch[1], data = diffstr[i].substring(3).trim().split("	", 2), header = (data[1] || "").trim();
+      const prefix2 = fileHeaderMatch[1], data = diffstr[i].substring(3).trim().split("	", 2), header = (data[1] || "").trim();
       let fileName = data[0];
       if (fileName.startsWith('"')) {
         fileName = unquoteIfQuoted(fileName);
       } else {
         fileName = fileName.replace(/\\\\/g, "\\");
       }
-      if (prefix === "---") {
+      if (prefix2 === "---") {
         index.oldFileName = fileName;
         index.oldHeader = header;
       } else {
@@ -24411,6 +24413,23 @@ async function fetchCommentableLines(octokit, owner, repo, prNumber) {
   }
   return map;
 }
+async function fetchPrFiles(octokit, owner, repo, prNumber) {
+  const { data } = await octokit.rest.pulls.listFiles({
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100
+  });
+  const commentable = /* @__PURE__ */ new Map();
+  const patches = /* @__PURE__ */ new Map();
+  for (const f of data) {
+    if (f.patch) {
+      commentable.set(f.filename, parseCommentableLines(f.patch));
+      patches.set(f.filename, f.patch);
+    }
+  }
+  return { commentable, patches };
+}
 function buildReviewComments(suggestions, model) {
   return suggestions.map((s) => {
     const body = renderAISuggestionBody(s, model);
@@ -24426,6 +24445,1947 @@ function buildReviewComments(suggestions, model) {
     }
     return comment;
   });
+}
+
+// src/ai/to-code-suggestion.ts
+var CATEGORY_LABEL = {
+  A: "Optimization",
+  B: "Product correctness",
+  C: "Framework misuse"
+};
+var CONTEXT_RADIUS = 3;
+function languageOf(file) {
+  const ext = file.slice(file.lastIndexOf(".") + 1).toLowerCase();
+  const map = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    py: "python",
+    rb: "ruby",
+    go: "go",
+    rs: "rust",
+    java: "java",
+    kt: "kotlin",
+    cs: "csharp",
+    php: "php",
+    swift: "swift",
+    scala: "scala",
+    c: "c",
+    h: "c",
+    cpp: "cpp",
+    cc: "cpp",
+    hpp: "cpp",
+    m: "objc",
+    sql: "sql",
+    sh: "bash"
+  };
+  return map[ext];
+}
+function numberPatchRows(patch) {
+  let files;
+  try {
+    files = parsePatch(patch);
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const file of files) {
+    for (const hunk of file.hunks) {
+      let n = hunk.newStart;
+      for (const row of hunk.lines) {
+        const c = row[0];
+        const code = row.slice(1);
+        if (c === "+") {
+          rows.push({ newLine: n, code, kind: "add" });
+          n += 1;
+        } else if (c === " ") {
+          rows.push({ newLine: n, code, kind: "ctx" });
+          n += 1;
+        } else if (c === "-") {
+          rows.push({ newLine: null, code, kind: "del" });
+        }
+      }
+    }
+  }
+  return rows;
+}
+function reconstructDiff(patch, start, end, afterCode) {
+  const afterLines = afterCode.split("\n").map((code) => ({ code, kind: "add" }));
+  const afterOnly = () => ({
+    unified: afterLines.map((l) => `+ ${l.code}`).join("\n"),
+    beforeLines: [],
+    afterLines
+  });
+  if (!patch) return afterOnly();
+  const rows = numberPatchRows(patch);
+  if (rows.length === 0) return afterOnly();
+  const inRange = (n, lo, hi) => typeof n === "number" && n >= lo && n <= hi;
+  const replaced = rows.filter((r) => inRange(r.newLine, start, end));
+  if (replaced.length === 0) return afterOnly();
+  const ctxBefore = rows.filter((r) => inRange(r.newLine, start - CONTEXT_RADIUS, start - 1));
+  const ctxAfter = rows.filter((r) => inRange(r.newLine, end + 1, end + CONTEXT_RADIUS));
+  const unified = [
+    ...ctxBefore.map((r) => `  ${r.code}`),
+    ...replaced.map((r) => `- ${r.code}`),
+    ...afterLines.map((l) => `+ ${l.code}`),
+    ...ctxAfter.map((r) => `  ${r.code}`)
+  ].join("\n");
+  const beforeLines = replaced.map((r) => ({
+    code: r.code,
+    kind: "del",
+    line_number: r.newLine ?? void 0
+  }));
+  return { unified, beforeLines, afterLines };
+}
+function aiToCodeSuggestion(ai, patch, model) {
+  const start = typeof ai.start_line === "number" ? ai.start_line : ai.line;
+  const { unified, beforeLines, afterLines } = reconstructDiff(patch, start, ai.line, ai.after_code);
+  const summary2 = ai.summary?.trim() || void 0;
+  return {
+    category: ai.category,
+    category_label: CATEGORY_LABEL[ai.category],
+    file: ai.file,
+    line: ai.line,
+    confidence: ai.confidence,
+    why_it_matters: ai.why_it_matters,
+    references: ai.references,
+    diff: { unified, before_lines: beforeLines, after_lines: afterLines },
+    language: languageOf(ai.file),
+    source: "ai",
+    summary: summary2,
+    model
+  };
+}
+function lookupPatch(patches, file) {
+  if (patches.has(file)) return patches.get(file);
+  let best;
+  for (const k of patches.keys()) {
+    if ((file.endsWith(k) || k.endsWith(file)) && (!best || k.length > best.length)) best = k;
+  }
+  return best ? patches.get(best) : void 0;
+}
+function mergeAiSuggestionsIntoReport(report, aiPostable, patches, model) {
+  const aiCode = aiPostable.map(
+    (s) => aiToCodeSuggestion(s, patches ? lookupPatch(patches, s.file) : void 0, model)
+  );
+  const aiKeys = new Set(aiCode.map((s) => `${s.file}:${s.line}`));
+  const det = (report.pr_review?.code_suggestions ?? []).filter(
+    (s) => !aiKeys.has(`${s.file}:${s.line}`)
+  );
+  return {
+    ...report,
+    pr_review: { ...report.pr_review ?? {}, code_suggestions: [...det, ...aiCode] }
+  };
+}
+
+// src/render/lib/format.ts
+function round(n, decimals = 1) {
+  const f = 10 ** decimals;
+  return Math.round(n * f) / f;
+}
+function signedPercent(n, decimals = 1) {
+  const r = round(n, decimals);
+  const mag = Math.abs(r).toFixed(decimals);
+  if (r > 0) return `+${mag}%`;
+  if (r < 0) return `\u2212${mag}%`;
+  return `${0 .toFixed(decimals)}%`;
+}
+function magnitudePercent(n, decimals = 1) {
+  return `${Math.abs(round(n, decimals)).toFixed(decimals)}%`;
+}
+function signedNumber(n, decimals = 1) {
+  const r = round(n, decimals);
+  const mag = Math.abs(r).toFixed(decimals);
+  if (r > 0) return `+${mag}`;
+  if (r < 0) return `\u2212${mag}`;
+  return 0 .toFixed(decimals);
+}
+function confidencePercent(conf01) {
+  return `${Math.round(clamp(conf01, 0, 1) * 100)}%`;
+}
+function signedInt(n) {
+  const r = Math.round(n);
+  const mag = Math.abs(r).toLocaleString("en-US");
+  if (r > 0) return `+${mag}`;
+  if (r < 0) return `\u2212${mag}`;
+  return "0";
+}
+function int(n) {
+  return Math.round(n).toLocaleString("en-US");
+}
+function clamp(n, lo, hi) {
+  return Math.min(hi, Math.max(lo, n));
+}
+function plural(n, singular, pluralForm) {
+  return n === 1 ? singular : pluralForm ?? `${singular}s`;
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function inlineList(items, max, code = true) {
+  const wrap = (s) => code ? `\`${s}\`` : s;
+  const shown = items.slice(0, max).map(wrap);
+  if (items.length > shown.length) shown.push(`*\u2026+${items.length - shown.length} more*`);
+  return shown.join(" \xB7 ");
+}
+function basename(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+function fencedBlock(content, info2 = "") {
+  const longest = (content.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}${info2}
+${content}
+${fence}`;
+}
+
+// src/render/state.ts
+var CONF_HISTORY_CAP = 12;
+function appendConfHistory(prior, score) {
+  const past = Array.isArray(prior?.confHistory) ? prior.confHistory.filter((n) => Number.isFinite(n)) : [];
+  return [...past, score].slice(-CONF_HISTORY_CAP);
+}
+var MARKER_RE = /<!--\s*drift:state\s+(\{[\s\S]*?\})\s*-->/;
+function stateFromReport(report) {
+  const state = { v: 1 };
+  const drift = report.pr_review?.overall_drift?.percent;
+  if (typeof drift === "number") state.overall = round2(drift);
+  const axes = report.pr_review?.value_card?.axes;
+  if (axes?.length) {
+    const map = {};
+    for (const a of axes) map[a.name] = round2(a.delta_percent);
+    state.axes = map;
+  }
+  return state;
+}
+function serializeState(state) {
+  return `<!-- drift:state ${JSON.stringify(state)} -->`;
+}
+function parseState(body) {
+  if (!body) return null;
+  const m = body.match(MARKER_RE);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[1]);
+    return parsed && parsed.v === 1 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+var AXIS_GLYPH = {
+  money: "\u{1F4B0}",
+  customer: "\u{1F465}",
+  runtime: "\u2699\uFE0F",
+  runtime_ux: "\u{1F3A8}"
+};
+function sinceLastReview(prior, current) {
+  if (!prior?.axes || !current.axes) return null;
+  const order = ["money", "customer", "runtime", "runtime_ux"];
+  const parts = [];
+  for (const name of order) {
+    const before = prior.axes[name];
+    const now = current.axes[name];
+    if (typeof before !== "number" || typeof now !== "number") continue;
+    const delta = round2(now - before);
+    if (delta === 0) continue;
+    const arrow = delta > 0 ? "\u25B2" : "\u25BC";
+    parts.push(`${AXIS_GLYPH[name]} ${arrow} ${signedNumber(delta)}pp`);
+  }
+  return parts.length ? parts.join(" \xB7 ") : null;
+}
+function round2(n) {
+  return Math.round(n * 10) / 10;
+}
+
+// src/render/lib/facts.ts
+function extractFacts(report) {
+  const ps = report.pr_scope;
+  const review = report.pr_review;
+  const ext = report.pr_review_ext;
+  const axes = review?.value_card?.axes ?? [];
+  const regressedAxes = axes.filter((a) => a.direction === "down");
+  const improvedAxes = axes.filter((a) => a.direction === "up");
+  const topImprovement = improvedAxes.length > 0 ? improvedAxes.reduce((best, a) => a.delta_percent > best.delta_percent ? a : best) : null;
+  const moneyInputs = axes.find((a) => a.name === "money")?.inputs;
+  const locAdded = numInput(moneyInputs, "loc_added");
+  const locDeleted = numInput(moneyInputs, "loc_deleted");
+  const netLoc = locAdded === null && locDeleted === null ? null : (locAdded ?? 0) - (locDeleted ?? 0);
+  const counts = review?.counts;
+  const passing = (review?.code_suggestions ?? []).filter(passesQualityBar);
+  const risks = review?.visual_summary?.risks?.items ?? [];
+  const uncoveredSet = new Set(ext?.tests_in_graph?.uncovered_roots ?? []);
+  const missingByRoot = new Map((ext?.nfr_edge_cases?.per_root ?? []).map((p) => [p.root, p.missing ?? []]));
+  const perRootCoverage = ps.affected_roots.map((root) => ({
+    root,
+    tested: !uncoveredSet.has(root),
+    missing: missingByRoot.get(root) ?? []
+  }));
+  return {
+    changedFiles: ps.changed_files.length,
+    affectedRoots: ps.affected_roots.length,
+    unreachable: ps.unreachable_changes.length,
+    overallPercent: review?.overall_drift?.percent ?? null,
+    overallDirection: review?.overall_drift?.direction ?? null,
+    axes,
+    regressedAxes,
+    improvedAxes,
+    topImprovement,
+    locAdded,
+    locDeleted,
+    netLoc,
+    newTestFiles: counts?.new_test_files ? counts.new_test_files.value : counts ? 0 : null,
+    features: counts?.features?.value ?? 0,
+    bugFixes: counts?.bug_fixes?.value ?? 0,
+    issuesResolved: counts?.issues_resolved?.value ?? 0,
+    passing,
+    correctness: passing.filter((s) => s.category === "B"),
+    deadCode: passing.filter((s) => s.category === "A" && isDeadCode(s)),
+    risksToAddress: risks.filter((r) => r.quadrant === "act_before_merge").length,
+    totalRisks: risks.length,
+    uncoveredRoots: ext?.tests_in_graph?.uncovered_roots ?? [],
+    reliabilityGaps: ext?.nfr_edge_cases?.reliability_gaps ?? [],
+    highComplexity: ext?.tech_debt?.high_complexity?.length ?? 0,
+    longFunctions: ext?.tech_debt?.long_functions?.length ?? 0,
+    duplicationClusters: ext?.duplication?.clusters?.length ?? 0,
+    perRootCoverage
+  };
+}
+function isDeadCode(s) {
+  const hay = `${s.kind ?? ""} ${s.category_label ?? ""}`.toLowerCase();
+  return hay.includes("dead");
+}
+function numInput(inputs, key) {
+  if (!inputs || !(key in inputs)) return null;
+  const v = inputs[key];
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+// src/render/lib/severity.ts
+var COLOR = {
+  green: "2ea043",
+  // improvement / ship
+  amber: "d29922",
+  // mixed / monitor
+  red: "d1242f",
+  // regression / act
+  blue: "58a6ff",
+  // neutral-informational
+  grey: "8b949e",
+  // muted / flat
+  brand: "ff6b3d"
+  // Drift / Andy brand orange — brand chips & agent-ready badge
+};
+function directionEmoji(direction) {
+  return direction === "up" ? "\u{1F7E2}" : direction === "down" ? "\u{1F534}" : "\u26AA";
+}
+function directionWord(direction) {
+  return direction === "up" ? "improved" : direction === "down" ? "regressed" : "no change";
+}
+function compositeStatus(axes) {
+  const ups = (axes ?? []).filter((a) => a.direction === "up").length;
+  const downs = (axes ?? []).filter((a) => a.direction === "down").length;
+  if (ups > 0 && downs > 0) return { emoji: "\u{1F7E1}", label: "mixed", color: COLOR.amber, mixed: true };
+  if (downs > 0) return { emoji: "\u{1F534}", label: "regressed", color: COLOR.red, mixed: false };
+  if (ups > 0) return { emoji: "\u{1F7E2}", label: "improved", color: COLOR.green, mixed: false };
+  return { emoji: "\u26AA", label: "no change", color: COLOR.grey, mixed: false };
+}
+function maxAbsDelta(axes) {
+  return (axes ?? []).reduce((m, a) => Math.max(m, Math.abs(a.delta_percent)), 0);
+}
+
+// src/render/lib/effort.ts
+var LABEL = {
+  1: "trivial",
+  2: "easy",
+  3: "moderate",
+  4: "involved",
+  5: "demanding"
+};
+var MINUTES = {
+  1: "\u2248 5 min",
+  2: "\u2248 10 min",
+  3: "\u2248 20 min",
+  4: "\u2248 30\u201345 min",
+  5: "\u2248 60 min+"
+};
+var SCORE_COLOR = {
+  1: COLOR.green,
+  2: COLOR.green,
+  3: COLOR.blue,
+  4: COLOR.amber,
+  5: COLOR.red
+};
+function reviewEffort(f) {
+  let pts = 0;
+  const files = f.changedFiles;
+  if (files > 40) pts += 2;
+  else if (files > 15) pts += 1.5;
+  else if (files > 6) pts += 1;
+  else pts += 0.5;
+  const loc = f.locAdded ?? 0;
+  if (loc > 1e3) pts += 2;
+  else if (loc > 400) pts += 1.5;
+  else if (loc > 150) pts += 1;
+  else if (loc > 0) pts += 0.5;
+  if (f.affectedRoots > 30) pts += 1;
+  else if (f.affectedRoots > 12) pts += 0.5;
+  const debt = f.highComplexity + f.longFunctions;
+  pts += Math.min(1.5, debt * 0.25);
+  pts += Math.min(2, f.correctness.length * 0.9);
+  if (f.regressedAxes.length > 0) pts += Math.min(1, f.regressedAxes.length * 0.5);
+  if (f.risksToAddress > 0) pts += Math.min(1, f.risksToAddress * 0.2);
+  if (f.newTestFiles === 0 && loc > 150) pts += 0.5;
+  const score = pts >= 7 ? 5 : pts >= 5 ? 4 : pts >= 3 ? 3 : pts >= 1.5 ? 2 : 1;
+  return {
+    score,
+    label: LABEL[score],
+    minutes: MINUTES[score],
+    drivers: drivers(f),
+    color: SCORE_COLOR[score]
+  };
+}
+function drivers(f) {
+  const out = [];
+  if (f.correctness.length > 0) {
+    out.push(`${f.correctness.length} ${plural(f.correctness.length, "correctness issue")}`);
+  }
+  if (f.regressedAxes.length > 0) {
+    out.push(`${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`);
+  }
+  const debt = f.highComplexity + f.longFunctions;
+  if (debt > 0) out.push(`${debt} complex/long ${plural(debt, "fn")}`);
+  if (f.changedFiles > 6) out.push(`${int(f.changedFiles)} files`);
+  if (f.locAdded !== null && f.locAdded > 0) out.push(`${signedInt(f.locAdded)} LOC`);
+  if (f.affectedRoots > 12) out.push(`${int(f.affectedRoots)} entry points`);
+  if (out.length === 0) {
+    out.push(`${int(f.changedFiles)} ${plural(f.changedFiles, "file")}`);
+  }
+  return out.slice(0, 3);
+}
+
+// src/render/lib/confidence.ts
+var LABEL2 = {
+  5: "ship with confidence",
+  4: "minor polish",
+  3: "review closely",
+  2: "significant concerns",
+  1: "high risk",
+  0: "do not merge"
+};
+function mergeConfidence(f) {
+  let pts = 5;
+  pts -= Math.min(3, f.correctness.length * 1);
+  pts -= Math.min(1.5, f.regressedAxes.length * 0.5);
+  pts -= Math.min(1.5, f.risksToAddress * 0.5);
+  if (f.affectedRoots > 0 && f.uncoveredRoots.length > 0) {
+    const frac = Math.min(1, f.uncoveredRoots.length / f.affectedRoots);
+    pts -= frac;
+  } else if (f.newTestFiles === 0 && f.locAdded !== null && f.locAdded > 150) {
+    pts -= 0.5;
+  }
+  const effort = reviewEffort(f).score;
+  if (effort >= 5) pts -= 0.5;
+  else if (effort === 4) pts -= 0.25;
+  const score = clampScore(Math.round(pts));
+  return { score, label: LABEL2[score], color: scoreColor(score), drivers: drivers2(f) };
+}
+function scoreColor(score) {
+  if (score >= 4) return COLOR.green;
+  if (score === 3) return COLOR.blue;
+  if (score === 2) return COLOR.amber;
+  return COLOR.red;
+}
+function drivers2(f) {
+  const out = [];
+  if (f.correctness.length > 0) out.push(`${f.correctness.length} ${plural(f.correctness.length, "correctness issue")}`);
+  if (f.affectedRoots > 0 && f.uncoveredRoots.length > 0) {
+    out.push(`${int(f.uncoveredRoots.length)}/${int(f.affectedRoots)} reached ${plural(f.affectedRoots, "root")} untested`);
+  } else if (f.newTestFiles === 0 && f.locAdded !== null && f.locAdded > 0) {
+    out.push("no new tests");
+  }
+  if (f.regressedAxes.length > 0) out.push(`${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`);
+  if (f.risksToAddress > 0) out.push(`${f.risksToAddress} gating ${plural(f.risksToAddress, "risk")}`);
+  return out.slice(0, 3);
+}
+function clampScore(n) {
+  return Math.max(0, Math.min(5, n));
+}
+
+// src/render/lib/section.ts
+function splitHeading(md) {
+  const lines = md.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  const m = lines[i]?.match(/^#{1,6}\s+(.+?)\s*$/);
+  if (!m) return { title: null, body: md };
+  const body = lines.slice(i + 1).join("\n").replace(/^\n+/, "");
+  return { title: m[1].trim(), body };
+}
+function collapsibleSection(opts) {
+  const openAttr = opts.open ? " open" : "";
+  const tldr = opts.tldr?.trim() ? ` \u2014 ${escapeHtml(opts.tldr.trim())}` : "";
+  const summary2 = `<summary><strong>${escapeHtml(opts.title)}</strong>${tldr}</summary>`;
+  return [`<details${openAttr}>`, summary2, "", opts.body.trim(), "", "</details>"].join("\n");
+}
+function wrapSection(md, opts) {
+  const { title, body } = splitHeading(md);
+  return collapsibleSection({
+    title: title ?? opts.fallbackTitle ?? "Details",
+    tldr: opts.tldr,
+    body: title ? body : md,
+    open: opts.open
+  });
+}
+
+// src/render/context.ts
+function repoSlug(ctx) {
+  return ctx?.owner && ctx?.repo ? `${ctx.owner}/${ctx.repo}` : null;
+}
+function canLink(ctx) {
+  return !!(ctx?.owner && ctx?.repo && ctx?.sha);
+}
+function permalinkUrl(ctx, path, line, endLine) {
+  if (!canLink(ctx)) return null;
+  const base = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.sha}/${encodePath(path)}`;
+  if (typeof line === "number" && typeof endLine === "number" && endLine !== line) {
+    return `${base}#L${line}-L${endLine}`;
+  }
+  if (typeof line === "number") return `${base}#L${line}`;
+  return base;
+}
+function fileLink(ctx, path, line, label) {
+  const text = label ?? (typeof line === "number" ? `${basename(path)}:${line}` : path);
+  const url = permalinkUrl(ctx, path, line);
+  return url ? `[\`${text}\`](${url})` : `\`${text}\``;
+}
+function symbolLink(ctx, symbol, path, line) {
+  const url = permalinkUrl(ctx, path, line);
+  return url ? `[\`${symbol}\`](${url})` : `\`${symbol}\``;
+}
+function snippetPermalink(ctx, path, startLine, endLine) {
+  return permalinkUrl(ctx, path, startLine, endLine);
+}
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+// src/render/lib/checklist.ts
+var MAX_DEAD_EXPORTS_LINKED = 5;
+var MAX_CORRECTNESS_LINES = 3;
+function buildChecklist(facts, ctx) {
+  const items = [];
+  for (const s of facts.correctness.slice(0, MAX_CORRECTNESS_LINES)) {
+    const loc = fileLink(ctx, s.file, s.line);
+    const why2 = correctnessTag(s.category_label);
+    items.push(`Fix the product-correctness issue at ${loc}${why2 ? ` (${why2})` : ""}`);
+  }
+  if (facts.correctness.length > MAX_CORRECTNESS_LINES) {
+    const extra = facts.correctness.length - MAX_CORRECTNESS_LINES;
+    items.push(`Resolve ${extra} more product-correctness ${plural(extra, "issue")} (see Suggestions)`);
+  }
+  if (facts.newTestFiles === 0) {
+    if (facts.locAdded !== null && facts.locAdded > 0) {
+      items.push(`Add tests \u2014 **${signedInt(facts.locAdded)}** LOC landed with **0** new test files`);
+    } else if (facts.changedFiles > 0) {
+      items.push("Add tests \u2014 this PR shipped **0** new test files");
+    }
+  }
+  if (facts.regressedAxes.length > 0) {
+    const list = facts.regressedAxes.map((a) => `**${a.label} ${signedPercent(a.delta_percent)}**`).join(" and ");
+    items.push(`Triage the ${list} ${plural(facts.regressedAxes.length, "regression")}, or confirm they're acceptable`);
+  }
+  if (facts.deadCode.length > 0) {
+    const links = facts.deadCode.slice(0, MAX_DEAD_EXPORTS_LINKED).map((s) => symbolLink(ctx, deadSymbol(s), s.file, s.line)).join(", ");
+    const n = facts.deadCode.length;
+    const more = n > MAX_DEAD_EXPORTS_LINKED ? `, *\u2026+${n - MAX_DEAD_EXPORTS_LINKED} more*` : "";
+    items.push(`Remove or wire up ${n} dead ${plural(n, "export")}: ${links}${more}`);
+  }
+  const gaps = facts.reliabilityGaps.length || facts.uncoveredRoots.length;
+  if (gaps > 0) {
+    items.push(`Decide on retry / timeout / fallback for the ${int(gaps)} uncovered entry ${plural(gaps, "point")}`);
+  }
+  return items;
+}
+function correctnessTag(label) {
+  if (!label) return null;
+  const idx = label.indexOf("\u2014");
+  const suffix = (idx >= 0 ? label.slice(idx + 1) : label).trim();
+  if (!suffix || /product correctness/i.test(suffix)) return null;
+  return suffix.charAt(0).toLowerCase() + suffix.slice(1);
+}
+function deadSymbol(s) {
+  const fn = s.function;
+  return fn && fn !== "<module>" && !fn.startsWith("<") ? fn : basename(s.file);
+}
+
+// src/render/lib/bars.ts
+var EIGHTHS = ["", "\u258F", "\u258E", "\u258D", "\u258C", "\u258B", "\u258A", "\u2589"];
+var FULL = "\u2588";
+var EMPTY = "\u2591";
+function magnitudeBar(value, max, cells = 10) {
+  if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(value)) {
+    return EMPTY.repeat(cells);
+  }
+  const frac = clamp(Math.abs(value) / max, 0, 1);
+  const eighths = Math.round(frac * cells * 8);
+  const full = Math.floor(eighths / 8);
+  const rem = eighths % 8;
+  const head = FULL.repeat(full) + EIGHTHS[rem];
+  const used = full + (rem > 0 ? 1 : 0);
+  return head + EMPTY.repeat(Math.max(0, cells - used));
+}
+var SPARK = ["\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
+function sparkline(nums) {
+  const xs = nums.filter((n) => Number.isFinite(n));
+  if (xs.length < 2) return "";
+  const lo = Math.min(...xs);
+  const hi = Math.max(...xs);
+  const span = hi - lo;
+  return xs.map((n) => {
+    const frac = span === 0 ? 1 : (n - lo) / span;
+    const idx = clamp(Math.round(frac * (SPARK.length - 1)), 0, SPARK.length - 1);
+    return SPARK[idx];
+  }).join("");
+}
+function progressBar(done, total, cells = 10) {
+  if (total <= 0) return EMPTY.repeat(cells);
+  const filled = clamp(Math.round(done / total * cells), 0, cells);
+  return FULL.repeat(filled) + EMPTY.repeat(cells - filled);
+}
+
+// src/render/sections/header.ts
+function renderHeader(report, ctx, opts = {}) {
+  const facts = extractFacts(report);
+  const composite = compositeStatus(facts.axes);
+  const verdict = decideVerdict(facts, composite);
+  const effort = reviewEffort(facts);
+  const confidence = mergeConfidence(facts);
+  const blocks = [
+    bottomLine(verdict, facts),
+    badgeRow(facts, verdict, effort, confidence),
+    trendLine(opts.confTrend),
+    subLine(ctx),
+    calloutBlock(verdict, facts, composite, ctx)
+  ];
+  return blocks.filter(Boolean).join("\n\n");
+}
+function subLine(ctx) {
+  const slug = repoSlug(ctx);
+  const repo = slug ? `\u{1F4CD} [\`${slug}\`](https://github.com/${ctx.owner}/${ctx.repo}) &nbsp;\xB7&nbsp; ` : "";
+  return `<sub>${repo}sticky review comment \u2014 re-rendered on every push</sub>`;
+}
+function decideVerdict(facts, composite) {
+  const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
+  if (needsAttention) {
+    const netRegression = facts.overallDirection === "down" && !composite.mixed;
+    return {
+      alert: "WARNING",
+      emoji: netRegression ? "\u{1F534}" : "\u{1F7E1}",
+      tldr: "address before merge",
+      statusMessage: "address before merge",
+      statusColor: COLOR.amber
+    };
+  }
+  if (facts.overallDirection === "up") {
+    return {
+      alert: "TIP",
+      emoji: "\u{1F7E2}",
+      tldr: "looks good \u2014 nothing to gate on",
+      statusMessage: "looks good",
+      statusColor: COLOR.green
+    };
+  }
+  return {
+    alert: "NOTE",
+    emoji: "\u{1F535}",
+    tldr: "advisory review only \u2014 nothing flagged",
+    statusMessage: "advisory",
+    statusColor: COLOR.blue
+  };
+}
+function bottomLine(verdict, facts) {
+  const move = theMove(facts);
+  const win = facts.overallDirection === "up" && facts.overallPercent !== null ? ` ${signedPercent(facts.overallPercent)}` : "";
+  let sentence;
+  if (verdict.alert === "WARNING") {
+    sentence = move ? `**Address before merge** \u2014 ${move}${win ? `, then ship the${win} improvement` : ""}.` : `**Address the regressions below before merge.**`;
+  } else if (verdict.alert === "TIP") {
+    sentence = move ? `**Looks good** \u2014 ${move} before you ship.` : `**Looks good \u2014 ship it.**`;
+  } else {
+    sentence = move ? `**Advisory** \u2014 ${move}.` : `**Advisory only \u2014 nothing flagged.**`;
+  }
+  return `> ${verdict.emoji} ${sentence}`;
+}
+function trendLine(confTrend) {
+  const trend = sparkline(confTrend ?? []);
+  if (!trend) return "";
+  return `<sub>\u{1F6E1}\uFE0F Merge-confidence trend \`${trend}\` (over the last ${confTrend.length} pushes)</sub>`;
+}
+function theMove(facts) {
+  const parts = [];
+  const c = topCorrectness(facts.correctness);
+  if (c) parts.push(`fix the ${correctnessTag(c.category_label) ?? "correctness issue"}`);
+  if (facts.newTestFiles === 0 && facts.locAdded !== null && facts.locAdded > 0) parts.push("add tests");
+  if (parts.length < 2 && facts.regressedAxes.length > 0) {
+    const worst = facts.regressedAxes.reduce((w, a) => a.delta_percent < w.delta_percent ? a : w);
+    parts.push(`confirm the ${worst.label} ${signedPercent(worst.delta_percent)} regression`);
+  }
+  if (parts.length < 2 && facts.deadCode.length > 0) {
+    parts.push(`drop ${facts.deadCode.length} dead ${plural(facts.deadCode.length, "export")}`);
+  }
+  return joinClauses(parts.slice(0, 2));
+}
+function calloutBlock(verdict, facts, composite, ctx) {
+  const tldr = `**TL;DR \u2014** ${narrative(facts, composite).join(" ")}`.trim();
+  const focus = focusLine(facts, ctx);
+  const paras = [tldr];
+  if (focus) paras.push(focus);
+  const lines = [`> [!${verdict.alert}]`];
+  paras.forEach((p, i) => {
+    if (i > 0) lines.push(">");
+    lines.push(`> ${p}`);
+  });
+  return lines.join("\n");
+}
+function focusLine(facts, ctx) {
+  const c = topCorrectness(facts.correctness);
+  if (c) {
+    const loc = fileLink(ctx, c.file, c.line);
+    const tag = correctnessTag(c.category_label) ?? "product-correctness issue";
+    return `\u{1F449} **Look here first:** ${loc} \u2014 ${tag} \xB7 ${confidencePercent(c.confidence)} confidence`;
+  }
+  if (facts.regressedAxes.length > 0) {
+    const worst = facts.regressedAxes.reduce((w, a) => a.delta_percent < w.delta_percent ? a : w);
+    return `\u{1F449} **Look here first:** the **${worst.label} ${signedPercent(worst.delta_percent)}** regression \u2014 confirm it's acceptable or fix it`;
+  }
+  const gaps = facts.reliabilityGaps.length || facts.uncoveredRoots.length;
+  if (gaps > 0) {
+    return `\u{1F449} **Look here first:** **${int(gaps)}** entry ${plural(gaps, "point")} ${plural(gaps, "lacks", "lack")} retry / timeout / fallback or test coverage`;
+  }
+  if (facts.deadCode.length > 0) {
+    const s = facts.deadCode[0];
+    const n = facts.deadCode.length;
+    return `\u{1F449} **Look here first:** **${n}** dead ${plural(n, "export")} in changed files (e.g. ${fileLink(ctx, s.file, s.line)})`;
+  }
+  if (facts.newTestFiles === 0 && facts.locAdded !== null && facts.locAdded > 0) {
+    return `\u{1F449} **Look here first:** **${signedInt(facts.locAdded)} LOC** shipped with **0** tests \u2014 spot-check the risky paths`;
+  }
+  return `\u{1F449} **Looks clean** \u2014 no findings; a quick skim of the **${int(facts.changedFiles)}** changed ${plural(facts.changedFiles, "file")} should do`;
+}
+function topCorrectness(items) {
+  if (items.length === 0) return null;
+  return [...items].sort((a, b) => b.confidence - a.confidence)[0];
+}
+function narrative(facts, composite) {
+  const lines = [];
+  if (facts.overallPercent !== null) {
+    let lead = `Overall drift **${signedPercent(facts.overallPercent)}**`;
+    if (composite.mixed && facts.topImprovement) {
+      lead += ` is led by ${facts.topImprovement.label} (**${signedPercent(facts.topImprovement.delta_percent)}**)`;
+    } else if (facts.overallDirection === "up") {
+      lead += " \u2014 a net improvement";
+    } else if (facts.overallDirection === "down") {
+      lead += " \u2014 a net regression";
+    }
+    lines.push(`${lead}.`);
+  }
+  const subs = [];
+  if (facts.regressedAxes.length > 0) {
+    const list = facts.regressedAxes.map((a) => `**${a.label} ${signedPercent(a.delta_percent)}**`).join(" and ");
+    subs.push(`${list} regressed`);
+  }
+  if (facts.locAdded !== null && facts.locAdded > 0 && facts.newTestFiles === 0) {
+    subs.push(`**${signedInt(facts.locAdded)} LOC** shipped with **0** tests`);
+  }
+  if (facts.correctness.length > 0) {
+    const n = facts.correctness.length;
+    subs.push(`**${n} product-correctness ${plural(n, "issue")}** flagged`);
+  }
+  if (subs.length > 0) lines.push(`Underneath: ${joinClauses(subs)}.`);
+  if (lines.length === 0) {
+    lines.push(
+      `${int(facts.changedFiles)} changed ${plural(facts.changedFiles, "file")}, ${int(facts.affectedRoots)} entry ${plural(facts.affectedRoots, "point")} reached.`
+    );
+  }
+  return lines;
+}
+function badgeRow(facts, verdict, effort, confidence) {
+  const verdictGroup = [
+    badge("Review status", "review", verdict.statusMessage, verdict.statusColor),
+    badge(`Merge confidence ${confidence.score}/5`, "merge confidence", `${confidence.score}/5 \xB7 ${confidence.label}`, confidence.color),
+    badge(`Review effort ${effort.score}/5`, "review effort", `${effort.score}/5 \xB7 ${bareMinutes(effort.minutes)}`, effort.color),
+    badge("Advisory \u2014 does not gate the merge", "advisory", "does not gate", COLOR.grey)
+  ];
+  const sizeGroup = [];
+  if (facts.overallPercent !== null) {
+    const color = facts.overallDirection === "up" ? COLOR.green : facts.overallDirection === "down" ? COLOR.red : COLOR.grey;
+    sizeGroup.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, "drift", signedPercent(facts.overallPercent), color));
+  }
+  sizeGroup.push(badge(`Files ${facts.changedFiles}`, "files", int(facts.changedFiles), COLOR.blue));
+  if (facts.netLoc !== null) {
+    sizeGroup.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, "net LOC", signedInt(facts.netLoc), COLOR.grey));
+  }
+  const findingsGroup = [
+    badge(`Suggestions ${facts.passing.length}`, "suggestions", int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey)
+  ];
+  if (facts.passing.length > 0) {
+    findingsGroup.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, "agent-ready", `${int(facts.passing.length)} fix prompts`, COLOR.brand));
+  }
+  if (facts.totalRisks > 0) {
+    const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
+    findingsGroup.push(badge(`Risks: ${facts.risksToAddress} to address`, "risks", `${facts.risksToAddress} to address`, color));
+  }
+  if (facts.newTestFiles !== null) {
+    const color = facts.newTestFiles > 0 ? COLOR.green : COLOR.red;
+    findingsGroup.push(badge(`New tests: ${facts.newTestFiles}`, "new tests", int(facts.newTestFiles), color));
+  }
+  return [verdictGroup, sizeGroup, findingsGroup].map((group) => group.join(" &nbsp;")).filter(Boolean).join("\n");
+}
+function bareMinutes(minutes) {
+  return minutes.replace(/^≈\s*/, "");
+}
+function badge(alt, label, message, color) {
+  return `![${alt}](https://img.shields.io/badge/${shields(label)}-${shields(message)}-${color}?style=flat-square)`;
+}
+function shields(s) {
+  return encodeURIComponent(s.replace(/_/g, "__").replace(/-/g, "--").replace(/ /g, "_"));
+}
+function joinClauses(parts) {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+// src/render/lib/cohorts.ts
+var TEST_RE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)(\/|$)|\.(test|spec)\.[a-z0-9]+$|_test\.[a-z0-9]+$/i;
+var DOCS_RE = /(^|\/)docs?(\/|$)|\.(md|mdx|rst|adoc|txt)$|(^|\/)(readme|license|changelog|contributing)(\.[a-z0-9]+)?$/i;
+var CONFIG_RE = /\.(ya?ml|json|toml|ini|cfg|conf|lock|env)$|(^|\/)\.[^/]+$|(^|\/)(dockerfile|makefile|\.github|\.config)(\/|$)|\.(gitignore|editorconfig|npmrc|prettierrc|eslintrc)/i;
+function groupCohorts(changedFiles, unreachable = []) {
+  const dead = new Set(unreachable);
+  const byKey = /* @__PURE__ */ new Map();
+  for (const file of changedFiles) {
+    const { key, label, role } = classify(file);
+    let c = byKey.get(key);
+    if (!c) {
+      c = { key, label, role, files: [], unreachable: 0 };
+      byKey.set(key, c);
+    }
+    c.files.push(file);
+    if (dead.has(file)) c.unreachable += 1;
+  }
+  const ROLE_RANK = { source: 0, tests: 1, docs: 2, config: 3 };
+  const cohorts = [...byKey.values()].sort(
+    (a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || b.files.length - a.files.length || a.key.localeCompare(b.key)
+  );
+  const sourceAreas = cohorts.filter((c) => c.role === "source").length;
+  const spread = sourceAreas >= 4 ? "spread" : sourceAreas >= 2 ? "multi" : "focused";
+  return { cohorts, totalFiles: changedFiles.length, spread, sourceAreas };
+}
+function classify(file) {
+  const path = file.replace(/^\.\//, "");
+  if (TEST_RE.test(path)) return { key: "role:tests", label: "Tests", role: "tests" };
+  if (DOCS_RE.test(path)) return { key: "role:docs", label: "Docs", role: "docs" };
+  if (CONFIG_RE.test(path)) return { key: "role:config", label: "Config & CI", role: "config" };
+  const segs = path.split("/").filter(Boolean);
+  if (segs.length <= 1) return { key: "dir:(root)", label: "(repo root)", role: "source" };
+  const depth = segs.length >= 3 ? 2 : segs.length - 1;
+  const dir = segs.slice(0, depth).join("/");
+  return { key: `dir:${dir}`, label: dir, role: "source" };
+}
+
+// src/render/sections/reviewers_guide.ts
+var MAX_KEY_ISSUES = 5;
+var MAX_COHORT_ROWS = 8;
+var MAX_FILES_PER_COHORT = 6;
+var WHY_MAX = 90;
+var VERIFY_BELOW = 0.85;
+function renderReviewersGuide(input) {
+  const { facts, changedFiles, ctx } = input;
+  if (changedFiles.length === 0 && facts.passing.length === 0) return null;
+  const cohorts = groupCohorts(changedFiles, input.unreachable);
+  const lines = ["## \u{1F9ED} Reviewer\u2019s guide", ""];
+  const tripwire = regressionTripwire(facts, input.priorState, input.currentState);
+  if (tripwire) lines.push(tripwire, "");
+  lines.push(atAGlance(facts), "");
+  const clean = cleanChecks(facts);
+  if (clean) lines.push(clean, "");
+  lines.push(focusVerdict(cohorts), "");
+  lines.push(keyIssues(facts, ctx));
+  if (cohorts.totalFiles > 0) lines.push("", changesWalkthrough(cohorts, ctx));
+  return lines.join("\n").trimEnd();
+}
+function regressionTripwire(facts, prior, current) {
+  const priorConf = lastFinite(prior?.confHistory);
+  if (priorConf === null) return null;
+  const curConf = mergeConfidence(facts).score;
+  const confDropped = curConf < priorConf;
+  const priorDrift = typeof prior?.overall === "number" ? prior.overall : null;
+  const curDrift = typeof current.overall === "number" ? current.overall : null;
+  const driftDropped = priorDrift !== null && curDrift !== null && curDrift < priorDrift - 0.05;
+  if (!confDropped && !driftDropped) return null;
+  const bits = [];
+  if (confDropped) bits.push(`merge confidence **${priorConf} \u2192 ${curConf}/5**`);
+  if (driftDropped) bits.push(`overall drift **${signedPercent(priorDrift)} \u2192 ${signedPercent(curDrift)}**`);
+  return [
+    "> [!CAUTION]",
+    `> \u{1F501} **Heads-up \u2014 this push got riskier since the last review:** ${joinClauses2(bits)}. If you already approved, take another look before merge.`
+  ].join("\n");
+}
+function atAGlance(facts) {
+  const reached = facts.perRootCoverage.length;
+  const untested = facts.perRootCoverage.filter((r) => !r.tested).length;
+  const parts = [`\u{1F534} **${int(facts.correctness.length)}** correctness`];
+  if (facts.totalRisks > 0) parts.push(`\u{1F7E1} **${int(facts.risksToAddress)}** gating ${plural(facts.risksToAddress, "risk")}`);
+  parts.push(`\u{1F4A1} **${int(facts.passing.length)}** ${plural(facts.passing.length, "suggestion")}`);
+  if (reached > 0) parts.push(`\u{1F9EA} **${int(untested)}/${int(reached)}** reached ${plural(reached, "root")} untested`);
+  return `**At a glance:** ${parts.join(" \xB7 ")}`;
+}
+function cleanChecks(facts) {
+  const passed = [];
+  if (facts.changedFiles > 0 && facts.correctness.length === 0) passed.push("no product-correctness issues");
+  if (facts.axes.length > 0 && facts.regressedAxes.length === 0) passed.push("no value-axis regressions");
+  if (facts.totalRisks > 0 && facts.risksToAddress === 0) passed.push("no gating risks");
+  if (facts.perRootCoverage.length > 0 && facts.perRootCoverage.every((r) => r.tested)) {
+    passed.push(`all ${int(facts.perRootCoverage.length)} reached entry points tested`);
+  }
+  if (facts.passing.length > 0 && facts.deadCode.length === 0) passed.push("no dead code in changed files");
+  if (facts.newTestFiles !== null && facts.newTestFiles > 0) passed.push(`${int(facts.newTestFiles)} new test ${plural(facts.newTestFiles, "file")} added`);
+  if (passed.length === 0) return null;
+  return `\u2705 **Clean:** ${passed.slice(0, 4).join(" \xB7 ")}.`;
+}
+function focusVerdict(cohorts) {
+  if (cohorts.spread === "spread") {
+    const areas = cohorts.cohorts.filter((c) => c.role === "source").slice(0, 4).map((c) => `\`${escapeCell(c.label)}\``).join(", ");
+    return `\u{1F500} **Consider splitting** \u2014 this PR spans **${cohorts.sourceAreas}** source areas (${areas}\u2026); smaller, single-purpose PRs review faster and revert cleaner.`;
+  }
+  if (cohorts.sourceAreas === 1) {
+    return "\u{1F3AF} **Focused PR** \u2014 the code changes are confined to a single area.";
+  }
+  if (cohorts.sourceAreas === 0) {
+    return "\u{1F4C4} **No source changes** \u2014 this PR touches only tests, docs, or config.";
+  }
+  return `\u{1F9ED} Touches **${cohorts.sourceAreas}** source areas across **${int(cohorts.totalFiles)}** files.`;
+}
+function keyIssues(facts, ctx) {
+  const correctness = [...facts.correctness].sort((a, b) => b.confidence - a.confidence);
+  let rows = correctness.slice(0, MAX_KEY_ISSUES);
+  let advisory = false;
+  if (rows.length === 0) {
+    rows = [...facts.passing].sort((a, b) => b.confidence - a.confidence).slice(0, 3);
+    advisory = rows.length > 0;
+  }
+  if (rows.length === 0) {
+    return [
+      "### \u{1F511} Key issues to review",
+      "",
+      "\u2705 No must-review code issues flagged. Skim the **Changes** map below, then check **Blast radius** for coverage."
+    ].join("\n");
+  }
+  const heading = advisory ? "### \u{1F511} Key issues to review <sub>(no must-fix \u2014 top advisory items)</sub>" : `### \u{1F511} Key issues to review (${rows.length})`;
+  const out = [heading, "", "| Issue | Where | Why it matters |", "|---|---|---|"];
+  for (const s of rows) {
+    out.push(`| ${issueLabel(s)} | ${where(s, ctx)} | ${why(s)} |`);
+  }
+  return out.join("\n");
+}
+function issueLabel(s) {
+  const emoji = s.category === "B" ? "\u{1F7E1}" : s.category === "C" ? "\u{1F535}" : "\u26AA";
+  const suffix = labelSuffix(s.category_label);
+  const name = suffix ?? (s.category === "B" ? "Product correctness" : s.category === "C" ? "Framework misuse" : "Optimization");
+  return `${emoji} ${escapeCell(name)}`;
+}
+function where(s, ctx) {
+  const line = typeof s.line === "number" ? s.line : void 0;
+  const label = escapeCell(typeof line === "number" ? `${basenameOf(s.file)}:${line}` : s.file);
+  return fileLink(ctx, s.file, line, label);
+}
+function why(s) {
+  const raw = s.why_it_matters.trim();
+  const dash = raw.indexOf(" \u2014 ");
+  const reason = dash >= 0 ? raw.slice(dash + 3).trim() : raw;
+  const verify = s.confidence < VERIFY_BELOW ? ` <sub>(${confidencePercent(s.confidence)} \u2014 verify)</sub>` : "";
+  return `${escapeCell(truncate(firstSentence(reason), WHY_MAX))}${verify}`;
+}
+function changesWalkthrough(cohorts, ctx) {
+  const summary2 = `\u{1F5C2} Changes \u2014 ${cohorts.cohorts.length} ${plural(cohorts.cohorts.length, "area")} \xB7 ${int(cohorts.totalFiles)} files`;
+  const out = ["<details>", `<summary>${summary2}</summary>`, "", "| Area | Files | Notes |", "|---|---|---|"];
+  for (const c of cohorts.cohorts.slice(0, MAX_COHORT_ROWS)) {
+    const links = c.files.slice(0, MAX_FILES_PER_COHORT).map((f) => fileLink(ctx, f, void 0, escapeCell(basenameOf(f)))).join(" \xB7 ");
+    const more = c.files.length > MAX_FILES_PER_COHORT ? ` *\u2026+${c.files.length - MAX_FILES_PER_COHORT}*` : "";
+    const count = `**${c.files.length}** ${plural(c.files.length, "file")}`;
+    const note = c.unreachable > 0 ? `\u26A0\uFE0F ${c.unreachable} unreachable` : "\u2014";
+    out.push(`| **${escapeCell(c.label)}** | ${count} \xB7 ${links}${more} | ${note} |`);
+  }
+  if (cohorts.cohorts.length > MAX_COHORT_ROWS) {
+    out.push(`| *\u2026+${cohorts.cohorts.length - MAX_COHORT_ROWS} more areas* | | |`);
+  }
+  out.push("", "</details>");
+  return out.join("\n");
+}
+function labelSuffix(label) {
+  if (!label) return null;
+  const idx = label.indexOf("\u2014");
+  const suffix = (idx >= 0 ? label.slice(idx + 1) : "").trim();
+  return suffix || null;
+}
+function firstSentence(s) {
+  const t = s.trim();
+  const m = t.match(/^(.*?[.!?])(\s|$)/);
+  if (!m) return t;
+  const candidate = m[1];
+  const abbrev = /\b(?:e\.g|i\.e|etc|vs|cf|al|approx|no|fig|eq|sec|ch|st|mr|mrs|dr)\.$/i;
+  if (candidate.length < 16 || abbrev.test(candidate)) return t;
+  return candidate;
+}
+function truncate(s, max) {
+  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}\u2026` : s;
+}
+function escapeCell(s) {
+  return s.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").replace(/`/g, "'").replace(/\s+/g, " ").trim();
+}
+function basenameOf(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+function lastFinite(xs) {
+  if (!Array.isArray(xs)) return null;
+  for (let i = xs.length - 1; i >= 0; i--) {
+    if (Number.isFinite(xs[i])) return xs[i];
+  }
+  return null;
+}
+function joinClauses2(parts) {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+// src/render/sections/value_card.ts
+var AXIS_SHORT = {
+  money: "money",
+  customer: "customer",
+  runtime: "runtime",
+  runtime_ux: "runtime UX"
+};
+function renderValueCard(input) {
+  const { counts, card } = input;
+  const axes = card?.axes ?? [];
+  if (axes.length === 0 && !counts) return null;
+  const lines = ["## \u{1F4CA} Business value", ""];
+  if (axes.length > 0) {
+    lines.push(dashboardTable(axes, input.overallPercent), "");
+    lines.push(barsCaption(axes), "");
+    lines.push(sinceLastReviewLine(input.priorState ?? null, input.currentState), "");
+  }
+  if (card?.bottom_line) {
+    const text = card.bottom_line.replace(/^\s*Bottom\s+line\s*[—-]\s*/i, "");
+    lines.push(`> **Bottom line \u2014** ${text}`, "");
+  }
+  const highlights = highlightsLine(counts);
+  if (highlights) lines.push(highlights, "");
+  if (axes.length > 0) {
+    lines.push(howComputed(axes));
+  }
+  return lines.join("\n").trimEnd();
+}
+function dashboardTable(axes, overallPercent) {
+  const max = maxAbsDelta(axes);
+  const composite = compositeStatus(axes);
+  const compositePct = typeof overallPercent === "number" ? overallPercent : mean(axes.map((a) => a.delta_percent));
+  const width = Math.round(100 / axes.length);
+  const headerCells = axes.map((a) => `<th align="center" width="${width}%" scope="col">${escapeHtml(a.label)}</th>`);
+  const valueCells = axes.map(
+    (a) => `<td align="center"><strong>${directionEmoji(a.direction)} ${signedPercent(a.delta_percent)}</strong><br><sub>${directionWord(a.direction)}</sub></td>`
+  );
+  const barCells = axes.map((a) => `<td align="center"><code>${magnitudeBar(a.delta_percent, max)}</code></td>`);
+  const confCells = axes.map((a) => `<td align="center"><sub>confidence&nbsp;\xB7&nbsp;<code>${a.confidence}</code></sub></td>`);
+  return [
+    "<table>",
+    "<caption>PR value drift \u2014 composite &amp; per-axis (\u0394% vs. base)</caption>",
+    "<tr>",
+    `<td colspan="${axes.length}" align="center"><strong>Composite&nbsp; ${composite.emoji} ${signedPercent(compositePct)}</strong> &nbsp;<code>${magnitudeBar(compositePct, max)}</code>&nbsp; <sub>${compositeNote(axes, composite.mixed, composite.label)}</sub></td>`,
+    "</tr>",
+    `<tr>${headerCells.join("")}</tr>`,
+    `<tr>${valueCells.join("")}</tr>`,
+    `<tr>${barCells.join("")}</tr>`,
+    `<tr>${confCells.join("")}</tr>`,
+    "</table>"
+  ].join("\n");
+}
+function compositeNote(axes, mixed, label) {
+  const base = `mean of the ${axes.length === 1 ? "axis" : `${axes.length} axes`}`;
+  if (mixed) {
+    const up = axes.filter((a) => a.direction === "up").reduce(pickMaxAbs, void 0);
+    const down = axes.filter((a) => a.direction === "down").reduce(pickMaxAbs, void 0);
+    if (up && down) {
+      return `${base} \u2014 <strong>mixed</strong>: a ${signedPercent(up.delta_percent)} ${AXIS_SHORT[up.name]} gain masks a ${signedPercent(down.delta_percent)} ${AXIS_SHORT[down.name]} regression`;
+    }
+    return `${base} \u2014 <strong>mixed</strong>`;
+  }
+  return `${base} \u2014 <strong>${label}</strong>`;
+}
+function barsCaption(axes) {
+  const top = axes.reduce(pickMaxAbs, void 0);
+  const ref = top ? ` (${AXIS_SHORT[top.name]}, ${magnitudePercent(top.delta_percent)})` : "";
+  return `<sub>Bars show |\u0394| relative to the largest axis${ref}, \u215B-block precision. \u{1F534} regression \xB7 \u{1F7E2} improvement \xB7 \u26AA flat.</sub>`;
+}
+function sinceLastReviewLine(prior, current) {
+  const deltas = sinceLastReview(prior, current);
+  if (deltas) {
+    return `> \u{1F501} **Since last review** &nbsp; ${deltas} <sub>(percentage points vs. the previous push)</sub>`;
+  }
+  return "> \u{1F501} **Since last review** &nbsp; _First run on this PR \u2014 no prior snapshot to diff. Each later push re-renders this sticky comment and fills this line with per-axis deltas (e.g. \u{1F4B0} \u25B2 +2.1pp \xB7 \u2699\uFE0F \u25BC \u22121.0pp)._";
+}
+function highlightsLine(counts) {
+  if (!counts) return null;
+  const f = counts.features?.value ?? 0;
+  const b = counts.bug_fixes?.value ?? 0;
+  const i = counts.issues_resolved?.value ?? 0;
+  const t = counts.new_test_files?.value ?? 0;
+  return `**Highlights:** \u2728 **${f}** new features &nbsp;\xB7&nbsp; \u{1F41B} **${b}** bug fixes &nbsp;\xB7&nbsp; \u{1F4CB} **${i}** issues resolved &nbsp;\xB7&nbsp; \u{1F9EA} **${t}** new test files`;
+}
+function howComputed(axes) {
+  const inner = axes.map(renderAxisDetail).join("\n\n");
+  return [
+    "<details>",
+    "<summary>\u{1F4D0} How each axis was computed \u2014 expand an axis</summary>",
+    "",
+    inner,
+    "",
+    "</details>"
+  ].join("\n");
+}
+function renderAxisDetail(a) {
+  const parts = [
+    "<details>",
+    `<summary>${escapeHtml(a.label)} \xB7 <code>${signedPercent(a.delta_percent)}</code> \xB7 confidence <code>${a.confidence}</code></summary>`,
+    ""
+  ];
+  if (a.subtitle) parts.push(`*${a.subtitle}*`, "");
+  if (a.formula) parts.push(fencedBlock(a.formula), "");
+  if (a.kv && a.kv.length) {
+    parts.push(a.kv.map((kv) => `- ${kv.label}: **${kv.value}**`).join("\n"), "");
+  }
+  if (a.source) {
+    const linked = a.source_link ? `[${a.source}](${a.source_link})` : a.source;
+    parts.push(`**Source:** ${linked}`, "");
+  }
+  if (a.inputs && Object.keys(a.inputs).length) {
+    const inputStr = Object.entries(a.inputs).map(([k, v]) => `\`${k}=${formatInput(v)}\``).join(" \xB7 ");
+    parts.push(`**Key inputs:** ${inputStr}`, "");
+  }
+  if (a.additional_sources && a.additional_sources.length) {
+    const refs = a.additional_sources.map((r) => `[${r.title ?? r.url}](${r.url})`).join(" \xB7 ");
+    parts.push(`**More:** ${refs}`, "");
+  }
+  parts.push("</details>");
+  return parts.join("\n");
+}
+function pickMaxAbs(best, a) {
+  return !best || Math.abs(a.delta_percent) > Math.abs(best.delta_percent) ? a : best;
+}
+function mean(ns) {
+  return ns.length ? ns.reduce((s, n) => s + n, 0) / ns.length : 0;
+}
+function formatInput(v) {
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  return String(v);
+}
+
+// src/render/lib/agent_prompt.ts
+var CONFIDENCE_GUARDRAIL = 0.85;
+var MAX_CODE_LINES = 30;
+var CATEGORY_CONSTRAINTS = {
+  A: [
+    "If the symbol is genuinely unused, delete it and any now-dead imports; otherwise wire it to a real caller.",
+    "Touch only this file and its direct imports \u2014 do not refactor unrelated code."
+  ],
+  B: [
+    "Preserve the public signature and the observable behaviour for valid inputs.",
+    "Do not add new dependencies, and do not modify existing tests."
+  ],
+  C: [
+    "Use the framework's idiomatic API; keep the public signature unchanged.",
+    "Do not add new dependencies, and do not modify existing tests."
+  ]
+};
+var CATEGORY_ACCEPTANCE = {
+  A: "The symbol is removed (or reached by a real entry point) and the project still builds.",
+  B: "Valid inputs behave exactly as before, and the flagged failure mode can no longer occur.",
+  C: "The framework API is used correctly and existing behaviour is preserved."
+};
+function buildAgentPrompt(s, ctx) {
+  const loc = locLabel(s);
+  const lines = [
+    "You are fixing ONE finding from a static-analysis PR review. Work only in the file below.",
+    "",
+    `FILE: ${loc}`
+  ];
+  const permalink = filePermalink(s, ctx);
+  if (permalink) lines.push(permalink);
+  lines.push("", "PROBLEM:", s.why_it_matters.trim());
+  const doThis = s.remediation_hint?.trim() || s.llm_prompt_hint?.trim() || s.category_label?.trim();
+  if (doThis) lines.push("", "DO THIS:", doThis);
+  const code = currentCode(s.diff?.before_lines);
+  if (code) lines.push("", "CURRENT CODE:", code);
+  lines.push("", "CONSTRAINTS:", ...CATEGORY_CONSTRAINTS[s.category].map((c) => `- ${c}`), "- Keep the diff minimal; do not reformat untouched code.");
+  lines.push("", "ACCEPTANCE:", `- ${CATEGORY_ACCEPTANCE[s.category]}`, "- Re-run the build/linter; this finding should no longer trigger.");
+  if (s.confidence < CONFIDENCE_GUARDRAIL) {
+    lines.push(
+      "",
+      `NOTE: Drift is ~${confidencePercent(s.confidence)} confident in this finding. If the code is actually correct, STOP and explain why instead of changing it.`
+    );
+  }
+  return lines.join("\n");
+}
+function buildFixAllPrompt(sorted, ctx) {
+  if (sorted.length < 2) return null;
+  const items = sorted.map((s, i) => {
+    const tag = labelTag(s);
+    const ask = (s.remediation_hint?.trim() || s.llm_prompt_hint?.trim() || s.why_it_matters.trim()).replace(/\s+/g, " ");
+    const lowConf = s.confidence < CONFIDENCE_GUARDRAIL ? ` (~${confidencePercent(s.confidence)} confident \u2014 verify before changing)` : "";
+    return `${i + 1}. [${tag}] ${locLabel(s)} \u2014 ${truncate2(ask, 200)}${lowConf}`;
+  });
+  return [
+    `You are resolving the ${sorted.length} findings from a Drift PR review. Fix them in the order listed, one minimal commit each, then run the build and the test suite.`,
+    "",
+    ...items,
+    "",
+    "GLOBAL CONSTRAINTS:",
+    "- Minimal diffs; do not reformat untouched code. No new dependencies. Do not modify existing tests unless a test encodes the bug.",
+    "- After each fix, re-run the build/linter and the tests before moving on.",
+    "- If you believe any finding is a false positive, STOP and report it rather than changing code you think is correct."
+  ].join("\n");
+}
+function locLabel(s) {
+  const range = lineRange(s.diff?.before_lines ?? s.diff?.after_lines);
+  if (range && range[0] !== range[1]) return `${s.file} (lines ${range[0]}\u2013${range[1]})`;
+  if (typeof s.line === "number") return `${s.file}:${s.line}`;
+  if (range) return `${s.file}:${range[0]}`;
+  return s.file;
+}
+function filePermalink(s, ctx) {
+  const range = lineRange(s.diff?.before_lines ?? s.diff?.after_lines);
+  const start = range ? range[0] : s.line;
+  const end = range ? range[1] : s.line;
+  if (typeof start !== "number") return null;
+  return permalinkUrl(ctx, s.file, start, typeof end === "number" ? end : start);
+}
+function currentCode(before) {
+  if (!before?.length) return null;
+  const code = before.map((l) => l.code).slice(0, MAX_CODE_LINES).join("\n").trimEnd();
+  return code || null;
+}
+function labelTag(s) {
+  const label = s.category_label?.split("\u2014").pop()?.trim();
+  if (label) return label;
+  return s.category === "B" ? "Product correctness" : s.category === "C" ? "Framework misuse" : "Optimization";
+}
+function lineRange(lines) {
+  const nums = (lines ?? []).map((l) => l.line_number).filter((n) => typeof n === "number");
+  if (nums.length === 0) return null;
+  return [Math.min(...nums), Math.max(...nums)];
+}
+function truncate2(s, max) {
+  return s.length > max ? `${s.slice(0, max - 1)}\u2026` : s;
+}
+
+// src/render/sections/suggestions.ts
+var CATEGORY = {
+  A: { badge: "\u{1F150}", name: "Optimization" },
+  B: { badge: "\u{1F151}", name: "Product correctness" },
+  C: { badge: "\u{1F152}", name: "Framework misuse" }
+};
+var DEFAULT_MAX_SUGGESTIONS = 10;
+var MAX_SHOWN = 20;
+function resolveMax(max) {
+  if (max === void 0 || !Number.isFinite(max) || max < 1) return DEFAULT_MAX_SUGGESTIONS;
+  return Math.floor(max);
+}
+function renderSuggestions(suggestions, ctx, opts = {}) {
+  const passing = (suggestions ?? []).filter(passesQualityBar);
+  if (passing.length === 0) return null;
+  const aiSugg = passing.filter((s) => s.source === "ai");
+  const detSugg = passing.filter((s) => s.source !== "ai");
+  const sorted = [...detSugg].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
+  const detTotal = sorted.length;
+  const total = passing.length;
+  const kept = sorted.slice(0, resolveMax(opts.max));
+  const correctness = passing.filter((s) => s.category === "B").length;
+  const lines = [`## \u26A0\uFE0F Code suggestions (${total})`, ""];
+  if (correctness > 0) {
+    lines.push(
+      "> [!CAUTION]",
+      `> **${correctness} product-correctness ${plural(correctness, "issue")}** ${correctness === 1 ? "was" : "were"} flagged. ${correctness === 1 ? "It's" : "They're"} surfaced as ${plural(correctness, "a warning", "warnings")} and ${correctness === 1 ? "does" : "do"} **not** fail the check \u2014 but ${correctness === 1 ? "it" : "they"} should be resolved before merge.`,
+      ""
+    );
+  }
+  const shown = kept.slice(0, MAX_SHOWN);
+  if (kept.length > 0) {
+    lines.push(
+      "<sub>**Priority reflects impact, not certainty** \u2014 a 100%-confident dead-code removal is still low-priority cleanup; a product-correctness finding matters more.</sub>",
+      ""
+    );
+    lines.push("| Priority | Finding | Location | Confidence |", "|:--:|---|---|---:|");
+    for (const s of kept) {
+      const p = priority(s);
+      lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
+    }
+    lines.push("");
+    if (detTotal > kept.length) {
+      const more = detTotal - kept.length;
+      lines.push(`_\u2026+${more} more ${plural(more, "suggestion")} not shown \u2014 rendering the top ${kept.length} by priority._`, "");
+    }
+    for (const s of shown) lines.push(renderDetail(s, ctx), "");
+  }
+  if (aiSugg.length > 0) {
+    lines.push(
+      `### \u{1F916} AI-refined code suggestions (${aiSugg.length})`,
+      "",
+      "<sub>Model-generated patches grounded in the scanner findings \u2014 each carries an **Apply** button on its matching inline review comment.</sub>",
+      ""
+    );
+    for (const s of aiSugg) lines.push(renderAIDetail(s, ctx), "");
+  }
+  const fixAllItems = [...shown, ...aiSugg];
+  const fixAll = buildFixAllPrompt(fixAllItems, ctx);
+  if (fixAll) {
+    lines.push(
+      "<details>",
+      `<summary>\u{1F916} <strong>Fix-All handoff</strong> \u2014 one prompt that dispatches all ${fixAllItems.length} findings</summary>`,
+      "",
+      fencedBlock(fixAll, "text"),
+      "",
+      "</details>"
+    );
+  }
+  return lines.join("\n").trimEnd();
+}
+function priority(s) {
+  const sev = (s.severity ?? "").toLowerCase();
+  if (sev === "critical" || sev === "high") return { emoji: "\u{1F534}", label: "High", rank: 0 };
+  if (s.category === "B" || s.category === "C") return { emoji: "\u{1F7E1}", label: "Medium", rank: 1 };
+  return { emoji: "\u26AA", label: "Low", rank: 2 };
+}
+function findingLabel(s) {
+  const cat = CATEGORY[s.category];
+  const suffix = labelSuffix2(s.category_label);
+  return suffix ? `${cat.badge} ${suffix}` : `${cat.badge} ${cat.name}`;
+}
+function labelSuffix2(label) {
+  if (!label) return null;
+  const idx = label.indexOf("\u2014");
+  const suffix = (idx >= 0 ? label.slice(idx + 1) : "").trim();
+  return suffix || null;
+}
+function renderDetail(s, ctx) {
+  const cat = CATEGORY[s.category];
+  const suffix = labelSuffix2(s.category_label);
+  const title = suffix && suffix.toLowerCase() !== cat.name.toLowerCase() ? `${cat.name} \xB7 ${suffix.toLowerCase()}` : cat.name;
+  const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
+  const pct = confidencePercent(s.confidence);
+  const out = [
+    "<details>",
+    // `title` (from category_label) and `loc` (file:line) are PR-controlled —
+    // file paths can legally contain `<`/`>` on Linux/macOS, so a path like
+    // `src/</summary><details>evil.ts` would otherwise close the <summary>
+    // early and inject a phantom <details>, breaking the disclosure and
+    // unbalancing the comment's tags. Escape both before embedding in the
+    // structural <summary>/<code>. (`cat.badge` and `pct` are static/computed.)
+    `<summary>${cat.badge} <strong>${escapeHtml(title)}</strong> \xB7 <code>${escapeHtml(loc)}</code> \xB7 ${pct}</summary>`,
+    "",
+    s.why_it_matters,
+    ""
+  ];
+  out.push(...codeContext(s, ctx));
+  if (s.remediation_hint && !s.diff?.after_lines?.length) {
+    out.push(`**Fix:** ${s.remediation_hint}`, "");
+  }
+  const ref = s.references?.[0];
+  if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, "");
+  if (s.file) {
+    out.push(
+      "<details>",
+      "<summary>\u{1F916} Copy this prompt for your AI agent <sub>(Claude Code \xB7 Cursor \xB7 Copilot)</sub></summary>",
+      "",
+      fencedBlock(buildAgentPrompt(s, ctx), "text"),
+      "",
+      "</details>",
+      ""
+    );
+  }
+  out.push("</details>");
+  return out.join("\n");
+}
+function renderAIDetail(s, ctx) {
+  const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
+  const pct = confidencePercent(s.confidence);
+  const modelTag = s.model ? ` \xB7 <code>${escapeHtml(s.model)}</code>` : "";
+  const out = [
+    "<details open>",
+    `<summary>\u{1F916} <strong>code suggestion</strong> \xB7 <code>${escapeHtml(loc)}</code> \xB7 ${pct}${modelTag}</summary>`,
+    ""
+  ];
+  if (s.summary) out.push(`**What** \u2014 ${s.summary}`, "");
+  out.push(`**Why it matters** \u2014 ${s.why_it_matters}`, "");
+  const unified = s.diff?.unified;
+  if (unified) {
+    out.push("**Suggested change:**", "", fencedBlock(unified, "diff"), "");
+  } else {
+    const after = s.diff?.after_lines ?? [];
+    if (after.length) {
+      out.push("**Suggested change:**", "", fencedBlock(after.map((l) => `+ ${l.code}`).join("\n"), "diff"), "");
+    }
+  }
+  const ref = s.references?.[0];
+  if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, "");
+  if (s.file) {
+    out.push(
+      "<details>",
+      "<summary>\u{1F916} Copy this prompt for your AI agent <sub>(Claude Code \xB7 Cursor \xB7 Copilot)</sub></summary>",
+      "",
+      fencedBlock(buildAgentPrompt(s, ctx), "text"),
+      "",
+      "</details>",
+      ""
+    );
+  }
+  out.push("</details>");
+  return out.join("\n");
+}
+function codeContext(s, ctx) {
+  const before = s.diff?.before_lines ?? [];
+  const after = s.diff?.after_lines ?? [];
+  if (after.length > 0) {
+    const body = [
+      ...before.filter((l) => l.kind !== "add").map(prefix),
+      ...after.map((l) => `+ ${l.code}`)
+    ].join("\n");
+    return ["**Suggested fix:**", "", fencedBlock(body, "diff"), ""];
+  }
+  if (before.length > 0) {
+    const range = lineRange2(before);
+    const url = range ? snippetPermalink(ctx, s.file, range[0], range[1]) : null;
+    if (url) {
+      return [
+        "**Current code** \u2014 a bare commit-pinned permalink auto-expands into an inline, syntax-highlighted snippet in the PR (shown as a link until then):",
+        "",
+        url,
+        ""
+      ];
+    }
+    return ["**Current code:**", "", fencedBlock(before.map((l) => l.code).join("\n"), s.language ?? ""), ""];
+  }
+  return [];
+}
+function prefix(l) {
+  if (l.kind === "del") return `- ${l.code}`;
+  return `  ${l.code}`;
+}
+function lineRange2(lines) {
+  const nums = lines.map((l) => l.line_number).filter((n) => typeof n === "number");
+  if (nums.length === 0) return null;
+  return [Math.min(...nums), Math.max(...nums)];
+}
+function cell(s) {
+  return s.replace(/\|/g, "\\|");
+}
+
+// src/render/sections/risks.ts
+var MAX_RISKS = 3;
+var QUADRANT = {
+  act_before_merge: { emoji: "\u{1F534}", label: "Act before merge", rank: 0 },
+  monitor_closely: { emoji: "\u{1F7E1}", label: "Monitor closely", rank: 1 },
+  document_and_ship: { emoji: "\u{1F535}", label: "Document & ship", rank: 2 },
+  acceptable: { emoji: "\u{1F7E2}", label: "Acceptable", rank: 3 }
+};
+function renderRisks(risks) {
+  const items = risks?.items ?? [];
+  if (items.length === 0 && !risks?.mermaid) return null;
+  const lines = ["## \u{1F6F0} Risks", ""];
+  if (items.length > 0) {
+    const act = items.filter((r) => r.quadrant === "act_before_merge").length;
+    lines.push(intro(act, items.length), "");
+    lines.push("| Risk | Likelihood | Severity | Quadrant |", "|---|---:|---:|---|");
+    const ranked = sortByImpact(items);
+    for (const r of ranked.slice(0, MAX_RISKS)) {
+      lines.push(`| ${cell2(r.label)} | ${prob(r.likelihood)} | ${prob(r.severity)} | ${quadrant(r)} |`);
+    }
+    if (ranked.length > MAX_RISKS) {
+      const more = ranked.length - MAX_RISKS;
+      lines.push(`| *\u2026+${more} lower-impact ${plural(more, "risk")}* | | | *see the quadrant map* |`);
+    }
+    lines.push("");
+  }
+  if (risks?.mermaid) {
+    lines.push(
+      "<details>",
+      "<summary>\u{1F5FA} Risk quadrant map (severity \u2191 \xD7 likelihood \u2192)</summary>",
+      "",
+      "```mermaid",
+      risks.mermaid,
+      "```",
+      "",
+      "</details>"
+    );
+  }
+  return lines.join("\n").trimEnd();
+}
+function intro(act, total) {
+  if (act === 0) {
+    return `**0 of ${total}** ${plural(total, "risk")} land in *Act before merge* \u2014 none gate the merge. Lower-impact ${plural(total, "risk")} below:`;
+  }
+  return `**${act} of ${total}** ${plural(total, "risk")} land in *Act before merge*. Highest-priority first:`;
+}
+function sortByImpact(items) {
+  return [...items].sort(
+    (a, b) => rank(a) - rank(b) || b.severity - a.severity || b.likelihood - a.likelihood || a.label.localeCompare(b.label)
+  );
+}
+function rank(r) {
+  return r.quadrant ? QUADRANT[r.quadrant].rank : 99;
+}
+function quadrant(r) {
+  if (!r.quadrant) return "\u2014";
+  const q = QUADRANT[r.quadrant];
+  return `${q.emoji} ${q.label}`;
+}
+function prob(p) {
+  return p.toFixed(2);
+}
+function cell2(s) {
+  return s.replace(/\|/g, "\\|");
+}
+
+// src/render/sections/architecture.ts
+var MAX_UNREACHABLE_LINKED = 8;
+function renderArchitecture(input) {
+  const { prScope, arch: arch2, business, keyFiles, ctx } = input;
+  const unreachable = prScope.unreachable_changes;
+  const dataStructures = arch2?.data_structures ?? [];
+  const nothing = unreachable.length === 0 && dataStructures.length === 0 && !archMermaid(arch2) && !business?.mermaid && !keyFiles?.mermaid;
+  if (nothing) return null;
+  const lines = ["## \u{1F3D7} Architecture", ""];
+  if (unreachable.length > 0) {
+    const links = unreachable.slice(0, MAX_UNREACHABLE_LINKED).map((f) => fileLink(ctx, f, void 0, basenameOf2(f)));
+    const more = unreachable.length > MAX_UNREACHABLE_LINKED ? `, *\u2026+${unreachable.length - MAX_UNREACHABLE_LINKED} more*` : "";
+    const note = (input.deadCodeCount ?? 0) > 0 ? " (These match the dead-code suggestions below.)" : "";
+    lines.push(
+      `> **${int(unreachable.length)} changed ${plural(unreachable.length, "file")} ${unreachable.length === 1 ? "is" : "are"} unreachable** from any entry point \u2014 likely dead code, config, or tests: ${links.join(", ")}${more}.${note}`,
+      ""
+    );
+  }
+  const details = [];
+  const pair = beforeAfterPair(arch2);
+  if (pair) {
+    const anonNote = "> Nodes labelled `\u2039anonymous@N\u203A` are anonymous functions/callbacks the profiler could not name; treat them as call sites within their module.";
+    const inner = [];
+    if ("combined" in pair) {
+      inner.push(anonNote, "", "```mermaid", pair.combined, "```");
+    } else {
+      inner.push(
+        "> **\u{1F534} BEFORE** reconstructs the call graph as it existed pre-PR (`status=added` files skipped, `status=removed` files appear as red placeholder cards). **\u{1F7E2} AFTER** shows the current call graph with file-status colouring (\u{1F7E9} added, \u{1F7E7} modified/renamed).",
+        anonNote,
+        "",
+        "**\u{1F534} BEFORE \u2014 what the code was:**",
+        "",
+        "```mermaid",
+        pair.before,
+        "```",
+        "",
+        "**\u{1F7E2} AFTER \u2014 what the code is now:**",
+        "",
+        "```mermaid",
+        pair.after,
+        "```"
+      );
+    }
+    inner.push("", "[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)");
+    details.push(detailsBlock("\u{1F9ED} Architecture flow diagram \u2014 before vs after", inner));
+  }
+  if (business?.mermaid) {
+    const inner = [];
+    if (business.summary) inner.push(`> **Summary \u2014** ${business.summary}`, "");
+    inner.push("```mermaid", business.mermaid, "```");
+    details.push(detailsBlock("\u{1F9E0} Business-logic reach diagram", inner));
+  }
+  if (dataStructures.length > 0) {
+    details.push(detailsBlock(`\u{1F4E6} Data structures touched (${dataStructures.length})`, dataStructureTable(dataStructures)));
+  }
+  if (keyFiles?.mermaid) {
+    details.push(detailsBlock("\u{1F5C2} Key files \u2014 hot-touch mindmap", ["```mermaid", keyFiles.mermaid, "```"]));
+  }
+  if (details.length > 0) lines.push(details.join("\n\n"));
+  return lines.join("\n").trimEnd();
+}
+function dataStructureTable(ds) {
+  const lines = ["| Name | Kind | Language | Methods in scope |", "|---|:--:|---|---:|"];
+  for (const d of ds) {
+    const methods = methodCount(d.description);
+    lines.push(`| \`${escapeHtml(d.name)}\` | ${d.kind} | ${d.scope ?? "\u2014"} | ${methods === null ? "\u2014" : int(methods)} |`);
+  }
+  return lines;
+}
+function methodCount(desc) {
+  const m = (desc ?? "").match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function archMermaid(arch2) {
+  return arch2?.combined_mermaid ?? arch2?.after_mermaid ?? arch2?.before_mermaid ?? null;
+}
+function beforeAfterPair(arch2) {
+  const before = arch2?.before_mermaid?.trim();
+  const after = arch2?.after_mermaid?.trim();
+  if (before && after) return { before, after };
+  const combined = arch2?.combined_mermaid?.trim() ?? after ?? before;
+  if (combined) return { combined };
+  return null;
+}
+function detailsBlock(summary2, inner) {
+  return ["<details>", `<summary>${summary2}</summary>`, "", ...inner, "", "</details>"].join("\n");
+}
+function basenameOf2(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+
+// src/render/sections/blast_radius.ts
+var MAX_ROWS = 15;
+var MAX_TESTLIST = 10;
+var MAX_GUARDS = 3;
+function renderBlastRadius(facts) {
+  const rows = facts.perRootCoverage;
+  if (rows.length === 0) return null;
+  const untested = rows.filter((r) => !r.tested);
+  const unguarded = rows.filter((r) => r.missing.length > 0);
+  if (untested.length === 0 && unguarded.length === 0) return null;
+  const sorted = [...rows].sort(
+    (a, b) => Number(a.tested) - Number(b.tested) || b.missing.length - a.missing.length || a.root.localeCompare(b.root)
+  );
+  const lines = ["## \u{1F3AF} Blast radius & coverage", ""];
+  const summary2 = `**${int(rows.length)}** entry ${plural(rows.length, "point")} reach this change \xB7 **${int(untested.length)}** untested \xB7 **${int(unguarded.length)}** lack reliability guards.`;
+  lines.push(summary2, "");
+  lines.push("| Entry point | Tested | Missing guards |", "|---|:--:|---|");
+  for (const r of sorted.slice(0, MAX_ROWS)) {
+    const tested = r.tested ? "\u{1F7E2} yes" : "\u{1F534} **no**";
+    lines.push(`| \`${escapeCell2(r.root)}\` | ${tested} | ${missingGuards(r.missing)} |`);
+  }
+  if (sorted.length > MAX_ROWS) {
+    lines.push(`| *\u2026+${sorted.length - MAX_ROWS} more* | | |`);
+  }
+  lines.push("");
+  if (untested.length > 0) {
+    const names = untested.map((r) => r.root);
+    lines.push(`> **Before merge, add tests for:** ${inlineList(names, MAX_TESTLIST)}.`);
+  }
+  return lines.join("\n").trimEnd();
+}
+function missingGuards(missing) {
+  if (missing.length === 0) return "\u2014";
+  const shown = missing.slice(0, MAX_GUARDS).map(escapeCell2).join(", ");
+  return missing.length > MAX_GUARDS ? `${shown} *+${missing.length - MAX_GUARDS}*` : shown;
+}
+function escapeCell2(s) {
+  return s.replace(/\|/g, "\\|").replace(/`/g, "'");
+}
+
+// src/render/sections/ext.ts
+var MAX_DUP = 8;
+var MAX_INLINE = 10;
+function renderExt(ext, ctx) {
+  if (!ext) return null;
+  const inner = [];
+  const clusters = ext.duplication?.clusters ?? [];
+  if (clusters.length > 0) {
+    const out = [`### \u{1F9EC} Duplication (${clusters.length} ${plural(clusters.length, "cluster")})`, ""];
+    for (const c of clusters.slice(0, MAX_DUP)) {
+      const members = c.members.map((m) => `\`${m.name}\` in ${fileLink(ctx, m.file, void 0, basename(m.file))}`).join(" \u2194 ");
+      out.push(`- ${members}`);
+    }
+    if (clusters.length > MAX_DUP) out.push(`- _\u2026+${clusters.length - MAX_DUP} more ${plural(clusters.length - MAX_DUP, "cluster")}_`);
+    inner.push(out.join("\n"));
+  }
+  const uncovered = ext.tests_in_graph?.uncovered_roots ?? [];
+  if (uncovered.length > 0) {
+    inner.push(
+      [`### \u{1F9EA} Uncovered entry points (${uncovered.length})`, "", "No test file reaches these in the call graph:", "", inlineList(uncovered, MAX_INLINE)].join("\n")
+    );
+  }
+  const gaps = ext.nfr_edge_cases?.reliability_gaps ?? [];
+  if (gaps.length > 0) {
+    inner.push(
+      [`### \u{1F6E1}\uFE0F Reliability gaps (${gaps.length})`, "", "These entry points lack retry / timeout / circuit / fallback markers:", "", inlineList(gaps, MAX_INLINE)].join("\n")
+    );
+  }
+  const hi = ext.tech_debt?.high_complexity?.length ?? 0;
+  const long = ext.tech_debt?.long_functions?.length ?? 0;
+  if (hi + long > 0) {
+    const out = ["### \u26A0\uFE0F Tech-debt findings", ""];
+    if (hi > 0) out.push(`- **${hi}** high-complexity ${plural(hi, "function")} (threshold ${ext.tech_debt?.thresholds?.complexity ?? 10})`);
+    if (long > 0) out.push(`- **${long}** long ${plural(long, "function")} (threshold ${ext.tech_debt?.thresholds?.loc ?? 80} LOC)`);
+    inner.push(out.join("\n"));
+  }
+  if (inner.length === 0) return null;
+  return [
+    "## \u{1F9EA} Extended findings",
+    "",
+    "<details>",
+    "<summary>Duplication, uncovered entry points, reliability gaps &amp; tech debt</summary>",
+    "",
+    inner.join("\n\n"),
+    "",
+    "</details>"
+  ].join("\n");
+}
+
+// src/render/sections/before_merge.ts
+function renderBeforeMerge(facts, ctx) {
+  const items = buildChecklist(facts, ctx);
+  if (items.length === 0) {
+    return ["## \u2705 Before you merge", "", "_Nothing blocking \u2014 Drift found no gating issues. Advisory review only._"].join("\n");
+  }
+  const boxes = items.map((t) => `- [ ] ${t}`);
+  const readiness = `> **Merge readiness** &nbsp; \`${progressBar(0, items.length)}\` &nbsp; **0 / ${items.length}** \u2014 GitHub tallies the boxes above as you check them off.`;
+  return ["## \u2705 Before you merge", "", ...boxes, "", readiness].join("\n");
+}
+
+// src/render/sections/footer.ts
+function escapeAttr(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function escapeText(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderFooter(gen, audioUrl, audioMp4Url) {
+  const url = audioUrl?.trim();
+  const mp4 = audioMp4Url?.trim();
+  let audio = "";
+  if (url) {
+    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
+    if (mp4) {
+      audio += ` \xB7 <a href="${escapeAttr(mp4)}">MP4</a>`;
+    }
+    audio += " <sup>(sign in to GitHub to download";
+    if (mp4) {
+      audio += "; drop the MP4 into a reply for an inline player";
+    }
+    audio += ")</sup>";
+  }
+  return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
+}
+
+// src/render/sections/artifacts.ts
+function renderScanArtifacts(opts) {
+  const json = opts.scanJsonUrl?.trim();
+  const context3 = opts.scanContextUrl?.trim();
+  if (!json && !context3) return "";
+  const links = [];
+  if (json) links.push(`<a href="${escapeHtml(json)}">pr-scan.json</a>`);
+  if (context3) links.push(`<a href="${escapeHtml(context3)}">pr-scan-context.json</a>`);
+  return `<details>
+<summary><sub>\u{1F4CE} Scan artifacts (JSON)</sub></summary>
+
+<sub>${links.join(" \xB7 ")} \u2014 machine-readable scanner report + scan context. Sign in to GitHub to download.</sub>
+
+</details>`;
+}
+
+// src/render/overview.ts
+var STICKY_MARKER = "<!-- drift:sticky-comment -->";
+var BODY_SIZE_BUDGET = 6e4;
+var HARD_CAP = 65e3;
+var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
+var BANNER_WIDTH = 120;
+var ANDY_WIDTH = 64;
+var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
+var withImage = (file, alt, section) => `${sectionImage(file, alt)}
+
+${section}`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
+var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
+function renderOverview(report, opts = {}) {
+  const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
+  const review = report.pr_review;
+  const facts = extractFacts(report);
+  const currentState = stateFromReport(report);
+  const confidence = mergeConfidence(facts);
+  const confTrend = appendConfHistory(priorState, confidence.score);
+  currentState.confHistory = confTrend;
+  const header = renderHeader(report, ctx, { confTrend });
+  const guide = renderReviewersGuide({
+    facts,
+    changedFiles: report.pr_scope.changed_files,
+    unreachable: report.pr_scope.unreachable_changes,
+    ctx,
+    priorState,
+    currentState
+  });
+  const valueCard = renderValueCard({
+    counts: review?.counts,
+    card: review?.value_card,
+    overallPercent: review?.overall_drift?.percent,
+    currentState,
+    priorState
+  });
+  const suggestions = renderSuggestions(review?.code_suggestions, ctx, { max: maxSuggestions });
+  const risks = renderRisks(review?.visual_summary?.risks);
+  const architecture = renderArchitecture({
+    prScope: report.pr_scope,
+    arch: review?.architecture_flow,
+    business: review?.business_logic,
+    keyFiles: review?.visual_summary?.key_files,
+    deadCodeCount: facts.deadCode.length,
+    ctx
+  });
+  const blastRadius = renderBlastRadius(facts);
+  const ext = renderExt(report.pr_review_ext, ctx);
+  const beforeMerge = renderBeforeMerge(facts, ctx);
+  const sections = [withImage("drift-review.png", "Drift review", header)];
+  if (architecture) sections.push(withImage("architecture.png", "Architecture", wrapSection(architecture, { tldr: tldrArchitecture(facts) })));
+  if (valueCard) sections.push(withImage("business-value.png", "Business value", wrapSection(valueCard, { tldr: tldrValue(facts) })));
+  if (suggestions) sections.push(withImage("code-suggestions.png", "Code suggestions", wrapSection(suggestions, { tldr: tldrSuggestions(facts) })));
+  if (blastRadius) sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts) }));
+  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts) }));
+  if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
+  if (guide) sections.push(wrapSection(guide, { tldr: tldrGuide(facts, report.pr_scope.changed_files) }));
+  sections.push(beforeMerge);
+  const footer = [
+    audioUrl?.trim() ? audioBanner(audioUrl.trim()) : "",
+    renderFooter(report.generator, audioUrl, audioMp4Url),
+    renderScanArtifacts({ scanJsonUrl, scanContextUrl }),
+    andySignoff()
+  ].filter(Boolean).join("\n\n");
+  let body = `${STICKY_MARKER}
+${sections.join("\n\n---\n\n")}`;
+  body += `
+
+---
+
+${footer}`;
+  body += `
+${statusMarker(facts, confidence.score, reviewEffort(facts).score)}`;
+  body += `
+
+${serializeState(currentState)}`;
+  return guardSize(body);
+}
+function statusMarker(facts, confidence, effort) {
+  const drift = facts.overallPercent === null ? "na" : facts.overallPercent.toFixed(1);
+  return `<!-- drift:status v=1 confidence=${confidence} effort=${effort} correctness=${facts.correctness.length} gatingRisks=${facts.risksToAddress} drift=${drift} -->`;
+}
+function tldrValue(f) {
+  if (f.overallPercent === null) return "Per-axis value dashboard";
+  const arrow = f.overallDirection === "up" ? "\u25B2" : f.overallDirection === "down" ? "\u25BC" : "\u2014";
+  let s = `Overall drift ${signedPercent(f.overallPercent)} ${arrow}`;
+  if (f.regressedAxes.length > 0) {
+    s += ` \xB7 ${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`;
+  } else if (f.topImprovement) {
+    s += ` \xB7 ${f.topImprovement.label} leads`;
+  }
+  return s;
+}
+function tldrSuggestions(f) {
+  const n = f.passing.length;
+  const parts = [`${int(n)} ${plural(n, "suggestion")}`];
+  if (f.correctness.length > 0) {
+    parts.push(`${f.correctness.length} product-correctness`);
+  }
+  return parts.join(" \xB7 ");
+}
+function tldrRisks(f) {
+  if (f.totalRisks === 0) return "Risk quadrant map";
+  if (f.risksToAddress > 0) return `${f.risksToAddress} to address \xB7 ${f.totalRisks} total`;
+  return `${f.totalRisks} ${plural(f.totalRisks, "risk")} \xB7 none gating`;
+}
+function tldrGuide(f, changedFiles) {
+  const issues = f.correctness.length > 0 ? `${int(f.correctness.length)} key ${plural(f.correctness.length, "issue")}` : `${int(f.passing.length)} ${plural(f.passing.length, "suggestion")}`;
+  return `At-a-glance triage \xB7 ${issues} \xB7 ${int(changedFiles.length)} changed ${plural(changedFiles.length, "file")}`;
+}
+function tldrBlastRadius(f) {
+  const reached = f.perRootCoverage.length;
+  const untested = f.perRootCoverage.filter((r) => !r.tested).length;
+  const unguarded = f.perRootCoverage.filter((r) => r.missing.length > 0).length;
+  const bits = [`${int(reached)} reached`];
+  if (untested > 0) bits.push(`${int(untested)} untested`);
+  if (unguarded > 0) bits.push(`${int(unguarded)} unguarded`);
+  return bits.join(" \xB7 ");
+}
+function tldrArchitecture(f) {
+  const dead = f.unreachable > 0 ? ` \xB7 ${int(f.unreachable)} unreachable` : "";
+  return `Before vs after diagrams${dead}`;
+}
+function tldrExt(f) {
+  const bits = [];
+  if (f.duplicationClusters > 0) bits.push(`${f.duplicationClusters} dup ${plural(f.duplicationClusters, "cluster")}`);
+  if (f.uncoveredRoots.length > 0) bits.push(`${f.uncoveredRoots.length} uncovered`);
+  if (f.reliabilityGaps.length > 0) bits.push(`${f.reliabilityGaps.length} reliability ${plural(f.reliabilityGaps.length, "gap")}`);
+  const debt = f.highComplexity + f.longFunctions;
+  if (debt > 0) bits.push(`${debt} tech-debt`);
+  return bits.length > 0 ? bits.join(" \xB7 ") : "Duplication \xB7 uncovered roots \xB7 reliability gaps \xB7 tech debt";
+}
+function guardSize(body) {
+  if (body.length <= BODY_SIZE_BUDGET) return body;
+  const innermost = /<details(?: open)?>\s*<summary>((?:(?!<\/summary>)[\s\S])*?)<\/summary>(?:(?!<details(?: open)?>)[\s\S])*?<\/details>/;
+  let out = body;
+  for (let i = 0; i < 1e3 && out.length > BODY_SIZE_BUDGET; i++) {
+    const next = out.replace(innermost, (_m, summary2) => `<sub>${summary2.trim()} \u2014 _collapsed (size guard)_</sub>`);
+    if (next === out) break;
+    out = next;
+  }
+  if (out.length > HARD_CAP) {
+    out = `${out.slice(0, HARD_CAP - 80)}
+
+<sub>\u2026report truncated (size guard).</sub>`;
+  }
+  return out;
+}
+
+// src/github/comment.ts
+async function upsertStickyComment(args) {
+  const { octokit, owner, repo, prNumber, body } = args;
+  const id = args.existingId !== void 0 ? args.existingId : (await findSticky(octokit, owner, repo, prNumber))?.id ?? null;
+  if (id) {
+    await octokit.rest.issues.updateComment({ owner, repo, comment_id: id, body });
+    info(`Updated sticky comment ${id}`);
+  } else {
+    const { data } = await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+    info(`Created sticky comment ${data.id}`);
+  }
+}
+async function findSticky(octokit, owner, repo, prNumber) {
+  const { data } = await octokit.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+  const found = data.find((c) => c.body?.includes(STICKY_MARKER));
+  return found ? { id: found.id, body: found.body ?? "" } : null;
+}
+
+// src/github/sticky-post.ts
+async function buildAndUpsertSticky(args) {
+  const { octokit, owner, repo, prNumber, report, ctx } = args;
+  let priorState = null;
+  let existingId = null;
+  try {
+    const prior = await findSticky(octokit, owner, repo, prNumber);
+    existingId = prior?.id ?? null;
+    priorState = parseState(prior?.body);
+  } catch (err) {
+    warning(`could not read prior sticky comment: ${describe(err)}`);
+  }
+  const body = renderOverview(report, {
+    ctx,
+    priorState,
+    audioUrl: args.audioUrl,
+    audioMp4Url: args.audioMp4Url,
+    scanJsonUrl: args.scanJsonUrl,
+    scanContextUrl: args.scanContextUrl,
+    maxSuggestions: args.maxSuggestions
+  });
+  await upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId });
+}
+function describe(err) {
+  return err instanceof Error ? err.message : String(err);
 }
 
 // src/pr-context.ts
@@ -24471,9 +26431,11 @@ async function aiMain() {
   const model = process.env.DRIFT_AI_MODEL || "openai/gpt-4o";
   const dryRun = process.env.DRIFT_DRY_RUN === "true";
   const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
-  const detSuggestions = readDeterministicSuggestions();
+  const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === "true";
+  const report = loadReportSafe();
+  const detSuggestions = (report?.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
   const { suggestions: aiSuggestions, funnel: aiFunnel } = readAISuggestions();
-  if (detSuggestions.length === 0 && aiSuggestions.length === 0) {
+  if (detSuggestions.length === 0 && aiSuggestions.length === 0 && !deferSticky) {
     info("No deterministic or AI suggestions to post \u2014 skipping combined review.");
     return;
   }
@@ -24490,10 +26452,17 @@ async function aiMain() {
   const octokit = getOctokit(token || "dry-run-stub-token");
   const { owner, repo } = context2.repo;
   let commentable = null;
+  let patches = null;
   try {
-    commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+    if (deferSticky) {
+      const f = await fetchPrFiles(octokit, owner, repo, pr.number);
+      commentable = f.commentable;
+      patches = f.patches;
+    } else {
+      commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+    }
   } catch (e) {
-    warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
+    warning(`Could not fetch PR diff to validate lines (${describe2(e)}); posting unfiltered.`);
   }
   const detComments = buildDeterministicComments(detSuggestions, commentable);
   const aiOnDiff = filterAIByDiff(aiSuggestions, commentable);
@@ -24510,24 +26479,66 @@ async function aiMain() {
   );
   if (merged.length === 0) {
     if (aiFunnel.total > 0 && detComments.length === 0) {
-      info("No AI suggestion landed on a diff line \u2014 nothing to post.");
+      info("No AI suggestion landed on a diff line \u2014 nothing to post inline.");
     } else {
-      info("No on-diff anchors \u2014 skipping combined review (suggestions still in the sticky comment).");
+      info("No on-diff anchors \u2014 skipping inline review (suggestions still in the sticky comment).");
     }
+  } else {
+    await postCombinedReview({
+      octokit,
+      owner,
+      repo,
+      prNumber: pr.number,
+      headSha: pr.headSha,
+      comments: merged,
+      detCount: detComments.length,
+      aiCount: aiComments.length,
+      model,
+      dryRun
+    });
+  }
+  if (deferSticky) {
+    try {
+      await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model });
+    } catch (e) {
+      warning(`Deferred sticky comment failed (non-fatal): ${describe2(e)}`);
+    }
+  }
+}
+async function postDeferredSticky(args) {
+  const { report, pr } = args;
+  if (!report) {
+    warning("Sticky comment deferred but the scan report is unreadable \u2014 cannot render the overview.");
     return;
   }
-  await postCombinedReview({
-    octokit,
-    owner,
-    repo,
+  const mergedReport = mergeAiSuggestionsIntoReport(report, args.aiPostable, args.patches, args.model);
+  const ctx = {
+    owner: args.owner,
+    repo: args.repo,
+    sha: pr.headSha,
     prNumber: pr.number,
-    headSha: pr.headSha,
-    comments: merged,
-    detCount: detComments.length,
-    aiCount: aiComments.length,
-    model,
-    dryRun
+    prTitle: pr.title,
+    htmlUrl: pr.htmlUrl,
+    baseRef: pr.baseRef,
+    author: pr.author
+  };
+  await buildAndUpsertSticky({
+    octokit: args.octokit,
+    owner: args.owner,
+    repo: args.repo,
+    prNumber: pr.number,
+    report: mergedReport,
+    ctx,
+    audioUrl: optEnv2("DRIFT_AUDIO_URL"),
+    audioMp4Url: optEnv2("DRIFT_AUDIO_MP4_URL"),
+    scanJsonUrl: optEnv2("DRIFT_SCAN_JSON_URL"),
+    scanContextUrl: optEnv2("DRIFT_SCAN_CONTEXT_URL")
   });
+  info(`Sticky comment refreshed with ${args.aiPostable.length} AI-refined suggestion(s) merged in.`);
+}
+function optEnv2(name) {
+  const v = process.env[name];
+  return v && v.trim().length > 0 ? v.trim() : void 0;
 }
 function filterAIByDiff(suggestions, commentable) {
   if (suggestions.length === 0) return [];
@@ -24542,18 +26553,18 @@ function filterAIByDiff(suggestions, commentable) {
   }
   return kept;
 }
-function readDeterministicSuggestions() {
+function loadReportSafe() {
   const path = process.env.DRIFT_REPORT_PATH;
-  if (!path) return [];
-  let report;
-  try {
-    report = loadReport(path);
-  } catch (e) {
-    info(`Drift report unreadable at ${path}: ${describe(e)} \u2014 combined review will skip deterministic`);
-    return [];
+  if (!path) {
+    info("DRIFT_REPORT_PATH not set \u2014 combined review will skip deterministic suggestions.");
+    return null;
   }
-  const suggestions = report.pr_review?.code_suggestions ?? [];
-  return suggestions.filter(passesQualityBar);
+  try {
+    return loadReport(path);
+  } catch (e) {
+    info(`Drift report unreadable at ${path}: ${describe2(e)} \u2014 combined review will skip deterministic`);
+    return null;
+  }
 }
 function readAISuggestions() {
   const empty = { total: 0, passing: 0 };
@@ -24566,7 +26577,7 @@ function readAISuggestions() {
   try {
     raw = (0, import_node_fs2.readFileSync)(path, "utf8");
   } catch (e) {
-    info(`AI envelope unreadable at ${path}: ${describe(e)} \u2014 combined review will skip AI`);
+    info(`AI envelope unreadable at ${path}: ${describe2(e)} \u2014 combined review will skip AI`);
     return { suggestions: [], funnel: empty };
   }
   if (raw.trim().length === 0) {
@@ -24653,7 +26664,7 @@ async function postCombinedReview(args) {
     else kind = "PR review";
     info(`Posted ${kind} with ${total} inline suggestion(s).`);
   } catch (e) {
-    warning(`Combined review POST failed (non-fatal): ${describe(e)}`);
+    warning(`Combined review POST failed (non-fatal): ${describe2(e)}`);
   }
 }
 function parseMax(v, fallback) {
@@ -24662,11 +26673,11 @@ function parseMax(v, fallback) {
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return n;
 }
-function describe(e) {
+function describe2(e) {
   return e instanceof Error ? e.message : String(e);
 }
 aiMain().catch((err) => {
-  warning(`Unhandled combined-review error: ${describe(err)}`);
+  warning(`Unhandled combined-review error: ${describe2(err)}`);
 });
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

@@ -12,6 +12,7 @@
 
 use crate::insights::{FindingKind, Severity};
 use crate::pr_algorithms::pr_signals;
+use crate::pr_algorithms::symbol_label::humanize_symbol_token;
 use crate::pr_algorithms::types::*;
 use crate::report::TopSymbol;
 use crate::tree::CallTreeNode;
@@ -440,10 +441,10 @@ fn dead_code_suggestions(
         if refs.is_empty() {
             continue; // quality bar
         }
-        let function_label = match &sym.parent_class {
+        let function_label = humanize_symbol_token(&match &sym.parent_class {
             Some(c) if !c.is_empty() => format!("{c}::{}", sym.name),
             _ => sym.name.clone(),
-        };
+        });
         out.push(CodeSuggestion {
             category: SuggestionCategory::Optimization,
             category_label: "Optimization — Dead code in changed file".into(),
@@ -519,13 +520,16 @@ fn call_graph_n_plus_one(
         // S7 calibration: ramp by db_count.
         let confidence = ((0.65 + (db_count as f64) * 0.04).min(0.95)).max(DEFAULT_THRESHOLD);
         let severity = if db_count >= 6 { "high" } else { "medium" };
+        // Readable token for synthetic names (`<module>` / `<anonymous@N>`);
+        // location lives in the file/line fields. See `symbol_label`.
+        let fn_label = humanize_symbol_token(&n.name);
         out.push(CodeSuggestion {
             category: SuggestionCategory::Optimization,
             category_label: "Optimization — Call-graph N+1".into(),
             kind: "call_graph_n_plus_one".into(),
             rule_id: "S1:call-graph-n+1".into(),
             file: n.file.clone(),
-            function: n.name.clone(),
+            function: fn_label.clone(),
             line: n.line,
             confidence,
             severity: severity.into(),
@@ -534,7 +538,7 @@ fn call_graph_n_plus_one(
                  This shape often indicates an N+1: a loop calling a DB-touching \
                  callee per item. Even if the ORM isn't in drift's per-SDK matcher \
                  list, the call-graph footprint is high.",
-                n.name, n.complexity
+                fn_label, n.complexity
             ),
             remediation_hint: "Batch the inner query (preload / join fetch / IN-clause). \
                                If the loop is intentional and bounded, document it."
@@ -547,7 +551,7 @@ fn call_graph_n_plus_one(
             language: language.into(),
             llm_prompt_hint: llm_prompt_hint(
                 "call_graph_n_plus_one",
-                &n.name,
+                &fn_label,
                 &n.file,
                 language,
             ),
@@ -922,13 +926,17 @@ pub fn compute(inputs: Inputs<'_>) -> Vec<CodeSuggestion> {
             continue;
         }
         let before_lines = read_around(inputs.repo_root, &f.file, f.line, 3);
+        // Readable token for synthetic function names; location is carried by
+        // the file/line fields, and the message is already synthetic-guarded
+        // upstream (insights::collect_node_findings). See `symbol_label`.
+        let fn_label = humanize_symbol_token(&f.function);
         out.push(CodeSuggestion {
             category,
             category_label: category_label.into(),
             kind: kind_slug(&f.kind),
             rule_id: f.rule_id.clone(),
             file: f.file.clone(),
-            function: f.function.clone(),
+            function: fn_label.clone(),
             line: f.line,
             confidence: f.confidence,
             severity: severity_str(&f.severity).into(),
@@ -940,7 +948,7 @@ pub fn compute(inputs: Inputs<'_>) -> Vec<CodeSuggestion> {
                 after_lines: Vec::new(),
             },
             language: language.into(),
-            llm_prompt_hint: llm_prompt_hint(&kind_slug(&f.kind), &f.function, &f.file, language),
+            llm_prompt_hint: llm_prompt_hint(&kind_slug(&f.kind), &fn_label, &f.file, language),
         });
     }
 

@@ -29,9 +29,21 @@ for (const fix of fixtures) {
     assert.ok(render().length < 60_000, `body is ${render().length} bytes`);
   });
 
+  test(`render(${fix.name}): confidence trend line wires through renderOverview when prior history exists`, () => {
+    // The header reads confTrend, but the trend is assembled in renderOverview
+    // (appendConfHistory(priorState, thisScore)). Exercise that whole path: a
+    // prior with ≥1 score → ≥2 points after the append → the trend line renders.
+    const withHistory = renderOverview(loadReport(fix.path), { ctx: CTX, priorState: { v: 1, confHistory: [2, 3] } });
+    assert.match(withHistory, /🛡️ Merge-confidence trend `[▁▂▃▄▅▆▇█]+`/, 'trend line present with prior history');
+    // First push (no prior) → only this score → <2 points → no trend line.
+    const firstPush = renderOverview(loadReport(fix.path), { ctx: CTX });
+    assert.doesNotMatch(firstPush, /Merge-confidence trend/, 'no trend line on the first push');
+  });
+
   test(`render(${fix.name}): every v7 section is present`, () => {
     const body = render();
-    assert.match(body, /^## [▲▼—] Drift review$/m, 'title line (no PR-title suffix)');
+    assert.match(body, /<img [^>]*alt="Drift review"[^>]*width="120"/, 'brand banner is the title, pinned small (120px)');
+    assert.doesNotMatch(body, /^## [▲▼—]? ?Drift review/m, 'no duplicate H2 title');
     assert.match(body, /img\.shields\.io\/badge\/review-/, 'review-status KPI badge');
     assert.match(body, /## ✅ Before you merge/, 'merge checklist (now a section at the end)');
     assert.match(body, /> \*\*Merge readiness\*\*/, 'merge-readiness bar');
@@ -112,7 +124,7 @@ test('render(no pr_review): factual-only output', () => {
     generator: { tool: 'drift-static-profiler', version: '0.0.0-test' },
     pr_scope: { changed_files: ['a.py'], affected_roots: ['main'], unreachable_changes: [] },
   });
-  assert.match(body, /## [▲▼—]? ?Drift review/, 'title present');
+  assert.match(body, /<img [^>]*alt="Drift review"/, 'brand banner present (no H2 text)');
   assert.match(body, /\[!NOTE\]/, 'NOTE verdict without a value model');
   // Diagrams-only architecture: this factual-only fixture carries no diagrams
   // and no unreachable files, so the section is omitted.

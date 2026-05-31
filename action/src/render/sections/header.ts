@@ -1,13 +1,22 @@
 // The header block — the whole-PR TL;DR, everything above the value card. It's
-// written bottom-line-up-front, the way a principal engineer opens a review:
-// the verdict, then the one place to look, then the numbers, then the to-dos.
-//   1. title line   — `## ▲ Drift review`
-//   2. sub-line      — repo permalink · sticky-comment note · advisory check
-//   3. advisory callout — GFM alert, BLUF-ordered:
-//        • **TL;DR** — recommendation + the data-driven one-paragraph verdict
+// written bottom-line-up-front and BADGE-FORWARD: the verdict in one line, then
+// an at-a-glance badge dashboard, then the one place to look. There is NO `##`
+// title here — the brand banner (added by overview.ts) IS the title, so we don't
+// repeat "Drift review" as text. Order:
+//   1. bottom line    — one plain-language verdict + the move (the BLUF)
+//   2. KPI badge dashboard — shields.io pills, grouped into themed rows:
+//        • verdict & gauges — review status · merge confidence N/5 · review
+//          effort N/5 (the two 0–5 gauges fold in their rubric word + time band,
+//          so there's no prose "signal line" duplicating them) · advisory
+//        • value & size — drift · files · net LOC
+//        • findings — suggestions · agent-ready · risks · new tests
+//   3. confidence trend — a cross-push sparkline; the ONE signal with no badge
+//      equivalent, so it stays a tiny line (only ≥2 pushes)
+//   4. sub-line       — repo permalink · sticky-comment note
+//   5. advisory callout — GFM alert, BLUF-ordered:
+//        • **TL;DR** — the data-driven one-paragraph verdict (numbers)
 //        • 👉 **Look here first** — the single highest-value spot for the
 //          reviewer's eyes (à la Qodo's "key issues", distilled to ONE pointer)
-//   4. KPI badge row — shields.io pills (review / confidence / effort / drift / …)
 //
 // The "✅ Before you merge" checklist + merge-readiness bar are NO LONGER here —
 // they render as their own section at the END of the comment (sections/before_merge.ts).
@@ -47,18 +56,20 @@ export function renderHeader(report: ScanPrOutput, ctx?: PrContext, opts: Header
   const effort = reviewEffort(facts);
   const confidence = mergeConfidence(facts);
 
-  // Bottom-line-up-front: the FIRST thing is one plain-language line a reviewer
-  // can read and stop — verdict + the single move. A muted signal line under it
-  // carries the two 0–5 gauges (merge confidence + review effort) and the
-  // cross-push confidence trend; the callout below carries the supporting
-  // numbers and the focus pointer.
+  // Bottom-line-up-front, badge-forward: the FIRST thing is one plain-language
+  // line a reviewer can read and stop — verdict + the single move. Directly
+  // under it sits the badge dashboard (every metric is a pill, grouped by
+  // theme), so the two 0–5 gauges are read from badges, not a duplicate prose
+  // line. The cross-push confidence trend has no badge equivalent, so it rides
+  // as a tiny line; the callout carries the supporting numbers + the focus
+  // pointer. NOTE: there is no `##` title — the brand banner (overview.ts) is
+  // the title, so we never repeat "Drift review" as text here.
   const blocks: string[] = [
-    titleLine(facts),
     bottomLine(verdict, facts),
-    signalLine(confidence, effort, opts.confTrend),
+    badgeRow(facts, verdict, effort, confidence),
+    trendLine(opts.confTrend),
     subLine(ctx),
     calloutBlock(verdict, facts, composite, ctx),
-    badgeRow(facts, verdict, effort, confidence),
   ];
 
   // NOTE: the "✅ Before you merge" checklist used to live here; it now renders
@@ -66,38 +77,37 @@ export function renderHeader(report: ScanPrOutput, ctx?: PrContext, opts: Header
   return blocks.filter(Boolean).join('\n\n');
 }
 
-// ── 1. title ────────────────────────────────────────────────────────────────
-
-// Just `## <arrow> Drift review` — no PR-title suffix. GitHub already shows the
-// PR title at the top of the page, so repeating it here is redundant noise; the
-// arrow encodes overall direction (▲ up · ▼ down · — flat).
-function titleLine(facts: PrFacts): string {
-  const arrow =
-    facts.overallDirection === 'up' ? '▲ ' : facts.overallDirection === 'down' ? '▼ ' : facts.overallDirection === 'neutral' ? '— ' : '';
-  return `## ${arrow}Drift review`;
-}
-
-// ── 2. sub-line ──────────────────────────────────────────────────────────────
+// ── sub-line ──────────────────────────────────────────────────────────────
+// Trimmed to the essentials: repo permalink + the sticky-comment note. The
+// "advisory" status it used to carry is now an `advisory` badge in the
+// dashboard, so it isn't repeated here (less text, no duplication).
 
 function subLine(ctx?: PrContext): string {
   const slug = repoSlug(ctx);
   const repo = slug ? `📍 [\`${slug}\`](https://github.com/${ctx!.owner}/${ctx!.repo}) &nbsp;·&nbsp; ` : '';
-  return `<sub>${repo}sticky review comment — re-rendered on every push &nbsp;·&nbsp; advisory check</sub>`;
+  return `<sub>${repo}sticky review comment — re-rendered on every push</sub>`;
 }
 
-// ── 3. advisory callout ──────────────────────────────────────────────────────
+// ── advisory callout ─────────────────────────────────────────────────────────
 
 function decideVerdict(facts: PrFacts, composite: Composite): Verdict {
   const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
   if (needsAttention) {
     // 🔴 when the whole PR is a net regression; 🟡 for a mixed/attention case.
-    const netRegression = facts.overallDirection === 'down' && !composite.mixed;
+    // Key off the per-axis composite (the always-present, direction-grounded
+    // signal the value card itself uses) rather than the OPTIONAL overall_drift
+    // block — so the hero dot + review pill stay in agreement with the value
+    // card even when a partial report omits overall_drift (overallDirection null).
+    const netRegression = composite.label === 'regressed' || (facts.overallDirection === 'down' && !composite.mixed);
     return {
       alert: 'WARNING',
       emoji: netRegression ? '🔴' : '🟡',
       tldr: 'address before merge',
       statusMessage: 'address before merge',
-      statusColor: COLOR.amber,
+      // The review-status pill tracks the hero dot: red for a pure net
+      // regression, amber for a mixed/attention case — so the badge and the dot
+      // never tell different stories.
+      statusColor: netRegression ? COLOR.red : COLOR.amber,
     };
   }
   if (facts.overallDirection === 'up') {
@@ -118,11 +128,11 @@ function decideVerdict(facts: PrFacts, composite: Composite): Verdict {
   };
 }
 
-// ── 2b. hero "bottom line" — the one line to read and stop ───────────────────
+// ── hero "bottom line" — the one line to read and stop ───────────────────────
 // The TL;DR-of-the-TL;DR, the way a principal engineer opens: verdict + THE
 // single move, in plain language, no numbers to decode. The colored callout
 // below carries the supporting drift/LOC/finding numbers, so this line
-// deliberately does NOT repeat them; the 0–5 gauges live on the signal line.
+// deliberately does NOT repeat them; the 0–5 gauges live on the badge dashboard.
 
 function bottomLine(verdict: Verdict, facts: PrFacts): string {
   const move = theMove(facts);
@@ -142,19 +152,17 @@ function bottomLine(verdict: Verdict, facts: PrFacts): string {
   return `> ${verdict.emoji} ${sentence}`;
 }
 
-// ── 2c. signal line — the two 0–5 gauges + the cross-push confidence trend ────
-// 🛡️ Merge confidence (Greptile-style, inverse-risk) and 🧮 Review effort (Qodo-
-// style) side by side, both grounded in the static facts, plus a Unicode-block
-// sparkline of how confidence has trended across pushes (the living-dashboard
-// signal no rival shows in-comment). Trend appears only with ≥2 data points.
+// ── confidence trend — the one cross-push signal with no badge equivalent ─────
+// A Unicode-block sparkline of how merge confidence has moved across pushes (the
+// living-dashboard signal no rival shows in-comment). The two 0–5 gauges
+// themselves are read from the badge dashboard now; only the trend stays prose,
+// because a single static badge can't show a series. Renders only with ≥2 data
+// points (sparkline() returns '' otherwise) → dropped by the block filter.
 
-function signalLine(confidence: MergeConfidence, effort: ReviewEffort, confTrend?: number[]): string {
+function trendLine(confTrend?: number[]): string {
   const trend = sparkline(confTrend ?? []);
-  const trendTag = trend ? ` · trend \`${trend}\` <sub>(confidence over the last ${confTrend!.length} pushes)</sub>` : '';
-  return (
-    `> <sub>🛡️ **Merge confidence ${confidence.score}/5** (${confidence.label}) ` +
-    `&nbsp;·&nbsp; 🧮 **Review effort ${effort.score}/5** · ${effort.minutes}</sub>${trendTag}`
-  );
+  if (!trend) return '';
+  return `<sub>🛡️ Merge-confidence trend \`${trend}\` (over the last ${confTrend!.length} pushes)</sub>`;
 }
 
 /**
@@ -186,8 +194,9 @@ function calloutBlock(verdict: Verdict, facts: PrFacts, composite: Composite, ct
   // The supporting detail under the hero line: the factual TL;DR paragraph
   // (drift / LOC / findings), then the single highest-value place to look.
   // It does NOT restate the recommendation — the hero line already made the
-  // call. Blank `>` lines separate paragraphs inside the GFM alert.
-  const tldr = `**TL;DR —** ${narrative(facts, composite).join(' ')} _Advisory — does not fail the check._`.trim();
+  // call — and it no longer carries the "advisory" note, which is now a badge.
+  // Blank `>` lines separate paragraphs inside the GFM alert.
+  const tldr = `**TL;DR —** ${narrative(facts, composite).join(' ')}`.trim();
   const focus = focusLine(facts, ctx);
 
   const paras = [tldr];
@@ -201,7 +210,7 @@ function calloutBlock(verdict: Verdict, facts: PrFacts, composite: Composite, ct
   return lines.join('\n');
 }
 
-// ── 3b. "Look here first" — the single highest-value reviewer pointer ────────
+// ── "Look here first" — the single highest-value reviewer pointer ────────────
 // Qodo lists "key issues to review"; a principal engineer points at the ONE
 // thing first. Priority is by how much careful human judgement the spot needs:
 // a real correctness bug > a regression to confirm > unguarded entry points >
@@ -284,48 +293,65 @@ function narrative(facts: PrFacts, composite: Composite): string[] {
   return lines;
 }
 
-// ── 4. KPI badge row ─────────────────────────────────────────────────────────
+// ── KPI badge dashboard ──────────────────────────────────────────────────────
+// Everything the header used to say in prose is a pill here, grouped into three
+// themed rows so the reviewer scans by category, not by wrap-wherever order:
+//   1. verdict & gauges — review status · merge confidence · review effort ·
+//      advisory. The two 0–5 gauges fold in the text that used to live on a
+//      separate "signal line": confidence carries its rubric word, effort its
+//      time band — so the dashboard is self-contained and nothing is duplicated.
+//   2. value & size — drift · files · net LOC.
+//   3. findings — suggestions · agent-ready · risks · new tests.
+// Each group is its own line (single `\n` → GitHub renders a line break), so the
+// three rows stack instead of forming one long strip.
 
 function badgeRow(facts: PrFacts, verdict: Verdict, effort: ReviewEffort, confidence: MergeConfidence): string {
-  const badges: string[] = [];
-  badges.push(badge('Review status', 'review', verdict.statusMessage, verdict.statusColor));
+  // Group 1 — verdict & the two 0–5 gauges + the advisory pill (Drift never gates).
+  const verdictGroup = [
+    badge('Review status', 'review', verdict.statusMessage, verdict.statusColor),
+    badge(`Merge confidence ${confidence.score}/5`, 'merge confidence', `${confidence.score}/5 · ${confidence.label}`, confidence.color),
+    badge(`Review effort ${effort.score}/5`, 'review effort', `${effort.score}/5 · ${bareMinutes(effort.minutes)}`, effort.color),
+    badge('Advisory — does not gate the merge', 'advisory', 'does not gate', COLOR.grey),
+  ];
 
-  // The two 0–5 verdict gauges lead the numeric KPIs: merge confidence (how safe
-  // to merge, Greptile-style) and review effort (how much attention, Qodo-style),
-  // both grounded in the static facts.
-  badges.push(badge(`Merge confidence ${confidence.score}/5`, 'merge confidence', `${confidence.score}/5`, confidence.color));
-  badges.push(badge(`Review effort ${effort.score}/5`, 'review effort', `${effort.score}/5`, effort.color));
-
+  // Group 2 — value drift & change size (drift/net-LOC only with a value model).
+  const sizeGroup: string[] = [];
   if (facts.overallPercent !== null) {
     const color = facts.overallDirection === 'up' ? COLOR.green : facts.overallDirection === 'down' ? COLOR.red : COLOR.grey;
-    badges.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, 'drift', signedPercent(facts.overallPercent), color));
+    sizeGroup.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, 'drift', signedPercent(facts.overallPercent), color));
   }
-
-  badges.push(badge(`Files ${facts.changedFiles}`, 'files', int(facts.changedFiles), COLOR.blue));
-
+  sizeGroup.push(badge(`Files ${facts.changedFiles}`, 'files', int(facts.changedFiles), COLOR.blue));
   if (facts.netLoc !== null) {
-    badges.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, 'net LOC', signedInt(facts.netLoc), COLOR.grey));
+    sizeGroup.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, 'net LOC', signedInt(facts.netLoc), COLOR.grey));
   }
 
-  badges.push(badge(`Suggestions ${facts.passing.length}`, 'suggestions', int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey));
-
+  // Group 3 — findings & actionability.
+  const findingsGroup: string[] = [
+    badge(`Suggestions ${facts.passing.length}`, 'suggestions', int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey),
+  ];
   // Every shown finding ships a copy-paste AI-fix prompt — surface that as a
   // brand-orange KPI so reviewers know the review is one-click-actionable.
   if (facts.passing.length > 0) {
-    badges.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, 'agent-ready', `${int(facts.passing.length)} fix prompts`, COLOR.brand));
+    findingsGroup.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, 'agent-ready', `${int(facts.passing.length)} fix prompts`, COLOR.brand));
   }
-
   if (facts.totalRisks > 0) {
     const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
-    badges.push(badge(`Risks: ${facts.risksToAddress} to address`, 'risks', `${facts.risksToAddress} to address`, color));
+    findingsGroup.push(badge(`Risks: ${facts.risksToAddress} to address`, 'risks', `${facts.risksToAddress} to address`, color));
   }
-
   if (facts.newTestFiles !== null) {
     const color = facts.newTestFiles > 0 ? COLOR.green : COLOR.red;
-    badges.push(badge(`New tests: ${facts.newTestFiles}`, 'new tests', int(facts.newTestFiles), color));
+    findingsGroup.push(badge(`New tests: ${facts.newTestFiles}`, 'new tests', int(facts.newTestFiles), color));
   }
 
-  return badges.join(' &nbsp;');
+  return [verdictGroup, sizeGroup, findingsGroup]
+    .map((group) => group.join(' &nbsp;'))
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Drop the leading "≈ " so a time band fits compactly inside a badge message. */
+function bareMinutes(minutes: string): string {
+  return minutes.replace(/^≈\s*/, '');
 }
 
 function badge(alt: string, label: string, message: string, color: string): string {

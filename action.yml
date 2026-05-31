@@ -978,6 +978,23 @@ runs:
           echo "⏭️  no report at $DRIFT_REPORT_PATH — nothing to cap"
           exit 0
         fi
+        # Snapshot the UNCAPPED report for the downloadable pr-scan.json artifact
+        # BEFORE the in-place cap below truncates code_suggestions. The sticky
+        # comment carries a 60 KB budget (so suggestions are capped there), but
+        # the artifact has none — the JSON link should serve the COMPLETE scanner
+        # output, which is the whole point of offering a download. The 8g stage
+        # step prefers this snapshot; a failed snapshot just falls back to the
+        # capped report. The whole snapshot lives INSIDE the `if` condition so a
+        # failed mkdir/cp can NEVER abort this step under `set -e` — the cap
+        # below must always run. `${RUNNER_TEMP:-}` guards an unset runner temp.
+        SCAN_SNAPSHOT_DIR="${RUNNER_TEMP:-}/drift-scan-artifacts"
+        if [ -n "${RUNNER_TEMP:-}" ] \
+           && mkdir -p "$SCAN_SNAPSHOT_DIR" 2>/dev/null \
+           && cp "$DRIFT_REPORT_PATH" "$SCAN_SNAPSHOT_DIR/pr-scan.json" 2>/dev/null; then
+          echo "📎 snapshotted uncapped report → $SCAN_SNAPSHOT_DIR/pr-scan.json"
+        else
+          echo "ℹ️  uncapped-report snapshot skipped — pr-scan.json will fall back to the capped report."
+        fi
         if ! command -v jq >/dev/null 2>&1; then
           echo "⚠️  jq unavailable — leaving report uncapped (size guard is the final fallback)"
           exit 0
@@ -2452,6 +2469,156 @@ runs:
           fi
         fi
 
+    # ─── 8g. Stage the machine-readable scan artifacts ──────────────
+    # Two JSON files an agent (or a curious reviewer) can pull straight
+    # from the run: the COMPLETE scanner report (pr-scan.json — the UNCAPPED
+    # scan output snapshotted in step 7b before the comment-size cap, named
+    # for the consumer) and a scan-CONTEXT bundle (pr-scan-context.json — PR
+    # identity, the exact diff scope, the merge-base, scanner identity, and
+    # run pointers). The report answers "what did Drift find" (all of it, not
+    # just the comment's top-N); the context answers "what did Drift look at".
+    # Both are uploaded NON-ZIPPED below (archive:false), so the artifact
+    # link serves the bare .json. The context is built by a zero-dep Node
+    # script (no jq dependency, safe JSON encoding of the PR title/body).
+    # Fail-soft throughout: a missing report just skips pr-scan.json; the
+    # context builder never throws (writes a minimal file on error).
+    - name: Stage scan artifacts (pr-scan.json + context)
+      id: scan-artifacts
+      continue-on-error: true   # advisory: never fail the PR on our own error
+      if: steps.scan.outputs.scan_ran == 'true' && steps.pr-ctx.outputs.head_sha != ''
+      shell: bash
+      env:
+        # The DRIFT_PR_* identity vars are already in $GITHUB_ENV (Resolve PR
+        # context), so the Node builder reads them straight from process.env.
+        # Everything below is a step-output the builder can't otherwise see.
+        REPORT_PATH:    ${{ runner.temp }}/drift-report.json
+        STAGE_DIR:      ${{ runner.temp }}/drift-scan-artifacts
+        RELEASE_TAG:    ${{ steps.resolve.outputs.tag }}
+        MERGE_BASE_SHA: ${{ steps.diff.outputs.base_sha }}
+        CHANGED_PATH:   ${{ steps.diff.outputs.changed_path }}
+        STATS_PATH:     ${{ steps.diff.outputs.stats_path }}
+        STATUS_PATH:    ${{ steps.diff.outputs.status_path }}
+        COMMITS_PATH:   ${{ steps.diff.outputs.commits_path }}
+      run: |
+        mkdir -p "$STAGE_DIR"
+        scan_json_ready=false
+        context_ready=false
+
+        # pr-scan.json — the COMPLETE scanner report. The Cap step (7b) already
+        # snapshotted the UNCAPPED report here BEFORE truncating drift-report.json
+        # in place, so prefer that: the download carries every suggestion (the
+        # sticky comment is size-capped; the artifact is not). Fall back to the
+        # post-cap report only if the snapshot is missing (jq present but cp failed,
+        # or a future reorder).
+        if [ -s "$STAGE_DIR/pr-scan.json" ]; then
+          scan_json_ready=true
+          echo "📎 pr-scan.json ready (uncapped snapshot, $(wc -c < "$STAGE_DIR/pr-scan.json" | tr -d ' ') bytes)"
+        elif [ -s "$REPORT_PATH" ]; then
+          if cp "$REPORT_PATH" "$STAGE_DIR/pr-scan.json"; then
+            scan_json_ready=true
+            echo "📎 pr-scan.json ready (post-cap fallback, $(wc -c < "$STAGE_DIR/pr-scan.json" | tr -d ' ') bytes)"
+          else
+            echo "::warning::📎 failed to copy report → pr-scan.json; that link will be absent."
+          fi
+        else
+          echo "ℹ️  no report available — pr-scan.json link will be absent."
+        fi
+
+        # pr-scan-context.json — built by the zero-dep Node helper from the SAME
+        # report the artifact serves (the uncapped snapshot when present), so
+        # report_summary.code_suggestions reflects the true total rather than the
+        # comment's capped view. SCAN_CONTEXT_OUT + REPORT_PATH are passed inline
+        # so they reach the child process without polluting the step env. The
+        # script never throws (writes a minimal file on error).
+        CONTEXT_REPORT="$STAGE_DIR/pr-scan.json"
+        [ -s "$CONTEXT_REPORT" ] || CONTEXT_REPORT="$REPORT_PATH"
+        SCAN_CONTEXT_OUT="$STAGE_DIR/pr-scan-context.json" REPORT_PATH="$CONTEXT_REPORT" \
+          node "${{ github.action_path }}/action/scripts/build-scan-context.mjs" || \
+          echo "::warning::📎 build-scan-context.mjs exited non-zero; pr-scan-context.json may be absent."
+        if [ -s "$STAGE_DIR/pr-scan-context.json" ]; then
+          context_ready=true
+        fi
+
+        {
+          echo "scan_json_ready=$scan_json_ready"
+          echo "context_ready=$context_ready"
+        } >> "$GITHUB_OUTPUT"
+
+    # ─── 8g.2 Upload pr-scan.json (NON-ZIPPED, raw .json at the link) ─
+    # archive:false serves the bare .json at the artifact URL (no unzip),
+    # and promotes the file basename to the artifact name → "pr-scan.json".
+    # overwrite:true so a workflow RE-RUN replaces the prior artifact
+    # instead of 409-ing (the namespace is shared across attempts of one
+    # run). Fail-soft.
+    - name: Upload pr-scan.json artifact
+      id: scan-json-upload
+      if: >-
+        steps.scan-artifacts.outputs.scan_json_ready == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        path: ${{ runner.temp }}/drift-scan-artifacts/pr-scan.json
+        archive: false
+        retention-days: 14
+        overwrite: true
+
+    # ─── 8g.3 Upload pr-scan-context.json (NON-ZIPPED) ───────────────
+    - name: Upload pr-scan-context.json artifact
+      id: scan-context-upload
+      if: >-
+        steps.scan-artifacts.outputs.context_ready == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        path: ${{ runner.temp }}/drift-scan-artifacts/pr-scan-context.json
+        archive: false
+        retention-days: 14
+        overwrite: true
+
+    # ─── 8g.4 Resolve both artifact URLs (two-source fallback) ───────
+    # Same hard-won fallback as the audio resolver: upload-artifact@v7 can
+    # report a SUCCESS outcome yet leave `artifact-url` empty (hot-replica
+    # 404 on its post-upload metadata fetch) while `artifact-id` is set.
+    # The canonical URL is a pure string concat (no REST call, no extra
+    # permission) identical to the run's Artifacts-panel link. Reading the
+    # render step's env from THIS resolver (not the upload step directly)
+    # is what keeps the links from silently vanishing on that quirk.
+    - name: Resolve scan artifact URLs
+      id: scan-artifacts-url
+      if: >-
+        (steps.scan-artifacts.outputs.scan_json_ready == 'true' ||
+         steps.scan-artifacts.outputs.context_ready == 'true') &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        JSON_DIRECT_URL:     ${{ steps.scan-json-upload.outputs.artifact-url }}
+        JSON_ARTIFACT_ID:    ${{ steps.scan-json-upload.outputs.artifact-id }}
+        CONTEXT_DIRECT_URL:  ${{ steps.scan-context-upload.outputs.artifact-url }}
+        CONTEXT_ARTIFACT_ID: ${{ steps.scan-context-upload.outputs.artifact-id }}
+        SERVER_URL:          ${{ github.server_url }}
+        REPO:                ${{ github.repository }}
+        RUN_ID:              ${{ github.run_id }}
+      run: |
+        # direct artifact-url wins; else reconstruct from artifact-id; else "".
+        resolve_url() {
+          if [ -n "${1:-}" ]; then
+            printf '%s' "$1"
+          elif [ -n "${2:-}" ]; then
+            printf '%s' "${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}/artifacts/${2}"
+          fi
+        }
+        json_url="$(resolve_url "${JSON_DIRECT_URL:-}" "${JSON_ARTIFACT_ID:-}")"
+        context_url="$(resolve_url "${CONTEXT_DIRECT_URL:-}" "${CONTEXT_ARTIFACT_ID:-}")"
+        {
+          echo "scan_json_url=${json_url}"
+          echo "scan_context_url=${context_url}"
+        } >> "$GITHUB_OUTPUT"
+        echo "📎 pr-scan.json         → ${json_url:-<none>}"
+        echo "📎 pr-scan-context.json → ${context_url:-<none>}"
+
     # ─── 9. Post sticky PR comment + check run (+ inline review when AI off) ─
     # Runs the compiled bundle at dist/index.js. The bundle reads the
     # JSON report at DRIFT_REPORT_PATH and uses GITHUB_TOKEN to:
@@ -2463,8 +2630,9 @@ runs:
     # OFF to the combined poster (step 12: dist/ai-suggest.js) so the PR
     # conversation shows ONE review thread with both deterministic and AI
     # suggestions, not two. DRIFT_DEFER_INLINE_REVIEW=true tells main.ts
-    # to skip its own postReview in that case; the sticky comment and
-    # check run still ship from this step.
+    # to skip its own postReview; DRIFT_DEFER_STICKY_COMMENT=true likewise
+    # defers the sticky comment to step 12 so it can include the AI-refined
+    # suggestions. The check run + tracking issue still ship from this step.
     # Skips when there's no PR context (push events, manual dispatch).
     - name: Post Drift PR review
       continue-on-error: true   # advisory: never fail the PR on our own error
@@ -2480,6 +2648,12 @@ runs:
         # we leave this empty and main.ts posts the deterministic inline
         # review here as before.
         DRIFT_DEFER_INLINE_REVIEW: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
+        # Likewise defer the STICKY COMMENT to step 12 when AI is on: the
+        # combined poster (dist/ai-suggest.js) merges the AI-refined suggestions
+        # into the report and re-renders the sticky so they appear in the "Code
+        # suggestions" section. main.ts still ships the check run + tracking
+        # issue + ::warning:: annotations from this step.
+        DRIFT_DEFER_STICKY_COMMENT: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
         # Artifact URL of the non-zipped WAV (empty when audio is disabled or
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
         # archive:false this URL serves the raw .wav, not a zip.
@@ -2494,6 +2668,14 @@ runs:
         # player is github.com/user-attachments/, which only the web UI can
         # write to). Footer surfaces both links when this is set.
         DRIFT_AUDIO_MP4_URL: ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
+        # Artifact URLs of the machine-readable scan outputs, surfaced in a
+        # collapsed accordion at the bottom of the sticky comment. Read from
+        # the resolver (NOT the upload steps directly) so an empty
+        # upload-artifact@v7 `artifact-url` is transparently reconstructed
+        # from `artifact-id` instead of silently dropping the link. Empty
+        # when staging/upload failed → dist/index.js omits the missing link.
+        DRIFT_SCAN_JSON_URL:    ${{ steps.scan-artifacts-url.outputs.scan_json_url }}
+        DRIFT_SCAN_CONTEXT_URL: ${{ steps.scan-artifacts-url.outputs.scan_context_url }}
         GITHUB_TOKEN:        ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/index.js"
 
@@ -2726,6 +2908,17 @@ runs:
         AI_SUGGESTIONS_PATH:      ${{ runner.temp }}/ai-suggestions.json
         DRIFT_MAX_AI_SUGGESTIONS: ${{ (steps.args.outputs.ai-max-suggestions || inputs.ai-max-suggestions) }}
         DRIFT_AI_MODEL:           ${{ (steps.args.outputs.ai-model || inputs.ai-model) }}
+        # Sticky comment is deferred to THIS step when AI is on (mirrors
+        # DRIFT_DEFER_INLINE_REVIEW in step 9). dist/ai-suggest.js merges the
+        # AI-refined suggestions into the report and re-renders the sticky so
+        # they show in the "Code suggestions" section. The footer/artifact URLs
+        # below are threaded in (same sources step 9 uses) so the re-render
+        # keeps full fidelity — audio button + machine-readable scan links.
+        DRIFT_DEFER_STICKY_COMMENT: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
+        DRIFT_AUDIO_URL:          ${{ steps.audio-url.outputs.audio_url }}
+        DRIFT_AUDIO_MP4_URL:      ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
+        DRIFT_SCAN_JSON_URL:      ${{ steps.scan-artifacts-url.outputs.scan_json_url }}
+        DRIFT_SCAN_CONTEXT_URL:   ${{ steps.scan-artifacts-url.outputs.scan_context_url }}
         GITHUB_TOKEN:             ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/ai-suggest.js"
 

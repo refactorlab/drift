@@ -2,11 +2,10 @@ import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import { loadReport, passesQualityBar, DRIFT_FAILS_PR } from './report.ts';
 import { renderOverview } from './render/overview.ts';
-import { upsertStickyComment, findSticky } from './github/comment.ts';
+import { buildAndUpsertSticky } from './github/sticky-post.ts';
 import { upsertTrackingIssue, issueMarker } from './github/issue.ts';
 import { postReview } from './github/review.ts';
 import { createCheckRun } from './github/check.ts';
-import { parseState, type DriftState } from './render/state.ts';
 import type { PrContext } from './render/context.ts';
 import { resolvePrContext } from './pr-context.ts';
 
@@ -80,6 +79,13 @@ export async function main(): Promise<void> {
   // native <video> player (GitHub strips <audio> in comments + only
   // auto-embeds video from user-attachments, which CI can't write to).
   const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || undefined;
+  // Artifact URLs of the machine-readable scan outputs, surfaced in a
+  // collapsed accordion at the bottom of the comment: the raw scanner report
+  // (pr-scan.json) and the scan-context bundle (pr-scan-context.json). Both
+  // are empty when the artifact upload is disabled or upload-artifact@v7
+  // returned no URL → the accordion drops the missing link (fail-soft).
+  const scanJsonUrl = process.env.DRIFT_SCAN_JSON_URL?.trim() || undefined;
+  const scanContextUrl = process.env.DRIFT_SCAN_CONTEXT_URL?.trim() || undefined;
 
   // When AI suggestions are enabled, the AI-post step (dist/ai-suggest.js)
   // posts a SINGLE combined PR review — deterministic + AI — so reviewers see
@@ -88,6 +94,14 @@ export async function main(): Promise<void> {
   // postReview so the combined poster owns the surface. When AI is disabled
   // the flag stays empty and main.ts posts the deterministic review as before.
   const deferInlineReview = process.env.DRIFT_DEFER_INLINE_REVIEW === 'true';
+
+  // When AI suggestions are enabled, the sticky comment is ALSO deferred to the
+  // AI-post step (dist/ai-suggest.js) — it merges the AI-refined suggestions
+  // (which don't exist yet at this step) into the report and renders the sticky
+  // with them included. main.ts still does the check run, tracking issue, and
+  // ::warning:: annotations; only the sticky-comment post moves. When AI is off
+  // this stays empty and main.ts posts the sticky here as before.
+  const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === 'true';
 
   const tasks: Promise<unknown>[] = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch((err) =>
@@ -112,26 +126,29 @@ export async function main(): Promise<void> {
     );
   }
 
-  if (wantComment) {
-    // Read the prior sticky comment ONCE: we recover its embedded drift
-    // snapshot for the "since last review" delta, and reuse its id so the
-    // upsert doesn't list comments a second time. Best-effort — any failure
-    // just means a first-run delta line.
-    let priorState: DriftState | null = null;
-    let existingId: number | null = null;
-    try {
-      const prior = await findSticky(octokit, owner, repo, prNumber);
-      existingId = prior?.id ?? null;
-      priorState = parseState(prior?.body);
-    } catch (err) {
-      core.warning(`could not read prior sticky comment: ${describeError(err)}`);
-    }
-
-    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl, audioMp4Url });
+  if (wantComment && deferSticky) {
+    core.info(
+      'DRIFT_DEFER_STICKY_COMMENT=true — skipping the sticky comment here; ' +
+        'the AI-post step will render it with the AI-refined suggestions merged in.',
+    );
+  } else if (wantComment) {
+    // Render + upsert the sticky overview. The shared helper reads the prior
+    // sticky once (for the "since last review" delta) and reuses its id — the
+    // SAME path ai-index.ts takes when the post is deferred, so the two can't
+    // drift.
     tasks.push(
-      upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch((err) =>
-        core.warning(`sticky comment failed: ${describeError(err)}`),
-      ),
+      buildAndUpsertSticky({
+        octokit,
+        owner,
+        repo,
+        prNumber,
+        report,
+        ctx: prCtx,
+        audioUrl,
+        audioMp4Url,
+        scanJsonUrl,
+        scanContextUrl,
+      }).catch((err) => core.warning(`sticky comment failed: ${describeError(err)}`)),
     );
   }
 
@@ -143,7 +160,7 @@ export async function main(): Promise<void> {
     const issueBody =
       `${issueMarker(prNumber)}\n\n> Drift tracking issue for ${prLink}` +
       ` — refreshed each time \`/drift issue\` runs.\n\n` +
-      renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url });
+      renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl });
     const issueTitle = `Drift findings — PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ''}`;
     tasks.push(
       upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch((err) =>

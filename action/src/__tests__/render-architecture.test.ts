@@ -70,7 +70,7 @@ test('architecture: collapsible diagrams + data-structure table', () => {
     ctx: CTX,
   })!;
   assert.match(out, /<summary>🧭 Architecture flow diagram — before vs after<\/summary>/);
-  assert.match(out, /‹anonymous@N›/, 'anonymous-callable note present');
+  assert.match(out, /anon ‹file:line›/, 'anonymous-callable note present');
   assert.match(out, /<summary>🧠 Business-logic reach diagram<\/summary>/);
   assert.match(out, /> \*\*Summary —\*\* why this exists/);
   assert.match(out, /<summary>📦 Data structures touched \(1\)<\/summary>/);

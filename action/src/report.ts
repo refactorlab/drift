@@ -162,6 +162,24 @@ export type CodeSuggestion = {
   /** Prompt hint handed to the AI pass; unused by the renderer. */
   llm_prompt_hint?: string;
   notes?: string;
+  /**
+   * Origin of this finding. `'scanner'` (default/absent) is a deterministic
+   * static-analysis finding; `'ai'` is one refined by the per-suggestion
+   * inference pass. The renderer keys off this to give AI suggestions the
+   * expanded "code suggestion" disclosure (narrative + red/green diff) while
+   * leaving deterministic findings in the priority table — see
+   * render/sections/suggestions.ts.
+   */
+  source?: 'scanner' | 'ai';
+  /**
+   * One plain-language sentence describing WHAT the change does (e.g. "Wrap the
+   * login call in a retry loop with backoff"). Distinct from `why_it_matters`
+   * (the WHY). Populated for `source: 'ai'` suggestions; rendered as the lead
+   * line of the AI code-suggestion block.
+   */
+  summary?: string;
+  /** Model id that produced an `source: 'ai'` suggestion, e.g. `openai/gpt-4.1`. */
+  model?: string;
 };
 
 export type RiskItem = {

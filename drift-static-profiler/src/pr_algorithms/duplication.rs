@@ -9,6 +9,7 @@ use crate::pr_algorithms::constants::{
 };
 use crate::pr_algorithms::pr_signals::PrSignals;
 use crate::pr_algorithms::types::*;
+use crate::tags::{is_anonymous_symbol_name, is_synthetic_module_name};
 use crate::tree::CallTreeNode;
 use std::collections::{HashMap, HashSet};
 
@@ -24,6 +25,12 @@ const GENERIC_NAMES: &[&str] = &[
 
 fn should_compare(name: &str) -> bool {
     if name.is_empty() {
+        return false;
+    }
+    // Synthetic names carry no duplication signal and would render raw in a
+    // cluster: every `<module>` is byte-identical (would always "duplicate")
+    // and `<anonymous@N>` names differ only by line. Skip them.
+    if is_synthetic_module_name(name) || is_anonymous_symbol_name(name) {
         return false;
     }
     if GENERIC_NAMES.iter().any(|g| *g == name) {

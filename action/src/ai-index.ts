@@ -26,14 +26,17 @@
 import { readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
-import { loadReport, passesQualityBar, type CodeSuggestion } from './report.ts';
+import { loadReport, passesQualityBar, type CodeSuggestion, type ScanPrOutput } from './report.ts';
 import { renderSuggestionBody } from './render/suggestion.ts';
 import { parseAIOutput } from './ai/parse.ts';
-import { fetchCommentableLines, buildReviewComments } from './ai/post.ts';
+import { fetchCommentableLines, fetchPrFiles, buildReviewComments } from './ai/post.ts';
 import { filterByDiff } from './ai/diff-lines.ts';
+import { mergeAiSuggestionsIntoReport } from './ai/to-code-suggestion.ts';
+import { buildAndUpsertSticky } from './github/sticky-post.ts';
 import type { ReviewComment } from './contract/github.ts';
 import type { AISuggestion } from './ai/schema.ts';
-import { resolvePrContext } from './pr-context.ts';
+import type { PrContext } from './render/context.ts';
+import { resolvePrContext, type ResolvedPr } from './pr-context.ts';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -46,13 +49,20 @@ async function aiMain(): Promise<void> {
   const model = process.env.DRIFT_AI_MODEL || 'openai/gpt-4o';
   const dryRun = process.env.DRIFT_DRY_RUN === 'true';
   const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 3);
+  // When set, main.ts deferred the sticky comment to THIS step so it can
+  // include the AI-refined suggestions (which don't exist yet at step 9). We
+  // then own the sticky post and must always reach it — even when there are no
+  // inline comments to anchor.
+  const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === 'true';
 
   // 1. Deterministic suggestions from the scan report. Optional — when the
   //    report path is missing/unreadable, we post AI-only (preserving the
   //    pre-combined behavior). The cap step in action.yml already trims
   //    code_suggestions to max-code-suggestions, so the worst-case here is
-  //    bounded by that cap, not by the scanner.
-  const detSuggestions = readDeterministicSuggestions();
+  //    bounded by that cap, not by the scanner. We keep the WHOLE report too —
+  //    the deferred sticky render needs it.
+  const report = loadReportSafe();
+  const detSuggestions = (report?.pr_review?.code_suggestions ?? []).filter(passesQualityBar);
 
   // 2. AI suggestions from the envelope. Optional — when the envelope is
   //    missing/empty (AI loop failed, no models permission, …), we still
@@ -61,7 +71,9 @@ async function aiMain(): Promise<void> {
   //    cap counts POSTABLE entries (legacy contract).
   const { suggestions: aiSuggestions, funnel: aiFunnel } = readAISuggestions();
 
-  if (detSuggestions.length === 0 && aiSuggestions.length === 0) {
+  // Nothing to post AND we don't own the sticky → the original fast exit. When
+  // we DO own the sticky we must continue so it ships (deterministic / empty).
+  if (detSuggestions.length === 0 && aiSuggestions.length === 0 && !deferSticky) {
     core.info('No deterministic or AI suggestions to post — skipping combined review.');
     return;
   }
@@ -84,10 +96,18 @@ async function aiMain(): Promise<void> {
   // (422). Pulls.createReview is ATOMIC — one off-diff anchor sinks the
   // ENTIRE review and every inline comment is lost. Best-effort: if the
   // diff fetch fails, proceed unfiltered and let the fail-soft POST handle
-  // it.
+  // it. When we own the sticky we ALSO need the raw patches (to reconstruct
+  // each AI suggestion's red/green diff), so one listFiles backs both.
   let commentable: Map<string, Set<number>> | null = null;
+  let patches: Map<string, string> | null = null;
   try {
-    commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+    if (deferSticky) {
+      const f = await fetchPrFiles(octokit, owner, repo, pr.number);
+      commentable = f.commentable;
+      patches = f.patches;
+    } else {
+      commentable = await fetchCommentableLines(octokit, owner, repo, pr.number);
+    }
   } catch (e) {
     core.warning(`Could not fetch PR diff to validate lines (${describe(e)}); posting unfiltered.`);
   }
@@ -119,29 +139,105 @@ async function aiMain(): Promise<void> {
       `${merged.length} comment(s) after dedupe`,
   );
 
+  // Inline review — only when there's something to anchor. This is NOT a
+  // function-level return anymore: the deferred sticky post below must still
+  // run even when no inline comment lands on the diff.
   if (merged.length === 0) {
     if (aiFunnel.total > 0 && detComments.length === 0) {
       // Preserve the original "no AI landed on diff" message so the user
       // sees the right narrative when AI was the sole source.
-      core.info('No AI suggestion landed on a diff line — nothing to post.');
+      core.info('No AI suggestion landed on a diff line — nothing to post inline.');
     } else {
-      core.info('No on-diff anchors — skipping combined review (suggestions still in the sticky comment).');
+      core.info('No on-diff anchors — skipping inline review (suggestions still in the sticky comment).');
     }
+  } else {
+    await postCombinedReview({
+      octokit,
+      owner,
+      repo,
+      prNumber: pr.number,
+      headSha: pr.headSha,
+      comments: merged,
+      detCount: detComments.length,
+      aiCount: aiComments.length,
+      model,
+      dryRun,
+    });
+  }
+
+  // Sticky comment — when deferred, render it HERE with the AI-refined
+  // suggestions merged into the report so they surface in the "Code
+  // suggestions" section as expanded "code suggestion" blocks (narrative +
+  // red/green diff). Independent try/catch so a sticky failure never masks a
+  // successful inline post, or vice-versa.
+  if (deferSticky) {
+    try {
+      await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model });
+    } catch (e) {
+      core.warning(`Deferred sticky comment failed (non-fatal): ${describe(e)}`);
+    }
+  }
+}
+
+/**
+ * Render + upsert the sticky comment with the AI-refined suggestions merged
+ * into the report. Converts each postable AISuggestion into a CodeSuggestion
+ * carrying a reconstructed red/green diff, dedupes against the deterministic
+ * findings by `path:line` (AI wins — it's the one rendered with the rich
+ * block), then delegates to the shared sticky helper.
+ */
+async function postDeferredSticky(args: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+  report: ScanPrOutput | null;
+  pr: ResolvedPr;
+  aiPostable: AISuggestion[];
+  patches: Map<string, string> | null;
+  model: string;
+}): Promise<void> {
+  const { report, pr } = args;
+  if (!report) {
+    core.warning('Sticky comment deferred but the scan report is unreadable — cannot render the overview.');
     return;
   }
 
-  await postCombinedReview({
-    octokit,
-    owner,
-    repo,
+  // Convert + merge the AI suggestions into a copy of the report (pure helper,
+  // unit-tested in ai-sticky-render.test.ts): each becomes a CodeSuggestion
+  // with a reconstructed red/green diff, deduped against the deterministic
+  // findings by path:line (AI wins). Empty aiPostable → deterministic-only;
+  // null patches → after-only diffs.
+  const mergedReport = mergeAiSuggestionsIntoReport(report, args.aiPostable, args.patches, args.model);
+
+  const ctx: PrContext = {
+    owner: args.owner,
+    repo: args.repo,
+    sha: pr.headSha,
     prNumber: pr.number,
-    headSha: pr.headSha,
-    comments: merged,
-    detCount: detComments.length,
-    aiCount: aiComments.length,
-    model,
-    dryRun,
+    prTitle: pr.title,
+    htmlUrl: pr.htmlUrl,
+    baseRef: pr.baseRef,
+    author: pr.author,
+  };
+
+  await buildAndUpsertSticky({
+    octokit: args.octokit,
+    owner: args.owner,
+    repo: args.repo,
+    prNumber: pr.number,
+    report: mergedReport,
+    ctx,
+    audioUrl: optEnv('DRIFT_AUDIO_URL'),
+    audioMp4Url: optEnv('DRIFT_AUDIO_MP4_URL'),
+    scanJsonUrl: optEnv('DRIFT_SCAN_JSON_URL'),
+    scanContextUrl: optEnv('DRIFT_SCAN_CONTEXT_URL'),
   });
+  core.info(`Sticky comment refreshed with ${args.aiPostable.length} AI-refined suggestion(s) merged in.`);
+}
+
+function optEnv(name: string): string | undefined {
+  const v = process.env[name];
+  return v && v.trim().length > 0 ? v.trim() : undefined;
 }
 
 /** Apply the diff filter to AI suggestions, logging per-finding drop
@@ -163,20 +259,22 @@ function filterAIByDiff(
   return kept;
 }
 
-/** Read code_suggestions from DRIFT_REPORT_PATH; apply the deterministic
- *  quality bar (confidence ≥ 0.75, reference present, category A/B/C). */
-function readDeterministicSuggestions(): CodeSuggestion[] {
+/** Load the scan report from DRIFT_REPORT_PATH, or null when it's missing or
+ *  unreadable. The caller derives the deterministic suggestions from it AND —
+ *  when this step owns the sticky comment — re-renders the whole overview, so
+ *  it needs the full report object, not just `code_suggestions`. */
+function loadReportSafe(): ScanPrOutput | null {
   const path = process.env.DRIFT_REPORT_PATH;
-  if (!path) return [];
-  let report: ReturnType<typeof loadReport>;
+  if (!path) {
+    core.info('DRIFT_REPORT_PATH not set — combined review will skip deterministic suggestions.');
+    return null;
+  }
   try {
-    report = loadReport(path);
+    return loadReport(path);
   } catch (e) {
     core.info(`Drift report unreadable at ${path}: ${describe(e)} — combined review will skip deterministic`);
-    return [];
+    return null;
   }
-  const suggestions = report.pr_review?.code_suggestions ?? [];
-  return suggestions.filter(passesQualityBar);
 }
 
 /** Read + parse AI suggestions from AI_SUGGESTIONS_PATH. Returns the FULL

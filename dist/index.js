@@ -24318,23 +24318,18 @@ function renderHeader(report, ctx, opts = {}) {
   const effort = reviewEffort(facts);
   const confidence = mergeConfidence(facts);
   const blocks = [
-    titleLine(facts),
     bottomLine(verdict, facts),
-    signalLine(confidence, effort, opts.confTrend),
+    badgeRow(facts, verdict, effort, confidence),
+    trendLine(opts.confTrend),
     subLine(ctx),
-    calloutBlock(verdict, facts, composite, ctx),
-    badgeRow(facts, verdict, effort, confidence)
+    calloutBlock(verdict, facts, composite, ctx)
   ];
   return blocks.filter(Boolean).join("\n\n");
-}
-function titleLine(facts) {
-  const arrow = facts.overallDirection === "up" ? "\u25B2 " : facts.overallDirection === "down" ? "\u25BC " : facts.overallDirection === "neutral" ? "\u2014 " : "";
-  return `## ${arrow}Drift review`;
 }
 function subLine(ctx) {
   const slug = repoSlug(ctx);
   const repo = slug ? `\u{1F4CD} [\`${slug}\`](https://github.com/${ctx.owner}/${ctx.repo}) &nbsp;\xB7&nbsp; ` : "";
-  return `<sub>${repo}sticky review comment \u2014 re-rendered on every push &nbsp;\xB7&nbsp; advisory check</sub>`;
+  return `<sub>${repo}sticky review comment \u2014 re-rendered on every push</sub>`;
 }
 function decideVerdict(facts, composite) {
   const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
@@ -24378,10 +24373,10 @@ function bottomLine(verdict, facts) {
   }
   return `> ${verdict.emoji} ${sentence}`;
 }
-function signalLine(confidence, effort, confTrend) {
+function trendLine(confTrend) {
   const trend = sparkline(confTrend ?? []);
-  const trendTag = trend ? ` \xB7 trend \`${trend}\` <sub>(confidence over the last ${confTrend.length} pushes)</sub>` : "";
-  return `> <sub>\u{1F6E1}\uFE0F **Merge confidence ${confidence.score}/5** (${confidence.label}) &nbsp;\xB7&nbsp; \u{1F9EE} **Review effort ${effort.score}/5** \xB7 ${effort.minutes}</sub>${trendTag}`;
+  if (!trend) return "";
+  return `<sub>\u{1F6E1}\uFE0F Merge-confidence trend \`${trend}\` (over the last ${confTrend.length} pushes)</sub>`;
 }
 function theMove(facts) {
   const parts = [];
@@ -24398,7 +24393,7 @@ function theMove(facts) {
   return joinClauses(parts.slice(0, 2));
 }
 function calloutBlock(verdict, facts, composite, ctx) {
-  const tldr = `**TL;DR \u2014** ${narrative(facts, composite).join(" ")} _Advisory \u2014 does not fail the check._`.trim();
+  const tldr = `**TL;DR \u2014** ${narrative(facts, composite).join(" ")}`.trim();
   const focus = focusLine(facts, ctx);
   const paras = [tldr];
   if (focus) paras.push(focus);
@@ -24472,31 +24467,39 @@ function narrative(facts, composite) {
   return lines;
 }
 function badgeRow(facts, verdict, effort, confidence) {
-  const badges = [];
-  badges.push(badge("Review status", "review", verdict.statusMessage, verdict.statusColor));
-  badges.push(badge(`Merge confidence ${confidence.score}/5`, "merge confidence", `${confidence.score}/5`, confidence.color));
-  badges.push(badge(`Review effort ${effort.score}/5`, "review effort", `${effort.score}/5`, effort.color));
+  const verdictGroup = [
+    badge("Review status", "review", verdict.statusMessage, verdict.statusColor),
+    badge(`Merge confidence ${confidence.score}/5`, "merge confidence", `${confidence.score}/5 \xB7 ${confidence.label}`, confidence.color),
+    badge(`Review effort ${effort.score}/5`, "review effort", `${effort.score}/5 \xB7 ${bareMinutes(effort.minutes)}`, effort.color),
+    badge("Advisory \u2014 does not gate the merge", "advisory", "does not gate", COLOR.grey)
+  ];
+  const sizeGroup = [];
   if (facts.overallPercent !== null) {
     const color = facts.overallDirection === "up" ? COLOR.green : facts.overallDirection === "down" ? COLOR.red : COLOR.grey;
-    badges.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, "drift", signedPercent(facts.overallPercent), color));
+    sizeGroup.push(badge(`Drift ${signedPercent(facts.overallPercent)}`, "drift", signedPercent(facts.overallPercent), color));
   }
-  badges.push(badge(`Files ${facts.changedFiles}`, "files", int(facts.changedFiles), COLOR.blue));
+  sizeGroup.push(badge(`Files ${facts.changedFiles}`, "files", int(facts.changedFiles), COLOR.blue));
   if (facts.netLoc !== null) {
-    badges.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, "net LOC", signedInt(facts.netLoc), COLOR.grey));
+    sizeGroup.push(badge(`Net LOC ${signedInt(facts.netLoc)}`, "net LOC", signedInt(facts.netLoc), COLOR.grey));
   }
-  badges.push(badge(`Suggestions ${facts.passing.length}`, "suggestions", int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey));
+  const findingsGroup = [
+    badge(`Suggestions ${facts.passing.length}`, "suggestions", int(facts.passing.length), facts.passing.length > 0 ? COLOR.blue : COLOR.grey)
+  ];
   if (facts.passing.length > 0) {
-    badges.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, "agent-ready", `${int(facts.passing.length)} fix prompts`, COLOR.brand));
+    findingsGroup.push(badge(`Agent-ready: ${facts.passing.length} fix prompts`, "agent-ready", `${int(facts.passing.length)} fix prompts`, COLOR.brand));
   }
   if (facts.totalRisks > 0) {
     const color = facts.risksToAddress > 0 ? COLOR.red : COLOR.green;
-    badges.push(badge(`Risks: ${facts.risksToAddress} to address`, "risks", `${facts.risksToAddress} to address`, color));
+    findingsGroup.push(badge(`Risks: ${facts.risksToAddress} to address`, "risks", `${facts.risksToAddress} to address`, color));
   }
   if (facts.newTestFiles !== null) {
     const color = facts.newTestFiles > 0 ? COLOR.green : COLOR.red;
-    badges.push(badge(`New tests: ${facts.newTestFiles}`, "new tests", int(facts.newTestFiles), color));
+    findingsGroup.push(badge(`New tests: ${facts.newTestFiles}`, "new tests", int(facts.newTestFiles), color));
   }
-  return badges.join(" &nbsp;");
+  return [verdictGroup, sizeGroup, findingsGroup].map((group) => group.join(" &nbsp;")).filter(Boolean).join("\n");
+}
+function bareMinutes(minutes) {
+  return minutes.replace(/^≈\s*/, "");
 }
 function badge(alt, label, message, color) {
   return `![${alt}](https://img.shields.io/badge/${shields(label)}-${shields(message)}-${color}?style=flat-square)`;
@@ -24959,10 +24962,13 @@ function resolveMax(max) {
 function renderSuggestions(suggestions, ctx, opts = {}) {
   const passing = (suggestions ?? []).filter(passesQualityBar);
   if (passing.length === 0) return null;
-  const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
-  const total = sorted.length;
+  const aiSugg = passing.filter((s) => s.source === "ai");
+  const detSugg = passing.filter((s) => s.source !== "ai");
+  const sorted = [...detSugg].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
+  const detTotal = sorted.length;
+  const total = passing.length;
   const kept = sorted.slice(0, resolveMax(opts.max));
-  const correctness = sorted.filter((s) => s.category === "B").length;
+  const correctness = passing.filter((s) => s.category === "B").length;
   const lines = [`## \u26A0\uFE0F Code suggestions (${total})`, ""];
   if (correctness > 0) {
     lines.push(
@@ -24971,27 +24977,39 @@ function renderSuggestions(suggestions, ctx, opts = {}) {
       ""
     );
   }
-  lines.push(
-    "<sub>**Priority reflects impact, not certainty** \u2014 a 100%-confident dead-code removal is still low-priority cleanup; a product-correctness finding matters more.</sub>",
-    ""
-  );
-  lines.push("| Priority | Finding | Location | Confidence |", "|:--:|---|---|---:|");
-  for (const s of kept) {
-    const p = priority(s);
-    lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
-  }
-  lines.push("");
-  if (total > kept.length) {
-    const more = total - kept.length;
-    lines.push(`_\u2026+${more} more ${plural(more, "suggestion")} not shown \u2014 rendering the top ${kept.length} by priority._`, "");
-  }
   const shown = kept.slice(0, MAX_SHOWN);
-  for (const s of shown) lines.push(renderDetail(s, ctx), "");
-  const fixAll = buildFixAllPrompt(shown, ctx);
+  if (kept.length > 0) {
+    lines.push(
+      "<sub>**Priority reflects impact, not certainty** \u2014 a 100%-confident dead-code removal is still low-priority cleanup; a product-correctness finding matters more.</sub>",
+      ""
+    );
+    lines.push("| Priority | Finding | Location | Confidence |", "|:--:|---|---|---:|");
+    for (const s of kept) {
+      const p = priority(s);
+      lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
+    }
+    lines.push("");
+    if (detTotal > kept.length) {
+      const more = detTotal - kept.length;
+      lines.push(`_\u2026+${more} more ${plural(more, "suggestion")} not shown \u2014 rendering the top ${kept.length} by priority._`, "");
+    }
+    for (const s of shown) lines.push(renderDetail(s, ctx), "");
+  }
+  if (aiSugg.length > 0) {
+    lines.push(
+      `### \u{1F916} AI-refined code suggestions (${aiSugg.length})`,
+      "",
+      "<sub>Model-generated patches grounded in the scanner findings \u2014 each carries an **Apply** button on its matching inline review comment.</sub>",
+      ""
+    );
+    for (const s of aiSugg) lines.push(renderAIDetail(s, ctx), "");
+  }
+  const fixAllItems = [...shown, ...aiSugg];
+  const fixAll = buildFixAllPrompt(fixAllItems, ctx);
   if (fixAll) {
     lines.push(
       "<details>",
-      `<summary>\u{1F916} <strong>Fix-All handoff</strong> \u2014 one prompt that dispatches all ${shown.length} findings</summary>`,
+      `<summary>\u{1F916} <strong>Fix-All handoff</strong> \u2014 one prompt that dispatches all ${fixAllItems.length} findings</summary>`,
       "",
       fencedBlock(fixAll, "text"),
       "",
@@ -25039,6 +25057,42 @@ function renderDetail(s, ctx) {
   out.push(...codeContext(s, ctx));
   if (s.remediation_hint && !s.diff?.after_lines?.length) {
     out.push(`**Fix:** ${s.remediation_hint}`, "");
+  }
+  const ref = s.references?.[0];
+  if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, "");
+  if (s.file) {
+    out.push(
+      "<details>",
+      "<summary>\u{1F916} Copy this prompt for your AI agent <sub>(Claude Code \xB7 Cursor \xB7 Copilot)</sub></summary>",
+      "",
+      fencedBlock(buildAgentPrompt(s, ctx), "text"),
+      "",
+      "</details>",
+      ""
+    );
+  }
+  out.push("</details>");
+  return out.join("\n");
+}
+function renderAIDetail(s, ctx) {
+  const loc = typeof s.line === "number" ? `${s.file}:${s.line}` : s.file;
+  const pct = confidencePercent(s.confidence);
+  const modelTag = s.model ? ` \xB7 <code>${escapeHtml(s.model)}</code>` : "";
+  const out = [
+    "<details open>",
+    `<summary>\u{1F916} <strong>code suggestion</strong> \xB7 <code>${escapeHtml(loc)}</code> \xB7 ${pct}${modelTag}</summary>`,
+    ""
+  ];
+  if (s.summary) out.push(`**What** \u2014 ${s.summary}`, "");
+  out.push(`**Why it matters** \u2014 ${s.why_it_matters}`, "");
+  const unified = s.diff?.unified;
+  if (unified) {
+    out.push("**Suggested change:**", "", fencedBlock(unified, "diff"), "");
+  } else {
+    const after = s.diff?.after_lines ?? [];
+    if (after.length) {
+      out.push("**Suggested change:**", "", fencedBlock(after.map((l) => `+ ${l.code}`).join("\n"), "diff"), "");
+    }
   }
   const ref = s.references?.[0];
   if (ref?.url) out.push(`**Reference:** [${ref.title ?? ref.url}](${ref.url})`, "");
@@ -25377,13 +25431,29 @@ function renderFooter(gen, audioUrl, audioMp4Url) {
   return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
 }
 
+// src/render/sections/artifacts.ts
+function renderScanArtifacts(opts) {
+  const json = opts.scanJsonUrl?.trim();
+  const context3 = opts.scanContextUrl?.trim();
+  if (!json && !context3) return "";
+  const links = [];
+  if (json) links.push(`<a href="${escapeHtml(json)}">pr-scan.json</a>`);
+  if (context3) links.push(`<a href="${escapeHtml(context3)}">pr-scan-context.json</a>`);
+  return `<details>
+<summary><sub>\u{1F4CE} Scan artifacts (JSON)</sub></summary>
+
+<sub>${links.join(" \xB7 ")} \u2014 machine-readable scanner report + scan context. Sign in to GitHub to download.</sub>
+
+</details>`;
+}
+
 // src/render/overview.ts
 var STICKY_MARKER = "<!-- drift:sticky-comment -->";
 var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
 var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
-var BANNER_WIDTH = 200;
-var ANDY_WIDTH = 72;
+var BANNER_WIDTH = 120;
+var ANDY_WIDTH = 64;
 var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
 var withImage = (file, alt, section) => `${sectionImage(file, alt)}
 
@@ -25391,7 +25461,7 @@ ${section}`;
 var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
 var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 function renderOverview(report, opts = {}) {
-  const { ctx, priorState, audioUrl, audioMp4Url, maxSuggestions } = opts;
+  const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
@@ -25439,6 +25509,7 @@ function renderOverview(report, opts = {}) {
   const footer = [
     audioUrl?.trim() ? audioBanner(audioUrl.trim()) : "",
     renderFooter(report.generator, audioUrl, audioMp4Url),
+    renderScanArtifacts({ scanJsonUrl, scanContextUrl }),
     andySignoff()
   ].filter(Boolean).join("\n\n");
   let body = `${STICKY_MARKER}
@@ -25542,6 +25613,33 @@ async function findSticky(octokit, owner, repo, prNumber) {
   const { data } = await octokit.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
   const found = data.find((c) => c.body?.includes(STICKY_MARKER));
   return found ? { id: found.id, body: found.body ?? "" } : null;
+}
+
+// src/github/sticky-post.ts
+async function buildAndUpsertSticky(args) {
+  const { octokit, owner, repo, prNumber, report, ctx } = args;
+  let priorState = null;
+  let existingId = null;
+  try {
+    const prior = await findSticky(octokit, owner, repo, prNumber);
+    existingId = prior?.id ?? null;
+    priorState = parseState(prior?.body);
+  } catch (err) {
+    warning(`could not read prior sticky comment: ${describe(err)}`);
+  }
+  const body = renderOverview(report, {
+    ctx,
+    priorState,
+    audioUrl: args.audioUrl,
+    audioMp4Url: args.audioMp4Url,
+    scanJsonUrl: args.scanJsonUrl,
+    scanContextUrl: args.scanContextUrl,
+    maxSuggestions: args.maxSuggestions
+  });
+  await upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId });
+}
+function describe(err) {
+  return err instanceof Error ? err.message : String(err);
 }
 
 // src/github/issue.ts
@@ -26177,7 +26275,10 @@ async function main() {
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
   const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || void 0;
+  const scanJsonUrl = process.env.DRIFT_SCAN_JSON_URL?.trim() || void 0;
+  const scanContextUrl = process.env.DRIFT_SCAN_CONTEXT_URL?.trim() || void 0;
   const deferInlineReview = process.env.DRIFT_DEFER_INLINE_REVIEW === "true";
+  const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === "true";
   const tasks = [
     createCheckRun({ octokit, owner, repo, headSha, report, failThreshold }).catch(
       (err) => warning(`check run failed: ${describeError(err)}`)
@@ -26199,21 +26300,24 @@ async function main() {
       }).catch((err) => warning(`review failed: ${describeError(err)}`))
     );
   }
-  if (wantComment) {
-    let priorState = null;
-    let existingId = null;
-    try {
-      const prior = await findSticky(octokit, owner, repo, prNumber);
-      existingId = prior?.id ?? null;
-      priorState = parseState(prior?.body);
-    } catch (err) {
-      warning(`could not read prior sticky comment: ${describeError(err)}`);
-    }
-    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl, audioMp4Url });
+  if (wantComment && deferSticky) {
+    info(
+      "DRIFT_DEFER_STICKY_COMMENT=true \u2014 skipping the sticky comment here; the AI-post step will render it with the AI-refined suggestions merged in."
+    );
+  } else if (wantComment) {
     tasks.push(
-      upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch(
-        (err) => warning(`sticky comment failed: ${describeError(err)}`)
-      )
+      buildAndUpsertSticky({
+        octokit,
+        owner,
+        repo,
+        prNumber,
+        report,
+        ctx: prCtx,
+        audioUrl,
+        audioMp4Url,
+        scanJsonUrl,
+        scanContextUrl
+      }).catch((err) => warning(`sticky comment failed: ${describeError(err)}`))
     );
   }
   if (wantIssue) {
@@ -26222,7 +26326,7 @@ async function main() {
 
 > Drift tracking issue for ${prLink} \u2014 refreshed each time \`/drift issue\` runs.
 
-` + renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url });
+` + renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl });
     const issueTitle = `Drift findings \u2014 PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ""}`;
     tasks.push(
       upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch(

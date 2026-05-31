@@ -11,6 +11,7 @@
 
 use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::pr_signals::{PrFinding, PrSignals, SignalTier};
+use crate::pr_algorithms::symbol_label::humanize_symbol_token;
 use crate::pr_algorithms::types::*;
 use std::collections::BTreeMap;
 
@@ -136,7 +137,9 @@ pub fn compute(
             value: format!(
                 "{} in {} ({}:{})",
                 worst.kind.as_str(),
-                worst.function,
+                // location is already in the (basename:line) suffix — collapse a
+                // synthetic function name to a bare token. See `symbol_label`.
+                humanize_symbol_token(&worst.function),
                 worst.file.rsplit('/').next().unwrap_or(&worst.file),
                 worst.line
             ),

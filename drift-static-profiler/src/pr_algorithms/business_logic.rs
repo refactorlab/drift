@@ -15,6 +15,7 @@
 use crate::pr_algorithms::mermaid::{
     colors, ClassDef, EdgeStyle, FlowDirection, FlowEdge, FlowNode, Flowchart, NodeShape,
 };
+use crate::pr_algorithms::symbol_label::humanize_symbol_token;
 use crate::pr_algorithms::types::*;
 use crate::tree::CallTreeNode;
 use std::collections::BTreeMap;
@@ -216,9 +217,16 @@ fn build_flowchart(
     let max_roots = NODE_CAP.saturating_sub(nodes.len());
     for (i, name) in affected_root_names.iter().take(max_roots).enumerate() {
         let rid = format!("r{i}");
+        // Collapse synthetic root names (`<module>` / `<anonymous@N>`) to a
+        // readable token. We deliberately do NOT embed file:line here: this
+        // diagram joins root NAMES to nodes by name alone (entry_index_by_name),
+        // so two same-named synthetic roots from different files would
+        // mis-attribute a file. The architecture-flow graph keys on
+        // (name, file) and shows the full `file:line` there. See `symbol_label`.
+        let entry_node = entry_index_by_name.get(name.as_str());
         nodes.push(FlowNode {
             id: rid.clone(),
-            label: name.clone(),
+            label: humanize_symbol_token(name),
             shape: NodeShape::Rect,
             class: Some("scope".into()),
         });
@@ -230,7 +238,7 @@ fn build_flowchart(
         });
 
         // Walk this root's categories_reached, accumulate totals.
-        if let Some(node) = entry_index_by_name.get(name.as_str()) {
+        if let Some(node) = entry_node {
             for (cat, count) in &node.categories_reached {
                 if let Some((label_id, display)) = category_label(cat) {
                     let entry = category_totals.entry(label_id).or_insert((display, 0));
@@ -431,5 +439,31 @@ mod tests {
             "expected `📦 Orders` entry node, got:\n{}",
             r.mermaid,
         );
+    }
+
+    /// Synthetic root names render as readable tokens (`module` / `anon`),
+    /// never the raw `<module>` / `<anonymous@N>`. Crucially this diagram
+    /// joins roots to nodes by NAME alone, so it deliberately does NOT embed
+    /// a file:line it can't attribute — two `<module>` roots from different
+    /// files both read `module` (honest), never one file's name claimed twice.
+    #[test]
+    fn synthetic_roots_render_as_readable_tokens_without_misattributed_files() {
+        let r = compute(
+            &["<module>".into(), "<module>".into(), "<anonymous@20>".into()],
+            2,
+            None,
+            1,
+            &[],
+            &[],
+        );
+        assert!(r.mermaid.contains("[\"module\"]"), "module token expected:\n{}", r.mermaid);
+        assert!(r.mermaid.contains("[\"anon\"]"), "anon token expected:\n{}", r.mermaid);
+        assert!(
+            !r.mermaid.contains("module›") && !r.mermaid.contains("‹anonymous"),
+            "no raw synthetic name may leak:\n{}",
+            r.mermaid
+        );
+        // No file basename is invented for these (name-keyed lookup is unsafe).
+        assert!(!r.mermaid.contains(".ts") && !r.mermaid.contains(":20"), "no file:line:\n{}", r.mermaid);
     }
 }
