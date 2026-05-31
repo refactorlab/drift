@@ -47,6 +47,30 @@ export function parseCommentableLines(patch: string): Set<number> {
   return lines;
 }
 
+/**
+ * Pick the commentable line CLOSEST to `target` from a non-empty set of
+ * diff lines. Used to RE-ANCHOR a deterministic finding whose exact line
+ * (a symbol's definition line) falls outside the PR's diff hunks: rather
+ * than dropping the finding to the sticky comment only, we snap its inline
+ * anchor to the nearest changed line in the same file. Ties resolve to the
+ * LOWER line number (earlier in the file) for deterministic output.
+ *
+ * Returns `undefined` for an empty set — the caller treats that as
+ * "file not in the diff at all" and drops the finding.
+ */
+export function nearestCommentableLine(set: Set<number>, target: number): number | undefined {
+  let best: number | undefined;
+  let bestDist = Infinity;
+  for (const n of set) {
+    const dist = Math.abs(n - target);
+    if (dist < bestDist || (dist === bestDist && (best === undefined || n < best))) {
+      best = n;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
 export type FilterResult = {
   kept: AISuggestion[];
   dropped: AISuggestion[];

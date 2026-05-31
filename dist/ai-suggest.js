@@ -19577,6 +19577,7 @@ var require_dist = __commonJS({
 // src/ai-index.ts
 var ai_index_exports = {};
 __export(ai_index_exports, {
+  buildDeterministicComments: () => buildDeterministicComments,
   mergeAndDedupe: () => mergeAndDedupe
 });
 module.exports = __toCommonJS(ai_index_exports);
@@ -24352,6 +24353,18 @@ function parseCommentableLines(patch) {
   }
   return lines;
 }
+function nearestCommentableLine(set, target) {
+  let best;
+  let bestDist = Infinity;
+  for (const n of set) {
+    const dist = Math.abs(n - target);
+    if (dist < bestDist || dist === bestDist && (best === void 0 || n < best)) {
+      best = n;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
 function lookupCommentable(map, file) {
   if (map.has(file)) return map.get(file);
   let best;
@@ -26580,7 +26593,13 @@ function readAISuggestions() {
   try {
     raw = (0, import_node_fs2.readFileSync)(path, "utf8");
   } catch (e) {
-    info(`AI envelope unreadable at ${path}: ${describe2(e)} \u2014 combined review will skip AI`);
+    if (isNotFound(e)) {
+      info(
+        `AI envelope not produced at ${path} (the AI inference step was skipped or failed) \u2014 posting deterministic suggestions only.`
+      );
+    } else {
+      info(`AI envelope unreadable at ${path}: ${describe2(e)} \u2014 combined review will skip AI`);
+    }
     return { suggestions: [], funnel: empty };
   }
   if (raw.trim().length === 0) {
@@ -26609,24 +26628,63 @@ ${parsed.rawPreview}`);
   };
 }
 function buildDeterministicComments(suggestions, commentable) {
-  const comments = suggestions.filter((s) => typeof s.line === "number").map((s) => ({
-    path: s.file,
-    line: s.line,
-    side: "RIGHT",
-    body: renderSuggestionBody(s)
+  const anchored = suggestions.filter((s) => typeof s.line === "number").map((s) => ({
+    suggestion: s,
+    comment: {
+      path: s.file,
+      line: s.line,
+      side: "RIGHT",
+      body: renderSuggestionBody(s)
+    },
+    // An Apply block makes the anchor line-sensitive — never snap those.
+    hasApplyBlock: extractAfterCode(s) !== null
   }));
-  if (!commentable) return comments;
-  const before = comments.length;
-  const kept = comments.filter(
-    (c) => typeof c.line === "number" && (commentable.get(c.path)?.has(c.line) ?? false)
-  );
-  const dropped = before - kept.length;
+  if (!commentable) return anchored.map((a) => a.comment);
+  const kept = [];
+  let dropped = 0;
+  let snapped = 0;
+  for (const { comment, hasApplyBlock } of anchored) {
+    const set = lookupCommentable(commentable, comment.path);
+    if (!set || set.size === 0) {
+      dropped += 1;
+      continue;
+    }
+    if (set.has(comment.line)) {
+      kept.push(comment);
+      continue;
+    }
+    if (hasApplyBlock) {
+      dropped += 1;
+      continue;
+    }
+    const near = nearestCommentableLine(set, comment.line);
+    if (near === void 0) {
+      dropped += 1;
+      continue;
+    }
+    kept.push({
+      ...comment,
+      line: near,
+      body: withSnapNote(comment.body, comment.path, comment.line)
+    });
+    snapped += 1;
+  }
+  if (snapped > 0) {
+    info(
+      `Re-anchored ${snapped} deterministic suggestion(s) to the nearest PR-diff line (exact line was outside the diff hunks).`
+    );
+  }
   if (dropped > 0) {
     info(
       `Dropped ${dropped} deterministic suggestion(s) not on a PR-diff line (still mirrored in the Drift sticky comment).`
     );
   }
   return kept;
+}
+function withSnapNote(body, path, originalLine) {
+  return `${body}
+
+> \u{1F4CD} Anchored to the nearest changed line; the finding is at \`${path}:${originalLine}\`.`;
 }
 function mergeAndDedupe(det, ai) {
   const key = (c) => `${c.path}:${c.line}`;
@@ -26679,11 +26737,15 @@ function parseMax(v, fallback) {
 function describe2(e) {
   return e instanceof Error ? e.message : String(e);
 }
+function isNotFound(e) {
+  return typeof e === "object" && e !== null && e.code === "ENOENT";
+}
 aiMain().catch((err) => {
   warning(`Unhandled combined-review error: ${describe2(err)}`);
 });
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  buildDeterministicComments,
   mergeAndDedupe
 });
 /*! Bundled license information:

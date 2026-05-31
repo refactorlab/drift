@@ -11,7 +11,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseCommentableLines, filterByDiff, lookupCommentable } from '../ai/diff-lines.ts';
+import {
+  parseCommentableLines,
+  filterByDiff,
+  lookupCommentable,
+  nearestCommentableLine,
+} from '../ai/diff-lines.ts';
 import { fetchCommentableLines } from '../ai/post.ts';
 import type { AISuggestion } from '../ai/schema.ts';
 
@@ -178,6 +183,33 @@ test('filterByDiff: ambiguous suffix (no exact match) → LONGEST suffix wins', 
 });
 
 // ── lookupCommentable (exported from diff-lines now) ────────────────────
+
+// ── nearestCommentableLine — snap an off-diff anchor to the closest ──────
+//   diff line so an advisory finding still posts inline.
+
+test('nearestCommentableLine: exact member returns itself', () => {
+  assert.equal(nearestCommentableLine(new Set([10, 20, 30]), 20), 20);
+});
+
+test('nearestCommentableLine: picks the closest line above or below', () => {
+  // 23 is closer to 20 than to 30.
+  assert.equal(nearestCommentableLine(new Set([10, 20, 30]), 23), 20);
+  // 27 is closer to 30.
+  assert.equal(nearestCommentableLine(new Set([10, 20, 30]), 27), 30);
+});
+
+test('nearestCommentableLine: equidistant tie resolves to the LOWER line', () => {
+  // 25 is exactly between 20 and 30 → deterministic lower wins.
+  assert.equal(nearestCommentableLine(new Set([20, 30]), 25), 20);
+});
+
+test('nearestCommentableLine: target far below the diff snaps to the first line', () => {
+  assert.equal(nearestCommentableLine(new Set([100, 200]), 1), 100);
+});
+
+test('nearestCommentableLine: empty set → undefined (caller drops the finding)', () => {
+  assert.equal(nearestCommentableLine(new Set<number>(), 5), undefined);
+});
 
 test('lookupCommentable: exact key wins', () => {
   const map = new Map([['a.ts', new Set([1, 2, 3])]]);

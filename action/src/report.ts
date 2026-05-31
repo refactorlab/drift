@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 
 export type PrScope = {
   changed_files: string[];
-  affected_roots: string[];      // names only — to look up in `entries[]`
+  affected_roots: string[];      // humanized entry-point labels (e.g. `OrderService.createOrder`, `anon <routes.js:8>`); join key for per-root coverage vs `uncovered_roots` / `nfr.per_root`
   unreachable_changes: string[];
 };
 

@@ -87,11 +87,24 @@ pub fn compute(entries: &[CallTreeNode]) -> NfrCoverage {
         missing.sort();
         let mut covered: Vec<String> = per.iter().map(|s| (*s).to_string()).collect();
         covered.sort();
+        // Humanize the root identity once (synthetic `<module>` / `<anonymous@N>`
+        // → `file.ext` / `anon <file:line>`, real class prepended) so neither
+        // the per-root table nor the reliability-gaps list shows raw synthetic
+        // names. Must match `pr_scope::affected_roots` and
+        // `tests_in_graph::uncovered_roots` byte-for-byte — the action joins
+        // these lists by string. `CallTreeNode` carries the same name/parent/
+        // file/line the other sites use, so the labels agree. See `symbol_label`.
+        let root_label = crate::pr_algorithms::symbol_label::display_symbol_label(
+            &root.name,
+            root.parent_class.as_deref(),
+            &root.file,
+            root.line,
+        );
         if !per.contains("reliability") {
-            reliability_gaps.push(root.name.clone());
+            reliability_gaps.push(root_label.clone());
         }
         per_root.push(NfrPerRoot {
-            root: root.name.clone(),
+            root: root_label,
             covered,
             missing,
         });
@@ -151,5 +164,48 @@ mod tests {
         let r = compute(&entries);
         assert!(r.families.get("reliability").copied().unwrap_or(0) > 0);
         assert!(r.families.get("security").copied().unwrap_or(0) > 0);
+    }
+
+    /// Synthetic (`<module>` / `<anonymous@N>`) and class-qualified roots are
+    /// humanized in BOTH `per_root[].root` AND `reliability_gaps`, byte-for-byte
+    /// as `tests_in_graph::uncovered_roots` and `pr_scope::affected_roots` do.
+    /// The action joins these lists by string (per-root coverage =
+    /// affected ∩ uncovered), so any divergence silently breaks the table;
+    /// and no display field may leak a raw synthetic identity. See `symbol_label`.
+    #[test]
+    fn synthetic_and_qualified_roots_are_humanized_in_both_fields() {
+        let module_root = mk_node("<module>", "app/keymap.ts");
+        let mut anon_root = mk_node("<anonymous@7>", "app/keymap.ts");
+        anon_root.line = 7;
+        let mut method_root = mk_node("createOrder", "app/svc.ts");
+        method_root.parent_class = Some("OrderService".to_string());
+
+        // None of the three touch a reliability marker, so each appears in
+        // per_root AND reliability_gaps — exercising both humanized fields.
+        let r = compute(&[module_root, anon_root, method_root]);
+
+        let roots: Vec<&str> = r.per_root.iter().map(|p| p.root.as_str()).collect();
+        assert!(roots.contains(&"keymap.ts"), "{roots:?}");
+        assert!(roots.contains(&"anon <keymap.ts:7>"), "{roots:?}");
+        assert!(roots.contains(&"OrderService.createOrder"), "{roots:?}");
+
+        assert!(r.reliability_gaps.contains(&"keymap.ts".to_string()), "{:?}", r.reliability_gaps);
+        assert!(
+            r.reliability_gaps.contains(&"anon <keymap.ts:7>".to_string()),
+            "{:?}",
+            r.reliability_gaps
+        );
+        assert!(
+            r.reliability_gaps.contains(&"OrderService.createOrder".to_string()),
+            "{:?}",
+            r.reliability_gaps
+        );
+
+        for s in roots.iter().copied().chain(r.reliability_gaps.iter().map(String::as_str)) {
+            assert!(
+                !s.contains("<module>") && !s.contains("<anonymous@"),
+                "raw synthetic identity leaked: {s:?}"
+            );
+        }
     }
 }
