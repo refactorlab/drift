@@ -148,6 +148,10 @@ function buildHarness(extra: Record<string, string> = {}): Harness {
   writeFileSync(outputFile, '');
   const briefingPath = join(dir, 'briefing.txt');
   writeFileSync(briefingPath, 'Hello world. This is a short integration-test briefing. It speaks safely.');
+  // The commit-based fallback file (step 8d-fb) — NOT created by default, so
+  // `[ -s ... ]` is false and the AI briefing wins. Tests exercising the
+  // fallback write to this path explicitly.
+  const fallbackPath = join(dir, 'briefing-fallback.txt');
   const reportPath = join(dir, 'drift-report.json');
   writeFileSync(reportPath, JSON.stringify({ pr_review: { business_logic: { summary: 'fallback summary' } } }));
 
@@ -164,6 +168,7 @@ function buildHarness(extra: Record<string, string> = {}): Harness {
       RUNNER_TEMP: dir,
       GITHUB_OUTPUT: outputFile,
       BRIEFING_PATH: briefingPath,
+      FALLBACK_BRIEFING_PATH: fallbackPath,
       DRIFT_REPORT_PATH: reportPath,
       REPO_NAME: 'drift-test',
       PR_BRANCH: 'integration',
@@ -342,23 +347,63 @@ test('text source priority: BRIEFING_PATH wins over scanner summary', () => {
   assert.doesNotMatch(r.stdout, /📄 using deterministic scanner summary/);
 });
 
-test('AI-only: empty BRIEFING_PATH SKIPS audio (no commit/scanner/title fallback)', () => {
-  // Policy: the spoken audio is ALWAYS the AI summarization output, or there
-  // is no audio. With no AI briefing the step must NOT speak the deterministic
-  // business_logic.summary (which leads with the commit subject) or the PR
-  // title — it must skip entirely. Regression guard for refactorlab/drift#68,
-  // where a rate-limited (429) AI step made the audio speak the
-  // commit-message-like fallback.
+test('skip: BOTH the AI briefing AND the commit fallback empty → no audio (no title-only substitute)', () => {
+  // Policy: the spoken audio is the AI handover briefing when available, the
+  // commit-based fallback when not, and NOTHING when neither exists. With both
+  // sources empty the step must NOT speak the scanner's business_logic.summary
+  // or the PR title — it must skip entirely (never feed Piper empty stdin).
   const h = buildHarness();
   writeFileSync(h.env.BRIEFING_PATH, ''); // AI summarization did not run
+  // FALLBACK_BRIEFING_PATH is not created by buildHarness → also absent.
   const r = runStep(h);
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /⏭️  No AI briefing present — skipping audio summary/);
+  assert.match(r.stdout, /⏭️  No AI briefing and no commit-based fallback present — skipping audio summary/);
   assert.equal(r.outputs.synthesized, 'false');
-  // Neither the old deterministic-fallback line nor any synthesis ran.
+  // No source was selected and no synthesis ran.
   assert.doesNotMatch(r.stdout, /📄 using deterministic scanner summary/);
   assert.doesNotMatch(r.stdout, /🧠 using AI handover briefing/);
+  assert.doesNotMatch(r.stdout, /📝 using commit-based fallback briefing/);
   assert.doesNotMatch(r.stdout, /🗣️\s+synthesizing/);
+});
+
+test('commit fallback: empty AI briefing + present FALLBACK_BRIEFING_PATH → synthesizes from commits', () => {
+  // When step 8d-pre could not produce an AI briefing (Models throttled/
+  // unreachable, or 3 retries all empty), step 8d-fb writes a commit-based
+  // briefing to FALLBACK_BRIEFING_PATH and the synth step speaks THAT — so a
+  // throttled run still ships the 🔊 link instead of silently losing audio.
+  const h = buildHarness({ MOCK_PIPER_PH_MAX: '120' });
+  writeFileSync(h.env.BRIEFING_PATH, ''); // AI summarization did not run
+  writeFileSync(
+    h.env.FALLBACK_BRIEFING_PATH,
+    'This is a commit based summary of this pull request. It contains 3 commits. We refactored the Marmot handler. Please review the changes carefully.',
+  );
+  const r = runStep(h);
+  assert.equal(r.status, 0, `step failed: ${r.stderr}`);
+  // The commit-fallback branch fired (NOT the AI-briefing branch).
+  assert.match(r.stdout, /📝 using commit-based fallback briefing \(\d+ chars\) — AI briefing was unavailable this run\./);
+  assert.doesNotMatch(r.stdout, /🧠 using AI handover briefing/);
+  // The fallback's words actually reached Piper's stdin (sanitizer lowercases
+  // capital runs, so match loosely).
+  assert.match(r.stdout, /marmot/i, `fallback content did not reach Piper:\n${r.stdout}`);
+  // It really synthesized + the commit_fallback telemetry tag fired.
+  assert.equal(r.outputs.synthesized, 'true');
+  assert.ok(r.outputs.wav_path?.endsWith('.wav'), 'wav_path emitted (audio link will surface)');
+  assert.match(r.outputs.defenses_fired ?? '', /\bcommit_fallback\b/, 'commit_fallback telemetry tag recorded');
+});
+
+test('priority: AI briefing WINS even when a commit fallback is also present', () => {
+  // Both files present → the AI handover is strictly preferred; the
+  // commit-based fallback is consulted only when the AI briefing is absent.
+  const h = buildHarness();
+  writeFileSync(h.env.BRIEFING_PATH, 'We optimized the Narwhal cache layer. It is safe.');
+  writeFileSync(h.env.FALLBACK_BRIEFING_PATH, 'This is a commit based summary mentioning a Pangolin.');
+  const r = runStep(h);
+  assert.equal(r.status, 0, `step failed: ${r.stderr}`);
+  assert.match(r.stdout, /🧠 using AI handover briefing/);
+  assert.doesNotMatch(r.stdout, /📝 using commit-based fallback briefing/);
+  assert.match(r.stdout, /narwhal/i, 'AI briefing content was spoken');
+  assert.doesNotMatch(r.stdout, /pangolin/i, 'commit fallback must NOT leak when the AI briefing is present');
+  assert.doesNotMatch(r.outputs.defenses_fired ?? '', /commit_fallback/, 'commit_fallback must NOT fire when AI briefing wins');
 });
 
 test("AI briefing CONTENT reaches Piper's stdin — not just the branch", () => {
