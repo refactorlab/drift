@@ -2183,11 +2183,99 @@ runs:
     # in the basename would have 422-d the upload). Needs no extra
     # permissions. Fail-soft.
     # See https://github.blog/changelog/2026-02-26-github-actions-now-supports-uploading-and-downloading-non-zipped-artifacts/
+
+    # ─── 8d.4 Transcode WAV → MP4 (sibling artifact for inline player) ─
+    # GitHub's markdown sanitiser STRIPS <audio> in PR comments — confirmed
+    # across every host (release assets, raw.githubusercontent, gh-pages).
+    # The ONLY host whose URLs auto-embed an HTML5 media player in comments
+    # is github.com/user-attachments/assets/<hash>, which is mintable only
+    # via the web upload-policies endpoint authenticated by a user-session
+    # cookie (NOT by GITHUB_TOKEN). So we can't ship an inline-playing audio
+    # link from CI directly.
+    #
+    # What we CAN do: produce a sibling .mp4 (silent black 320×60 frame +
+    # AAC audio). A logged-in reviewer who drag-drops that MP4 into a reply
+    # comment gets GitHub's native <video> player. The MP4 is roughly the
+    # same byte-size as the WAV (≈ 1 MB at AAC 64 kbps for 60-90s of speech)
+    # so it fits well under GitHub's 10 MB comment-upload cap.
+    # Fail-soft: missing ffmpeg → ::warning::, no mp4_path output, footer
+    # still emits the WAV link. ubuntu-latest has ffmpeg by default.
+    - name: Transcode audio WAV → MP4 (inline-player sibling)
+      id: audio-mp4
+      if: >-
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        steps.audio.outputs.synthesized == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        WAV_PATH: ${{ steps.audio.outputs.wav_path }}
+      run: |
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+          echo "ℹ️  ffmpeg not on PATH — skipping MP4 sibling (fail-soft, WAV-only footer)."
+          exit 0
+        fi
+        if [ -z "${WAV_PATH:-}" ] || [ ! -s "${WAV_PATH}" ]; then
+          echo "ℹ️  wav_path missing or empty — skipping MP4 sibling (fail-soft)."
+          exit 0
+        fi
+        MP4_PATH="${WAV_PATH%.wav}.mp4"
+        # Silent black single-frame video carrying the audio. -shortest stops
+        # at audio EOF; yuv420p ensures Safari/Chrome decode compatibility;
+        # -tune stillimage hints the encoder to spend bits on the audio.
+        if ffmpeg -y -loglevel error \
+            -f lavfi -i color=c=black:s=320x60:d=1 \
+            -i "${WAV_PATH}" \
+            -c:v libx264 -tune stillimage -pix_fmt yuv420p \
+            -c:a aac -b:a 64k -shortest \
+            "${MP4_PATH}" 2>/dev/null; then
+          sz=$(wc -c < "${MP4_PATH}" | tr -d ' ')
+          if [ "$sz" -gt 10485760 ]; then
+            echo "::warning::🎬 MP4 sibling exceeded 10 MB cap (${sz} B) — dropping."
+            rm -f "${MP4_PATH}"
+          else
+            echo "mp4_path=${MP4_PATH}" >> "$GITHUB_OUTPUT"
+            echo "🎬 MP4 sibling created: ${MP4_PATH} (${sz} bytes) — logged-in reviewers can drag-drop into a reply for the inline <video> player."
+          fi
+        else
+          echo "::warning::🎬 ffmpeg transcode failed — skipping MP4 sibling (fail-soft, WAV-only footer)."
+        fi
+
+    # ─── 8d.5 Upload precheck — verify wav_path resolves to a non-empty file ─
+    # actions/upload-artifact@v7 with archive:false + if-no-files-found:warn
+    # (the default) treats a glob that resolves to zero files as
+    # success-with-empty-outputs. The synth step writes synthesized=true
+    # ONLY when wav_bytes > 0, so this is impossible today — but a future
+    # refactor reordering the GITHUB_OUTPUT writes would silently re-open
+    # the hole. This precheck closes it loudly and produces a clear
+    # cause in the chain diagnostic instead of an unexplained empty
+    # artifact-url.
+    - name: Audio upload precheck
+      id: audio-precheck
+      if: >-
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        steps.audio.outputs.synthesized == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        WAV_PATH: ${{ steps.audio.outputs.wav_path }}
+      run: |
+        if [ -n "${WAV_PATH:-}" ] && [ -s "${WAV_PATH}" ]; then
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "🔊 precheck OK: ${WAV_PATH} ($(wc -c < "${WAV_PATH}" | tr -d ' ') bytes) — upload will run."
+        else
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::🔊 precheck FAILED: wav_path=${WAV_PATH:-(empty)} is missing or zero-byte despite synthesized=true. Upload will be SKIPPED to avoid empty artifact-url; 🔊 Listen link will be ABSENT."
+        fi
+        exit 0
+
     - name: Upload audio summary artifact
       id: audio-upload
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.audio.outputs.synthesized == 'true' &&
+        steps.audio-precheck.outputs.ok == 'true' &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       uses: actions/upload-artifact@v7
@@ -2204,6 +2292,104 @@ runs:
         # the literal "Re-run jobs" button case.
         overwrite: true
 
+    # ─── 8e.2 Upload MP4 sibling artifact ────────────────────────────
+    # Same upload semantics as the WAV: archive:false, fail-soft. Gates
+    # only on mp4-path being non-empty so a ffmpeg-missing runner
+    # (transcode step exited 0 with no output) cleanly skips.
+    - name: Upload audio MP4 sibling artifact
+      id: audio-mp4-upload
+      if: >-
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        steps.audio-mp4.outputs.mp4_path != '' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        path: ${{ steps.audio-mp4.outputs.mp4_path }}
+        archive: false
+        retention-days: 14
+        overwrite: true
+
+    # ─── 8e.5 Resolve audio artifact URL (two-source fallback) ───────
+    # Even on a `success` outcome, actions/upload-artifact@v7 can leave
+    # `artifact-url` empty (hot-replica 404 on its post-upload metadata
+    # fetch, or continue-on-error masking a late-stage failure that
+    # already persisted the artifact). When that happens, `artifact-id`
+    # is usually still populated — and the canonical URL is a pure
+    # string concat from `${github.server_url}/${github.repository}/
+    # actions/runs/${github.run_id}/artifacts/{artifact-id}` (the same
+    # shape the run's Artifacts panel links to). Reconstructing it here
+    # needs NO new permissions (no REST call). DRIFT_AUDIO_URL on the
+    # render step reads from this resolver, so an empty direct output
+    # no longer silently drops the 🔊 Listen link.
+    - name: Resolve audio artifact URL
+      id: audio-url
+      if: >-
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        steps.audio.outputs.synthesized == 'true' &&
+        steps.audio-precheck.outputs.ok == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        DIRECT_URL:     ${{ steps.audio-upload.outputs.artifact-url }}
+        ARTIFACT_ID:    ${{ steps.audio-upload.outputs.artifact-id }}
+        SERVER_URL:     ${{ github.server_url }}
+        REPO:           ${{ github.repository }}
+        RUN_ID:         ${{ github.run_id }}
+        UPLOAD_OUTCOME: ${{ steps.audio-upload.outcome }}
+      run: |
+        url=""
+        source="none"
+        # Source 1: upload-artifact's own output (the happy path).
+        if [ -n "${DIRECT_URL:-}" ]; then
+          url="${DIRECT_URL}"
+          source="direct"
+        # Source 2: reconstruct from artifact-id (works when upload-
+        # artifact wrote artifact-id but not artifact-url — known
+        # @v7 quirk). The URL shape is canonical and identical to what
+        # the run's Artifacts panel renders, so links are interchangeable.
+        elif [ -n "${ARTIFACT_ID:-}" ]; then
+          url="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}/artifacts/${ARTIFACT_ID}"
+          source="reconstructed"
+        fi
+        echo "audio_url=${url}" >> "$GITHUB_OUTPUT"
+        echo "url_source=${source}" >> "$GITHUB_OUTPUT"
+        if [ -n "${url}" ]; then
+          echo "🔊 url-source=${source} resolved audio_url=${url}"
+        else
+          echo "::warning::🔊 audio_url could not be resolved (direct + artifact-id both empty; upload outcome=${UPLOAD_OUTCOME:-?}). 🔊 Listen link will be ABSENT."
+        fi
+        exit 0
+
+    # ─── 8e.6 Resolve MP4 sibling URL (same two-source fallback) ─────
+    - name: Resolve MP4 sibling URL
+      id: audio-mp4-url
+      if: >-
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        steps.audio-mp4.outputs.mp4_path != '' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        DIRECT_URL:  ${{ steps.audio-mp4-upload.outputs.artifact-url }}
+        ARTIFACT_ID: ${{ steps.audio-mp4-upload.outputs.artifact-id }}
+        SERVER_URL:  ${{ github.server_url }}
+        REPO:        ${{ github.repository }}
+        RUN_ID:      ${{ github.run_id }}
+      run: |
+        url=""
+        if [ -n "${DIRECT_URL:-}" ]; then
+          url="${DIRECT_URL}"
+        elif [ -n "${ARTIFACT_ID:-}" ]; then
+          url="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}/artifacts/${ARTIFACT_ID}"
+        fi
+        echo "audio_mp4_url=${url}" >> "$GITHUB_OUTPUT"
+        if [ -n "${url}" ]; then
+          echo "🎬 resolved audio_mp4_url=${url} — surfaced in footer as the 'inline-player' affordance."
+        fi
+        exit 0
+
     # ─── 8f. Audio-link chain diagnostic (hops 2 + 3 of 3) ───────────
     # Makes the audio-link chain debuggable WITHOUT GitHub Actions log
     # auth. The renderer (step 9) reads DRIFT_AUDIO_URL — if it's empty
@@ -2219,24 +2405,50 @@ runs:
       continue-on-error: true
       shell: bash
       env:
-        SYNTHESIZED: ${{ steps.audio.outputs.synthesized }}
-        WAV_PATH:    ${{ steps.audio.outputs.wav_path }}
-        ARTIFACT_URL: ${{ steps.audio-upload.outputs.artifact-url }}
+        SYNTHESIZED:    ${{ steps.audio.outputs.synthesized }}
+        WAV_PATH:       ${{ steps.audio.outputs.wav_path }}
+        ARTIFACT_URL:   ${{ steps.audio-upload.outputs.artifact-url }}
+        ARTIFACT_ID:    ${{ steps.audio-upload.outputs.artifact-id }}
+        RESOLVED_URL:   ${{ steps.audio-url.outputs.audio_url }}
+        URL_SOURCE:     ${{ steps.audio-url.outputs.url_source }}
         UPLOAD_OUTCOME: ${{ steps.audio-upload.outcome }}
+        PRECHECK_OK:    ${{ steps.audio-precheck.outputs.ok }}
       run: |
-        echo "🔊 hop 2/3: upload step outcome=${UPLOAD_OUTCOME:-(skipped)} synthesized=${SYNTHESIZED:-(unset)} wav_path=${WAV_PATH:-(unset)}"
-        if [ -n "${ARTIFACT_URL:-}" ]; then
-          echo "🔊 hop 3/3 OK: artifact-url=${ARTIFACT_URL} — DRIFT_AUDIO_URL will be set; the 🔊 Listen link WILL appear in the PR comment."
-        else
-          echo "🔊 hop 3/3 FAILED: artifact-url is EMPTY — DRIFT_AUDIO_URL will be unset; the 🔊 Listen link will be ABSENT from the PR comment."
-          if [ "${SYNTHESIZED:-}" != "true" ]; then
-            echo "    cause: hop 1 failed (synthesized != true). Inspect the 'Synthesize audio summary' step."
-          elif [ "${UPLOAD_OUTCOME:-}" = "skipped" ] || [ -z "${UPLOAD_OUTCOME:-}" ]; then
-            echo "    cause: upload step was SKIPPED (its 'if:' condition evaluated false). Audio synth claims success but upload never gated true — check audio-summary input + head_sha."
-          elif [ "${UPLOAD_OUTCOME:-}" = "failure" ]; then
-            echo "    cause: upload step ran but FAILED (continue-on-error swallowed). Inspect the 'Upload audio summary artifact' step log."
+        echo "🔊 hop 2/3: upload outcome=${UPLOAD_OUTCOME:-(skipped)} precheck=${PRECHECK_OK:-(unset)} synthesized=${SYNTHESIZED:-(unset)} wav_path=${WAV_PATH:-(unset)}"
+        if [ -n "${RESOLVED_URL:-}" ]; then
+          echo "🔊 hop 3/3 OK: DRIFT_AUDIO_URL=${RESOLVED_URL} (source=${URL_SOURCE:-?}; direct=${ARTIFACT_URL:+set:}${ARTIFACT_URL:-empty} artifact-id=${ARTIFACT_ID:-empty}) — 🔊 Listen link WILL appear."
+          if [ "${URL_SOURCE:-}" = "reconstructed" ]; then
+            echo "    note: upload-artifact's direct artifact-url was EMPTY; URL was reconstructed from artifact-id. This is a known upload-artifact@v7 quirk — the link still works, but worth tracking."
+          fi
+          # CI-time HEAD probe (UNAUTHENTICATED — matches what a reviewer in
+          # an incognito tab sees). GitHub gates artifact downloads behind a
+          # logged-in session even on public repos, so the canonical URL
+          # 307s to /suites/.../artifacts/N and returns 404 "Not Found" to
+          # unauthenticated clients. Surface this state in the chain log so
+          # reviewers know the click-to-listen UX requires login — and so
+          # any future change that fixes the auth gate is visible immediately.
+          unauth_status=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 10 "${RESOLVED_URL}" 2>/dev/null || echo "000")
+          if [ "${unauth_status}" = "200" ]; then
+            echo "🔊 hop 3.5/4 unauth check: HTTP 200 — audio plays inline for unauthenticated viewers too. 🎉"
+          elif [ "${unauth_status}" = "404" ] || [ "${unauth_status}" = "302" ] || [ "${unauth_status}" = "307" ]; then
+            echo "ℹ️  hop 3.5/4 unauth check: HTTP ${unauth_status} — GitHub's expected auth gate. The link works for logged-in reviewers; reviewers in incognito / signed-out tabs will see 'Not Found'. The footer now says '(GitHub login required)' to set this expectation."
           else
-            echo "    cause: upload step outcome=${UPLOAD_OUTCOME} but artifact-url is empty — possible upload-artifact@v7 archive:false bug; report upstream."
+            echo "::warning::🔊 hop 3.5/4 unauth check: unexpected HTTP ${unauth_status} from ${RESOLVED_URL}. Investigate."
+          fi
+        else
+          echo "::warning::🔊 hop 3/3 FAILED: DRIFT_AUDIO_URL is EMPTY — 🔊 Listen link will be ABSENT."
+          if [ "${PRECHECK_OK:-}" = "false" ]; then
+            echo "    cause: precheck failed (wav_path missing or zero-byte). Inspect 'Audio upload precheck' step."
+          elif [ "${SYNTHESIZED:-}" != "true" ]; then
+            echo "    cause: hop 1 failed (synthesized != true). Inspect 'Synthesize audio summary'."
+          elif [ "${UPLOAD_OUTCOME:-}" = "skipped" ] || [ -z "${UPLOAD_OUTCOME:-}" ]; then
+            echo "    cause: upload step was SKIPPED. Check audio-summary input + head_sha."
+          elif [ "${UPLOAD_OUTCOME:-}" = "failure" ]; then
+            echo "    cause: upload step ran but FAILED (continue-on-error swallowed). Inspect 'Upload audio summary artifact' log."
+          elif [ -z "${ARTIFACT_URL:-}" ] && [ -z "${ARTIFACT_ID:-}" ]; then
+            echo "    cause: upload outcome=${UPLOAD_OUTCOME} but BOTH artifact-url AND artifact-id are empty — possible upload-artifact@v7 archive:false bug; report upstream."
+          else
+            echo "    cause: resolver produced an empty URL despite upload outputs being set — inspect 'Resolve audio artifact URL' step."
           fi
         fi
 
@@ -2271,9 +2483,91 @@ runs:
         # Artifact URL of the non-zipped WAV (empty when audio is disabled or
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
         # archive:false this URL serves the raw .wav, not a zip.
-        DRIFT_AUDIO_URL:   ${{ steps.audio-upload.outputs.artifact-url }}
-        GITHUB_TOKEN:      ${{ inputs.github-token }}
+        DRIFT_AUDIO_URL:     ${{ steps.audio-url.outputs.audio_url }}
+        # MP4 sibling (silent black 320×60 video + AAC audio). GitHub's
+        # markdown sanitiser strips <audio> tags everywhere, and ALL hosts
+        # we can write to (releases, raw.githubusercontent, gh-pages) force
+        # Content-Disposition: attachment for .wav files — so a true inline
+        # audio player from CI is not achievable. The MP4 exists so a
+        # logged-in reviewer can drag-drop it into a reply comment and get
+        # GitHub's native <video> player (the only host that auto-embeds a
+        # player is github.com/user-attachments/, which only the web UI can
+        # write to). Footer surfaces both links when this is set.
+        DRIFT_AUDIO_MP4_URL: ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
+        GITHUB_TOKEN:        ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/index.js"
+
+    # ─── 9b. Post-comment validator (hop 4 of 4) ───────────────────
+    # Re-fetches the sticky PR comment via REST and grep-asserts that
+    # the 🔊 Listen link is actually present. Closes the visibility gap
+    # left by the pre-flight diagnostic at 8f (which only verifies
+    # DRIFT_AUDIO_URL will be passed to dist/index.js — NOT that the
+    # link actually rendered into the body). Warn-only; never fails
+    # the PR. Uses /issues/{n}/comments which is event-agnostic (PR
+    # comments ARE issue comments) and is covered by the documented
+    # `pull-requests: write` permission. No new scopes needed.
+    - name: Validate audio link landed in sticky comment
+      id: audio-link-validate
+      if: >-
+        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        steps.audio.outputs.synthesized == 'true' &&
+        steps.audio-url.outputs.audio_url != '' &&
+        steps.scan.outputs.scan_ran == 'true' &&
+        steps.pr-ctx.outputs.head_sha != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_OWNER:     ${{ github.repository_owner }}
+        GH_REPO:      ${{ github.event.repository.name }}
+        PR_NUMBER:    ${{ steps.pr-ctx.outputs.pr_number }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        EXPECTED_URL: ${{ steps.audio-url.outputs.audio_url }}
+      run: |
+        resp="$(curl -sS --max-time 15 \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/issues/${PR_NUMBER}/comments?per_page=100" 2>/dev/null || echo '[]')"
+        # Locate the sticky comment by the dedupe marker (STICKY_MARKER
+        # in action/src/render/overview.ts). Zero-dep parse — no jq on
+        # the runner image guarantee; use node which the composite
+        # already requires (node20).
+        sticky_body="$(printf '%s' "$resp" | node -e '
+          let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+            try{
+              const j=JSON.parse(s);
+              const m="<!-- drift:sticky-comment -->";
+              const c=(Array.isArray(j)?j:[]).filter(x=>x && typeof x.body==="string" && x.body.includes(m));
+              if(c.length){process.stdout.write(c[c.length-1].body||"");}
+            }catch(_){}
+          });
+        ' 2>/dev/null || true)"
+        sticky_url="$(printf '%s' "$resp" | node -e '
+          let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+            try{
+              const j=JSON.parse(s);
+              const m="<!-- drift:sticky-comment -->";
+              const c=(Array.isArray(j)?j:[]).filter(x=>x && typeof x.body==="string" && x.body.includes(m));
+              if(c.length){process.stdout.write(c[c.length-1].html_url||"");}
+            }catch(_){}
+          });
+        ' 2>/dev/null || true)"
+        if [ -z "$sticky_body" ]; then
+          echo "::warning::🔊 hop 4/4: sticky comment NOT FOUND via REST despite Post-step succeeding — validator could not run. PR #${PR_NUMBER}"
+          echo "validated=unknown" >> "$GITHUB_OUTPUT"
+          echo "audio-link-validate: comment NOT FOUND (PR #${PR_NUMBER})" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        if printf '%s' "$sticky_body" | grep -qF '🔊' && printf '%s' "$sticky_body" | grep -qF 'Listen to the spoken summary'; then
+          echo "🔊 hop 4/4 OK: 🔊 Listen link present in sticky comment (${sticky_url})"
+          echo "validated=true" >> "$GITHUB_OUTPUT"
+          echo "audio-link-validate: ✅ link present — ${sticky_url}" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "::warning::🔊 hop 4/4 FAILED: Listen link MISSING from sticky comment despite synthesis + upload + URL resolution all succeeding (expected: ${EXPECTED_URL}). Comment: ${sticky_url}"
+          echo "validated=false" >> "$GITHUB_OUTPUT"
+          echo "audio-link-validate: ❌ link ABSENT — ${sticky_url} (expected: ${EXPECTED_URL})" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit 0
 
     # ─── 12. AI inference LOOP — one model call per scanner finding ──
     # A composite action CANNOT loop a `uses:` step, so we replace

@@ -58,7 +58,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     report: base({ pr_scope: { changed_files: [], affected_roots: [], unreachable_changes: [] } }),
     expect: (b) => {
       assert.match(b, /Drift review/);
-      assert.doesNotMatch(b, /📊 Value card/);
+      assert.doesNotMatch(b, /📊 Business value/);
       assert.doesNotMatch(b, /🏗 Architecture/);
       assert.match(b, /Posted by/);
     },
@@ -69,8 +69,8 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     ctx: CTX,
     expect: (b) => {
       assert.match(b, /\[!NOTE\]/);
-      assert.match(b, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /);
-      assert.doesNotMatch(b, /📊 Value card/);
+      assert.match(b, /<summary><strong>🏗 Architecture<\/strong> — /);
+      assert.doesNotMatch(b, /📊 Business value/);
     },
   },
   {
@@ -97,7 +97,6 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
       assert.match(b, /Triage the .*💰 Money −15\.9%.* and .*⚙️ Runtime −3\.0%.* regressions/);
       assert.match(b, /Remove or wire up 1 dead export: \[`Example`\]/);
       assert.match(b, /<summary><strong>🛰 Risks<\/strong> — /);
-      assert.match(b, /Legend &amp; methodology/);
     },
   },
   {
@@ -155,7 +154,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /<summary><strong>⚠️ Suggestions \(1\)<\/strong> — /);
+      assert.match(b, /<summary><strong>⚠️ Code suggestions \(1\)<\/strong> — /);
       assert.match(b, /🟡 Medium \| 🅒/);
       assert.doesNotMatch(b, /\[!CAUTION\]/, 'cat-C is not a product-correctness CAUTION');
     },
@@ -235,7 +234,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /<summary><strong>⚠️ Suggestions \(25\)<\/strong> — /, 'header shows full count');
+      assert.match(b, /<summary><strong>⚠️ Code suggestions \(25\)<\/strong> — /, 'header shows full count');
       // Checklist truncates at MAX_DEAD_EXPORTS_LINKED = 5 with a more-tail.
       assert.match(b, /\*…\+20 more\*/, 'checklist truncation note');
       // Priority-table cap = MAX_SHOWN = 20 → details "5 more not shown".
@@ -283,7 +282,7 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     // PR title with mermaid-hostile characters. The TS renderer puts the title
     // inside a backtick code span on the H2; a literal backtick in the title
     // would break the span. The header replaces backticks with `'`.
-    name: "PR title with hostile chars (backticks, <>, |, reserved 'end')",
+    name: "PR title with hostile chars (backticks, <>, |, reserved 'end') never reaches the H2",
     report: base({
       pr_review: {
         overall_drift: { percent: 5, direction: 'up', confidence: 'low' },
@@ -292,10 +291,9 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: { ...CTX, prTitle: 'feat: `code` <T> | end keyword fix' },
     expect: (b) => {
-      // Backticks in the title are replaced with `'` so the H2 code-span isn't broken;
-      // `<T>` / `|` / the reserved word `end` all pass through verbatim.
-      assert.match(b, /^## [▲▼—] Drift review — `feat: 'code' <T> \| end keyword fix`/m);
-      assert.doesNotMatch(b, /Drift review — `feat: `code/, 'no nested raw backticks in title');
+      // The PR title is no longer rendered, so hostile chars can't reach the H2.
+      assert.match(b, /^## [▲▼—] Drift review$/m, 'clean H2 with no title suffix');
+      assert.doesNotMatch(b, /Drift review —/, 'no PR-title suffix at all');
     },
   },
 ];
@@ -324,13 +322,18 @@ test('scenarios: every Mermaid block validates against the real parser', async (
 });
 
 test('scenario: identical render with and without context (only links differ)', () => {
-  const report = base({ pr_review: { value_card: card([axis('customer', 12)]), code_suggestions: [deadCode('src/A.tsx', 'A', 3)] } });
+  // Includes an unreachable file so the (diagrams-only) Architecture section
+  // still renders its dead-code callout — whose file links are ctx-dependent.
+  const report = base({
+    pr_scope: { changed_files: ['a.ts', 'src/dead.tsx'], affected_roots: ['main'], unreachable_changes: ['src/dead.tsx'] },
+    pr_review: { value_card: card([axis('customer', 12)]), code_suggestions: [deadCode('src/A.tsx', 'A', 3)] },
+  });
   const withCtx = renderOverview(report, { ctx: CTX });
   const noCtx = renderOverview(report);
   assert.match(withCtx, /\]\(https:\/\/github\.com\/refactorlab\/andy\/blob\/sha123\//, 'ctx → permalinks');
   assert.doesNotMatch(noCtx, /\]\(https:\/\/github\.com/, 'no ctx → no permalinks');
   // both must contain the same section headings
-  for (const h of ['📊 Value card', '⚠️ Suggestions', '🏗 Architecture &amp; reach']) {
+  for (const h of ['📊 Business value', '⚠️ Code suggestions', '🏗 Architecture']) {
     assert.ok(withCtx.includes(h) && noCtx.includes(h), `both render ${h}`);
   }
 });

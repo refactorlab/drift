@@ -1,10 +1,10 @@
-// Architecture & reach: intro grammar, reach table (parsed counts), unreachable
-// callout + dead-code note, nested diagrams/tables, inline-root fallback, and
-// degradation.
+// Architecture (diagrams-only): unreachable/dead-code callout, nested
+// diagrams/tables (flow before/after, business-logic, data structures,
+// mindmap), and degradation to null when there's nothing to draw.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderArchitecture, type ArchitectureInput } from '../render/sections/architecture.ts';
+import { renderArchitecture } from '../render/sections/architecture.ts';
 import type { PrScope } from '../report.ts';
 import type { PrContext } from '../render/context.ts';
 
@@ -14,41 +14,29 @@ function scope(over: Partial<PrScope> = {}): PrScope {
   return { changed_files: ['a.ts'], affected_roots: ['App'], unreachable_changes: [], ...over };
 }
 
-test('architecture: reach table parses "N root(s) reach this file", sorted desc', () => {
-  const input: ArchitectureInput = {
+test('architecture: diagrams-only — no reach prose, table, or root list ever rendered', () => {
+  // Even with a full key-file block and multiple roots, the section emits only
+  // the mindmap diagram — never the old "N entry points reach…" prose or the
+  // "files most callers depend on" reach table.
+  const out = renderArchitecture({
     prScope: scope({ affected_roots: ['App', 'Worker'] }),
     keyFiles: {
-      groups: [
-        { name: 'g', files: [
-          { path: 'src/Hot.tsx', why: '40 root(s) reach this file' },
-          { path: 'src/Mid.ts', why: '21 roots reach' },
-          { path: 'src/Cold.ts', why: 'no count here' },
-        ] },
-      ],
+      mermaid: 'mindmap\n root((files))',
+      groups: [{ name: 'g', files: [{ path: 'src/Hot.tsx', why: '40 root(s) reach this file' }] }],
     },
     ctx: CTX,
-  };
-  const out = renderArchitecture(input)!;
-  assert.match(out, /\*\*2\*\* entry points reach changes in this PR\. The files most callers depend on:/);
-  assert.match(out, /\| File \| Roots reaching it \|/);
-  // sorted by reach desc; unknown ("—") last
-  const hot = out.indexOf('Hot.tsx');
-  const mid = out.indexOf('Mid.ts');
-  const cold = out.indexOf('Cold.ts');
-  assert.ok(hot < mid && mid < cold, 'reach-sorted');
-  assert.match(out, /\[`src\/Hot\.tsx`\]\(https:\/\/github\.com\/acme\/shop\/blob\/cafe\/src\/Hot\.tsx\) \| 40 \|/);
-  assert.match(out, /Cold\.ts[^\n]*\| — \|/, 'unparseable reach → —');
+  })!;
+  assert.doesNotMatch(out, /entry points? reach/i, 'no reach prose');
+  assert.doesNotMatch(out, /files most callers depend on/i, 'no reach-intro sentence');
+  assert.doesNotMatch(out, /\| File \| Roots reaching it \|/, 'no reach table');
+  assert.match(out, /## 🏗 Architecture\b/, 'renamed header (no "& reach")');
+  assert.match(out, /<summary>🗂 Key files — hot-touch mindmap<\/summary>/, 'mindmap diagram kept');
 });
 
-test('architecture: singular subject-verb agreement ("1 entry point reaches")', () => {
-  const out = renderArchitecture({ prScope: scope({ affected_roots: ['App'] }), ctx: CTX })!;
-  assert.match(out, /\*\*1\*\* entry point reaches changes in this PR\./);
-});
-
-test('architecture: inline root list when there is no key-file data', () => {
-  const out = renderArchitecture({ prScope: scope({ affected_roots: ['App', 'Worker', 'Cron'] }), ctx: CTX })!;
-  assert.match(out, /\*\*3\*\* entry points reach changes in this PR\./);
-  assert.match(out, /`App` · `Worker` · `Cron`/);
+test('architecture: null when only affected roots exist (no diagrams, no unreachable)', () => {
+  // Roots alone produce neither a diagram nor a dead-code callout, so the whole
+  // diagrams-only section is omitted.
+  assert.equal(renderArchitecture({ prScope: scope({ affected_roots: ['App', 'Worker'] }), ctx: CTX }), null);
 });
 
 test('architecture: unreachable callout links files + notes dead-code match', () => {
@@ -59,7 +47,7 @@ test('architecture: unreachable callout links files + notes dead-code match', ()
   })!;
   assert.match(out, /\*\*2 changed files are unreachable\*\*/);
   assert.match(out, /\[`Example\.tsx`\]\(https:\/\/github\.com\/acme\/shop\/blob\/cafe\/src\/components\/Example\.tsx\)/);
-  assert.match(out, /\(These match the dead-code suggestions above\.\)/);
+  assert.match(out, /\(These match the dead-code suggestions below\.\)/);
 });
 
 test('architecture: unreachable callout omits dead-code note when none', () => {

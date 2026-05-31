@@ -31,23 +31,32 @@ for (const fix of fixtures) {
 
   test(`render(${fix.name}): every v7 section is present`, () => {
     const body = render();
-    assert.match(body, /^## [▲▼—] Drift review — `feat: modern motion system`/m, 'title line');
+    assert.match(body, /^## [▲▼—] Drift review$/m, 'title line (no PR-title suffix)');
     assert.match(body, /img\.shields\.io\/badge\/review-/, 'review-status KPI badge');
-    assert.match(body, /### ✅ Before you merge/, 'merge checklist');
+    assert.match(body, /## ✅ Before you merge/, 'merge checklist (now a section at the end)');
     assert.match(body, /> \*\*Merge readiness\*\*/, 'merge-readiness bar');
     // Sections are now collapsible: the title lives in a <details><summary>
     // with a one-line TLDR appended ("— …").
-    assert.match(body, /<summary><strong>📊 Value card<\/strong> — /, 'value card collapsible + TLDR');
+    assert.match(body, /<summary><strong>📊 Business value<\/strong> — /, 'business value collapsible + TLDR');
     assert.match(body, /<table>[\s\S]*<caption>PR value drift/, 'HTML dashboard table');
     assert.match(body, /Composite&nbsp;/, 'composite row');
     assert.match(body, /🔁 \*\*Since last review\*\*/, 'since-last-review line');
-    assert.match(body, /<summary><strong>⚠️ Suggestions \(\d+\)<\/strong> — /, 'suggestions collapsible + TLDR');
+    assert.match(body, /<summary><strong>⚠️ Code suggestions \(\d+\)<\/strong> — /, 'code suggestions collapsible + TLDR');
     assert.match(body, /\| Priority \| Finding \| Location \| Confidence \|/, 'priority table');
     assert.match(body, /<summary><strong>🛰 Risks<\/strong> — /, 'risks collapsible + TLDR');
-    assert.match(body, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /, 'architecture collapsible + TLDR');
+    assert.match(body, /<summary><strong>🏗 Architecture<\/strong> — /, 'architecture collapsible + TLDR');
     assert.match(body, /<summary><strong>🧪 Extended findings<\/strong> — /, 'extended findings collapsible + TLDR');
-    assert.match(body, /Legend &amp; methodology/, 'legend');
+    assert.doesNotMatch(body, /Legend &amp; methodology/, 'legend section removed');
     assert.match(body, /Posted by <a href="https:\/\/drift\.dev">Drift<\/a>/, 'footer');
+
+    // Body order: Architecture leads, then Business value, then Code suggestions.
+    const iArch = body.indexOf('🏗 Architecture');
+    const iValue = body.indexOf('📊 Business value');
+    const iSug = body.indexOf('⚠️ Code suggestions');
+    assert.ok(
+      iArch > 0 && iArch < iValue && iValue < iSug,
+      `section order must be Architecture → Business value → Code suggestions (indices ${iArch}/${iValue}/${iSug})`,
+    );
   });
 
   test(`render(${fix.name}): no broken-template artifacts`, () => {
@@ -90,8 +99,10 @@ test('render(no suggestions): suggestions section omitted, checklist still sane'
     pr_scope: { changed_files: ['a.py'], affected_roots: ['main'], unreachable_changes: [] },
     pr_review: { code_suggestions: [] },
   });
-  assert.doesNotMatch(body, /⚠️ Suggestions/, 'no section without passing suggestions');
-  assert.match(body, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /, 'architecture still renders (collapsible)');
+  assert.doesNotMatch(body, /⚠️ Code suggestions/, 'no section without passing suggestions');
+  // Architecture is diagrams-only now: this fixture has no diagrams and no
+  // unreachable files, so the section is omitted entirely.
+  assert.doesNotMatch(body, /🏗 Architecture/, 'no architecture without diagrams or a dead-code callout');
 });
 
 test('render(no pr_review): factual-only output', () => {
@@ -103,10 +114,11 @@ test('render(no pr_review): factual-only output', () => {
   });
   assert.match(body, /## [▲▼—]? ?Drift review/, 'title present');
   assert.match(body, /\[!NOTE\]/, 'NOTE verdict without a value model');
-  assert.match(body, /<summary><strong>🏗 Architecture &amp; reach<\/strong> — /, 'factual architecture section (collapsible)');
-  assert.doesNotMatch(body, /📊 Value card/, 'no value card without a value model');
+  // Diagrams-only architecture: this factual-only fixture carries no diagrams
+  // and no unreachable files, so the section is omitted.
+  assert.doesNotMatch(body, /🏗 Architecture/, 'no architecture without diagrams or a dead-code callout');
+  assert.doesNotMatch(body, /📊 Business value/, 'no value card without a value model');
   assert.doesNotMatch(body, /img\.shields\.io\/badge\/drift-/, 'no drift badge without a value model');
-  assert.doesNotMatch(body, /Legend &amp; methodology/, 'legend skipped on factual-only');
 });
 
 test('render: guardSize collapses <details> innermost-first when over budget', () => {
@@ -127,7 +139,7 @@ test('render: guardSize collapses <details> innermost-first when over budget', (
 });
 
 test('render: guardSize can collapse a <details open> section and preserves its TLDR summary', () => {
-  // The Value card is rendered as `<details open>`. A huge `bottom_line` lands
+  // The Business value section is rendered as `<details open>`. A huge `bottom_line` lands
   // DIRECTLY in its body (not in a nested <details>), so the only way under
   // budget is to collapse the OUTER `<details open>` itself. This is the exact
   // case the pre-fix guardSize regex (which only matched `<details>`) could
@@ -148,9 +160,9 @@ test('render: guardSize can collapse a <details open> section and preserves its 
     },
   });
   assert.ok(body.length < 65_536, `guarded body too large: ${body.length}`);
-  // The open Value-card section collapsed to a tagless marker — its TLDR text
+  // The open Business-value section collapsed to a tagless marker — its TLDR text
   // (carried in the summary) must survive in that marker.
-  assert.match(body, /📊 Value card<\/strong> — Overall drift \+5\.0% ▲[\s\S]*?collapsed \(size guard\)/, 'value-card TLDR survives the collapse marker');
+  assert.match(body, /📊 Business value<\/strong> — Overall drift \+5\.0% ▲[\s\S]*?collapsed \(size guard\)/, 'business-value TLDR survives the collapse marker');
   // The 70 KB blob must be gone (the open section's body was dropped).
   assert.doesNotMatch(body, /y{1000}/, 'huge body content was dropped');
 });

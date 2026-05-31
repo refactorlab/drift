@@ -13,12 +13,12 @@ const items: RiskItem[] = [
   { label: 'Wide blast radius', likelihood: 0.84, severity: 1.0, quadrant: 'act_before_merge' },
 ];
 
-test('risks: intro counts act-before-merge, table is impact-ordered', () => {
+test('risks: intro counts act-before-merge, table is impact-ordered and capped at 3', () => {
   const out = renderRisks({ items })!;
   assert.match(out, /## 🛰 Risks/);
-  assert.match(out, /\*\*2 of 4\*\* risks land in \*Act before merge\*/);
-  // act-before-merge rows first, ordered by severity desc within the group
-  const order = ['Wide blast radius', 'Reliability gaps', 'Uncovered roots', 'PR size · 3 files'];
+  assert.match(out, /\*\*2 of 4\*\* risks land in \*Act before merge\*/, 'intro still references the true total');
+  // Top-3 by impact, in order; the 4th (lowest-impact) is summarised, not a row.
+  const order = ['Wide blast radius', 'Reliability gaps', 'Uncovered roots'];
   let last = -1;
   for (const label of order) {
     const idx = out.indexOf(label);
@@ -27,7 +27,9 @@ test('risks: intro counts act-before-merge, table is impact-ordered', () => {
   }
   assert.match(out, /Wide blast radius \| 0\.84 \| 1\.00 \| 🔴 Act before merge/);
   assert.match(out, /Uncovered roots \| 0\.40 \| 0\.60 \| 🟡 Monitor closely/);
-  assert.match(out, /PR size · 3 files \| 0\.03 \| 0\.32 \| 🟢 Acceptable/);
+  // The lowest-impact risk is rolled into a "+N more" summary row, not shown.
+  assert.doesNotMatch(out, /PR size · 3 files \| 0\.03/, 'lowest-impact risk is not a data row');
+  assert.match(out, /…\+1 lower-impact risk/);
 });
 
 test('risks: 0 act-before-merge gets the reassuring intro', () => {

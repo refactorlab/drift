@@ -46,6 +46,18 @@ export type PrFacts = {
   highComplexity: number;
   longFunctions: number;
   duplicationClusters: number;
+
+  /** Per reached entry point: is it test-covered, and which NFR families are missing.
+   *  Powers the blast-radius / coverage panel. Empty when there's no call-graph data. */
+  perRootCoverage: RootCoverage[];
+};
+
+export type RootCoverage = {
+  root: string;
+  /** A test reaches this root in the call graph. */
+  tested: boolean;
+  /** Missing reliability families (retry / timeout / fallback / …). */
+  missing: string[];
 };
 
 export function extractFacts(report: ScanPrOutput): PrFacts {
@@ -70,6 +82,16 @@ export function extractFacts(report: ScanPrOutput): PrFacts {
   const passing = (review?.code_suggestions ?? []).filter(passesQualityBar);
 
   const risks = review?.visual_summary?.risks?.items ?? [];
+
+  // Per reached entry point: cross-reference test coverage (tests_in_graph) with
+  // missing reliability families (nfr_edge_cases.per_root), keyed by root name.
+  const uncoveredSet = new Set(ext?.tests_in_graph?.uncovered_roots ?? []);
+  const missingByRoot = new Map((ext?.nfr_edge_cases?.per_root ?? []).map((p) => [p.root, p.missing ?? []]));
+  const perRootCoverage = ps.affected_roots.map((root) => ({
+    root,
+    tested: !uncoveredSet.has(root),
+    missing: missingByRoot.get(root) ?? [],
+  }));
 
   return {
     changedFiles: ps.changed_files.length,
@@ -105,6 +127,8 @@ export function extractFacts(report: ScanPrOutput): PrFacts {
     highComplexity: ext?.tech_debt?.high_complexity?.length ?? 0,
     longFunctions: ext?.tech_debt?.long_functions?.length ?? 0,
     duplicationClusters: ext?.duplication?.clusters?.length ?? 0,
+
+    perRootCoverage,
   };
 }
 

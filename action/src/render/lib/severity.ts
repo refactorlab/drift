@@ -10,6 +10,7 @@ export const COLOR = {
   red: 'd1242f', // regression / act
   blue: '58a6ff', // neutral-informational
   grey: '8b949e', // muted / flat
+  brand: 'ff6b3d', // Drift / Andy brand orange — brand chips & agent-ready badge
 } as const;
 
 /** Direction → leading status emoji (🟢 improvement · 🔴 regression · ⚪ flat). */

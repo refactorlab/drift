@@ -13,8 +13,8 @@ import type { ScanPrOutput, ValueAxis, ValueCard, CodeSuggestion, RiskItem } fro
 // ── unit: splitHeading ───────────────────────────────────────────────────────
 
 test('splitHeading: extracts a leading ## heading and returns the rest as body', () => {
-  const { title, body } = splitHeading('## 📊 Value card\n\nrow1\nrow2');
-  assert.equal(title, '📊 Value card');
+  const { title, body } = splitHeading('## 📊 Business value\n\nrow1\nrow2');
+  assert.equal(title, '📊 Business value');
   assert.equal(body, 'row1\nrow2');
 });
 
@@ -34,8 +34,8 @@ test('splitHeading: no heading → title null, body unchanged', () => {
 // ── unit: collapsibleSection ─────────────────────────────────────────────────
 
 test('collapsibleSection: builds a <details> with escaped title + TLDR', () => {
-  const out = collapsibleSection({ title: '🏗 Architecture & reach', tldr: 'before vs after', body: 'B' });
-  assert.match(out, /^<details>\n<summary><strong>🏗 Architecture &amp; reach<\/strong> — before vs after<\/summary>\n\nB\n\n<\/details>$/);
+  const out = collapsibleSection({ title: 'Risks & mitigations', tldr: 'before vs after', body: 'B' });
+  assert.match(out, /^<details>\n<summary><strong>Risks &amp; mitigations<\/strong> — before vs after<\/summary>\n\nB\n\n<\/details>$/);
 });
 
 test('collapsibleSection: open flag emits <details open>', () => {
@@ -114,22 +114,46 @@ function fullReport(): ScanPrOutput {
 test('overview: every detail section is an expandable <details> with a TLDR summary', () => {
   const body = renderOverview(fullReport(), { ctx: CTX });
 
-  // The header (verdict + checklist) stays OUTSIDE any <details> — its task
-  // boxes must be visible for GitHub to tally merge-readiness.
-  assert.match(body, /### ✅ Before you merge/);
-  const beforeFirstDetails = body.slice(0, body.indexOf('<details'));
-  assert.match(beforeFirstDetails, /### ✅ Before you merge/, 'checklist is above the first <details>');
+  // The "✅ Before you merge" checklist now CLOSES the comment — it stays
+  // OUTSIDE any <details> (task boxes must be visible for GitHub to tally
+  // merge-readiness), and sits AFTER the last collapsible section.
+  assert.match(body, /## ✅ Before you merge/);
+  const afterLastDetails = body.slice(body.lastIndexOf('</details>'));
+  assert.match(afterLastDetails, /## ✅ Before you merge/, 'checklist is after the last <details>');
 
   // Each detail section is a collapsible carrying a TLDR (the "— …" suffix).
   // Risks auto-opens here because the fixture has 1 act-before-merge item.
   for (const re of [
-    /<details open>\n<summary><strong>📊 Value card<\/strong> — Overall drift \+18\.0% ▲/,
-    /<details open>\n<summary><strong>⚠️ Suggestions \(1\)<\/strong> — 1 suggestion/,
+    /<details open>\n<summary><strong>📊 Business value<\/strong> — Overall drift \+18\.0% ▲/,
+    /<details open>\n<summary><strong>⚠️ Code suggestions \(1\)<\/strong> — 1 suggestion/,
     /<details open>\n<summary><strong>🛰 Risks<\/strong> — 1 to address · 2 total<\/summary>/,
-    /<details>\n<summary><strong>🏗 Architecture &amp; reach<\/strong> — Before vs after · 1 entry point reaches it<\/summary>/,
+    /<details>\n<summary><strong>🏗 Architecture<\/strong> — Before vs after diagrams<\/summary>/,
   ]) {
     assert.match(body, re, `missing collapsible/TLDR: ${re}`);
   }
+});
+
+test('overview: official section screenshots precede the major sections (fail-soft to alt text)', () => {
+  const body = renderOverview(fullReport(), { ctx: CTX });
+  const SHOT = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
+  for (const file of ['drift-review.png', 'architecture.png', 'business-value.png', 'code-suggestions.png', 'andy.png']) {
+    assert.ok(body.includes(`<img src="${SHOT}/${file}"`), `${file} section image present`);
+  }
+  // The header screenshot leads the comment, right after the sticky marker.
+  assert.match(body, /drift:sticky-comment -->\n<p><img src="[^"]*\/drift-review\.png"/);
+  // Each banner sits ABOVE its section (architecture image precedes the heading).
+  assert.ok(body.indexOf('architecture.png') < body.indexOf('🏗 Architecture'), 'image precedes its section');
+  // The andy banner sits just above the footer attribution.
+  assert.ok(body.indexOf('andy.png') < body.indexOf('Posted by'), 'andy banner precedes the footer');
+});
+
+test('overview: audio summary button banner renders only when there is an audio URL', () => {
+  const SHOT = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
+  const withAudio = renderOverview(fullReport(), { ctx: CTX, audioUrl: 'https://github.com/o/r/actions/runs/1/artifacts/2?x=1&y=2' });
+  // A clickable banner linked to the artifact, with the href safely escaped.
+  assert.match(withAudio, /<a href="https:\/\/github\.com\/o\/r\/actions\/runs\/1\/artifacts\/2\?x=1&amp;y=2"><img src="[^"]*\/summary-audio\.png"/);
+  const noAudio = renderOverview(fullReport(), { ctx: CTX });
+  assert.doesNotMatch(noAudio, /summary-audio\.png/, 'no audio banner without an audio URL');
 });
 
 test('overview: regressed-axis TLDR names the regression count', () => {
@@ -137,14 +161,14 @@ test('overview: regressed-axis TLDR names the regression count', () => {
   r.pr_review!.value_card = card([axis('money', -12), axis('runtime', -3), axis('customer', 5)]);
   r.pr_review!.overall_drift = { percent: -4, direction: 'down', confidence: 'low' };
   const body = renderOverview(r, { ctx: CTX });
-  assert.match(body, /<summary><strong>📊 Value card<\/strong> — Overall drift −4\.0% ▼ · 2 axes regressed/);
+  assert.match(body, /<summary><strong>📊 Business value<\/strong> — Overall drift −4\.0% ▼ · 2 axes regressed/);
 });
 
 test('overview: primary sections open; architecture stays collapsed', () => {
   const body = renderOverview(fullReport(), { ctx: CTX });
   // value + suggestions always open; architecture is reference → always closed.
-  assert.match(body, /<details open>\n<summary><strong>📊 Value card/);
-  assert.match(body, /<details open>\n<summary><strong>⚠️ Suggestions/);
+  assert.match(body, /<details open>\n<summary><strong>📊 Business value/);
+  assert.match(body, /<details open>\n<summary><strong>⚠️ Code suggestions/);
   assert.match(body, /<details>\n<summary><strong>🏗 Architecture/);
 });
 

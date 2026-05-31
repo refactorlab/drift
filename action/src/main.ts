@@ -75,6 +75,11 @@ export async function main(): Promise<void> {
     author: pr.author,
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || undefined;
+  // MP4 sibling URL — surfaced in the footer alongside the WAV so a
+  // logged-in reviewer can drag-drop it into a reply for GitHub's
+  // native <video> player (GitHub strips <audio> in comments + only
+  // auto-embeds video from user-attachments, which CI can't write to).
+  const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || undefined;
 
   // When AI suggestions are enabled, the AI-post step (dist/ai-suggest.js)
   // posts a SINGLE combined PR review — deterministic + AI — so reviewers see
@@ -122,7 +127,7 @@ export async function main(): Promise<void> {
       core.warning(`could not read prior sticky comment: ${describeError(err)}`);
     }
 
-    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl });
+    const body = renderOverview(report, { ctx: prCtx, priorState, audioUrl, audioMp4Url });
     tasks.push(
       upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId }).catch((err) =>
         core.warning(`sticky comment failed: ${describeError(err)}`),
@@ -138,7 +143,7 @@ export async function main(): Promise<void> {
     const issueBody =
       `${issueMarker(prNumber)}\n\n> Drift tracking issue for ${prLink}` +
       ` — refreshed each time \`/drift issue\` runs.\n\n` +
-      renderOverview(report, { ctx: prCtx, audioUrl });
+      renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url });
     const issueTitle = `Drift findings — PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ''}`;
     tasks.push(
       upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch((err) =>

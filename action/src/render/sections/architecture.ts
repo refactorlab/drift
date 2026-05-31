@@ -1,24 +1,20 @@
-// 🏗 Architecture & reach — one section that answers "what does this PR touch,
-// and who depends on it?". Merges what used to be four separate sections
-// (architecture flow · business logic · affected roots · key files) into the
-// template's top-down layout:
+// 🏗 Architecture — the diagrams that answer "what does this PR touch?".
+// Renders the scanner's pre-rendered, theme-matched diagrams (plus a dead-code
+// callout) and nothing else — the reach prose/table was dropped in favour of a
+// diagrams-only section:
 //
-//   intro     — N entry points reach the change
-//   table     — files the most callers depend on (reach count)
 //   callout   — changed files unreachable from any entry point (likely dead)
 //   <details> — flow diagram · business-logic reach · data structures · mindmap
 //
-// Every Mermaid block is the scanner's pre-rendered, theme-matched diagram,
-// framed verbatim.
+// Every Mermaid block is framed verbatim. The section is omitted entirely when
+// there are no diagrams and no unreachable files to call out.
 
 import type { PrScope, ArchitectureFlow, BusinessLogic, KeyFilesBlock, DataStructureEntry } from '../../report.ts';
 import type { PrContext } from '../context.ts';
 import { fileLink } from '../context.ts';
-import { int, plural, inlineList, escapeHtml } from '../lib/format.ts';
+import { int, plural, escapeHtml } from '../lib/format.ts';
 
-const MAX_REACH_ROWS = 12;
 const MAX_UNREACHABLE_LINKED = 8;
-const MAX_ROOTS_INLINE = 12;
 
 export type ArchitectureInput = {
   prScope: PrScope;
@@ -32,45 +28,24 @@ export type ArchitectureInput = {
 
 export function renderArchitecture(input: ArchitectureInput): string | null {
   const { prScope, arch, business, keyFiles, ctx } = input;
-  const roots = prScope.affected_roots;
   const unreachable = prScope.unreachable_changes;
   const dataStructures = arch?.data_structures ?? [];
-  const keyFileRows = flattenKeyFiles(keyFiles);
 
   const nothing =
-    roots.length === 0 &&
     unreachable.length === 0 &&
     dataStructures.length === 0 &&
-    keyFileRows.length === 0 &&
     !archMermaid(arch) &&
-    !business?.mermaid;
+    !business?.mermaid &&
+    !keyFiles?.mermaid;
   if (nothing) return null;
 
-  const lines: string[] = ['## 🏗 Architecture & reach', ''];
-
-  // intro + reach table (or an inline root list when there's no key-file data)
-  if (roots.length > 0) {
-    const reaches = plural(roots.length, 'reaches', 'reach');
-    const intro = `**${int(roots.length)}** entry ${plural(roots.length, 'point')} ${reaches} changes in this PR.`;
-    if (keyFileRows.length > 0) {
-      lines.push(`${intro} The files most callers depend on:`, '');
-      lines.push('| File | Roots reaching it |', '|---|---:|');
-      for (const row of keyFileRows.slice(0, MAX_REACH_ROWS)) {
-        lines.push(`| ${fileLink(ctx, row.path, undefined, row.path)} | ${row.reach === null ? '—' : int(row.reach)} |`);
-      }
-      lines.push('');
-    } else {
-      lines.push(intro, '', inlineList(roots, MAX_ROOTS_INLINE), '');
-    }
-  } else {
-    lines.push("No entry point reaches this PR's changes — the change is internal, config, or unreachable.", '');
-  }
+  const lines: string[] = ['## 🏗 Architecture', ''];
 
   // unreachable callout
   if (unreachable.length > 0) {
     const links = unreachable.slice(0, MAX_UNREACHABLE_LINKED).map((f) => fileLink(ctx, f, undefined, basenameOf(f)));
     const more = unreachable.length > MAX_UNREACHABLE_LINKED ? `, *…+${unreachable.length - MAX_UNREACHABLE_LINKED} more*` : '';
-    const note = (input.deadCodeCount ?? 0) > 0 ? ' (These match the dead-code suggestions above.)' : '';
+    const note = (input.deadCodeCount ?? 0) > 0 ? ' (These match the dead-code suggestions below.)' : '';
     lines.push(
       `> **${int(unreachable.length)} changed ${plural(unreachable.length, 'file')} ${unreachable.length === 1 ? 'is' : 'are'} unreachable** ` +
         `from any entry point — likely dead code, config, or tests: ${links.join(', ')}${more}.${note}`,
@@ -134,25 +109,6 @@ export function renderArchitecture(input: ArchitectureInput): string | null {
   if (details.length > 0) lines.push(details.join('\n\n'));
 
   return lines.join('\n').trimEnd();
-}
-
-// ── key-file reach table ─────────────────────────────────────────────────────
-
-type ReachRow = { path: string; reach: number | null };
-
-function flattenKeyFiles(kf?: KeyFilesBlock): ReachRow[] {
-  const rows: ReachRow[] = [];
-  for (const g of kf?.groups ?? []) {
-    for (const f of g.files) rows.push({ path: f.path, reach: reachCount(f.why) });
-  }
-  // Most-depended-on first; unknown reach sinks to the bottom.
-  return rows.sort((a, b) => (b.reach ?? -1) - (a.reach ?? -1) || a.path.localeCompare(b.path));
-}
-
-/** Parse the leading integer out of "N root(s) reach this file". */
-function reachCount(why?: string): number | null {
-  const m = (why ?? '').match(/(\d+)/);
-  return m ? Number(m[1]) : null;
 }
 
 // ── data structures ──────────────────────────────────────────────────────────

@@ -1,14 +1,18 @@
-// Sticky overview comment — assembled top-down in the reading order a senior
-// reviewer uses (verdict → numbers → fixes → risk → architecture → reference):
+// Sticky overview comment — assembled top-down: lead with WHAT the PR touches
+// (the architecture diagrams), then its value, the fixes, the risk, and finally
+// the extended findings:
 //
 //   marker
-//   1. Header           — title · KPIs · advisory verdict · "Before you merge"
-//   2. Value card       — composite + per-axis dashboard
-//   3. Suggestions      — priority table + per-finding details
-//   4. Risks            — impact-ordered table + quadrant map
-//   5. Architecture     — reach table + flow/business/mindmap diagrams
-//   6. Extended findings + Legend & methodology
-//   7. Footer           — attribution + (optional) audio link
+//   1. Header           — title · advisory verdict · KPI badges
+//   2. Reviewer's guide — triage panel (changed files · key issues)
+//   3. Architecture     — flow/business/mindmap diagrams (+ dead-code callout)
+//   4. Business value   — composite + per-axis dashboard
+//   5. Code suggestions — priority table + per-finding details
+//   6. Blast radius     — reached entry points · coverage
+//   7. Risks            — impact-ordered table + quadrant map
+//   8. Extended findings
+//   9. Before you merge — the actionable, GitHub-tallied checklist (closes the comment)
+//   10. Footer          — attribution + (optional) audio link
 //   state blob          — invisible snapshot, diffed on the next push
 //
 // Every section returns null when its data is absent, so the comment degrades
@@ -16,18 +20,22 @@
 
 import type { ScanPrOutput } from '../report.ts';
 import type { PrContext } from './context.ts';
-import { type DriftState, stateFromReport, serializeState } from './state.ts';
+import { type DriftState, stateFromReport, serializeState, appendConfHistory } from './state.ts';
 import { extractFacts, type PrFacts } from './lib/facts.ts';
+import { mergeConfidence } from './lib/confidence.ts';
+import { reviewEffort } from './lib/effort.ts';
 import { wrapSection } from './lib/section.ts';
-import { signedPercent, plural, int } from './lib/format.ts';
+import { signedPercent, plural, int, escapeHtml } from './lib/format.ts';
 
 import { renderHeader } from './sections/header.ts';
+import { renderReviewersGuide } from './sections/reviewers_guide.ts';
 import { renderValueCard } from './sections/value_card.ts';
 import { renderSuggestions } from './sections/suggestions.ts';
 import { renderRisks } from './sections/risks.ts';
 import { renderArchitecture } from './sections/architecture.ts';
+import { renderBlastRadius } from './sections/blast_radius.ts';
 import { renderExt } from './sections/ext.ts';
-import { renderLegend } from './sections/legend.ts';
+import { renderBeforeMerge } from './sections/before_merge.ts';
 import { renderFooter } from './sections/footer.ts';
 
 export const STICKY_MARKER = '<!-- drift:sticky-comment -->';
@@ -37,21 +45,65 @@ export const STICKY_MARKER = '<!-- drift:sticky-comment -->';
 const BODY_SIZE_BUDGET = 60_000;
 const HARD_CAP = 65_000;
 
+// Official Drift section-header screenshots (refactorlab/andy/docs/screenshots).
+// Fail-soft: GitHub's Camo proxy degrades a missing/404 asset to its `alt` text
+// without breaking the comment, so these can ship before the PNGs are committed.
+const SCREENSHOTS = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
+const sectionImage = (file: string, alt: string): string =>
+  `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="100%" /></p>`;
+/** Prepend a section-header screenshot to a section's markdown (own line, above it). */
+const withImage = (file: string, alt: string, section: string): string => `${sectionImage(file, alt)}\n\n${section}`;
+
+/**
+ * Clickable "🔊 audio summary" button banner — the `summary-audio.png` screenshot
+ * wrapped in a link to the spoken-summary artifact. `escapeHtml` closes the
+ * `href` attribute safely (the URL is env-influenced). Only rendered when an
+ * audio URL exists; same artifact caveat as the footer's text link.
+ */
+const audioBanner = (url: string): string =>
+  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="100%" /></a></p>`;
+
 export type RenderOptions = {
   ctx?: PrContext;
   /** Prior run's snapshot (from the previous sticky comment) for the delta line. */
   priorState?: DriftState | null;
   /** Artifact URL of the spoken-summary WAV, linked in the footer. */
   audioUrl?: string;
+  /**
+   * Artifact URL of the MP4 sibling (silent black frame + AAC audio). Surfaced
+   * in the footer alongside the WAV. The MP4 exists because GitHub strips
+   * <audio> in PR comments but auto-embeds a <video> player when a logged-in
+   * reviewer drag-drops the MP4 into a reply.
+   */
+  audioMp4Url?: string;
 };
 
 export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): string {
-  const { ctx, priorState, audioUrl } = opts;
+  const { ctx, priorState, audioUrl, audioMp4Url } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
 
-  const header = renderHeader(report, ctx);
+  // Merge-confidence trend: append this push's 0–5 score to the prior history
+  // (carried in the previous sticky comment's state snapshot), bounded, and
+  // persist it so the next push can draw the sparkline. The append must happen
+  // HERE, where priorState is available — stateFromReport() stays pure.
+  const confidence = mergeConfidence(facts);
+  const confTrend = appendConfHistory(priorState, confidence.score);
+  currentState.confHistory = confTrend;
+
+  const header = renderHeader(report, ctx, { confTrend });
+  // 🧭 Reviewer's guide — the always-visible triage panel right under the
+  // header (Qodo's `/describe` walkthrough + `/review` Reviewer Guide, rebuilt
+  // deterministically). Reads the changed-file scope + the cross-push state.
+  const guide = renderReviewersGuide({
+    facts,
+    changedFiles: report.pr_scope.changed_files,
+    unreachable: report.pr_scope.unreachable_changes,
+    ctx,
+    priorState,
+    currentState,
+  });
   const valueCard = renderValueCard({
     counts: review?.counts,
     card: review?.value_card,
@@ -69,39 +121,78 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
     deadCodeCount: facts.deadCode.length,
     ctx,
   });
+  const blastRadius = renderBlastRadius(facts);
   const ext = renderExt(report.pr_review_ext, ctx);
-
-  // The legend is reference detail — show it only when there's rich content to
-  // legend. A factual-only PR skips it.
-  const hasRich = [valueCard, suggestions, risks].some(Boolean);
-  const legend = hasRich ? renderLegend(report.pr_review_ext?.tech_debt) : null;
+  // The "✅ Before you merge" checklist now closes the comment (moved out of the
+  // header). Visible (not collapsed) so GitHub tallies the task boxes.
+  const beforeMerge = renderBeforeMerge(facts, ctx);
 
   // Every detail section is wrapped in an expandable <details> whose summary
   // is "Title — TLDR", so the comment reads as a scannable list of TLDRs the
   // reviewer can open on demand. The header stays OUTSIDE this framing: it is
   // the whole-PR TLDR (verdict + KPIs) and its "Before you merge" task boxes
-  // must stay visible for GitHub to tally merge-readiness. Primary sections
-  // (value dashboard, suggestions) default to OPEN; supporting detail
-  // (risks, architecture, extended findings, legend) defaults to collapsed.
-  const sections: string[] = [header];
-  if (valueCard) sections.push(wrapSection(valueCard, { tldr: tldrValue(facts), open: true }));
-  if (suggestions) sections.push(wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true }));
+  // must stay visible for GitHub to tally merge-readiness. Architecture leads
+  // the body — the diagrams that show WHAT changed — then the value dashboard
+  // and suggestions default to OPEN; supporting detail (architecture, risks,
+  // extended findings) defaults to collapsed.
+  // Each major section is preceded by its official Drift screenshot banner.
+  const sections: string[] = [withImage('drift-review.png', 'Drift review', header)];
+  if (architecture) sections.push(withImage('architecture.png', 'Architecture', wrapSection(architecture, { tldr: tldrArchitecture(facts) })));
+  if (valueCard) sections.push(withImage('business-value.png', 'Business value', wrapSection(valueCard, { tldr: tldrValue(facts), open: true })));
+  if (suggestions) sections.push(withImage('code-suggestions.png', 'Code suggestions', wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true })));
+  // Blast radius & coverage — what's exposed if this breaks, and is it tested.
+  // Auto-opens when reached entry points are untested (the actionable case).
+  if (blastRadius) {
+    const untested = facts.perRootCoverage.filter((r) => !r.tested).length;
+    sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts), open: untested > 0 }));
+  }
   // Risks auto-opens when there's something to act on before merge — it's as
   // actionable as the suggestions section in that case; otherwise collapsed.
   if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts), open: facts.risksToAddress > 0 }));
-  if (architecture) sections.push(wrapSection(architecture, { tldr: tldrArchitecture(facts) }));
   if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
-  // The legend is ALREADY a self-contained <details> (its own summary) — it's
-  // expandable as-is, so push it directly rather than double-nesting it.
-  if (legend) sections.push(legend);
+  // Reviewer's guide — demoted from its prominent under-header slot to a
+  // collapsed accordion near the end (it's a reference/triage map, not a
+  // headline). No section banner here — it's an appendix now.
+  if (guide) sections.push(wrapSection(guide, { tldr: tldrGuide(facts, report.pr_scope.changed_files) }));
+  // Closes the comment: the actionable, GitHub-tallied merge checklist.
+  sections.push(beforeMerge);
 
-  const footer = renderFooter(report.generator, audioUrl);
+  // The footer block: the Andy sign-off banner, then (when there's a spoken
+  // summary) the clickable audio button banner, then the attribution/audio text.
+  const footer = [
+    sectionImage('andy.png', 'Andy — your PR handoff assistant'),
+    audioUrl?.trim() ? audioBanner(audioUrl.trim()) : '',
+    renderFooter(report.generator, audioUrl, audioMp4Url),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   let body = `${STICKY_MARKER}\n${sections.join('\n\n---\n\n')}`;
   body += `\n\n---\n\n${footer}`;
+  // A hidden, machine-readable verdict line a tiny companion action can grep to
+  // gate branch protection on Drift's result (Qodo publishes GitHub labels; we
+  // publish a parseable marker). Invisible like the state blob, and emitted just
+  // BEFORE it so the `drift:state` snapshot stays the final line (the next push
+  // reads it from the end of the prior comment).
+  body += `\n${statusMarker(facts, confidence.score, reviewEffort(facts).score)}`;
   body += `\n\n${serializeState(currentState)}`;
 
   return guardSize(body);
+}
+
+/**
+ * The hidden CI-gateable status marker: stable `key=value` pairs carrying the
+ * 0–5 merge-confidence + review-effort scores, the product-correctness count,
+ * the gating-risk count, and overall drift % (`na` when there's no value model).
+ * An HTML comment, so it never renders; `parseState()` keys off `drift:state`,
+ * not `drift:status`, so the two markers never collide.
+ */
+function statusMarker(facts: PrFacts, confidence: number, effort: number): string {
+  const drift = facts.overallPercent === null ? 'na' : facts.overallPercent.toFixed(1);
+  return (
+    `<!-- drift:status v=1 confidence=${confidence} effort=${effort} ` +
+    `correctness=${facts.correctness.length} gatingRisks=${facts.risksToAddress} drift=${drift} -->`
+  );
 }
 
 // ── per-section TLDRs (one-line teasers shown in the collapsed summary) ───────
@@ -137,17 +228,30 @@ function tldrRisks(f: PrFacts): string {
   return `${f.totalRisks} ${plural(f.totalRisks, 'risk')} · none gating`;
 }
 
+function tldrGuide(f: PrFacts, changedFiles: string[]): string {
+  const issues =
+    f.correctness.length > 0
+      ? `${int(f.correctness.length)} key ${plural(f.correctness.length, 'issue')}`
+      : `${int(f.passing.length)} ${plural(f.passing.length, 'suggestion')}`;
+  return `At-a-glance triage · ${issues} · ${int(changedFiles.length)} changed ${plural(changedFiles.length, 'file')}`;
+}
+
+function tldrBlastRadius(f: PrFacts): string {
+  const reached = f.perRootCoverage.length;
+  const untested = f.perRootCoverage.filter((r) => !r.tested).length;
+  const unguarded = f.perRootCoverage.filter((r) => r.missing.length > 0).length;
+  const bits = [`${int(reached)} reached`];
+  if (untested > 0) bits.push(`${int(untested)} untested`);
+  if (unguarded > 0) bits.push(`${int(unguarded)} unguarded`);
+  return bits.join(' · ');
+}
+
 function tldrArchitecture(f: PrFacts): string {
-  const n = f.affectedRoots;
-  // Subject–verb agreement: "1 entry point reaches" vs "2 entry points reach".
-  // With 0 roots the architecture section still renders (internal/config-only
-  // change, or unreachable files), so phrase it as a non-reaching change.
-  const reach =
-    n === 0
-      ? 'no entry point reaches it'
-      : `${int(n)} entry ${plural(n, 'point')} ${n === 1 ? 'reaches' : 'reach'} it`;
-  const dead = f.unreachable > 0 ? ` · ${f.unreachable} unreachable` : '';
-  return `Before vs after · ${reach}${dead}`;
+  // The section is diagrams-only now (flow before/after · business-logic reach
+  // · key-file mindmap), plus a dead-code callout when changed files are
+  // unreachable — so the teaser describes the diagrams, not a reach count.
+  const dead = f.unreachable > 0 ? ` · ${int(f.unreachable)} unreachable` : '';
+  return `Before vs after diagrams${dead}`;
 }
 
 function tldrExt(f: PrFacts): string {

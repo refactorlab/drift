@@ -14,7 +14,21 @@ export type DriftState = {
   v: 1;
   overall?: number;
   axes?: Partial<Record<AxisName, number>>;
+  /** Bounded merge-confidence history (0–5), oldest→newest, for the trend sparkline. */
+  confHistory?: number[];
 };
+
+/** Keep the confidence trend short — enough to see momentum, cheap in the body. */
+export const CONF_HISTORY_CAP = 12;
+
+/**
+ * Append this push's confidence score to the prior history, bounded to the cap.
+ * Tolerant of a missing/garbage prior history (legacy or hand-edited comment).
+ */
+export function appendConfHistory(prior: DriftState | null | undefined, score: number): number[] {
+  const past = Array.isArray(prior?.confHistory) ? prior!.confHistory!.filter((n) => Number.isFinite(n)) : [];
+  return [...past, score].slice(-CONF_HISTORY_CAP);
+}
 
 const MARKER_RE = /<!--\s*drift:state\s+(\{[\s\S]*?\})\s*-->/;
 

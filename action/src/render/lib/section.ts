@@ -4,7 +4,7 @@
 // WHY: a Drift review can be long (value dashboard + suggestions + risks +
 // before/after architecture + tech debt). Rendering every section fully
 // expanded forces the reviewer to scroll past everything. Instead we surface a
-// scannable list of TLDRs — "📊 Value card — Overall drift +32% ▲", "🛰 Risks —
+// scannable list of TLDRs — "📊 Business value — Overall drift +32% ▲", "🛰 Risks —
 // 2 to address" — and let the reviewer expand only what they care about. The
 // header (verdict + KPI badges + "Before you merge" checklist) stays OUTSIDE
 // this framing: it IS the whole-PR TLDR and its task boxes must stay visible

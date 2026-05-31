@@ -40,9 +40,11 @@ const sigil = (cond: boolean) => (cond ? '✓' : '·');
 const has = (s: string) => body.includes(s);
 console.log(`✓ wrote ${outputPath} (${body.length} bytes / 65 536 cap)${ctx ? ' [with PR context → permalinks]' : ''}`);
 console.log(`  ${sigil(/\[!(TIP|WARNING|NOTE)\]/.test(body))} header verdict   ${sigil(has('### ✅ Before you merge'))} merge checklist`);
-console.log(`  ${sigil(has('## 📊 Value card'))} value card       ${sigil(has('Since last review'))} since-last-review`);
-console.log(`  ${sigil(has('## ⚠️ Suggestions'))} suggestions      ${sigil(has('## 🛰 Risks'))} risks`);
-console.log(`  ${sigil(has('## 🏗 Architecture & reach'))} architecture     ${sigil(has('Legend &amp; methodology'))} legend`);
+// Section titles are moved into <summary> by wrapSection, so match the title
+// text (not the stripped `## ` heading).
+console.log(`  ${sigil(has('📊 Business value'))} business value   ${sigil(has('Since last review'))} since-last-review`);
+console.log(`  ${sigil(has('⚠️ Code suggestions'))} code suggestions ${sigil(has('🛰 Risks'))} risks`);
+console.log(`  ${sigil(has('🏗 Architecture'))} architecture     ${sigil(has('🧪 Extended findings'))} extended findings`);
 
 if (body.length > 60_000) console.warn(`! body exceeds 60 KiB soft budget (cap is 65 536)`);
 

@@ -8,6 +8,10 @@
 import type { RisksBlock, RiskItem } from '../../report.ts';
 import { plural } from '../lib/format.ts';
 
+// Always show at most the top-N risks by impact — the table is a triage list,
+// not an exhaustive register; the rest are summarised and live in the quadrant map.
+const MAX_RISKS = 3;
+
 const QUADRANT: Record<NonNullable<RiskItem['quadrant']>, { emoji: string; label: string; rank: number }> = {
   act_before_merge: { emoji: '🔴', label: 'Act before merge', rank: 0 },
   monitor_closely: { emoji: '🟡', label: 'Monitor closely', rank: 1 },
@@ -25,8 +29,13 @@ export function renderRisks(risks?: RisksBlock): string | null {
     const act = items.filter((r) => r.quadrant === 'act_before_merge').length;
     lines.push(intro(act, items.length), '');
     lines.push('| Risk | Likelihood | Severity | Quadrant |', '|---|---:|---:|---|');
-    for (const r of sortByImpact(items)) {
+    const ranked = sortByImpact(items);
+    for (const r of ranked.slice(0, MAX_RISKS)) {
       lines.push(`| ${cell(r.label)} | ${prob(r.likelihood)} | ${prob(r.severity)} | ${quadrant(r)} |`);
+    }
+    if (ranked.length > MAX_RISKS) {
+      const more = ranked.length - MAX_RISKS;
+      lines.push(`| *…+${more} lower-impact ${plural(more, 'risk')}* | | | *see the quadrant map* |`);
     }
     lines.push('');
   }
