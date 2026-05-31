@@ -22,7 +22,7 @@ import {
 } from '../ai/build-context.ts';
 import { filterByDiff, parseCommentableLines } from '../ai/diff-lines.ts';
 import { parseAIOutput } from '../ai/parse.ts';
-import { buildReviewComments } from '../ai/post.ts';
+import { aiToCodeSuggestion } from '../ai/to-code-suggestion.ts';
 import { inferOne, type InferLogger, type InferOneDeps } from '../ai/infer-one-core.ts';
 import type { AISuggestion } from '../ai/schema.ts';
 import type { ScanPrOutput } from '../report.ts';
@@ -125,15 +125,15 @@ test('perf: parseAIOutput on a 1MB envelope < 200ms', () => {
   assert.ok(elapsed < 200, `parseAIOutput took ${elapsed.toFixed(1)}ms — investigate`);
 });
 
-test('perf: buildReviewComments(50 suggestions) < 50ms', () => {
+test('perf: aiToCodeSuggestion(50 suggestions) < 50ms', () => {
   const sugs: AISuggestion[] = Array.from({ length: 50 }, (_, i) => ({
     file: `f${i}.py`, line: i + 1, category: 'A', confidence: 0.9,
     why_it_matters: 'load-bearing message',
     references: [{ url: `https://example.com/x/${i}` }],
     after_code: `    log.info("FIX_${i}")`,
   }));
-  const [, elapsed] = timed(() => buildReviewComments(sugs, 'openai/gpt-4o'));
-  assert.ok(elapsed < 50, `buildReviewComments took ${elapsed.toFixed(1)}ms — investigate`);
+  const [, elapsed] = timed(() => sugs.map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o')));
+  assert.ok(elapsed < 50, `aiToCodeSuggestion took ${elapsed.toFixed(1)}ms — investigate`);
 });
 
 test('perf: annotateDiff on a 100-line diff < 30ms', () => {

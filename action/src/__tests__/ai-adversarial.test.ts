@@ -30,9 +30,8 @@ import { tmpdir } from 'node:os';
 import { inferOne, type InferLogger, type InferOneDeps } from '../ai/infer-one-core.ts';
 import { filterByDiff } from '../ai/diff-lines.ts';
 import { parseAIOutput } from '../ai/parse.ts';
-import { buildReviewComments } from '../ai/post.ts';
+import { suggestionBlock, unwrapFence } from '../suggestion-fence.ts';
 import type { ScanPrOutput } from '../report.ts';
-import type { AISuggestion } from '../ai/schema.ts';
 
 const captureLogger = (): { logger: InferLogger; messages: string[] } => {
   const messages: string[] = [];
@@ -287,13 +286,10 @@ test('adversarial: model after_code with embedded ``` runs → wrapper fence is 
     '```\n```\n````\n`````\n``````\n```````\n````````\n`````````\n``````````',
   ];
   for (const code of samples) {
-    const sug: AISuggestion = {
-      file: 'a.py', line: 1, category: 'A', confidence: 0.9,
-      why_it_matters: 'fence-breakout test, ≥ 10 chars',
-      references: [{ url: 'https://example.com/x' }],
-      after_code: code,
-    };
-    const body = buildReviewComments([sug], 'openai/gpt-4o')[0].body;
+    // The exact defense the renderer applies to model-supplied after_code
+    // before it lands in a comment: strip any outer fence, then size a
+    // ```suggestion wrapper to (longest inner run + 1).
+    const body = suggestionBlock(unwrapFence(code));
     // Find the ```suggestion opening fence: the leading run on a line
     // that introduces "suggestion".
     const openMatch = body.match(/(`+)suggestion/);
