@@ -1,0 +1,170 @@
+'ll ground this in the actual code state first, then go deep on research. Let me map what exists and check key conventions in parallel.
+
+Agent:Map pr_algorithms current state
+IN
+Explore the Rust crate at /Users/ilyashusterman/Projects/drift/drift-static-profiler very thoroughly. I need a precise map of the CURRENT state of the PR-quality / pr_algorithms machinery so I can write a bulletproof implementation plan for new LLM-complexity & code-quality metrics.
+
+Report on:
+
+1. **Does `src/pr_algorithms/pr_quality/` exist yet?** If so, list every file and summarize what's implemented (which of comprehensibility/longevity/correctness_confidence/operational/team_process/llm_complexity exist, and their status). If not, say so clearly.
+
+2. **types.rs** — list the key public structs/enums relevant to PR review output: `PrReviewExt`, `QualityDimension`, `PrQuality`, `LlmComplexity`, `TeamProcess`, `Direction`, `Confidence`, `InputValue`, `ValueKv`, `SourceCitation`, `QualityComponent`, `QualityRollup`. For each, note whether it currently exists and its fields.
+
+3. **CallTreeNode** (find its definition, likely in src/ not pr_algorithms) — list ALL its fields with types, especially: complexity, loc, nesting_depth, parameter_count, is_async, call_site_count, callees_count, callers_count, subtree_size, pagerank, percent_total, categories_reached, external_calls, findings, cognitive_complexity (does this field exist yet?), in_pr_changed_files.
+
+4. **metrics.rs** (src/metrics.rs) — how is `complexity` computed (the McCabe decision_points walk)? Is there any `cognitive_complexity`? How do language profiles plug in (src/languages/)? List the language profile files.
+
+5. **constants.rs** (src/pr_algorithms/constants.rs) — how are constants loaded from pr_algorithms_constants.json? Show the accessor pattern, the `every_value_has_a_citation` test, and any `json_values_match_previous_hardcoded_constants` regression test. Is there a `PrQualityConstants` struct yet?
+
+6. **code_suggestions.rs** — show the `read_around` / file-reading + path-safety pattern (the precedent for safe source reading).
+
+7. **duplication.rs** — show the `token_shingles` splitter function.
+
+8. **value_money.rs** — does it expose `net_debt_*`? Summarize the cost/profit arithmetic it does.
+
+9. **tech_debt.rs** — show `language_of` and how it detects long functions / high complexity.
+
+10. **nfr_edge_cases.rs** — how does it scan for markers (idempot/validate/observability)? What's the FAMILIES table pattern?
+
+11. **merge.rs** — show how PrReviewExt is assembled, the `finite_or_zero` NaN guard, and where pr_quality::compute would be wired in.
+
+12. **Cargo.toml** — list current dependencies and dev-dependencies (especially anything tree-sitter, tokenizer, fuzzy-matching related like rapidfuzz/strsim).
+
+13. **mod.rs** (pr_algorithms) — list the `pub mod` declarations.
+
+Quote real code snippets with file:line references. Be thorough and precise — this map is the foundation for an implementation plan, so accuracy matters more than brevity.
+Bash Check git log and pr_quality dir existence
+IN
+cd /Users/ilyashusterman/Projects/drift/drift-static-profiler && echo "=== git log pr_quality ===" && git log --oneline -15 2>/dev/null && echo "=== pr_quality dir? ===" && ls -la src/pr_algorithms/pr_quality 2>&1 | head -30 && echo "=== other PR docs ===" && ls *.md 2>/dev/null && echo "=== CALIBRATION? ===" && ls CALIBRATION.md 2>&1
+
+OUT
+=== git log pr_quality ===
+30e8924 add pr quickcharts for improved ui
+535d5e5 fix(action): update stale AI-only log/comments for the commit fallback
+49f6cf4 test(action): cover commit-based audio fallback end-to-end
+f08bd61 fix(action): make PR audio AI-only and resilient to GitHub Models 429 throttling
+647d3a0 refactor(action,profiler): collapse PR review to one sticky comment & dedupe suggestions
+a47f45b fix(action,profiler): re-anchor off-diff findings & humanize root labels
+6f4a0a4 build(action): rebuild dist/ bundles in sync with src
+98f039e comments render , artifact of pr-scan.json publish json in github runner announymouse
+324510e add default max suggestions fix render pr comments
+7e3e975 feat(action): principal-engineer PR-comment redesign — TLDR-first, agent-ready
+397373c fix(action): harden Piper TTS pipeline against gibberish-WAV regression
+bc954eb feat(action): cap report suggestions + combined inline review + /drift comment docs
+0f555f0 feat(action): make start-on-pr-comment additive instead of exclusive
+146036e fix(profiler): bound scan-pr memory to stop runner OOM ("operation canceled")
+7e8848d docs(action): fetch comment parser via sparse-checkout in example workflow
+=== pr_quality dir? ===
+ls: src/pr_algorithms/pr_quality: No such file or directory
+=== other PR docs ===
+ARCHITECTURE.md
+BENCH_BASELINE.md
+CALIBRATION.md
+INSIGHTS_PLAN.md
+PR_ALGORITHMS_TODO.md
+PR_QUALITY_METRICS_PLAN.md
+PR_QUALITY_RESEARCH.md
+QUERY_ORM_ANALYZER_PLAN.md
+=== CALIBRATION? ===
+CALIBRATION.md
+I now have a precise picture: the two docs (PLAN + RESEARCH) are thorough, CALIBRATION.md exists, but pr_quality/ is not implemented yet — and several load-bearing decisions still rest on [CALIBRATION] guesses or 2026 facts that need hard verification. That's exactly where "even more deep research" earns its keep.
+
+Let me kick off a deep, multi-source research pass focused on the genuine open questions — verifying the open-source Rust ecosystem we'd lean on, the 2026 tokenizer/context facts, and the algorithm references — then I'll synthesize it into a bulletproof implementation plan grounded in the actual code.
+
+deep-research skill
+The skill directs me to run the deep-research workflow. Invoking it now.
+
+Workflow
+IN
+{
+  "name": "deep-research",
+  "args": "Implementation-grade research for a Rust static-analysis tool (drift-static-profiler) that scores GitHub PRs on \"LLM complexity\" and code-quality dimensions, WITHOUT calling any LLM at runtime — pure deterministic static analysis over a tree-sitter call graph. I need to verify facts and find production-ready open-source Rust crates. Treat each as a principal engineer who must defend the choice in review. Answer every sub-question with verified citations, version numbers, and license. Flag anything that is a tuning knob vs a hard external fact.\n\nTHEME 1 — Token estimation for source code WITHOUT vendoring an LLM tokenizer in the hot path:\n1. Measured chars-per-token / bytes-per-token densities for CODE (not prose) on the 2026 tokenizers: OpenAI o200k_base and cl100k_base; Anthropic Claude (Sonnet 4.5/4.6, Opus 4.8) — per language (Python, TypeScript, Go, Rust, Java). Are newer tokenizers denser (more tokens per char)? Get hard numbers with sources.\n2. Pure-Rust crates that can serve as a tokenizer ORACLE in dev/tests: tiktoken-rs (current version, which encodings, license), HuggingFace `tokenizers` crate, any Claude/Anthropic tokenizer availability in Rust. Is Anthropic's tokenizer public in 2026? Can the count-tokens API be used offline?\n3. Is \"bytes/2.8\" a defensible safety-biased estimator for code across these tokenizers, or should it differ? What is the error profile (over/under-budget)?\n\nTHEME 2 — Cognitive complexity (Campbell) computed statically in Rust:\n4. The `rust-code-analysis` crate (Mozilla) — current status/version, license, does it expose cognitive complexity AND cyclomatic across Python/JS/TS/Go/Rust/Java? Is it maintained in 2026? Any successor crates?\n5. The exact SonarSource Cognitive Complexity algorithm (B1 increment / B2 nesting / B3 nesting-only buckets) — confirm the precise rules: which constructs increment, the nesting penalty, the boolean-operator-run rule (+1 per contiguous run of same operator), switch counted once not per-case, recursion, labeled jumps. Cite the Campbell whitepaper.\n6. Reference implementations to validate against: `gocognit` (Go), `lizard` (multi-language CCN), SonarQube S3776. Confirm cognitive_complexity_limit = 15.\n\nTHEME 3 — Source-text classification (comment vs code vs string) state machine:\n7. How `scc` and `tokei` classify lines (the byte-level state machine: blank/code/comment/string states, strings suppress comment tokens, nested block comments, longest-delimiter-first). Are `tokei` or `scc` usable as Rust LIBRARY crates (not just CLIs)? Versions + license.\n8. SonarQube comment_lines_density definition and healthy band; the S109 \"magic number\" rule (exempt set, what counts).\n\nTHEME 4 — Context-window & long-context degradation facts (2026):\n9. Confirmed context windows for current flagship + workhorse models (Claude Opus 4.8 / Sonnet 4.6, GPT-4.1/o-series, Gemini 2.5/3 Pro/Flash) — 1M vs 200K vs 128K.\n10. Long-context effective-length / \"context rot\" research: NoLiMa (ICML 2025, arXiv 2502.05167), Chroma context-rot, \"Lost in the Middle\" (Liu 2024). What fraction of a 1M / 200K window is reliably usable for retrieval/reasoning? Cite specific degradation knees.\n\nTHEME 5 — Coupling / fragility / centrality metrics and normalization:\n11. CK metrics (CBO), Martin's instability (I = Ce/(Ca+Ce)), Henry-Kafura information flow — confirmed fault-risk thresholds (Shatnawi 2010 CBO≈9). Are class-level thresholds defensibly transferable to function-level?\n12. PageRank as a centrality measure on call graphs; why thresholding raw PageRank is wrong (shrinks with N) and \"centrality multiple = pagerank·N\" is scale-free. NDepend / CodeScene precedents.\n13. log1p(x)/log1p(SAT) saturation normalization for power-law-distributed graph-degree counts — is this a sound, citable choice vs z-score / min-max?\n\nTHEME 6 — Validation methodology:\n14. sMAPE vs MAPE for estimator error bands on small diffs; Spearman ρ for rank-prediction quality. Best practice for validating a heuristic composite score (dead-score/saturation detection).\n15. Any 2024-2026 academic or industry work specifically on \"PR reviewability for LLMs\", \"token budget of a diff\", or \"AI code review degradation with large diffs\" — GitHub Copilot large-PR behavior, Anthropic/Cursor agent token-spend studies.\n\nPrioritize: hard version+license facts for the Rust crates (THEME 1-3 crates are the highest value — they decide build vs buy), and the 2026 numeric facts (densities, context windows, degradation knees). Where a number is genuinely a calibration knob with no external source, say so explicitly."
+}
+OUT
+Workflow launched in background. Task ID: wp0iebbve
+Summary: Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.
+Transcript dir: /Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/subagents/workflows/wf_3064dce2-659
+Script file: /Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift-drift-static-profiler/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_3064dce2-659.js
+(Edit this file with Write/Edit and re-invoke Workflow with {scriptPath: "/Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift-drift-static-profiler/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_3064dce2-659.js"} to iterate without resending the script.)
+Run ID: wf_3064dce2-659
+To resume after editing the script: Workflow({scriptPath: "/Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift-drift-static-profiler/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_3064dce2-659.js", resumeFromRunId: "wf_3064dce2-659"}) — completed agents return cached results.
+
+You will be notified when it completes. Use /workflows to watch live progress.
+Research is running in the background. While it runs, I'll ground myself in the exact reuse surfaces my plan will reference — the data model and the single-source-of-truth signals module — so the eventual plan is precise about what to reuse versus build.
+
+Read tree.rs
+Read pr_signals.rs
+I've now got the exact reuse surfaces mapped (PrSignals, CallTreeNode, QualityBar, the clean-as-you-code scoping, finite_or_zero, the constants/citation test harness). The deep-research workflow is fanning out across all six themes in the background — I'll be notified when it lands.
+
+Here's where things stand and what I'll do with the results:
+
+Confirmed ground truth (from the live code):
+
+pr_quality/ is not implemented yet — the two design docs exist but no module, no PrQuality/LlmComplexity/QualityDimension types, and CallTreeNode has no cognitive_complexity field (only McCabe complexity). So the plan's biggest open decision — compute true cognitive complexity in the core vs. use the surrogate — is still genuinely open.
+The reuse scaffolding is strong: PrSignals SSOT, read_around path-safety, token_shingles splitter, the FAMILIES marker tables, finite_or_zero, and the every_value_has_a_citation / json_values_match_previous_hardcoded_constants regression guards.
+Deps already present that matter: tree-sitter (8 langs), strsim, regex, petgraph, sqlparser/pg_query. No tokenizer or cognitive-complexity crate yet — so THEME 1–2 of the research (build vs. buy) directly decides new dependencies.
+What the research will let me harden in the plan (the spots currently resting on [CALIBRATION] or unverified 2026 facts): the bytes/2.8 token estimator and whether to lean on tiktoken-rs/tokenizers as an oracle; whether rust-code-analysis is alive in 2026 (buy) or we hand-roll Campbell cognitive complexity (build); tokei/scc as a library vs. our own state machine; the exact context-window + context-rot knees; and the normalization/validation methodology.
+
+Once the report is back, I'll synthesize it with this code map into a single bulletproof, build-ordered implementation plan — every constant tagged CITED vs. CALIBRATION, every new dependency justified with version+license, and each step tied to the real reuse points — superseding the round-2 deltas where the new research changes the call. I'll let you know the moment the research completes.
+
+The research is back (106 agents, 1.6M tokens). Let me read the full result to capture every verified finding before synthesizing.
+
+Read wp0iebbve.output
+The research nailed the highest-value build-vs-buy facts and — crucially — flagged its own scope gaps: THEME 4 (context windows + context-rot knees), THEME 5 (coupling/centrality/normalization), and THEME 6 (validation methodology) went unverified this round because I told it to prioritize the crate decisions. Those three are load-bearing for a bulletproof plan, so I'll close them with a second, tighter verification pass while I start drafting.
+
+Key decisions the first pass already locks in:
+
+tiktoken-rs v0.11.0 (MIT, offline) → BUY as a dev/test oracle for OpenAI; runtime stays byte-based.
+No offline Claude tokenizer exists in 2026 → the Claude byte/token ratio is officially a calibration knob, not a fact (validates the plan's [CALIBRATION] tag).
+rust-code-analysis is stale (v0.0.25, 2023) + Go cognitive support unconfirmed → decisive: BUILD cognitive complexity on our own tree-sitter walk, validated against gocognit/SonarQube — don't depend on the dead crate.
+Campbell whitepaper v1.7: increment types are Nesting/Structural/Fundamental/Hybrid (the existing doc's "B1/B2/B3 A/B/C/D" labels are wrong and must be corrected).
+tokei v14.0.0 (MIT/Apache, library) → available, but it yields line counts, not the per-byte code/comment spans we need — so it's an oracle, not a drop-in.
+Launching the gap-closing research now:
+
+Workflow
+IN
+{
+  "name": "deep-research",
+  "args": "Targeted verification pass for a Rust PR-quality static-analysis tool. A prior research round verified the Rust-crate build-vs-buy facts but EXPLICITLY LEFT THESE THREE THEMES UNVERIFIED. Verify each with hard citations (prefer primary sources: arXiv papers, official model docs, original metric papers). For every numeric value state whether it is a HARD EXTERNAL FACT (with source) or a CALIBRATION KNOB (no authoritative source — say so plainly).\n\nTHEME A — Context windows & long-context degradation (2026 facts):\n1. Confirmed maximum context-window token counts for: Anthropic Claude Opus 4.8 and Sonnet 4.6; OpenAI GPT-4.1 and the o-series/GPT-5; Google Gemini 2.5 Pro / 3 Pro / Flash. Which are 1,000,000 vs 200,000 vs 128,000 tokens? Cite official model/docs pages.\n2. NoLiMa (arXiv 2502.05167): what does it measure (\"effective context length\" where performance stays ≥85% of short-context baseline), and what effective lengths did it find for long-context models — i.e. at what token depth does performance fall below the 85% threshold?\n3. Chroma \"context rot\" study (research.trychroma.com/context-rot): what degradation does it report as input length grows, and at roughly what token counts does reliability noticeably drop for 200K-class and 1M-class models?\n4. \"Lost in the Middle\" (Liu et al. 2024, TACL): the U-shaped position effect — does retrieval accuracy drop for information in the middle of a long context? Quantify.\n5. Net: what FRACTION of a 1M-token window and a 200K-token window is reliably usable for accurate retrieval/reasoning (the \"usable fraction\")? Is ~0.30 of 1M defensible, or what does the evidence actually support?\n\nTHEME B — Coupling / fragility / centrality metrics & normalization:\n6. CK metric CBO (Coupling Between Objects): Shatnawi 2010 (\"A Quantitative Investigation of the Acceptable Risk Levels of Object-Oriented Metrics\") — what acceptable-risk CBO threshold did it find (is CBO≈9 correct)? Cite.\n7. Robert C. Martin's Instability metric I = Ce/(Ca+Ce): definition, the \"stable/unstable\" bands (≥0.7 unstable, ≤0.3 stable?), and the main-sequence/zone-of-pain concept. Cite Martin.\n8. Henry-Kafura information-flow complexity: the fan-in × fan-out squared formula. Cite.\n9. Are CLASS/PACKAGE-level coupling thresholds (CK CBO, Martin instability) defensibly transferable to FUNCTION-level call-graph nodes, or is that a category error requiring independent calibration? What do practitioners (NDepend, CodeScene, SonarQube) actually do at function granularity?\n10. PageRank as a centrality measure on software call graphs: precedent (NDepend \"Rank\", CodeScene). Why does thresholding RAW pagerank fail as graph size N grows (pagerank values sum to 1, so each shrinks ~1/N)? Is \"centrality multiple = pagerank × N\" (how many times the uniform 1/N baseline) a sound scale-invariant normalization?\n11. log1p(x)/log1p(SAT) saturation normalization for power-law / heavy-tailed graph-degree counts (fan-in, fan-out, subtree size): is this a sound, defensible transform vs z-score (unbounded) or min-max (needs full distribution)? Any citable basis for log compression of degree distributions?\n\nTHEME C — Validation methodology & PR-reviewability literature:\n12. sMAPE (symmetric mean absolute percentage error) vs MAPE: why is sMAPE preferred when the denominator (true value) can be tiny — e.g. estimating tokens for a tiny diff? Cite the definition and its bounded [0,200%] property.\n13. Spearman rank correlation ρ vs Pearson: why ρ is the right metric for validating a heuristic that should predict RANK ORDER (which PR is riskier) rather than absolute values. Cite.\n14. Best practice for validating/calibrating a composite heuristic score: detecting \"dead\" sub-scores (no variance / always saturated), the saturation/peg trap, choosing saturation points at distribution percentiles (p90). Any references.\n15. 2024-2026 work specifically on AI/LLM code-review degradation with LARGE diffs / PR reviewability for LLMs: GitHub's guidance on reviewing agent-generated PRs, any studies on how AI review quality drops as diff/token size grows, Cursor/Anthropic agent token-spend-per-task studies. Cite what exists.\n\nPrioritize hard primary-source numbers for THEME A (context windows, NoLiMa effective lengths, the usable-fraction question) and clear cited/knob verdicts for every value."
+}
+OUT
+Workflow launched in background. Task ID: wd9m53ghh
+Summary: Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.
+Transcript dir: /Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/subagents/workflows/wf_e0f91d2d-e36
+Script file: /Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_e0f91d2d-e36.js
+(Edit this file with Write/Edit and re-invoke Workflow with {scriptPath: "/Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_e0f91d2d-e36.js"} to iterate without resending the script.)
+Run ID: wf_e0f91d2d-e36
+To resume after editing the script: Workflow({scriptPath: "/Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_e0f91d2d-e36.js", resumeFromRunId: "wf_e0f91d2d-e36"}) — completed agents return cached results.
+
+You will be notified when it completes. Use /workflows to watch live progress.
+The second pass is running. While it works, I'll draft the bulletproof plan document with everything already locked — folding in the THEME A/B/C facts the moment they land.
+
+Read constants.rs (lines 2-61)
+I have the constants/accessor pattern (NumberWithCitation typed structs + OnceLock parse + citation tests). I now have everything I need on the code side; the only missing inputs are the THEME A/B/C facts from the second research pass, which directly set numeric values in the plan (context windows, usable fraction, coupling thresholds, validation methodology). Rather than draft around placeholders, I'll wait for that pass to land and then write the full plan in one go.
+
+I'll be notified when it completes.
+
+Second pass done. Let me read the full result to capture THEME A/B/C verdicts precisely.
+
+Read wd9m53ghh.output (lines 45-204)
+THEME A is now rock-solid (1M/200K tiering confirmed from official docs; NoLiMa, Chroma, Lost-in-the-Middle all verified; the 0.30 usable-fraction explicitly confirmed as a calibration knob, not a fact). Martin's Instability is confirmed primary. But THEME B (Shatnawi CBO, Henry-Kafura, PageRank×N, log1p, class→function transferability) and all of THEME C (sMAPE, Spearman, calibration practice, AI-review-large-diff literature) survived as open — they were in the existing research doc but neither pass could independently confirm them.
+
+For a plan that's genuinely bulletproof and highest-integrity, I won't ship those as facts without verification. One final tight round closes exactly those gaps:
+
+Workflow
+IN
+{
+  "name": "deep-research",
+  "args": "Final targeted verification for a Rust PR-quality static-analysis tool's design doc. Two prior rounds verified Rust-crate facts and context-window facts. These specific items remain UNVERIFIED and I need a cited verdict on each — for every numeric value, state HARD EXTERNAL FACT (with primary source) vs CALIBRATION KNOB (no authoritative source). Prefer original papers and authoritative docs.\n\nTHEME B — coupling/centrality metrics (software engineering metric papers):\n1. Shatnawi 2010, \"A Quantitative Investigation of the Acceptable Risk Levels of Object-Oriented Metrics in Open-Source Systems\" (IEEE TSE 36(2):216-225): what acceptable-risk THRESHOLD did it derive for CBO (Coupling Between Objects)? Is the commonly-cited \"CBO ≈ 9\" accurate? What method (ROC/VARL)? Cite the actual finding.\n2. Henry & Kafura 1981, \"Software Structure Metrics Based on Information Flow\" (IEEE TSE): confirm the information-flow complexity formula — is it length × (fan-in × fan-out)²? What are fan-in and fan-out defined as? Cite.\n3. Are CLASS-level / package-level coupling thresholds (CK CBO ≈ 9, Martin instability bands) defensibly transferable to FUNCTION-level call-graph nodes (fan-in/fan-out of a function)? Is this a category error? What granularity do NDepend, CodeScene, and SonarQube actually operate coupling/centrality metrics at — class, file, or function?\n4. PageRank applied to software dependency/call graphs: what is the precedent (NDepend's \"Rank\" metric is explicitly PageRank-based; CodeScene hotspots)? Mathematically, since PageRank scores sum to 1 across N nodes, raw scores shrink ~1/N as the graph grows — so is normalizing by multiplying by N (\"centrality multiple = how many times the uniform 1/N baseline\") a sound scale-invariant transform? Any citation for this normalization idea.\n5. log1p(x)/log1p(SAT) saturation normalization for heavy-tailed / power-law count distributions (function fan-in, fan-out, subtree size — known to be power-law/scale-free in call graphs): is log compression a defensible, citable transform for power-law data vs z-score (unbounded, assumes normality) or min-max (needs the full distribution)? Cite the scale-free/power-law software-graph literature (e.g. Myers, Louridas et al. \"Power Laws in Software\") and any standard reference on log-transforming skewed counts.\n\nTHEME C — estimator/validation methodology + AI-review literature:\n6. sMAPE (symmetric mean absolute percentage error): definition, and why it is bounded (commonly [0,200%]) and preferred over MAPE when the true value can be near-zero (e.g. token estimate for a tiny diff where MAPE explodes). Cite a forecasting reference (Makridakis / Hyndman).\n7. Spearman rank correlation ρ vs Pearson r: confirm ρ assesses MONOTONIC rank-order association (not linear), making it the right choice for validating a heuristic that should predict the rank-ordering of PR risk rather than absolute magnitudes. Cite a statistics reference.\n8. Best practice for validating/calibrating COMPOSITE heuristic scores: is there literature on detecting \"dead\" components (a sub-score with near-zero variance / always saturated), the saturation/peg problem, and setting saturation/normalization anchors at distribution percentiles (e.g. p90)? Cite anything authoritative (composite indicator methodology — OECD/JRC Handbook on Constructing Composite Indicators is a likely source).\n9. 2024-2026 evidence that AI/LLM code review degrades as diff/PR/token size grows: GitHub's official guidance on reviewing AI-agent-generated PRs (keep PRs small/reviewable); any Anthropic, Cursor, or academic study quantifying agent token-spend per coding task or review-quality drop with large diffs. Cite what concretely exists (and say if it's thin).\n\nGive a crisp cited-or-knob verdict for every item; where only a tuning knob exists, say so explicitly so it can be tagged [CALIBRATION] in the design doc."
+}
+OUT
+Workflow launched in background. Task ID: wgugyfsfh
+Summary: Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.
+Transcript dir: /Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/subagents/workflows/wf_56e6a12d-dce
+Script file: /Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_56e6a12d-dce.js
+(Edit this file with Write/Edit and re-invoke Workflow with {scriptPath: "/Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_56e6a12d-dce.js"} to iterate without resending the script.)
+Run ID: wf_56e6a12d-dce
+To resume after editing the script: Workflow({scriptPath: "/Users/ilyashusterman/.claude/projects/-Users-ilyashusterman-Projects-drift/dd5cb6e1-975d-4b96-8e71-368703ef2ef3/workflows/scripts/deep-research-wf_56e6a12d-dce.js", resumeFromRunId: "wf_56e6a12d-dce"}) — completed agents return cached results.
+
+You will be notified when it completes. Use /workflows to watch live progress.
+Third and final research round is running. I'll be notified when it lands, then write the complete bulletproof plan in one pass with every value tagged CITED vs CALIBRATION.

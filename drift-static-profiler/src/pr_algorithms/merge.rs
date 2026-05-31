@@ -4,6 +4,7 @@
 
 use crate::api::AnalyzePrOutcome;
 use crate::pr_algorithms::business_logic::PrContextInput;
+use crate::tree::CallTreeNode;
 use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::types::*;
 use crate::pr_algorithms::{
@@ -315,6 +316,55 @@ fn bottom_line(axes: &[ValueAxis]) -> String {
     )
 }
 
+/// Restrict the call-tree roots to those whose subtree actually reaches a
+/// PR-changed file.
+///
+/// The graph-derived review sections — architecture flow, tests-in-graph
+/// (uncovered roots) and NFR (reliability gaps) — must only see roots the PR
+/// touches. Otherwise, when the scanner walks a whole polyglot monorepo (the
+/// action runs `scan-pr` over the repo root), they surface roots from
+/// unrelated fixture / demo / sibling trees that have nothing in common with
+/// the diff. The diff-scoped sections (counts, value axes, key files,
+/// tech-debt, duplication, signals) already filter by `changed_files`; these
+/// three walked EVERY root. Regression: refactorlab/drift#69 — a 12-file
+/// action PR rendered `model_discovery.rs` / `queries.py` / `users.ts` (all
+/// from `tests/fixtures/**`) into the BEFORE/AFTER diagram and the
+/// uncovered-roots / reliability-gaps lists, while `affected_roots` was 0.
+///
+/// Contract mirrors [`in_pr_changed_files`]: an EMPTY `changed_paths` returns
+/// every root unchanged (no PR scope to apply — preserves library / unit-test
+/// callers). When `changed_paths` is non-empty and no root reaches the diff,
+/// the result is empty and each consumer renders its honest "nothing affected"
+/// state (the architecture flow's "No affected entries" placeholder, an empty
+/// uncovered-roots list, etc.).
+fn pr_scoped_roots(entries: &[CallTreeNode], changed_paths: &[String]) -> Vec<CallTreeNode> {
+    if changed_paths.is_empty() {
+        return entries.to_vec();
+    }
+    entries
+        .iter()
+        .filter(|root| subtree_reaches_changed(root, changed_paths))
+        .cloned()
+        .collect()
+}
+
+/// True iff any node in `root`'s subtree is defined in a changed file. Uses the
+/// same suffix-match convention as [`in_pr_changed_files`] and
+/// `pr_scope::affected_roots`, so a root counts as "affected" under exactly the
+/// rule the PR-scope BFS already uses.
+fn subtree_reaches_changed(root: &CallTreeNode, changed_paths: &[String]) -> bool {
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if super::in_pr_changed_files(&n.file, changed_paths) {
+            return true;
+        }
+        for c in &n.children {
+            stack.push(c);
+        }
+    }
+    false
+}
+
 pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
     let null = NullProgress;
     let p: &dyn Progress = inputs.progress.unwrap_or(&null);
@@ -327,6 +377,12 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         .clone();
 
     let changed_paths: Vec<String> = inputs.changed_files.iter().map(|f| f.path.clone()).collect();
+
+    // PR-scope the GRAPH-derived sections (architecture flow, tests-in-graph,
+    // NFR) to roots whose subtree reaches a changed file. The whole-repo
+    // `entries` list is the wrong input for these three — feeding it lets a
+    // monorepo scan surface unrelated fixture/demo roots. See `pr_scoped_roots`.
+    let pr_scoped_entries = pr_scoped_roots(entries, &changed_paths);
 
     // Single source of truth for "what did we detect in the changed code?".
     // Computed once here and threaded into every consumer (value axes,
@@ -352,7 +408,7 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
     // happen later (before visual_summary) since visual_summary
     // also wants them.
     p.phase("NFR coverage (early — for V3 runtime confidence)");
-    let nfr_early = nfr_edge_cases::compute(entries);
+    let nfr_early = nfr_edge_cases::compute(&pr_scoped_entries);
 
     p.phase("value axes (money / customer / runtime / runtime UX)");
     let axes = vec![
@@ -385,7 +441,7 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
     // so the architecture flow can render BEFORE and AFTER as two real
     // charts — status=Added files are skipped from BEFORE, status=Removed
     // get placeholder cards, status=Modified are tinted amber in AFTER, etc.
-    let architecture_flow = architecture_flow::compute_with_diff(entries, inputs.changed_files);
+    let architecture_flow = architecture_flow::compute_with_diff(&pr_scoped_entries, inputs.changed_files);
 
     p.phase("business logic (product-flow mermaid)");
     // DESIGN NOTE — why business_logic does NOT get the BEFORE/AFTER
@@ -455,7 +511,7 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         ..Default::default()
     });
     p.phase("tests-in-graph (multi-language test discovery)");
-    let tig = tests_in_graph::compute(entries);
+    let tig = tests_in_graph::compute(&pr_scoped_entries);
     // NFR was computed early for V3; reuse it instead of recomputing.
     let nfr = nfr_early;
 
@@ -521,5 +577,92 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
     EnrichedReport {
         pr_review,
         pr_review_ext,
+    }
+}
+
+#[cfg(test)]
+mod pr_scope_tests {
+    use super::*;
+    use crate::pr_algorithms::test_helpers::{mk_node, with_children};
+
+    /// Regression for refactorlab/drift#69. When the scanner walks a whole
+    /// monorepo, only roots whose subtree reaches a changed file may feed the
+    /// architecture flow / tests-in-graph / NFR sections. Roots living in
+    /// unrelated fixture trees (`tests/fixtures/**`, sibling subprojects) must
+    /// drop out — they have nothing in common with the diff.
+    #[test]
+    fn pr_scoped_roots_keeps_only_roots_reaching_changed_files() {
+        let touched = with_children(
+            mk_node("renderHeader", "action/src/render/sections/header.ts"),
+            vec![mk_node("gauge", "action/src/render/lib/gauge.ts")],
+        );
+        let fixture_py = mk_node(
+            "queries.py",
+            "drift-static-profiler/tests/fixtures/python-sqlalchemy/app/queries.py",
+        );
+        let fixture_ts = mk_node(
+            "users.ts",
+            "drift-static-profiler/tests/fixtures/typescript-prisma/src/users.ts",
+        );
+        let entries = vec![touched, fixture_py, fixture_ts];
+        let changed = vec!["action/src/render/lib/gauge.ts".to_string()];
+
+        let scoped = pr_scoped_roots(&entries, &changed);
+        let names: Vec<&str> = scoped.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["renderHeader"],
+            "only the root whose subtree reaches gauge.ts survives"
+        );
+
+        // …and the architecture flow built from the scoped roots must not leak
+        // the unrelated fixture files into the AFTER diagram.
+        let arch = architecture_flow::compute_with_diff(
+            &scoped,
+            &[ChangedFile {
+                path: "action/src/render/lib/gauge.ts".into(),
+                status: Some("added".into()),
+                ..Default::default()
+            }],
+        );
+        assert!(
+            !arch.after_mermaid.contains("queries.py"),
+            "unrelated fixture leaked into after_mermaid:\n{}",
+            arch.after_mermaid
+        );
+        assert!(
+            !arch.after_mermaid.contains("users.ts"),
+            "unrelated fixture leaked into after_mermaid:\n{}",
+            arch.after_mermaid
+        );
+    }
+
+    /// Empty changed_files = no PR scope to apply → every root kept (preserves
+    /// behaviour for library / unit-test callers that don't pipe a diff).
+    #[test]
+    fn pr_scoped_roots_empty_changed_files_keeps_all() {
+        let entries = vec![mk_node("a", "a.rs"), mk_node("b", "b.rs")];
+        assert_eq!(pr_scoped_roots(&entries, &[]).len(), 2);
+    }
+
+    /// When nothing reaches the diff, the scope is empty and the architecture
+    /// flow renders its honest placeholder instead of inventing unrelated nodes
+    /// — the exact failure mode of drift#69 where `affected_roots` was 0 yet the
+    /// chart still drew 8 unrelated boxes.
+    #[test]
+    fn pr_scoped_roots_none_reaching_yields_empty_and_placeholder() {
+        let entries = vec![mk_node(
+            "queries.py",
+            "drift-static-profiler/tests/fixtures/python-sqlalchemy/app/queries.py",
+        )];
+        let changed = vec!["action/src/render/lib/gauge.ts".to_string()];
+        let scoped = pr_scoped_roots(&entries, &changed);
+        assert!(scoped.is_empty(), "no root reaches the diff → empty scope");
+        let arch = architecture_flow::compute_with_diff(&scoped, &[]);
+        assert!(
+            arch.after_mermaid.contains("No affected entries"),
+            "expected the honest placeholder, got:\n{}",
+            arch.after_mermaid
+        );
     }
 }
