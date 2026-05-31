@@ -1,9 +1,10 @@
 // Downstream integration: an envelope WRITTEN by inferOne must flow
-// cleanly through the ai-suggest post layer. The existing
+// cleanly through the ai-suggest sticky-comment layer. The existing
 // ai-pipeline.test.ts uses a static example fixture; here we close
 // the loop by FIRST producing the envelope with the real inferOne
 // (against a real git repo + stubbed model) and SECOND running that
-// envelope through `parseAIOutput → filterByDiff → buildReviewComments`.
+// envelope through `parseAIOutput → filterByDiff → aiToCodeSuggestion`
+// (the conversion ai-index.ts feeds into the single sticky comment).
 //
 // What this catches: a future change to the envelope shape (e.g.
 // renaming `suggestions`, dropping a field, changing the `references`
@@ -21,7 +22,8 @@ import { tmpdir } from 'node:os';
 import { inferOne, type InferLogger, type InferOneDeps } from '../ai/infer-one-core.ts';
 import { parseAIOutput } from '../ai/parse.ts';
 import { filterByDiff } from '../ai/diff-lines.ts';
-import { buildReviewComments } from '../ai/post.ts';
+import { aiToCodeSuggestion, mergeAiSuggestionsIntoReport } from '../ai/to-code-suggestion.ts';
+import { renderSuggestions } from '../render/sections/suggestions.ts';
 import type { ScanPrOutput } from '../report.ts';
 
 const captureLogger = (): { logger: InferLogger; messages: string[] } => {
@@ -185,20 +187,20 @@ test('envelope downstream: inferOne output parses + survives filterByDiff + buil
     assert.equal(kept.length, 3, 'all 3 anchored to a `+` line');
     assert.equal(dropped.length, 0);
 
-    // 5. buildReviewComments → the payload pulls.createReview expects.
-    const comments = buildReviewComments(kept, 'openai/gpt-4o');
-    assert.equal(comments.length, 3);
-    for (const c of comments) {
-      assert.equal(c.side, 'RIGHT', 'all anchors on the RIGHT side (new file)');
-      assert.match(c.body, /```suggestion/);
-      assert.match(c.path, /^svc\/[abc]\.py$/);
+    // 5. aiToCodeSuggestion → the sticky-comment render shape.
+    const code = kept.map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o'));
+    assert.equal(code.length, 3);
+    for (const c of code) {
+      assert.equal(c.source, 'ai');
+      assert.ok(c.diff?.unified && c.diff.unified.length > 0, 'carries a renderable diff');
+      assert.match(c.file, /^svc\/[abc]\.py$/);
       assert.equal(c.line, 3);
     }
-    // Each file's after_code lands inside its own ```suggestion``` block —
-    // proves the suggestion bodies aren't shuffled across files.
-    const aBody = comments.find((c) => c.path === 'svc/a.py')!.body;
-    assert.match(aBody, /FIXED_a/);
-    assert.ok(!aBody.includes('FIXED_b') && !aBody.includes('FIXED_c'));
+    // Each file's after_code lands inside its OWN diff — proves the
+    // suggestion bodies aren't shuffled across files.
+    const aDiff = code.find((c) => c.file === 'svc/a.py')!.diff?.unified ?? '';
+    assert.match(aDiff, /FIXED_a/);
+    assert.ok(!aDiff.includes('FIXED_b') && !aDiff.includes('FIXED_c'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -237,11 +239,11 @@ test('envelope downstream: a partially-anchorable envelope drops the off-diff en
     const { kept, dropped } = filterByDiff(parsed.suggestions, commentable);
     assert.deepEqual(kept.map((s) => s.file), ['svc/a.py']);
     assert.deepEqual(dropped.map((s) => `${s.file}:${s.line}`), ['svc/b.py:99']);
-    // The dropped entry NEVER reaches buildReviewComments — proves
-    // a stale model response can't take the whole review down via 422.
-    const comments = buildReviewComments(kept, 'openai/gpt-4o');
-    assert.equal(comments.length, 1);
-    assert.equal(comments[0].path, 'svc/a.py');
+    // The dropped entry NEVER reaches the render shape — proves a stale
+    // model response can't mis-anchor a suggestion in the sticky comment.
+    const code = kept.map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o'));
+    assert.equal(code.length, 1);
+    assert.equal(code[0].file, 'svc/a.py');
   } finally {
     rmSync(dirname(envelopePath), { recursive: true, force: true });
   }
@@ -383,7 +385,7 @@ test('regression: 3 dead-code findings (the actual PR log scenario) flow end-to-
     assert.match(log, /focal #1: \+1 suggestion → app\/db\.py:3/);
     assert.match(log, /focal #3: app\/repos\.py:2.*cohort 3\/3 anchorable/);
 
-    // ── ai-suggest phase: parse + filterByDiff + buildReviewComments ──
+    // ── ai-suggest phase: parse + filterByDiff + aiToCodeSuggestion ──
     const parsed = parseAIOutput(readFileSync(outPath, 'utf8'));
     assert.ok(parsed.ok);
     assert.equal(parsed.suggestions.length, 3);
@@ -397,10 +399,10 @@ test('regression: 3 dead-code findings (the actual PR log scenario) flow end-to-
     assert.equal(kept.length, 3, 'every model-anchored suggestion is on a `+` line');
     assert.equal(dropped.length, 0);
 
-    const comments = buildReviewComments(kept, 'openai/gpt-4o');
-    assert.equal(comments.length, 3);
+    const code = kept.map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o'));
+    assert.equal(code.length, 3);
     assert.deepEqual(
-      comments.map((c) => `${c.path}:${c.line}`).sort(),
+      code.map((c) => `${c.file}:${c.line}`).sort(),
       ['app/db.py:3', 'app/db.py:3', 'app/repos.py:5'].sort(),
     );
   } finally {
@@ -456,14 +458,14 @@ test('regression: real production scanner report (action/.dev/report.json) survi
   );
   assert.equal(kept.length, suggestions.length);
 
-  // buildReviewComments shapes them for createReview — no field is
+  // aiToCodeSuggestion shapes them for the sticky comment — no field is
   // missing on a real-scanner-shaped finding.
-  const comments = buildReviewComments(kept, 'openai/gpt-4o');
-  assert.equal(comments.length, suggestions.length);
-  for (const c of comments) {
-    assert.equal(c.side, 'RIGHT');
-    assert.match(c.body, /```suggestion/);
-    assert.ok(c.path.length > 0);
+  const code = kept.map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o'));
+  assert.equal(code.length, suggestions.length);
+  for (const c of code) {
+    assert.equal(c.source, 'ai');
+    assert.ok(c.diff?.unified && c.diff.unified.length > 0);
+    assert.ok(c.file.length > 0);
     assert.ok(typeof c.line === 'number' && c.line >= 1);
   }
 });
@@ -554,15 +556,17 @@ test('regression: scanner uses DEEPER path than GitHub diff → BOTH filter laye
   }
 });
 
-// ─── Full ai-index chain: spy octokit handles BOTH listFiles + createReview ─
+// ─── Full ai-index chain: spy octokit reads the diff, suggestions render in
+//     the ONE sticky comment (NO second inline review) ─────────────────────
 
-test('full ai-index chain: envelope + spy Octokit → exact createReview payload + correct cap', async () => {
-  // Mirrors aiMain() in ai-index.ts step for step against a spy
-  // Octokit that handles BOTH listFiles (read) AND createReview
-  // (write). Catches WIRING breakage (envelope writer/reader
-  // contract drift, filter-then-cap order, createReview payload
-  // shape) even when each unit test passes.
-  const { fetchCommentableLines, postAIReview } = await import('../ai/post.ts');
+test('full ai-index chain: envelope + spy Octokit → suggestions merged into the sticky comment + correct cap', async () => {
+  // Mirrors aiMain() in ai-index.ts step for step against a spy Octokit.
+  // The AI suggestions are NOT a second inline review — they merge into the
+  // single Drift sticky comment as a markdown red/green diff. Catches WIRING
+  // breakage (envelope reader contract drift, filter-then-cap order, the
+  // render shape) and pins the contract that we make exactly ONE read call
+  // (listFiles) and NEVER post a createReview.
+  const { fetchPrFiles } = await import('../ai/post.ts');
 
   const root = mkdtempSync(join(tmpdir(), 'drift-aindex-'));
   const envPath = join(root, 'env.json');
@@ -624,9 +628,9 @@ test('full ai-index chain: envelope + spy Octokit → exact createReview payload
     assert.ok(parsed.ok);
     assert.equal(parsed.suggestions.length, 4);
 
-    // 2. Fetch commentable lines (octokit call #1).
-    const map = await fetchCommentableLines(
-      spyOctokit as unknown as Parameters<typeof fetchCommentableLines>[0],
+    // 2. Fetch the PR diff: commentable lines + raw patches (octokit call #1).
+    const { commentable, patches } = await fetchPrFiles(
+      spyOctokit as unknown as Parameters<typeof fetchPrFiles>[0],
       'acme', 'shop', 77,
     );
     assert.equal(calls.length, 1);
@@ -634,11 +638,11 @@ test('full ai-index chain: envelope + spy Octokit → exact createReview payload
     assert.deepEqual(calls[0].args, {
       owner: 'acme', repo: 'shop', pull_number: 77, per_page: 100,
     });
-    assert.equal(map.size, 3);
-    assert.ok(!map.has('svc/c.py'));
+    assert.equal(commentable.size, 3);
+    assert.ok(!commentable.has('svc/c.py'));
 
     // 3. Filter by diff — off-diff drops here.
-    const { kept, dropped } = filterByDiff(parsed.suggestions, map);
+    const { kept, dropped } = filterByDiff(parsed.suggestions, commentable);
     assert.equal(kept.length, 3);
     assert.equal(dropped.length, 1);
     assert.equal(dropped[0].file, 'svc/c.py');
@@ -648,46 +652,34 @@ test('full ai-index chain: envelope + spy Octokit → exact createReview payload
     const toPost = kept.slice(0, MAX);
     assert.deepEqual(toPost.map((s) => s.file), ['svc/a.py', 'svc/b.py']);
 
-    // 5. postAIReview (octokit call #2).
-    const result = await postAIReview({
-      octokit: spyOctokit as unknown as Parameters<typeof postAIReview>[0]['octokit'],
-      owner: 'acme', repo: 'shop', prNumber: 77,
-      headSha: 'deadbeefcafe1234567890abcdef0123456789ab',
-      suggestions: toPost,
-      model: 'openai/gpt-4o',
-    });
-    assert.equal(result.posted, true);
-    assert.equal(result.commentCount, 2);
+    // 5. Merge the postable AI suggestions into the report + render the ONE
+    //    sticky comment's "Code suggestions" section.
+    const baseReport = { pr_review: { code_suggestions: [] } } as unknown as ScanPrOutput;
+    const merged = mergeAiSuggestionsIntoReport(baseReport, toPost, patches, 'openai/gpt-4o');
+    const md = renderSuggestions(merged.pr_review?.code_suggestions, undefined);
+    assert.ok(md, 'sticky comment must carry a Code suggestions section');
 
-    // 6. Assert the exact createReview payload (per GitHub REST docs).
-    assert.equal(calls.length, 2);
-    assert.equal(calls[1].method, 'pulls.createReview');
-    const review = calls[1].args as Record<string, unknown>;
-    assert.equal(review.owner, 'acme');
-    assert.equal(review.repo, 'shop');
-    assert.equal(review.pull_number, 77);
-    assert.equal(review.commit_id, 'deadbeefcafe1234567890abcdef0123456789ab');
-    assert.equal(review.event, 'COMMENT');
-    assert.match(review.body as string, /openai\/gpt-4o/);
-    const reviewComments = review.comments as Array<Record<string, unknown>>;
-    assert.equal(reviewComments.length, 2);
-    assert.deepEqual(
-      reviewComments.map((c) => `${c.path}:${c.line}`),
-      ['svc/a.py:12', 'svc/b.py:8'],
-    );
-    for (const c of reviewComments) {
-      assert.equal(c.side, 'RIGHT');
-      assert.match(c.body as string, /```suggestion/);
-    }
+    // 6. Both postable findings render as a markdown diff; dropped + capped do not.
+    assert.match(md!, /```diff/);
+    assert.match(md!, /FIXED_A/);
+    assert.match(md!, /FIXED_B/);
+    assert.ok(!md!.includes('FIXED_C'), 'off-diff finding must not render');
+    assert.ok(!md!.includes('FIXED_D'), 'over-cap finding must not render');
+    assert.match(md!, /openai\/gpt-4o/);
+
+    // 7. The contract: exactly ONE read call, and NEVER a createReview — the
+    //    AI suggestions live only in the sticky comment.
+    assert.equal(calls.length, 1, 'no second octokit call');
+    assert.ok(!calls.some((c) => c.method === 'pulls.createReview'), 'no inline review posted');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('full ai-index chain: zero anchorable suggestions → NO createReview call (silence > noise)', async () => {
-  // aiMain short-circuits when toPost.length === 0. Pin that
-  // contract: a spy that records ANY createReview call here would
-  // catch the regression.
+test('full ai-index chain: zero anchorable suggestions → nothing posted (silence > noise)', async () => {
+  // When no suggestion anchors on-diff there are zero AI entries to merge
+  // into the sticky comment. Pin the contract that we NEVER fall back to an
+  // inline review: a spy recording ANY createReview call would catch it.
   const { fetchCommentableLines } = await import('../ai/post.ts');
 
   const root = mkdtempSync(join(tmpdir(), 'drift-aindex-zero-'));
@@ -728,8 +720,8 @@ test('full ai-index chain: zero anchorable suggestions → NO createReview call 
     const { kept } = filterByDiff(parsed.suggestions, map);
     // line 99 is not in the +1,+2 hunk → dropped.
     assert.equal(kept.length, 0);
-    // aiMain would short-circuit here. NO createReview call.
-    assert.equal(createReviewCalls, 0, 'an empty toPost MUST NOT hit pulls.createReview');
+    // No AI entries to merge into the sticky comment, and NEVER an inline review.
+    assert.equal(createReviewCalls, 0, 'an empty result MUST NOT hit pulls.createReview');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,19 +1,15 @@
-// Post AI-generated inline suggestions as a GitHub PR review.
+// PR-diff lookups for the AI suggestion path.
 //
-// Validated against the documented schema (May 2026):
-//   POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews
-//   https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28
-//
-// Multi-line suggestions: when a suggestion carries `start_line`,
-// we emit `start_line` + `start_side` so GitHub renders the
-// "Apply suggestion" button on a range.
+// AI suggestions are NOT posted as a second inline review — they render in the
+// single Drift sticky comment (see ai-index.ts → render/sections/suggestions.ts),
+// as a markdown red/green diff. These helpers only read the PR diff: the
+// commentable-line map (so a suggestion that anchors off-diff is dropped before
+// it can mis-anchor) and the raw per-file `.patch` (so the sticky comment's
+// red/green diff is reconstructed from the authoritative GitHub patch — see
+// ai/to-code-suggestion.ts).
 
-import * as core from '@actions/core';
 import type { getOctokit } from '@actions/github';
-import type { AISuggestion } from './schema.ts';
-import { renderAISuggestionBody } from './render.ts';
 import { parseCommentableLines } from './diff-lines.ts';
-import type { ReviewComment } from '../contract/github.ts';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -50,8 +46,7 @@ export async function fetchCommentableLines(
  * One pulls.listFiles pass that returns BOTH the commentable-lines map (for
  * the diff filter) AND the raw per-file `.patch` text (for reconstructing the
  * red/green diff of an AI suggestion — see ai/to-code-suggestion.ts). Used by
- * the combined poster when it also has to render the sticky comment; a single
- * call backs both needs.
+ * the sticky-comment poster; a single call backs both needs.
  */
 export async function fetchPrFiles(
   octokit: Octokit,
@@ -74,84 +69,4 @@ export async function fetchPrFiles(
     }
   }
   return { commentable, patches };
-}
-
-export type PostAIReviewArgs = {
-  octokit: Octokit;
-  owner: string;
-  repo: string;
-  prNumber: number;
-  headSha: string;
-  suggestions: AISuggestion[];
-  model: string;
-  dryRun?: boolean;
-};
-
-export type PostAIReviewResult = {
-  posted: boolean;
-  commentCount: number;
-  payload: {
-    owner: string;
-    repo: string;
-    pull_number: number;
-    commit_id: string;
-    event: 'COMMENT';
-    body: string;
-    comments: ReviewComment[];
-  };
-};
-
-/**
- * Build the `comments[]` array for pulls.createReview. Exported for
- * tests so we can assert payload shape without spying on octokit.
- */
-export function buildReviewComments(
-  suggestions: AISuggestion[],
-  model: string,
-): ReviewComment[] {
-  return suggestions.map((s) => {
-    const body = renderAISuggestionBody(s, model);
-    const comment: ReviewComment = {
-      path: s.file,
-      line: s.line,
-      side: 'RIGHT',
-      body,
-    };
-    if (typeof s.start_line === 'number' && s.start_line < s.line) {
-      comment.start_line = s.start_line;
-      comment.start_side = 'RIGHT';
-    }
-    return comment;
-  });
-}
-
-export async function postAIReview(args: PostAIReviewArgs): Promise<PostAIReviewResult> {
-  const { octokit, owner, repo, prNumber, headSha, suggestions, model, dryRun } = args;
-
-  const comments = buildReviewComments(suggestions, model);
-
-  const payload = {
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: 'COMMENT' as const,
-    body: `🤖 **${model}** has ${comments.length} suggestion${comments.length === 1 ? '' : 's'} to apply.`,
-    comments,
-  };
-
-  if (comments.length === 0) {
-    core.info('No AI suggestions to post — skipping review.');
-    return { posted: false, commentCount: 0, payload };
-  }
-
-  if (dryRun) {
-    core.info(`[dry-run] Would POST pulls.createReview with ${comments.length} comment(s).`);
-    core.info(JSON.stringify(payload, null, 2));
-    return { posted: false, commentCount: comments.length, payload };
-  }
-
-  await octokit.rest.pulls.createReview(payload);
-  core.info(`Posted AI review with ${comments.length} inline suggestion(s).`);
-  return { posted: true, commentCount: comments.length, payload };
 }

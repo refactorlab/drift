@@ -3,11 +3,11 @@
 //   raw model output → parseAIOutput (quality bar)
 //                     → filterByDiff (anchor to commentable lines)
 //                     → slice(maxSuggestions) (cap)
-//                     → buildReviewComments (createReview payload)
+//                     → aiToCodeSuggestion (the sticky-comment render shape)
 //
-// Proves out-of-diff suggestions are DROPPED (never 422), the cap counts
-// only postable suggestions (filter-then-cap), and multi-line ranges
-// survive intact.
+// Proves out-of-diff suggestions are DROPPED (never reach the comment), the
+// cap counts only postable suggestions (filter-then-cap), and multi-line
+// ranges survive intact into the rendered red/green diff.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseAIOutput } from '../ai/parse.ts';
 import { filterByDiff } from '../ai/diff-lines.ts';
-import { buildReviewComments } from '../ai/post.ts';
+import { aiToCodeSuggestion } from '../ai/to-code-suggestion.ts';
 
 const fixtureDir = join(import.meta.dirname, '../../.dev');
 
@@ -64,34 +64,33 @@ test('pipeline: filter-then-cap counts only postable suggestions', () => {
   assert.equal(toPost.length, 2);
 });
 
-test('pipeline: produces a valid createReview payload (multi-line range intact)', () => {
+test('pipeline: converts kept suggestions into renderable AI code-suggestions (multi-line range intact)', () => {
   const parsed = loadParsed();
   const commentable = new Map<string, Set<number>>([
     ['src/users/service.py', new Set([42])],
     ['src/api/handler.ts', new Set([50, 51, 52, 53])],
   ]);
   const { kept } = filterByDiff(parsed.suggestions, commentable);
-  const comments = buildReviewComments(kept.slice(0, 3), 'openai/gpt-4o');
+  // No PR patch wired here → diffs degrade to after-only, but the conversion
+  // (the sticky-comment render shape) must still carry every field.
+  const code = kept.slice(0, 3).map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o'));
 
-  // every comment is on a commentable line, RIGHT side, with a suggestion block
-  for (const c of comments) {
-    assert.equal(c.side, 'RIGHT');
-    assert.ok(c.body.includes('```suggestion'));
-    assert.equal((c as Record<string, unknown>).position, undefined);
+  for (const c of code) {
+    assert.equal(c.source, 'ai');
+    assert.equal(c.model, 'openai/gpt-4o');
+    assert.ok(c.diff?.unified && c.diff.unified.length > 0, 'each carries a renderable diff');
   }
-  // the handler.ts entry is multi-line → carries start_line + start_side
-  const multi = comments.find((c) => c.path === 'src/api/handler.ts');
-  assert.ok(multi, 'multi-line comment present');
-  assert.equal(multi!.start_line, 50);
-  assert.equal(multi!.start_side, 'RIGHT');
+  // the handler.ts entry is multi-line → its end-of-range anchor is line 53
+  const multi = code.find((c) => c.file === 'src/api/handler.ts');
+  assert.ok(multi, 'multi-line suggestion present');
   assert.equal(multi!.line, 53);
 });
 
-test('pipeline: nothing commentable → nothing posted (no review)', () => {
+test('pipeline: nothing commentable → nothing rendered (no AI suggestions)', () => {
   const parsed = loadParsed();
   const commentable = new Map<string, Set<number>>(); // empty diff
   const { kept, dropped } = filterByDiff(parsed.suggestions, commentable);
   assert.equal(kept.length, 0);
   assert.equal(dropped.length, 4);
-  assert.equal(buildReviewComments(kept, 'openai/gpt-4o').length, 0);
+  assert.equal(kept.map((s) => aiToCodeSuggestion(s, undefined, 'openai/gpt-4o')).length, 0);
 });
