@@ -27,10 +27,10 @@ import { readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import { loadReport, passesQualityBar, type CodeSuggestion, type ScanPrOutput } from './report.ts';
-import { renderSuggestionBody } from './render/suggestion.ts';
+import { renderSuggestionBody, extractAfterCode } from './render/suggestion.ts';
 import { parseAIOutput } from './ai/parse.ts';
 import { fetchCommentableLines, fetchPrFiles, buildReviewComments } from './ai/post.ts';
-import { filterByDiff } from './ai/diff-lines.ts';
+import { filterByDiff, lookupCommentable, nearestCommentableLine } from './ai/diff-lines.ts';
 import { mergeAiSuggestionsIntoReport } from './ai/to-code-suggestion.ts';
 import { buildAndUpsertSticky } from './github/sticky-post.ts';
 import type { ReviewComment } from './contract/github.ts';
@@ -292,7 +292,18 @@ function readAISuggestions(): { suggestions: AISuggestion[]; funnel: AIFunnel } 
   try {
     raw = readFileSync(path, 'utf8');
   } catch (e) {
-    core.info(`AI envelope unreadable at ${path}: ${describe(e)} — combined review will skip AI`);
+    // ENOENT is the EXPECTED shape when the AI inference loop was skipped
+    // (preflight blocked it: missing `models: read`, model unavailable, …) —
+    // the loop is what creates the envelope. Frame it as a fallback, not a
+    // crash; the deterministic suggestions below still post inline.
+    if (isNotFound(e)) {
+      core.info(
+        `AI envelope not produced at ${path} (the AI inference step was skipped or failed) — ` +
+          `posting deterministic suggestions only.`,
+      );
+    } else {
+      core.info(`AI envelope unreadable at ${path}: ${describe(e)} — combined review will skip AI`);
+    }
     return { suggestions: [], funnel: empty };
   }
   if (raw.trim().length === 0) {
@@ -322,26 +333,84 @@ function readAISuggestions(): { suggestions: AISuggestion[]; funnel: AIFunnel } 
   };
 }
 
-/** Build review comments for deterministic suggestions, dropping anchors
- *  that aren't on the PR diff (when we know the commentable lines). */
-function buildDeterministicComments(
+/**
+ * Build review comments for deterministic suggestions, anchoring each to a
+ * PR-diff line (when we know the commentable lines).
+ *
+ * The scanner anchors a finding at its SYMBOL's definition line (e.g. a dead
+ * function), which lives in a changed file but is frequently NOT itself a line
+ * in the PR's diff hunks — so a naive exact-line filter drops every such
+ * finding and the inline review comes back empty (the failure this fixes).
+ *
+ * Policy, in order:
+ *   1. File lookup is suffix-tolerant (`lookupCommentable`) — same as the AI
+ *      path — so a monorepo / differently-rooted scanner path still resolves.
+ *   2. Exact line is commentable → keep as-is.
+ *   3. Exact line is OFF-diff but the finding is ADVISORY (no ```suggestion```
+ *      Apply block) → SNAP to the nearest commentable line in the same file,
+ *      and append a note pointing at the true location. The Apply button is
+ *      what makes the anchor line-sensitive; advisory comments carry none, so
+ *      moving them is safe and strictly better than zero inline coverage.
+ *   4. Exact line is OFF-diff AND the finding carries an Apply block → DROP.
+ *      Snapping would make GitHub's "Apply" rewrite the WRONG line. It stays
+ *      in the sticky comment.
+ *   5. File not in the diff at all → DROP (sticky-only).
+ */
+export function buildDeterministicComments(
   suggestions: CodeSuggestion[],
   commentable: Map<string, Set<number>> | null,
 ): ReviewComment[] {
-  const comments = suggestions
+  const anchored = suggestions
     .filter((s) => typeof s.line === 'number')
-    .map<ReviewComment>((s) => ({
-      path: s.file,
-      line: s.line as number,
-      side: 'RIGHT',
-      body: renderSuggestionBody(s),
+    .map((s) => ({
+      suggestion: s,
+      comment: {
+        path: s.file,
+        line: s.line as number,
+        side: 'RIGHT' as const,
+        body: renderSuggestionBody(s),
+      } satisfies ReviewComment,
+      // An Apply block makes the anchor line-sensitive — never snap those.
+      hasApplyBlock: extractAfterCode(s) !== null,
     }));
-  if (!commentable) return comments;
-  const before = comments.length;
-  const kept = comments.filter(
-    (c) => typeof c.line === 'number' && (commentable.get(c.path)?.has(c.line) ?? false),
-  );
-  const dropped = before - kept.length;
+
+  if (!commentable) return anchored.map((a) => a.comment);
+
+  const kept: ReviewComment[] = [];
+  let dropped = 0;
+  let snapped = 0;
+  for (const { comment, hasApplyBlock } of anchored) {
+    const set = lookupCommentable(commentable, comment.path);
+    if (!set || set.size === 0) {
+      dropped += 1; // file not in the PR diff at all
+      continue;
+    }
+    if (set.has(comment.line)) {
+      kept.push(comment);
+      continue;
+    }
+    if (hasApplyBlock) {
+      dropped += 1; // can't move an Apply-button anchor without corrupting it
+      continue;
+    }
+    const near = nearestCommentableLine(set, comment.line);
+    if (near === undefined) {
+      dropped += 1;
+      continue;
+    }
+    kept.push({
+      ...comment,
+      line: near,
+      body: withSnapNote(comment.body, comment.path, comment.line),
+    });
+    snapped += 1;
+  }
+  if (snapped > 0) {
+    core.info(
+      `Re-anchored ${snapped} deterministic suggestion(s) to the nearest PR-diff line ` +
+        `(exact line was outside the diff hunks).`,
+    );
+  }
   if (dropped > 0) {
     core.info(
       `Dropped ${dropped} deterministic suggestion(s) not on a PR-diff line ` +
@@ -349,6 +418,13 @@ function buildDeterministicComments(
     );
   }
   return kept;
+}
+
+/** Append an honest "this anchor was moved" note so a reader is never misled
+ *  about where the finding actually lives. Kept as a `>` blockquote so it
+ *  reads as metadata below the suggestion body. */
+function withSnapNote(body: string, path: string, originalLine: number): string {
+  return `${body}\n\n> 📍 Anchored to the nearest changed line; the finding is at \`${path}:${originalLine}\`.`;
 }
 
 /** Merge deterministic + AI comments, deduping by `path:line`. AI wins on
@@ -438,6 +514,11 @@ function parseMax(v: string | undefined, fallback: number): number {
 
 function describe(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** True for a "file does not exist" error (Node sets `code === 'ENOENT'`). */
+function isNotFound(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'ENOENT';
 }
 
 aiMain().catch((err) => {

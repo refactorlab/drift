@@ -761,7 +761,29 @@ pub fn analyze_pr_with_progress(
 
     let pr_scope = PrScopeSummary {
         changed_files: changed_files.to_vec(),
-        affected_root_names: affected.roots.iter().map(|r| r.name.clone()).collect(),
+        // Present each affected root human-readably — synthetic identities
+        // (`<module>` / `<anonymous@N>`) become `file.ext` / `anon <file:line>`
+        // and a real class is prepended (`OrderService.createOrder`), exactly
+        // as `tests_in_graph::uncovered_roots` and `nfr_edge_cases::per_root`
+        // do. This is REQUIRED, not cosmetic: the action joins these three
+        // lists by string (per-root coverage = affected ∩ uncovered), so all
+        // must humanize identically. A root's graph `Symbol` and its
+        // `CallTreeNode` agree on every input — `CallTreeNode.parent_class`
+        // is `Symbol.parent` (see `tree.rs`), `name`/`file`/`line` are shared
+        // — so the same root yields the same label on both sides.
+        affected_root_names: affected
+            .roots
+            .iter()
+            .map(|r| match ctx.graph.symbols.get(&r.id) {
+                Some(sym) => crate::pr_algorithms::symbol_label::display_symbol_label(
+                    &sym.name,
+                    sym.parent.as_deref(),
+                    &sym.file.to_string_lossy(),
+                    sym.line,
+                ),
+                None => r.name.clone(),
+            })
+            .collect(),
         unreachable_changes: affected.unreachable_changes,
     };
     let outcome = AnalyzeOutcome {

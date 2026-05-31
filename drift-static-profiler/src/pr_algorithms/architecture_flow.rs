@@ -167,8 +167,19 @@ fn collect_data_structures(
     while let Some(node) = stack.pop() {
         let file_touched = changed_files.iter().any(|p| node.file.ends_with(p));
 
-        // Signal A: node is itself a Class declaration.
-        if file_touched && matches!(node.kind, SymbolKind::Class) {
+        // Signal A: node is itself a Class declaration. Guard against a
+        // synthetic NAME (`<anonymous@N>` / `<module>`) for the same reason
+        // Signal B guards `parent_class` below — a synthetic identity is not a
+        // named data structure and must never surface raw in the table. This
+        // arm is unreachable today (every `def.class` capture across the 8
+        // languages pairs with a real `def.name`; anonymous callables are
+        // `def.anonymous` → Function, never Class), so it is defense-in-depth:
+        // a future tag-query change can't silently reintroduce the leak.
+        if file_touched
+            && matches!(node.kind, SymbolKind::Class)
+            && !is_anonymous_symbol_name(&node.name)
+            && !is_synthetic_module_name(&node.name)
+        {
             let key = (node.name.clone(), node.file.clone());
             directly_seen.insert(key.clone(), true);
             classes.entry(key).or_insert(0);
@@ -1090,6 +1101,31 @@ mod tests {
         assert!(
             !names.iter().any(|n| n.starts_with('<')),
             "no synthetic name may appear as a data structure: {names:?}"
+        );
+    }
+
+    /// Defense-in-depth (Signal A): a node that is ITSELF a `Class` but
+    /// carries a synthetic NAME must be excluded too — `<anonymous@N>` /
+    /// `<module>` is never a named data structure. Real-named classes still
+    /// pass. No tag query emits a synthetic-named Class today (anonymous
+    /// callables are `def.anonymous` → Function), so this locks the guard
+    /// against a future regression rather than a live path.
+    #[test]
+    fn synthetic_named_class_is_not_a_data_structure() {
+        let mut anon_class = mk_node("<anonymous@7>", "app/db.ts");
+        anon_class.kind = SymbolKind::Class;
+        let mut module_class = mk_node("<module>", "app/db.ts");
+        module_class.kind = SymbolKind::Class;
+        let mut real_class = mk_node("Repository", "app/db.ts");
+        real_class.kind = SymbolKind::Class;
+        let entries = vec![anon_class, module_class, real_class];
+
+        let r = compute(&entries, &["app/db.ts".into()]);
+        let names: Vec<&str> = r.data_structures.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Repository"), "real class kept: {names:?}");
+        assert!(
+            !names.iter().any(|n| n.starts_with('<')),
+            "no synthetic-named class may appear as a data structure: {names:?}"
         );
     }
 

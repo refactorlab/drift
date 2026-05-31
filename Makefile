@@ -47,6 +47,7 @@ RESET  := \033[0m
         drift-lab-export drift-lab-export-clean \
         drift-lab-ci-preflight \
         action-scan-demo action-scan-demo-kotlin-exposed action-scan-demo-self \
+        action-scan-demo-self-current-branch \
         action-test action-build \
         action-render-comment action-render-comment-kotlin action-render-comments \
         action-render-comment-self \
@@ -727,6 +728,39 @@ action-scan-demo-self: ## scan-pr over THIS repo from a real branch diff vs main
 	fi
 	@printf "    Open $(CYAN)$(DRIFT_SELF_OUTPUT)$(RESET) to inspect the full JSON.\n"
 	@$(MAKE) --no-print-directory action-render-comment-self
+
+# ── Self-scan, pinned to the current branch (no demo fallback) ──────────
+# action-scan-demo-self AUTO-DETECTS what to scan: it profiles the current
+# branch only when that branch has something to show vs main, and otherwise
+# silently falls back to the `desktop-fullpipelile` demo branch so the canned
+# demo always renders SOMETHING. That fallback is the wrong default when you
+# specifically want "profile exactly what I have checked out RIGHT NOW".
+#
+# This target removes the guesswork: it pins DRIFT_SELF_BRANCH to the CURRENT
+# branch unconditionally, then delegates to action-scan-demo-self — which, for
+# the current branch, diffs the WORKING TREE (staged + unstaged) plus every
+# commit ahead against the merge-base with main. So it captures your full
+# uncommitted-and-committed state vs main into the four Action inputs in
+# $(DRIFT_SELF_TMPDIR) (changed.txt / diff-stats.tsv / diff-status.tsv /
+# commits.txt + the synthesized pr-context.json & event.json) and scans the
+# repo. If the branch is clean AND level with main it errors ("nothing to
+# scan") instead of inventing a demo diff.
+#
+#   make action-scan-demo-self-current-branch
+#
+# Implemented as a thin override so the (subtle) git plumbing and scan
+# invocation stay in ONE place: the command-line `DRIFT_SELF_BRANCH=` beats the
+# `?=` auto-detect default in the sub-make, which is exactly what disables the
+# fallback — and beats any DRIFT_SELF_BRANCH inherited from the environment too.
+action-scan-demo-self-current-branch: ## scan-pr over THIS repo's CURRENT branch + working tree vs main (no demo fallback)
+	@cur=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null); \
+	if [ -z "$$cur" ]; then \
+	  printf "$(RED)✗$(RESET) not inside a git work tree — cannot resolve current branch\n"; exit 1; \
+	fi; \
+	if [ "$$cur" = HEAD ]; then \
+	  printf "$(YELLOW)!$(RESET) detached HEAD — scanning detached commit(s) + working tree vs $(CYAN)$(DRIFT_SELF_BASE)$(RESET)\n"; \
+	fi; \
+	$(MAKE) --no-print-directory action-scan-demo-self DRIFT_SELF_BRANCH="$$cur"
 
 # ── PR-comment renderers ────────────────────────────────────────────────
 # Render the scan-pr JSON into the exact GitHub-Flavored Markdown body the
