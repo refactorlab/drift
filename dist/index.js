@@ -24950,13 +24950,20 @@ var CATEGORY = {
   B: { badge: "\u{1F151}", name: "Product correctness" },
   C: { badge: "\u{1F152}", name: "Framework misuse" }
 };
+var DEFAULT_MAX_SUGGESTIONS = 10;
 var MAX_SHOWN = 20;
-function renderSuggestions(suggestions, ctx) {
+function resolveMax(max) {
+  if (max === void 0 || !Number.isFinite(max) || max < 1) return DEFAULT_MAX_SUGGESTIONS;
+  return Math.floor(max);
+}
+function renderSuggestions(suggestions, ctx, opts = {}) {
   const passing = (suggestions ?? []).filter(passesQualityBar);
   if (passing.length === 0) return null;
   const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
+  const total = sorted.length;
+  const kept = sorted.slice(0, resolveMax(opts.max));
   const correctness = sorted.filter((s) => s.category === "B").length;
-  const lines = [`## \u26A0\uFE0F Code suggestions (${sorted.length})`, ""];
+  const lines = [`## \u26A0\uFE0F Code suggestions (${total})`, ""];
   if (correctness > 0) {
     lines.push(
       "> [!CAUTION]",
@@ -24969,16 +24976,17 @@ function renderSuggestions(suggestions, ctx) {
     ""
   );
   lines.push("| Priority | Finding | Location | Confidence |", "|:--:|---|---|---:|");
-  for (const s of sorted) {
+  for (const s of kept) {
     const p = priority(s);
     lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
   }
   lines.push("");
-  const shown = sorted.slice(0, MAX_SHOWN);
-  for (const s of shown) lines.push(renderDetail(s, ctx), "");
-  if (sorted.length > MAX_SHOWN) {
-    lines.push(`_\u2026+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, "suggestion")} not shown._`, "");
+  if (total > kept.length) {
+    const more = total - kept.length;
+    lines.push(`_\u2026+${more} more ${plural(more, "suggestion")} not shown \u2014 rendering the top ${kept.length} by priority._`, "");
   }
+  const shown = kept.slice(0, MAX_SHOWN);
+  for (const s of shown) lines.push(renderDetail(s, ctx), "");
   const fixAll = buildFixAllPrompt(shown, ctx);
   if (fixAll) {
     lines.push(
@@ -25374,13 +25382,16 @@ var STICKY_MARKER = "<!-- drift:sticky-comment -->";
 var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
 var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
-var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="100%" /></p>`;
+var BANNER_WIDTH = 200;
+var ANDY_WIDTH = 72;
+var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
 var withImage = (file, alt, section) => `${sectionImage(file, alt)}
 
 ${section}`;
-var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="100%" /></a></p>`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
+var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 function renderOverview(report, opts = {}) {
-  const { ctx, priorState, audioUrl, audioMp4Url } = opts;
+  const { ctx, priorState, audioUrl, audioMp4Url, maxSuggestions } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
@@ -25403,7 +25414,7 @@ function renderOverview(report, opts = {}) {
     currentState,
     priorState
   });
-  const suggestions = renderSuggestions(review?.code_suggestions, ctx);
+  const suggestions = renderSuggestions(review?.code_suggestions, ctx, { max: maxSuggestions });
   const risks = renderRisks(review?.visual_summary?.risks);
   const architecture = renderArchitecture({
     prScope: report.pr_scope,
@@ -25418,20 +25429,17 @@ function renderOverview(report, opts = {}) {
   const beforeMerge = renderBeforeMerge(facts, ctx);
   const sections = [withImage("drift-review.png", "Drift review", header)];
   if (architecture) sections.push(withImage("architecture.png", "Architecture", wrapSection(architecture, { tldr: tldrArchitecture(facts) })));
-  if (valueCard) sections.push(withImage("business-value.png", "Business value", wrapSection(valueCard, { tldr: tldrValue(facts), open: true })));
-  if (suggestions) sections.push(withImage("code-suggestions.png", "Code suggestions", wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true })));
-  if (blastRadius) {
-    const untested = facts.perRootCoverage.filter((r) => !r.tested).length;
-    sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts), open: untested > 0 }));
-  }
-  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts), open: facts.risksToAddress > 0 }));
+  if (valueCard) sections.push(withImage("business-value.png", "Business value", wrapSection(valueCard, { tldr: tldrValue(facts) })));
+  if (suggestions) sections.push(withImage("code-suggestions.png", "Code suggestions", wrapSection(suggestions, { tldr: tldrSuggestions(facts) })));
+  if (blastRadius) sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts) }));
+  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts) }));
   if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
   if (guide) sections.push(wrapSection(guide, { tldr: tldrGuide(facts, report.pr_scope.changed_files) }));
   sections.push(beforeMerge);
   const footer = [
-    sectionImage("andy.png", "Andy \u2014 your PR handoff assistant"),
     audioUrl?.trim() ? audioBanner(audioUrl.trim()) : "",
-    renderFooter(report.generator, audioUrl, audioMp4Url)
+    renderFooter(report.generator, audioUrl, audioMp4Url),
+    andySignoff()
   ].filter(Boolean).join("\n\n");
   let body = `${STICKY_MARKER}
 ${sections.join("\n\n---\n\n")}`;

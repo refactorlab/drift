@@ -11,6 +11,11 @@
 // action/.dev/event.json) to preview the title line + SHA-pinned permalinks the
 // real action produces. Without it, the comment still renders — just with
 // code-span fallbacks instead of links.
+//
+// Override the Code-suggestions render cap (default 10) with the flag
+// `--max-suggestions=N` (or the `DRIFT_MAX_SUGGESTIONS` env var) — the flag
+// wins. The cap is RENDER-ONLY: it trims how many findings the comment shows
+// while keeping the true total in the heading; it never touches the report.
 
 import { readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -18,11 +23,29 @@ import { loadReport } from '../src/report.ts';
 import { renderOverview } from '../src/render/overview.ts';
 import type { PrContext } from '../src/render/context.ts';
 
-const [, , inputArg, outputArg, eventArg] = process.argv;
+// Split argv into `--flag=value` options and bare positionals so the three
+// positional args keep working regardless of where a flag is passed.
+const rawArgs = process.argv.slice(2);
+const flags = new Map<string, string>();
+const positionals: string[] = [];
+for (const arg of rawArgs) {
+  if (arg.startsWith('--')) {
+    const [key, ...rest] = arg.slice(2).split('=');
+    flags.set(key, rest.join('=') || 'true');
+  } else {
+    positionals.push(arg);
+  }
+}
+const [inputArg, outputArg, eventArg] = positionals;
 if (!inputArg || !outputArg) {
-  console.error('usage: render-comment.ts <input.json> <output.md> [<event.json>]');
+  console.error('usage: render-comment.ts <input.json> <output.md> [<event.json>] [--max-suggestions=N]');
   process.exit(2);
 }
+
+// Render cap: --max-suggestions=N wins, then DRIFT_MAX_SUGGESTIONS, else the
+// renderer's built-in default (10). A non-positive / non-numeric value is
+// ignored so the renderer falls back to its default.
+const maxSuggestions = parsePositiveInt(flags.get('max-suggestions') ?? process.env.DRIFT_MAX_SUGGESTIONS);
 
 const inputPath = resolve(inputArg);
 const outputPath = resolve(outputArg);
@@ -30,7 +53,7 @@ const outputPath = resolve(outputArg);
 statSync(inputPath); // throws if missing — clearer than load() error
 const report = loadReport(inputPath);
 const ctx = eventArg ? contextFromEvent(resolve(eventArg)) : undefined;
-const body = renderOverview(report, { ctx, audioUrl: process.env.DRIFT_AUDIO_URL });
+const body = renderOverview(report, { ctx, audioUrl: process.env.DRIFT_AUDIO_URL, maxSuggestions });
 
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, body);
@@ -45,8 +68,16 @@ console.log(`  ${sigil(/\[!(TIP|WARNING|NOTE)\]/.test(body))} header verdict   $
 console.log(`  ${sigil(has('📊 Business value'))} business value   ${sigil(has('Since last review'))} since-last-review`);
 console.log(`  ${sigil(has('⚠️ Code suggestions'))} code suggestions ${sigil(has('🛰 Risks'))} risks`);
 console.log(`  ${sigil(has('🏗 Architecture'))} architecture     ${sigil(has('🧪 Extended findings'))} extended findings`);
+console.log(`  suggestions render cap: ${maxSuggestions ?? 'default (10)'}${has('more not shown — rendering the top') ? ' (overflow trimmed)' : ''}`);
 
 if (body.length > 60_000) console.warn(`! body exceeds 60 KiB soft budget (cap is 65 536)`);
+
+/** Parse a positive integer; returns undefined for empty/invalid/≤0 input. */
+function parsePositiveInt(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 
 // Build a PrContext from a `pull_request` webhook payload (best-effort).
 function contextFromEvent(eventPath: string): PrContext {

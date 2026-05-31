@@ -49,8 +49,14 @@ const HARD_CAP = 65_000;
 // Fail-soft: GitHub's Camo proxy degrades a missing/404 asset to its `alt` text
 // without breaking the comment, so these can ship before the PNGs are committed.
 const SCREENSHOTS = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
+// Banner sizing. These brand PNGs are wide hero images; at full width they
+// dominate the comment, so every banner is pinned to a small FIXED width
+// (height auto-scales, preserving aspect ratio). Two knobs only: section
+// + audio banners share BANNER_WIDTH; the Andy sign-off is smaller still.
+const BANNER_WIDTH = 200;
+const ANDY_WIDTH = 72;
 const sectionImage = (file: string, alt: string): string =>
-  `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="100%" /></p>`;
+  `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
 /** Prepend a section-header screenshot to a section's markdown (own line, above it). */
 const withImage = (file: string, alt: string, section: string): string => `${sectionImage(file, alt)}\n\n${section}`;
 
@@ -61,7 +67,17 @@ const withImage = (file: string, alt: string, section: string): string => `${sec
  * audio URL exists; same artifact caveat as the footer's text link.
  */
 const audioBanner = (url: string): string =>
-  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="100%" /></a></p>`;
+  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="${BANNER_WIDTH}" /></a></p>`;
+
+/**
+ * Andy sign-off — a small mascot banner pinned to the VERY END of the comment,
+ * after the audio button and the attribution line. It is the last visible
+ * element, so the comment always closes on the Andy handoff whether or not a
+ * spoken summary is present. Kept small (ANDY_WIDTH) so it reads as a sign-off,
+ * not a hero banner. Fail-soft to alt text like every other screenshot.
+ */
+const andySignoff = (): string =>
+  `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy — your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 
 export type RenderOptions = {
   ctx?: PrContext;
@@ -76,10 +92,18 @@ export type RenderOptions = {
    * reviewer drag-drops the MP4 into a reply.
    */
   audioMp4Url?: string;
+  /**
+   * Render cap on the Code-suggestions section (default 10). Only the top-N
+   * highest-priority findings are rendered; the heading + overflow note keep
+   * the true total visible. RENDER-ONLY — the underlying report is untouched,
+   * so the inline review + AI focal-point picker still see every suggestion.
+   * Overridden from the CLI via `--max-suggestions=N` / `DRIFT_MAX_SUGGESTIONS`.
+   */
+  maxSuggestions?: number;
 };
 
 export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): string {
-  const { ctx, priorState, audioUrl, audioMp4Url } = opts;
+  const { ctx, priorState, audioUrl, audioMp4Url, maxSuggestions } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
@@ -111,7 +135,7 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
     currentState,
     priorState,
   });
-  const suggestions = renderSuggestions(review?.code_suggestions, ctx);
+  const suggestions = renderSuggestions(review?.code_suggestions, ctx, { max: maxSuggestions });
   const risks = renderRisks(review?.visual_summary?.risks);
   const architecture = renderArchitecture({
     prScope: report.pr_scope,
@@ -131,24 +155,23 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   // is "Title — TLDR", so the comment reads as a scannable list of TLDRs the
   // reviewer can open on demand. The header stays OUTSIDE this framing: it is
   // the whole-PR TLDR (verdict + KPIs) and its "Before you merge" task boxes
-  // must stay visible for GitHub to tally merge-readiness. Architecture leads
-  // the body — the diagrams that show WHAT changed — then the value dashboard
-  // and suggestions default to OPEN; supporting detail (architecture, risks,
-  // extended findings) defaults to collapsed.
+  // must stay visible for GitHub to tally merge-readiness. Every detail section
+  // below defaults to COLLAPSED — the comment is a scannable list of TLDRs the
+  // reviewer expands on demand. Architecture leads the body (the diagrams that
+  // show WHAT changed), then the value dashboard, suggestions, and supporting
+  // detail follow.
   // Each major section is preceded by its official Drift screenshot banner.
+  // Each section's screenshot banner sits ABOVE it as a decorative header; the
+  // collapsible's own <summary> row (rendered by GitHub with a ▸/▾ disclosure
+  // arrow) is the toggle. The banner can't be the toggle — clicking an image
+  // opens the image, never the <details>.
   const sections: string[] = [withImage('drift-review.png', 'Drift review', header)];
   if (architecture) sections.push(withImage('architecture.png', 'Architecture', wrapSection(architecture, { tldr: tldrArchitecture(facts) })));
-  if (valueCard) sections.push(withImage('business-value.png', 'Business value', wrapSection(valueCard, { tldr: tldrValue(facts), open: true })));
-  if (suggestions) sections.push(withImage('code-suggestions.png', 'Code suggestions', wrapSection(suggestions, { tldr: tldrSuggestions(facts), open: true })));
+  if (valueCard) sections.push(withImage('business-value.png', 'Business value', wrapSection(valueCard, { tldr: tldrValue(facts) })));
+  if (suggestions) sections.push(withImage('code-suggestions.png', 'Code suggestions', wrapSection(suggestions, { tldr: tldrSuggestions(facts) })));
   // Blast radius & coverage — what's exposed if this breaks, and is it tested.
-  // Auto-opens when reached entry points are untested (the actionable case).
-  if (blastRadius) {
-    const untested = facts.perRootCoverage.filter((r) => !r.tested).length;
-    sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts), open: untested > 0 }));
-  }
-  // Risks auto-opens when there's something to act on before merge — it's as
-  // actionable as the suggestions section in that case; otherwise collapsed.
-  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts), open: facts.risksToAddress > 0 }));
+  if (blastRadius) sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts) }));
+  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts) }));
   if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
   // Reviewer's guide — demoted from its prominent under-header slot to a
   // collapsed accordion near the end (it's a reference/triage map, not a
@@ -157,12 +180,15 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   // Closes the comment: the actionable, GitHub-tallied merge checklist.
   sections.push(beforeMerge);
 
-  // The footer block: the Andy sign-off banner, then (when there's a spoken
-  // summary) the clickable audio button banner, then the attribution/audio text.
+  // The footer block, in order: (when there's a spoken summary) the clickable
+  // audio button banner, then the attribution/audio text, then the small Andy
+  // sign-off LAST. This keeps the audio "before the end" and pins the Andy
+  // banner to the very end of the comment (the trailing state markers are
+  // invisible HTML comments, so Andy is the last *visible* element).
   const footer = [
-    sectionImage('andy.png', 'Andy — your PR handoff assistant'),
     audioUrl?.trim() ? audioBanner(audioUrl.trim()) : '',
     renderFooter(report.generator, audioUrl, audioMp4Url),
+    andySignoff(),
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -274,10 +300,11 @@ function guardSize(body: string): string {
 
   // Collapse INNERMOST-first. Two correctness requirements drove this shape:
   //   1. Both the target match AND the nested-boundary lookahead accept
-  //      `<details open>` as well as `<details>` — the top-level Value /
-  //      Suggestions / (act-before-merge) Risks sections are `<details open>`,
-  //      and a regex that only knew `<details>` could neither collapse them nor
-  //      correctly treat a nested `<details open>` as a boundary.
+  //      `<details open>` as well as `<details>`. The renderer currently emits
+  //      only collapsed `<details>`, but the `(?: open)?` tolerance is kept so
+  //      that if any section is ever made open-by-default again, the regex can
+  //      still collapse it and still treat a nested `<details open>` as a
+  //      boundary (a regex that only knew `<details>` could do neither).
   //   2. A collapsed block is replaced by a marker with NO `<details>` tags
   //      (a `<sub>` line). If we kept an (empty) `<details>` placeholder, its
   //      tags would still satisfy the "contains a nested details" lookahead of

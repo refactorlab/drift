@@ -22,18 +22,49 @@ const CATEGORY: Record<'A' | 'B' | 'C', { badge: string; name: string }> = {
   C: { badge: '🅒', name: 'Framework misuse' },
 };
 
+// Default render cap on the suggestions surfaced in the sticky comment. The
+// scanner can emit hundreds of findings; rendering them all blows past GitHub's
+// 65 536-byte comment cap and the size-guard then collapses every section into
+// "_collapsed (size guard)_" stubs. So we render only the top-N (highest
+// priority first) and keep the TRUE total visible in the heading + an overflow
+// note ("…+M more not shown"). Override per-render via the `max` opt
+// (render-comment.ts: `--max-suggestions=N` / `DRIFT_MAX_SUGGESTIONS`).
+// RENDER-ONLY: this never mutates the report, so the inline review and the AI
+// focal-point picker still read the full `code_suggestions` array.
+export const DEFAULT_MAX_SUGGESTIONS = 10;
+
+// Hard ceiling on the expensive per-finding <details> blocks, independent of the
+// table cap. With the default cap (10) this never binds; it only matters when
+// `max` is overridden above it, keeping detail blocks bounded while the table
+// can still list every kept row.
 const MAX_SHOWN = 20;
 
 type Priority = { emoji: string; label: 'High' | 'Medium' | 'Low'; rank: number };
 
-export function renderSuggestions(suggestions: CodeSuggestion[] | undefined, ctx?: PrContext): string | null {
+/** Resolve the render cap to a positive integer, defaulting to DEFAULT_MAX_SUGGESTIONS. */
+function resolveMax(max: number | undefined): number {
+  if (max === undefined || !Number.isFinite(max) || max < 1) return DEFAULT_MAX_SUGGESTIONS;
+  return Math.floor(max);
+}
+
+export function renderSuggestions(
+  suggestions: CodeSuggestion[] | undefined,
+  ctx?: PrContext,
+  opts: { max?: number } = {},
+): string | null {
   const passing = (suggestions ?? []).filter(passesQualityBar);
   if (passing.length === 0) return null;
 
   const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
+  const total = sorted.length;
+  // Render cap: how many of the highest-priority suggestions reach the comment.
+  // The heading + overflow note keep the TRUE total (`total`) visible.
+  const kept = sorted.slice(0, resolveMax(opts.max));
+  // Counts reflect the WHOLE PR (true totals), not just the rendered slice — the
+  // heading and the CAUTION callout would understate the problem otherwise.
   const correctness = sorted.filter((s) => s.category === 'B').length;
 
-  const lines: string[] = [`## ⚠️ Code suggestions (${sorted.length})`, ''];
+  const lines: string[] = [`## ⚠️ Code suggestions (${total})`, ''];
 
   if (correctness > 0) {
     lines.push(
@@ -51,20 +82,23 @@ export function renderSuggestions(suggestions: CodeSuggestion[] | undefined, ctx
     '',
   );
 
-  // priority table
+  // priority table — capped to the top `kept` rows (highest priority first)
   lines.push('| Priority | Finding | Location | Confidence |', '|:--:|---|---|---:|');
-  for (const s of sorted) {
+  for (const s of kept) {
     const p = priority(s);
     lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
   }
   lines.push('');
-
-  // detail blocks
-  const shown = sorted.slice(0, MAX_SHOWN);
-  for (const s of shown) lines.push(renderDetail(s, ctx), '');
-  if (sorted.length > MAX_SHOWN) {
-    lines.push(`_…+${sorted.length - MAX_SHOWN} more ${plural(sorted.length - MAX_SHOWN, 'suggestion')} not shown._`, '');
+  // Overflow note: the TRUE total minus what we rendered. Keeps the reviewer
+  // honest about scale even though only the top slice is shown.
+  if (total > kept.length) {
+    const more = total - kept.length;
+    lines.push(`_…+${more} more ${plural(more, 'suggestion')} not shown — rendering the top ${kept.length} by priority._`, '');
   }
+
+  // detail blocks — over the kept slice, bounded by the detail ceiling.
+  const shown = kept.slice(0, MAX_SHOWN);
+  for (const s of shown) lines.push(renderDetail(s, ctx), '');
 
   // 🤖 One batched "Fix-All" handoff — dispatch every shown finding in a single
   // copy-paste to an AI agent. Omitted for a lone finding (use its own prompt).

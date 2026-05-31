@@ -212,8 +212,9 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
   {
     // Volume stressor: many cat-A dead-code findings. Exercises the checklist
     // "dead exports" truncation (`MAX_DEAD_EXPORTS_LINKED = 5`) and the
-    // priority-table cap (`MAX_SHOWN = 20`), while keeping the rendered comment
-    // well under the 60 KiB budget.
+    // Code-suggestions render cap (`DEFAULT_MAX_SUGGESTIONS = 10`) — the table
+    // shows the top 10, the heading keeps the true total (25), and an overflow
+    // note accounts for the rest — while keeping the comment under 60 KiB.
     name: 'high-volume dead-code (25 findings) — truncation + body cap',
     report: base({
       pr_review: {
@@ -237,8 +238,11 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
       assert.match(b, /<summary><strong>⚠️ Code suggestions \(25\)<\/strong> — /, 'header shows full count');
       // Checklist truncates at MAX_DEAD_EXPORTS_LINKED = 5 with a more-tail.
       assert.match(b, /\*…\+20 more\*/, 'checklist truncation note');
-      // Priority-table cap = MAX_SHOWN = 20 → details "5 more not shown".
-      assert.match(b, /…\+5 more suggestions? not shown\./);
+      // Render cap = DEFAULT_MAX_SUGGESTIONS = 10 → 10 table rows + an overflow
+      // note for the remaining 15.
+      assert.match(b, /…\+15 more suggestions? not shown — rendering the top 10 by priority\./);
+      const tableRows = (b.match(/^\| (?:🔴 High|🟡 Medium|⚪ Low) \|/gm) ?? []).length;
+      assert.equal(tableRows, 10, `priority table must cap at 10 rows (got ${tableRows})`);
       assert.ok(b.length < 60_000, `body within budget: ${b.length}`);
     },
   },

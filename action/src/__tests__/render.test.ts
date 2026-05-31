@@ -138,11 +138,11 @@ test('render: guardSize collapses <details> innermost-first when over budget', (
   assert.match(body, /collapsed \(size guard\)/);
 });
 
-test('render: guardSize can collapse a <details open> section and preserves its TLDR summary', () => {
-  // The Business value section is rendered as `<details open>`. A huge `bottom_line` lands
-  // DIRECTLY in its body (not in a nested <details>), so the only way under
-  // budget is to collapse the OUTER `<details open>` itself. This is the exact
-  // case the pre-fix guardSize regex (which only matched `<details>`) could
+test('render: guardSize can collapse an outer <details> section and preserves its TLDR summary', () => {
+  // A huge `bottom_line` lands DIRECTLY in the Business value section's body
+  // (not in a nested <details>), so the only way under budget is to collapse
+  // the OUTER `<details>` itself. This is the exact case the pre-fix guardSize
+  // regex (which couldn't match an outer block holding nested details) could
   // never collapse — the body would blow past the cap. Also asserts the
   // section TLDR survives the collapse (the summary is preserved).
   const huge = 'y'.repeat(70_000);

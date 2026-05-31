@@ -42,9 +42,11 @@ export type CollapsibleOpts = {
 };
 
 /**
- * Wrap `body` in a `<details>` whose summary is `**title** — tldr`.
- * Blank lines around the body are required so GitHub parses the inner
- * markdown (tables, mermaid fences, nested <details>) correctly.
+ * Wrap `body` in a `<details>` whose summary is `**title** — tldr`. GitHub
+ * renders the disclosure arrow (▸/▾) on the summary row; clicking that row is
+ * what toggles the section (a sibling image above can't — image clicks open
+ * the image, never the toggle). Blank lines around the body are required so
+ * GitHub parses the inner markdown (tables, mermaid fences, nested <details>).
  */
 export function collapsibleSection(opts: CollapsibleOpts): string {
   const openAttr = opts.open ? ' open' : '';

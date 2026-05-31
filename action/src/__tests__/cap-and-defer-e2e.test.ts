@@ -130,7 +130,13 @@ function runCapStep(reportPath: string, max: string): { code: number | null; std
 
 // ─── A. TRUNCATION FIX ─────────────────────────────────────────────────
 
-test('truncation: 500-entry report rendered RAW overflows 60 KB budget (proves the bug exists)', () => {
+test('render cap: a RAW (uncapped) 500-entry report now fits under budget — renderer shows top 10, true total stays visible', () => {
+  // Before the render-only cap, a 500-entry report rendered RAW overflowed the
+  // 60 KB budget and the size-guard had to collapse/hard-cut sections (losing
+  // information silently). The renderer now caps the Code-suggestions section to
+  // DEFAULT_MAX_SUGGESTIONS (10) on its own, so even an UNCAPPED report fits and
+  // the size-guard never fires. This is belt-and-suspenders with the action.yml
+  // jq cap (proven by the next test) — either alone keeps the comment bounded.
   const report = makeReportWith(500);
   const body = renderOverview(report, {
     ctx: {
@@ -144,15 +150,14 @@ test('truncation: 500-entry report rendered RAW overflows 60 KB budget (proves t
       author: 'octocat',
     },
   });
-  // Either it was hard-cut by guardSize, OR it bumped against the
-  // collapsed-details path. Both are observable in the rendered text.
-  const hardCut = /report truncated \(size guard\)/.test(body);
-  const collapsed = /_collapsed \(size guard\)_/.test(body);
-  assert.ok(
-    hardCut || collapsed,
-    `expected truncation marker in raw 500-entry render; body length=${body.length}, ` +
-      `hardCut=${hardCut}, collapsed=${collapsed}`,
-  );
+  assert.ok(body.length < BODY_SIZE_BUDGET, `raw render must now fit under ${BODY_SIZE_BUDGET}; got ${body.length}`);
+  assert.doesNotMatch(body, /report truncated \(size guard\)/, 'render cap must keep the hard-cut from firing');
+  assert.doesNotMatch(body, /_collapsed \(size guard\)_/, 'render cap must keep the details-collapse from firing');
+  // True total preserved in the heading; only 10 rows rendered; overflow noted.
+  assert.match(body, /⚠️ Code suggestions \(500\)/, 'heading keeps the TRUE total (500)');
+  const rows = (body.match(/^\| (?:🔴 High|🟡 Medium|⚪ Low) \|/gm) ?? []).length;
+  assert.equal(rows, 10, `priority table must cap at the default 10 rows; got ${rows}`);
+  assert.match(body, /…\+490 more suggestions not shown — rendering the top 10 by priority\./);
 });
 
 test('truncation: cap step trims 500 → 10 then rendered body fits cleanly under budget', () => {
