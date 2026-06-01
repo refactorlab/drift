@@ -142,8 +142,8 @@ test('gauges: all shields URLs are encoded; bars + radar carry no quickchart', (
   assert.doesNotMatch(out, /quickchart\.io/, 'bars + radar are Mermaid — no quickchart anywhere');
 });
 
-test('gauges: single-series radar-beta chart is emitted', () => {
-  const out = renderQualityGauges(fullExt())!;
+test('gauges: single-series radar-beta chart is emitted (defaults to "This PR")', () => {
+  const out = renderQualityGauges(fullExt())!; // no prTitle → default
   // The radar is a Mermaid `radar-beta` chart (dark theme), not a quickchart image.
   assert.match(out, /```mermaid\n---\nconfig:[\s\S]*?radar-beta/);
   assert.match(out, /^ {2}title This PR$/m);
@@ -152,6 +152,31 @@ test('gauges: single-series radar-beta chart is emitted', () => {
   assert.match(out, /^ {2}max 100$/m);
   assert.match(out, /^ {2}graticule polygon$/m);
   assert.doesNotMatch(out, /quickchart\.io\/chart\?bkg=%230d0d10/, 'no quickchart radar anymore');
+});
+
+test('gauges: the radar title + curve label use the PR title when given', () => {
+  const out = renderQualityGauges(fullExt(), 'Speed up checkout flow')!;
+  assert.match(out, /^ {2}title Speed up checkout flow$/m, 'title directive uses the PR title');
+  assert.match(out, /curve pr\["Speed up checkout flow"\]\{[\d, ]+\}/, 'curve label uses the PR title');
+  assert.doesNotMatch(out, /title This PR/, 'no longer the placeholder');
+});
+
+test('gauges: a hostile PR title is sanitized for the radar AND still parses', async (t) => {
+  // PR-controlled title with every Mermaid-breaking char + a newline.
+  const hostile = 'Fix ["]{}| <script>\n drop curve';
+  const out = renderQualityGauges(fullExt(), hostile)!;
+  const radarBlock = (await extractBlocks(out)).find((b) => /radar-beta/.test(b));
+  assert.ok(radarBlock, 'radar block present');
+  // The title text + the curve label are stripped of structural chars / angle brackets.
+  const titleText = radarBlock!.match(/^\s*title (.+)$/m)?.[1] ?? '';
+  const curveLabel = radarBlock!.match(/curve pr\["([^"]*)"\]/)?.[1] ?? '';
+  assert.doesNotMatch(titleText, /["[\]{}|<>]/, 'title sanitized');
+  assert.doesNotMatch(curveLabel, /["[\]{}|<>]/, 'curve label sanitized');
+  assert.match(curveLabel, /Fix .*script.* drop curve/, 'kept the readable words');
+  // …and the whole block still parses in the real Mermaid engine.
+  if (!(await isInstalled())) return void t.skip('mermaid validator not installed');
+  const res = await validate(radarBlock!);
+  assert.ok(res.ok, `sanitized-title radar failed to parse: ${res.error}\n---\n${radarBlock}`);
 });
 
 test('gauges: renders REAL profiler output (golden fixture, full Rust→JSON→TS round-trip)', () => {

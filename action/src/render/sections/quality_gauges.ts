@@ -125,10 +125,30 @@ const RADAR_AXES: Array<{ id: string; key: string; label: string }> = [
   { id: 'review_fatigue', key: 'rfr', label: 'Review fatigue risk' },
 ];
 
-/** The full metric-profile radar as a dark-themed Mermaid `radar-beta` chart. */
-function radar(byId: Map<string, QualityGauge>): string {
+/**
+ * Sanitize a PR title for the Mermaid radar: it lands in the `title <text>`
+ * directive AND inside the `curve pr["<text>"]` label, so quotes / brackets /
+ * braces / pipes and newlines (which break those) are stripped, whitespace is
+ * collapsed, and the result is capped. Falls back to "This PR" when empty.
+ */
+function radarTitle(prTitle?: string): string {
+  const safe = (prTitle ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/["[\]{}|<>]/g, ' ') // structural Mermaid chars + HTML angle brackets
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!safe) return 'This PR';
+  return safe.length > 60 ? `${safe.slice(0, 59).trimEnd()}…` : safe;
+}
+
+/**
+ * The full metric-profile radar as a dark-themed Mermaid `radar-beta` chart.
+ * The chart title + curve label use the PR title (sanitized), or "This PR".
+ */
+function radar(byId: Map<string, QualityGauge>, prTitle?: string): string {
+  const title = radarTitle(prTitle);
   // Axis declarations, three per line (mirrors the requested layout); each
-  // gauge's score (0–100, rounded) feeds the single "This PR" curve in order.
+  // gauge's score (0–100, rounded) feeds the single curve in order.
   const axisLines: string[] = [];
   for (let i = 0; i < RADAR_AXES.length; i += 3) {
     axisLines.push('  axis ' + RADAR_AXES.slice(i, i + 3).map((a) => `${a.key}["${a.label}"]`).join(', '));
@@ -152,9 +172,9 @@ function radar(byId: Map<string, QualityGauge>): string {
     '      graticuleOpacity: 0.55',
     '---',
     'radar-beta',
-    '  title This PR',
+    `  title ${title}`,
     ...axisLines,
-    `  curve pr["This PR"]{${data}}`,
+    `  curve pr["${title}"]{${data}}`,
     '  max 100',
     '  min 0',
     '  graticule polygon',
@@ -167,7 +187,7 @@ function radar(byId: Map<string, QualityGauge>): string {
  * Render the gauge report. Returns null when there are no gauges (so the
  * overview omits the section cleanly).
  */
-export function renderQualityGauges(ext: PrReviewExt | undefined): string | null {
+export function renderQualityGauges(ext: PrReviewExt | undefined, prTitle?: string): string | null {
   const gauges = ext?.pr_quality?.gauges;
   if (!gauges || gauges.length === 0) return null;
   const summary = ext?.pr_quality?.gauge_summary ?? {};
@@ -227,7 +247,7 @@ export function renderQualityGauges(ext: PrReviewExt | undefined): string | null
 
   // Full metric profile radar (the reading-scale note was dropped).
   out.push('---');
-  out.push(radar(byId));
+  out.push(radar(byId, prTitle));
 
   return out.join('\n\n');
 }
