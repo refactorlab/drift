@@ -42,18 +42,18 @@ const GROUP_INTRO: Record<string, string> = {
   'Team & Process': 'Organizational dynamics and review safety.',
 };
 
-/** Markdown image-alt: strip `[]` and newlines so the `![alt](url)` never breaks. */
-function altText(s: string): string {
-  return s.replace(/[\][\n\r]/g, ' ').trim();
-}
-
 /** shields.io static badge via the query form (every segment URL-encoded). */
 function shield(label: string, message: string, hex: string): string {
   const p = (s: string) => encodeURIComponent(s);
   return `https://img.shields.io/static/v1?label=${p(label)}&message=${p(message)}&color=${hex}&style=for-the-badge`;
 }
 
-/** The band pill repeating the exact value + direction arrow. */
+/** Markdown image-alt: strip `[]` and newlines so the `![alt](url)` never breaks. */
+function altText(s: string): string {
+  return s.replace(/[\][\n\r]/g, ' ').trim();
+}
+
+/** The band pill badge repeating the exact value + direction arrow. */
 function pill(g: QualityGauge): string {
   const hex = LEVEL_HEX[g.level] ?? LEVEL_HEX.moderate;
   const lvl = LEVEL_LABEL[g.level] ?? 'MODERATE';
@@ -61,31 +61,33 @@ function pill(g: QualityGauge): string {
   return `![${altText(`${lvl} ${g.score}%`)}](${shield(lvl, message, hex)})`;
 }
 
-/** A thin horizontal gauge bar: score-long solid level colour on a dark track. */
+// A fixed BAR_CELLS-wide horizontal bar rendered as a Mermaid flowchart (no
+// quickchart): `filled` cells in the band colour, the rest muted grey. The █
+// string sets each node's width; fill == text-colour paints each node a solid
+// block; the invisible `~~~` link butts them together so they read as one bar.
+const BAR_CELLS = 40;
+const BAR_GREY = 'd1d5db';
 function bar(g: QualityGauge): string {
   const hex = LEVEL_HEX[g.level] ?? LEVEL_HEX.moderate;
   const score = Math.max(0, Math.min(100, Math.round(g.score)));
-  const config = {
-    type: 'bar',
-    data: {
-      labels: [''],
-      datasets: [
-        { data: [score], backgroundColor: `#${hex}`, borderRadius: 3, borderSkipped: false, barThickness: 6 },
-        { data: [100 - score], backgroundColor: '#22252a', borderRadius: 3, borderSkipped: false, barThickness: 6 },
-      ],
-    },
-    options: {
-      indexAxis: 'y',
-      layout: { padding: 0 },
-      scales: {
-        x: { stacked: true, display: false, min: 0, max: 100 },
-        y: { stacked: true, display: false },
-      },
-      plugins: { legend: { display: false } },
-    },
-  };
-  const url = `https://quickchart.io/chart?w=280&h=20&v=3&bkg=transparent&c=${encodeURIComponent(JSON.stringify(config))}`;
-  return `![${altText(`${g.label} gauge`)}](${url})`;
+  const filled = Math.round((score / 100) * BAR_CELLS);
+  const remaining = BAR_CELLS - filled;
+  const cell = '█';
+  const lines = [
+    "%%{init: {'flowchart': {'htmlLabels': true, 'padding': 1, 'nodeSpacing': 1, 'rankSpacing': 1}}}%%",
+    'flowchart LR',
+  ];
+  if (filled > 0 && remaining > 0) {
+    lines.push(`    f["${cell.repeat(filled)}"]:::done ~~~ r["${cell.repeat(remaining)}"]:::todo`);
+  } else if (remaining === 0) {
+    lines.push(`    f["${cell.repeat(BAR_CELLS)}"]:::done`);
+  } else {
+    lines.push(`    r["${cell.repeat(BAR_CELLS)}"]:::todo`);
+  }
+  lines.push(`    classDef done fill:#${hex},stroke:#${hex},stroke-width:0px,color:#${hex};`);
+  lines.push(`    classDef todo fill:#${BAR_GREY},stroke:#${BAR_GREY},stroke-width:0px,color:#${BAR_GREY};`);
+  if (filled > 0 && remaining > 0) lines.push('    linkStyle 0 stroke-width:0px;');
+  return ['```mermaid', ...lines, '```'].join('\n');
 }
 
 function tokensK(n: number | undefined): string {
