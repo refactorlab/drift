@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn destructive_migration_floors_at_080() {
         let node = with_findings(mk_node("migrate", "db/migrations/001.sql"), vec![mig_finding("MIG_DROP_COLUMN")]);
-        let sig = collect(&[node.clone()], &["db/migrations/001.sql".into()], &QualityBar::default());
+        let sig = collect(std::slice::from_ref(&node), &["db/migrations/001.sql".into()], &QualityBar::default());
         let r = compute(Inputs {
             entries: &[node],
             changed_files: &[cf("db/migrations/001.sql", "modified")],

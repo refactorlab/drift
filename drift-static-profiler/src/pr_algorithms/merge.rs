@@ -225,6 +225,7 @@ mod xychart_tests {
 ///   - all up  → "All four axes trend positive. ..." with ROI hint when money +
 ///   - mixed   → "X ▲ but Y ▼ — investigate before merge"
 ///   - all down → "Multiple regressions; consider scope split"
+///
 /// Combined with the strongest signal called out by name.
 fn bottom_line(axes: &[ValueAxis]) -> String {
     let ups: Vec<&ValueAxis> = axes

@@ -380,7 +380,7 @@ pub struct TechDebt {
     /// PR-scoped, impact-ranked structured findings (from `pr_signals`).
     /// Distinct from `summary_findings_top`, which is the GLOBAL scan's top
     /// findings: this list is only the *changed* code, ranked by review tier
-    /// + impact, so the renderer can lead with what THIS PR introduced.
+    /// and impact, so the renderer can lead with what THIS PR introduced.
     /// Each element is a serialized `pr_signals::PrFinding`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pr_findings_top: Vec<serde_json::Value>,
