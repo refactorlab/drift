@@ -150,7 +150,7 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   // 📊 Complexity & Risk gauges — the lead gauge report (charts-of-metrics.md).
   // All 18 metrics are computed by the profiler (pr_quality.gauges); this is
   // pure presentation. Sits right under the header as the initial reporting.
-  const qualityGauges = renderQualityGauges(report.pr_review_ext);
+  const qualityGauges = renderQualityGauges(report.pr_review_ext, ctx?.prTitle);
   const valueCard = renderValueCard({
     counts: review?.counts,
     card: review?.value_card,

@@ -24374,7 +24374,13 @@ var RADAR_AXES = [
   { id: "knowledge_concentration", key: "kc", label: "Knowledge concentration" },
   { id: "review_fatigue", key: "rfr", label: "Review fatigue risk" }
 ];
-function radar(byId) {
+function radarTitle(prTitle) {
+  const safe = (prTitle ?? "").replace(/[\r\n]+/g, " ").replace(/["[\]{}|<>]/g, " ").replace(/\s+/g, " ").trim();
+  if (!safe) return "This PR";
+  return safe.length > 60 ? `${safe.slice(0, 59).trimEnd()}\u2026` : safe;
+}
+function radar(byId, prTitle) {
+  const title = radarTitle(prTitle);
   const axisLines = [];
   for (let i = 0; i < RADAR_AXES.length; i += 3) {
     axisLines.push("  axis " + RADAR_AXES.slice(i, i + 3).map((a) => `${a.key}["${a.label}"]`).join(", "));
@@ -24398,9 +24404,9 @@ function radar(byId) {
     "      graticuleOpacity: 0.55",
     "---",
     "radar-beta",
-    "  title This PR",
+    `  title ${title}`,
     ...axisLines,
-    `  curve pr["This PR"]{${data}}`,
+    `  curve pr["${title}"]{${data}}`,
     "  max 100",
     "  min 0",
     "  graticule polygon",
@@ -24408,7 +24414,7 @@ function radar(byId) {
     "```"
   ].join("\n");
 }
-function renderQualityGauges(ext) {
+function renderQualityGauges(ext, prTitle) {
   const gauges = ext?.pr_quality?.gauges;
   if (!gauges || gauges.length === 0) return null;
   const summary2 = ext?.pr_quality?.gauge_summary ?? {};
@@ -24451,7 +24457,7 @@ function renderQualityGauges(ext) {
     }
   });
   out.push("---");
-  out.push(radar(byId));
+  out.push(radar(byId, prTitle));
   return out.join("\n\n");
 }
 
@@ -24986,7 +24992,7 @@ function renderOverview(report, opts = {}) {
   const confTrend = appendConfHistory(priorState, confidence.score);
   currentState.confHistory = confTrend;
   const header = renderHeader(report, ctx, { confTrend });
-  const qualityGauges = renderQualityGauges(report.pr_review_ext);
+  const qualityGauges = renderQualityGauges(report.pr_review_ext, ctx?.prTitle);
   const valueCard = renderValueCard({
     counts: review?.counts,
     card: review?.value_card,
