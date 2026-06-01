@@ -1022,7 +1022,11 @@ fn append_unrendered_changed_files(
     changed_files: &[ChangedFile],
     rendered: &BTreeSet<String>,
 ) {
-    const MAX_STANDALONE: usize = 24;
+    // Show generously many changed files individually before summarising the
+    // tail — a real PR diff that touches dozens of files should appear in full;
+    // only a pathological hundreds-of-files PR collapses to the overflow card
+    // (which also keeps the comment under GitHub's size cap).
+    const MAX_STANDALONE: usize = 60;
     const HUB_ID: &str = "chg_hub";
 
     // First collect the files that need a node, so we only emit the hub when
