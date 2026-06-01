@@ -5,7 +5,81 @@ use crate::resolver::SymbolIndex;
 use crate::{FileTags, Symbol};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
+
+/// Resolve a reference `name` to a symbol via this file's RELATIVE imports.
+///
+/// Cross-file resolution by bare name is ambiguous in a monorepo — a React
+/// `App`/`render`/`Settings` is defined in many packages, so the name-fan-out
+/// cap (correctly) refuses to wire an edge to all of them. But an `import {App}
+/// from './App'` names the EXACT module, so we can resolve precisely: find the
+/// import that introduces `name`, resolve its (relative) module specifier
+/// against this file's path, and pick the same-named symbol defined in that
+/// module. Returns `None` for non-imported names and bare/external modules
+/// (`react`, `@scope/x`) — the caller then falls back to the language resolver.
+fn resolve_via_import(
+    name: &str,
+    ft: &FileTags,
+    idx: &SymbolIndex,
+    caller: &SymbolId,
+) -> Option<Vec<SymbolId>> {
+    let imp = ft.imports.iter().find(|i| i.local_name == name)?;
+    if !imp.module_path.starts_with('.') {
+        return None; // bare/external module — no local symbol to point at
+    }
+    let targets = resolve_relative_module(&ft.file, &imp.module_path);
+    if targets.is_empty() {
+        return None;
+    }
+    // The symbol's defined name is the ORIGINAL export name (handles
+    // `import { App as Root }` — local_name=Root, imported_name=App).
+    let want = imp.imported_name.as_deref().unwrap_or(name);
+    let matched: Vec<SymbolId> = idx
+        .by_name
+        .get(want)?
+        .iter()
+        .filter(|id| *id != caller)
+        .filter(|id| {
+            idx.symbols
+                .get(id)
+                .is_some_and(|s| targets.iter().any(|t| s.file.ends_with(t)))
+        })
+        .cloned()
+        .collect();
+    (!matched.is_empty()).then_some(matched)
+}
+
+/// Candidate file paths a relative `module` specifier could resolve to, from
+/// `importer`'s directory. Normalises `.`/`..`, then appends the usual
+/// TS/JS extension and `index.*` variants (extension-less imports are the
+/// norm). Matching is by path SUFFIX (see `resolve_via_import`), so extra
+/// non-existent candidates are harmless — they simply match no symbol.
+fn resolve_relative_module(importer: &Path, module: &str) -> Vec<PathBuf> {
+    // Flatten importer-dir + module into a clean component stack (drop `.`,
+    // pop on `..`, ignore root/prefix so the result is a repo-relative suffix).
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let dir = importer.parent().unwrap_or(Path::new(""));
+    for comp in dir.components().chain(Path::new(module).components()) {
+        match comp {
+            Component::ParentDir => {
+                stack.pop();
+            }
+            Component::Normal(c) => stack.push(c.to_os_string()),
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    let base: PathBuf = stack.iter().collect();
+    const EXTS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "cjs"];
+    let mut out: Vec<PathBuf> = Vec::with_capacity(1 + EXTS.len() * 2);
+    if base.extension().is_some() {
+        out.push(base.clone()); // module already carried an explicit extension
+    }
+    for e in EXTS {
+        out.push(base.with_extension(e)); // ./App  → App.tsx
+        out.push(base.join("index").with_extension(e)); // ./ui → ui/index.ts
+    }
+    out
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub String);
@@ -142,13 +216,24 @@ impl CallGraph {
                 };
                 let src_id = SymbolId::for_symbol(src);
 
-                let resolved: Vec<SymbolId> = resolver.resolve(
-                    &r.name,
-                    r.receiver.as_deref(),
-                    r.call_form,
-                    &src_id,
-                    &symbol_index,
-                );
+                // Import-aware resolution FIRST: if `r.name` is brought into
+                // this file by a relative import, resolve it to the symbol in
+                // that exact module — precise, and immune to the name-collision
+                // fan-out cap. This is what lets a React app's `<App/>` /
+                // `import {App} from './App'` resolve to the ONE local App even
+                // though "App" is defined in 10 packages across the monorepo.
+                // Falls back to the language resolver for non-imported names
+                // (local calls, methods, same-file helpers).
+                let resolved: Vec<SymbolId> = resolve_via_import(&r.name, ft, &symbol_index, &src_id)
+                    .unwrap_or_else(|| {
+                        resolver.resolve(
+                            &r.name,
+                            r.receiver.as_deref(),
+                            r.call_form,
+                            &src_id,
+                            &symbol_index,
+                        )
+                    });
 
                 if !resolved.is_empty() {
                     let bucket = edges.entry(src_id.clone()).or_default();
