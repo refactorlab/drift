@@ -1,0 +1,283 @@
+/* Drift Lens design tokens — tuned to sit beside GitHub's own UI.
+   Scoped under .drift-root so the content-script injection never leaks
+   styles onto the host page (and host styles don't leak in). */
+
+.drift-root {
+  /* Light is the default theme. Dark is opt-in via Settings (html[data-theme]). */
+  --drift-accent: #ff6b3d;
+  --drift-bg: #ffffff;
+  --drift-bg-elev: #f6f8fa;
+  --drift-border: #d0d7de;
+  --drift-fg: #1f2328;
+  --drift-fg-muted: #5e6772;
+  --drift-good: #1a7f37;
+  --drift-warn: #9a6700;
+  --drift-bad: #d1242f;
+  --drift-bad-soft: #d1242f;
+  --drift-info: #0860c4;
+  --drift-track: #e7ecf0;
+  --drift-radius: 10px;
+  --drift-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial,
+    sans-serif;
+
+  font-family: var(--drift-font);
+  color: var(--drift-fg);
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+.drift-root *,
+.drift-root *::before,
+.drift-root *::after {
+  box-sizing: border-box;
+}
+
+.drift-panel {
+  background: var(--drift-bg);
+  color: var(--drift-fg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.drift-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--drift-border);
+  background: var(--drift-bg-elev);
+}
+.drift-header h1 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0;
+  text-transform: uppercase;
+}
+.drift-header .drift-spacer {
+  flex: 1;
+}
+.drift-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--drift-accent), #ffb199);
+  flex: none;
+}
+.drift-iconbtn {
+  appearance: none;
+  border: 1px solid var(--drift-border);
+  background: var(--drift-bg);
+  color: var(--drift-fg-muted);
+  border-radius: 7px;
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.drift-iconbtn:hover {
+  color: var(--drift-fg);
+  border-color: var(--drift-fg-muted);
+}
+
+.drift-scroll {
+  overflow-y: auto;
+  padding: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Verdict banner */
+.drift-verdict {
+  border-radius: var(--drift-radius);
+  padding: 10px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid transparent;
+}
+.drift-verdict.address {
+  background: color-mix(in srgb, var(--drift-bad) 16%, var(--drift-bg));
+  border-color: color-mix(in srgb, var(--drift-bad) 45%, transparent);
+}
+.drift-verdict.review {
+  background: color-mix(in srgb, var(--drift-warn) 16%, var(--drift-bg));
+  border-color: color-mix(in srgb, var(--drift-warn) 45%, transparent);
+}
+.drift-verdict.approve {
+  background: color-mix(in srgb, var(--drift-good) 16%, var(--drift-bg));
+  border-color: color-mix(in srgb, var(--drift-good) 45%, transparent);
+}
+.drift-verdict .sub {
+  font-weight: 500;
+  color: var(--drift-fg-muted);
+  font-size: 12px;
+}
+
+/* Gauge grid */
+.drift-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+@media (max-width: 320px) {
+  .drift-gauges {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.drift-gauge {
+  background: var(--drift-bg-elev);
+  border: 1px solid var(--drift-border);
+  border-radius: var(--drift-radius);
+  padding: 8px 6px 10px;
+  text-align: center;
+}
+.drift-gauge svg {
+  display: block;
+  margin: 0 auto;
+}
+.drift-gauge .val {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: -34px;
+}
+.drift-gauge .lbl {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--drift-fg-muted);
+  margin-top: 8px;
+  text-transform: uppercase;
+}
+
+/* Sections + metric bars */
+.drift-section {
+  margin-bottom: 16px;
+}
+.drift-section > h2 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--drift-fg-muted);
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.drift-section > h2 .idx {
+  color: var(--drift-accent);
+}
+.drift-metric {
+  margin-bottom: 9px;
+}
+.drift-metric .top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.drift-metric .name {
+  color: var(--drift-fg);
+}
+.drift-metric .pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--drift-fg-muted);
+}
+.drift-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--drift-track);
+  overflow: hidden;
+}
+.drift-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.lvl-low > span {
+  background: var(--drift-good);
+}
+.lvl-moderate > span {
+  background: var(--drift-warn);
+}
+.lvl-critical > span {
+  background: var(--drift-bad);
+}
+.lvl-unknown > span {
+  background: var(--drift-fg-muted);
+}
+
+.drift-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pill-low {
+  background: color-mix(in srgb, var(--drift-good) 22%, transparent);
+  color: var(--drift-good);
+}
+.pill-moderate {
+  background: color-mix(in srgb, var(--drift-warn) 22%, transparent);
+  color: var(--drift-warn);
+}
+.pill-critical {
+  background: color-mix(in srgb, var(--drift-bad) 22%, transparent);
+  color: var(--drift-bad-soft);
+}
+.pill-unknown {
+  background: var(--drift-track);
+  color: var(--drift-fg-muted);
+}
+
+.drift-empty {
+  text-align: center;
+  color: var(--drift-fg-muted);
+  padding: 32px 18px;
+  font-size: 13px;
+}
+.drift-empty .big {
+  font-size: 30px;
+  margin-bottom: 8px;
+}
+
+.drift-footer {
+  border-top: 1px solid var(--drift-border);
+  padding: 8px 14px;
+  font-size: 11px;
+  color: var(--drift-fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.drift-footer a {
+  color: var(--drift-info);
+  text-decoration: none;
+}
+.drift-btn {
+  appearance: none;
+  border: 1px solid var(--drift-border);
+  background: var(--drift-accent);
+  color: #fff;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.drift-btn.ghost {
+  background: transparent;
+  color: var(--drift-fg);
+}
