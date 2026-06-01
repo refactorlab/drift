@@ -1,0 +1,112 @@
+name: drift-chrome-extension / publish
+
+# Auto-publishes the Drift Lens MV3 extension to the Chrome Web Store.
+#
+# Model: PUBLISH ON EVERY PUSH TO main (that touched the extension).
+#   Any merge to `main` that changes `drift-chrome-extension/**` builds the
+#   extension and ships it to the Web Store. No tag, no manual step.
+#
+# Why CI owns the version number:
+#   The Chrome Web Store API REJECTS re-uploading a version that already
+#   exists — you can't publish 0.1.0 twice. To make "publish on every push"
+#   actually succeed without a human bumping the version each time, the patch
+#   component is the GitHub run number (a strictly-monotonic build counter):
+#
+#       version = <major>.<minor>.<github.run_number>
+#
+#   `major.minor` stays human-controlled in drift-chrome-extension/package.json
+#   (the single source of truth — manifest.config.ts reads pkg.version). CI
+#   overwrites only the patch before building, guaranteeing a unique, always-
+#   increasing version that the store accepts every time. Bump major/minor in
+#   package.json when you want a new headline version; the patch takes care of
+#   itself. This change is build-only and is NOT committed back to the repo.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   CWS_EXTENSION_ID    — the extension's ID (from its Web Store dashboard URL)
+#   CWS_CLIENT_ID       — Google OAuth2 client id   (Chrome Web Store API)
+#   CWS_CLIENT_SECRET   — Google OAuth2 client secret
+#   CWS_REFRESH_TOKEN   — Google OAuth2 refresh token
+#   See drift-chrome-extension/README.md → "Automated publishing" for how to mint
+#   these. NOTE: a refresh token unused for ~6 months expires — the cadence of
+#   merges to main keeps it warm.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'drift-chrome-extension/**'
+  # Manual escape hatch — e.g. to re-ship after rotating the OAuth secrets.
+  workflow_dispatch:
+
+# Serialize: two merges landing close together must not race on the same
+# upload/publish (and run numbers must map 1:1 to store versions).
+concurrency:
+  group: drift-chrome-extension-release
+  cancel-in-progress: false
+
+# Read-only: this workflow never writes back to the repo. The publish targets
+# an external service (the Web Store), authenticated via the OAuth secrets.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: build + publish to Chrome Web Store
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: drift-chrome-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: drift-chrome-extension/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Stamp the build version: keep major.minor from package.json, take the
+      # patch from the monotonic run number. `npm pkg set` rewrites the field
+      # in place; the build (manifest.config.ts → defineManifest) then reads
+      # the new pkg.version. Working-tree only — never committed.
+      - name: Stamp build version (major.minor.run_number)
+        id: version
+        run: |
+          set -euo pipefail
+          base="$(node -p "require('./package.json').version")"
+          majmin="$(echo "$base" | cut -d. -f1-2)"
+          new="${majmin}.${GITHUB_RUN_NUMBER}"
+          npm pkg set version="$new"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "📦 building Drift Lens v$new (base $base, patch = run #$GITHUB_RUN_NUMBER)"
+
+      # `npm run zip` = build (icons → tsc --noEmit → vite build) then package
+      # dist/ into release/drift-lens.zip (see scripts/zip.mjs).
+      - name: Build + zip
+        run: npm run zip
+
+      # Uploads release/drift-lens.zip to the Chrome Web Store via the API
+      # (refreshes its own access token from the refresh token) and publishes.
+      # publish: true → goes live after Google's review. The action is pinned
+      # to a full release tag.
+      - name: Upload + publish to Chrome Web Store
+        uses: mnao305/chrome-extension-upload@v6.0.0
+        with:
+          file-path: drift-chrome-extension/release/drift-lens.zip
+          extension-id: ${{ secrets.CWS_EXTENSION_ID }}
+          client-id: ${{ secrets.CWS_CLIENT_ID }}
+          client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+          publish: true
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### ✅ Published Drift Lens v${{ steps.version.outputs.version }}"
+            echo ""
+            echo "Uploaded \`release/drift-lens.zip\` to the Chrome Web Store and submitted for review."
+          } >> "$GITHUB_STEP_SUMMARY"

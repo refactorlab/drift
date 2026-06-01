@@ -17,6 +17,7 @@ jobs:
       pull-requests: read
     outputs:
       profiler: ${{ steps.filter.outputs.profiler }}
+      chrome_ext: ${{ steps.filter.outputs.chrome_ext }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -25,6 +26,8 @@ jobs:
           filters: |
             profiler:
               - 'drift-static-profiler/**'
+            chrome_ext:
+              - 'drift-chrome-extension/**'
 
   # Compiles the crate (so newly added .rs files are actually built) and
   # runs the full test suite. Only runs when drift-static-profiler/** changed.
@@ -60,6 +63,41 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+  # Builds the MV3 extension (so newly added src files actually compile) and
+  # runs the vitest suite. Only runs when drift-chrome-extension/** changed —
+  # same path-filter gate as the profiler. This is the "build on every change"
+  # safety net; the actual Web Store publish lives in
+  # drift-chrome-extension-release.yml and only fires on main.
+  chrome-ext:
+    name: chrome-ext / build + test
+    needs: changes
+    if: needs.changes.outputs.chrome_ext == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: drift-chrome-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: drift-chrome-extension/package-lock.json
+
+      # `npm ci` installs the exact lockfile versions — reproducible builds and
+      # a fail-loud guard if package-lock.json drifts from package.json.
+      - name: Install
+        run: npm ci
+
+      # `npm run build` already runs `tsc --noEmit` before `vite build`
+      # (see package.json), so this covers the type check too.
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
 
   action:
     name: action / build + test

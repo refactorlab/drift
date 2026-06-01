@@ -111,6 +111,7 @@ help: ## Show this help (auto-generated from inline doc strings)
 	@printf "\n  $(GREEN)Sub-project Makefiles$(RESET)\n"
 	@printf "    $(BLUE)%-26s$(RESET) %s\n" "make -C drift-lab help"             "desktop app targets (dev, compile, ship)"
 	@printf "    $(BLUE)%-26s$(RESET) %s\n" "make -C drift-static-profiler help" "CLI analyzer + viewer targets"
+	@printf "    $(BLUE)%-26s$(RESET) %s\n" "make -C drift-chrome-extension help" "Chrome side-panel app targets"
 	@printf "\n"
 
 ### Whole-repo bootstrap
@@ -856,3 +857,23 @@ llm-docker:                             ## curl-test Docker Model Runner (http:/
 	  -H 'Content-Type: application/json' \
 	  -d '{"model":"ai/gemma4:E4B","messages":[{"role":"user","content":"Reply with the single word: pong"}]}' \
 	  | jq '{model, choices: .choices[0].message.content, usage}'
+
+### Drift Chrome extension — side-panel app (drift-chrome-extension/)
+
+.PHONY: extension-dev extension-build extension-test extension-install extension-kill
+
+extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — then load drift-chrome-extension/dist unpacked
+	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR)\n"
+	@$(MAKE) --no-print-directory -C drift-chrome-extension dev
+
+extension-kill: ## Stop any running Chrome-extension dev servers (frees Vite ports 5181+)
+	@$(MAKE) --no-print-directory -C drift-chrome-extension kill
+
+extension-build: ## Production build of the Chrome extension → drift-chrome-extension/dist
+	@$(MAKE) --no-print-directory -C drift-chrome-extension build
+
+extension-test: ## Run the Chrome extension test suite (vitest)
+	@$(MAKE) --no-print-directory -C drift-chrome-extension test
+
+extension-install: ## Install the Chrome extension npm deps
+	@$(MAKE) --no-print-directory -C drift-chrome-extension install
