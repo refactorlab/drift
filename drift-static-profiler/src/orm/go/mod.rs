@@ -14,6 +14,7 @@ use tree_sitter::{Node, Tree};
 /// One iterative DFS pass populates every collector for Go.
 pub fn build_context<'a>(source: &'a str, tree: &'a Tree) -> PyOrmContext<'a> {
     let mut ctx = PyOrmContext {
+        source,
         file: "<inline>",
         ..PyOrmContext::default()
     };

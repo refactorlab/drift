@@ -85,7 +85,7 @@ fn with_cached_tsx_parser<R>(
         if p_opt.is_none() {
             let mut parser = Parser::new();
             parser
-                .set_language(&crate::languages::typescript::language_tsx())
+                .set_language(&crate::languages::typescript_xml::language())
                 .context("set_language tsx")?;
             *p_opt = Some(parser);
         }
@@ -93,12 +93,8 @@ fn with_cached_tsx_parser<R>(
         TSX_QUERY.with(|q_cell| {
             let mut q_opt = q_cell.borrow_mut();
             if q_opt.is_none() {
-                let src = format!(
-                    "{}\n{}",
-                    crate::languages::typescript::TAGS_QUERY,
-                    crate::languages::typescript::TSX_JSX_EXTRA
-                );
-                let q = Query::new(&crate::languages::typescript::language_tsx(), &src)
+                let src = crate::languages::typescript_xml::tags_query();
+                let q = Query::new(&crate::languages::typescript_xml::language(), &src)
                     .context("compile tsx query")?;
                 *q_opt = Some(q);
             }

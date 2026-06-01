@@ -179,6 +179,11 @@ pub enum FindingKind {
     /// Ktorm (Kotlin sequence-based ORM) antipattern. Detector lives in
     /// `src/orm/jvm_kotlin/ktorm.rs`.
     KtormAntipattern,
+    /// React (TS/JS UI framework) anti-pattern — async effects,
+    /// `dangerouslySetInnerHTML`, hooks-in-loops, index keys. NOT an ORM:
+    /// it's a "parallel track" framework detector living in
+    /// `src/orm/parallel/react.rs`, categorised under Reliability.
+    ReactAntipattern,
 }
 
 impl FindingKind {
@@ -215,6 +220,7 @@ impl FindingKind {
             FindingKind::QuillAntipattern => "quill_antipattern",
             FindingKind::ExposedAntipattern => "exposed_antipattern",
             FindingKind::KtormAntipattern => "ktorm_antipattern",
+            FindingKind::ReactAntipattern => "react_antipattern",
         }
     }
 
@@ -251,7 +257,9 @@ impl FindingKind {
             | FindingKind::MissingCaching
             | FindingKind::SmellyLoop => FindingCategory::Performance,
             FindingKind::AuthCryptoAntipattern => FindingCategory::Security,
-            FindingKind::Recursive | FindingKind::BlockingInAsync => FindingCategory::Reliability,
+            FindingKind::Recursive
+            | FindingKind::BlockingInAsync
+            | FindingKind::ReactAntipattern => FindingCategory::Reliability,
             FindingKind::NoisyLog | FindingKind::LogAmplification => FindingCategory::Observability,
             FindingKind::LlmAntipattern => FindingCategory::Ai,
             FindingKind::OutdatedPackage => FindingCategory::Maintenance,

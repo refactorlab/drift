@@ -72,6 +72,7 @@ fn categorize(kind: &FindingKind) -> Option<(SuggestionCategory, &'static str)> 
         AuthCryptoAntipattern   => (SuggestionCategory::ProductCorrectness, "Product correctness — Auth / Crypto"),
         // ── C: Framework misuse ────────────────────────────────────
         LlmAntipattern          => (SuggestionCategory::FrameworkMisuse, "Framework misuse — LLM API"),
+        ReactAntipattern        => (SuggestionCategory::FrameworkMisuse, "Framework misuse — React"),
     })
 }
 

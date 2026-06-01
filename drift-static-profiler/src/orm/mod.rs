@@ -351,6 +351,15 @@ fn file_might_contain_orm_signal(lang: FileLang, source: &str) -> bool {
             "@OneToMany",
             "@ManyToOne",
             "@Query",
+            // React (parallel track): admit files exhibiting React so the
+            // `react` detector's gate + rules get a chance to run. Hook usage
+            // and `dangerouslySetInnerHTML` are React-specific; the `react`
+            // import covers class components / no-hook files.
+            "react",
+            "useEffect",
+            "useState",
+            "useLayoutEffect",
+            "dangerouslySetInnerHTML",
         ],
         FileLang::Java => &[
             "@Entity",
@@ -613,8 +622,17 @@ pub struct ParsedFile {
 
 fn parse_one(wf: WorkspaceFile) -> Option<ParsedFile> {
     let mut parser = tree_sitter::Parser::new();
+    let is_tsx = wf
+        .path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e == "tsx");
     let lang_obj = match wf.lang {
         FileLang::Python => tree_sitter_python::LANGUAGE.into(),
+        // `.tsx` needs the JSX-aware grammar — the plain TS grammar parses JSX
+        // into ERROR nodes, breaking chain/loop extraction (and the React
+        // hook-in-loop rule). `.ts` keeps the non-JSX grammar.
+        FileLang::TypeScript if is_tsx => crate::languages::typescript_xml::language(),
         FileLang::TypeScript => crate::languages::typescript::language(),
         FileLang::JavaScript => crate::languages::javascript::language(),
         FileLang::Java => crate::languages::java::language(),
@@ -878,6 +896,18 @@ fn analyze_with_tree(
                     &ts::mongoose::MONGOOSE_RULES,
                     &ctx,
                     crate::insights::FindingKind::MongooseAntipattern,
+                    &mut orm_findings,
+                );
+            }
+
+            // React parallel track (NOT an ORM): UI-framework anti-patterns.
+            // Gated by `matches_react` (react/react-dom import OR hook usage)
+            // so it never fires on plain TS/JS.
+            if parallel::react::matches_react(&ctx) {
+                run_rules_with_kind(
+                    &parallel::react::REACT_RULES,
+                    &ctx,
+                    crate::insights::FindingKind::ReactAntipattern,
                     &mut orm_findings,
                 );
             }
