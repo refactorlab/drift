@@ -807,6 +807,24 @@ pub fn analyze_pr_with_progress(
     progress.phase("filtering roots by PR scope…");
     let mut affected = crate::pr_scope::affected_roots(&ctx.graph, &all_discovered, changed_files);
     let affected_total = affected.roots.len();
+    // PRIORITIZE roots that are themselves DEFINED IN a changed file, before
+    // the reach-based truncation below. Truncation keeps the highest-reach
+    // roots; in a polyglot PR the highest-reach roots belong to the dominant
+    // language (e.g. the Rust binary's `main`, reaching thousands of nodes),
+    // which would starve the entry roots of a SECONDARY language the PR also
+    // touches (a React app's `main.tsx`, reaching a few dozen). Those entry
+    // roots' trees would never be built, so that language's flow can't appear
+    // in the diff diagram at all. A STABLE partition (changed-file roots first,
+    // reach order preserved within each group) guarantees every touched
+    // language's entry points survive the cap. Cheap: one symbol lookup per root.
+    affected.roots.sort_by_key(|r| {
+        let in_changed_file = ctx
+            .graph
+            .symbols
+            .get(&r.id)
+            .is_some_and(|s| changed_files.iter().any(|c| s.file.ends_with(c)));
+        u8::from(!in_changed_file)
+    });
     // Cap how many affected roots we build trees for. Roots are
     // reach-sorted by discover_roots and affected_roots preserves that
     // order, so truncating keeps the highest-reach (most impactful)
