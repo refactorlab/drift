@@ -64,6 +64,32 @@ pub fn language() -> Language {
     tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
 }
 
+/// The TSX grammar variant. `.tsx` files MUST be parsed with this — the plain
+/// `LANGUAGE_TYPESCRIPT` grammar does not understand JSX, so a React component
+/// file parses into ERROR nodes and its functions/calls (and all JSX) are lost.
+/// `.ts` keeps `language()` (the TSX grammar misreads `<T>expr` type
+/// assertions as JSX). Routed per-extension in `tags.rs`.
+pub fn language_tsx() -> Language {
+    tree_sitter_typescript::LANGUAGE_TSX.into()
+}
+
+/// JSX-only query patterns, appended to [`TAGS_QUERY`] when parsing `.tsx`
+/// with the TSX grammar. They turn React component COMPOSITION into call-graph
+/// edges: `<Chat/>` inside `App` wires an `App → Chat` edge, exactly like a
+/// function call would. Restricted to PascalCase names (`#match ^[A-Z]`) so
+/// host/HTML tags (`<div>`, `<span>`) — which resolve to no symbol anyway — are
+/// not even captured. Without this, a React app is a graph of disconnected
+/// components and nothing of it appears in the diff diagram.
+pub const TSX_JSX_EXTRA: &str = r#"
+(jsx_opening_element
+  name: (identifier) @ref.name
+  (#match? @ref.name "^[A-Z]")) @ref.call
+
+(jsx_self_closing_element
+  name: (identifier) @ref.name
+  (#match? @ref.name "^[A-Z]")) @ref.call
+"#;
+
 pub const TAGS_QUERY: &str = r#"
 (function_declaration
   name: (identifier) @def.name

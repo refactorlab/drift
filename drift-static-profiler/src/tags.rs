@@ -56,6 +56,56 @@ thread_local! {
     // pointers inside tree-sitter, but the C call + RefCell ceremony
     // is still measurable across a 50k-file scan.
     static TS_PARSER_LANG: RefCell<Option<Language>> = const { RefCell::new(None) };
+
+    // Dedicated parser + query for `.tsx` (the JSX-aware TypeScript grammar).
+    // Kept separate from the per-`Language` cache above because `.tsx` and `.ts`
+    // share `Language::TypeScript` but need DIFFERENT grammars/queries (JSX vs
+    // not). Lazily initialised on first `.tsx` file.
+    static TSX_PARSER: RefCell<Option<Parser>> = const { RefCell::new(None) };
+    static TSX_QUERY: RefCell<Option<Query>> = const { RefCell::new(None) };
+}
+
+/// True when `path`/`lang` should be parsed with the JSX-aware TSX grammar
+/// rather than the plain one. Only `.tsx` (TypeScript) qualifies: the JS grammar
+/// already understands JSX, and `.ts` must stay on the non-JSX grammar.
+fn wants_tsx(path: &Path, lang: Language) -> bool {
+    lang == Language::TypeScript
+        && path.extension().and_then(|e| e.to_str()) == Some("tsx")
+}
+
+/// `with_cached_parser`'s sibling for `.tsx`: a thread-local TSX parser + a
+/// query compiled once from `TAGS_QUERY + TSX_JSX_EXTRA`, so React component
+/// composition is captured as call edges. Mirrors the borrow discipline of
+/// `with_cached_parser` (closure runs inside the borrows).
+fn with_cached_tsx_parser<R>(
+    f: impl FnOnce(&mut Parser, &Query) -> Result<R>,
+) -> Result<R> {
+    TSX_PARSER.with(|p_cell| {
+        let mut p_opt = p_cell.borrow_mut();
+        if p_opt.is_none() {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&crate::languages::typescript::language_tsx())
+                .context("set_language tsx")?;
+            *p_opt = Some(parser);
+        }
+        let p = p_opt.as_mut().expect("just inserted");
+        TSX_QUERY.with(|q_cell| {
+            let mut q_opt = q_cell.borrow_mut();
+            if q_opt.is_none() {
+                let src = format!(
+                    "{}\n{}",
+                    crate::languages::typescript::TAGS_QUERY,
+                    crate::languages::typescript::TSX_JSX_EXTRA
+                );
+                let q = Query::new(&crate::languages::typescript::language_tsx(), &src)
+                    .context("compile tsx query")?;
+                *q_opt = Some(q);
+            }
+            let q = q_opt.as_ref().expect("just inserted");
+            f(p, q)
+        })
+    })
 }
 
 /// Run a closure with a parser configured for `lang` and a pre-compiled
@@ -250,6 +300,13 @@ pub fn extract_tags_from_source(
     lang: Language,
     source: &str,
 ) -> Result<FileTags> {
+    // `.tsx` needs the JSX-aware grammar + query (see `wants_tsx`); everything
+    // else uses the per-`Language` cache.
+    if wants_tsx(path, lang) {
+        return with_cached_tsx_parser(|parser, query| {
+            extract_tags_inner(path, lang, source, parser, query)
+        });
+    }
     with_cached_parser(lang, |parser, query| {
         extract_tags_inner(path, lang, source, parser, query)
     })
