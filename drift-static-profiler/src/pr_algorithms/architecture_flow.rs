@@ -343,6 +343,7 @@ struct GraphMode {
 ///   * a file-named entry (`name == basename`, e.g. `users.ts`),
 ///   * the synthetic `<module>` entry (renders as the basename), and
 ///   * an `<anonymous@N>` node (renders as `anon <basename:line>`).
+///
 /// Ordinary symbol nodes (`OrderService.create_order`) keep their names —
 /// a rename moves the file, not the symbol.
 ///
@@ -376,7 +377,7 @@ fn before_rename_label(
     }
     // A file-named entry (no enclosing class, name == basename) shows the
     // basename directly — swap to the OLD basename.
-    if parent_class.as_deref().map_or(true, |p| p.is_empty()) && name == basename(file) {
+    if parent_class.as_deref().is_none_or(|p| p.is_empty()) && name == basename(file) {
         return Some(basename(old).to_string());
     }
     None
@@ -402,6 +403,9 @@ fn build_call_graph(
         std::collections::HashSet::new();
     let mut next_id: usize = 0;
 
+    // A flat helper with one param per node attribute; bundling into a struct
+    // would add indirection without clarity here.
+    #[allow(clippy::too_many_arguments)]
     fn intern_node(
         nodes: &mut Vec<FlowNode>,
         id_for: &mut BTreeMap<String, String>,

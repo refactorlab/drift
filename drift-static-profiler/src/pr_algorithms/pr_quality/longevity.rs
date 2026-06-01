@@ -278,7 +278,7 @@ mod tests {
             total_symbols: 0,
         });
         let node = with_findings(mk_node("f", "a.rs"), vec![finding(FindingKind::NPlusOne, Severity::High)]);
-        let sig = collect(&[node.clone()], &["a.rs".into()], &QualityBar::default());
+        let sig = collect(std::slice::from_ref(&node), &["a.rs".into()], &QualityBar::default());
         let debty = compute(Inputs {
             entries: &[node],
             changed_files: &files,
@@ -294,9 +294,9 @@ mod tests {
     fn fix_and_refactor_commits_reduce_net_debt() {
         let files = vec![cf("a.rs", 20, 60)]; // net deletion → cleanup credit
         let node = with_findings(mk_node("f", "a.rs"), vec![finding(FindingKind::NPlusOne, Severity::High)]);
-        let sig = collect(&[node.clone()], &["a.rs".into()], &QualityBar::default());
+        let sig = collect(std::slice::from_ref(&node), &["a.rs".into()], &QualityBar::default());
         let no_fix = compute(Inputs {
-            entries: &[node.clone()],
+            entries: std::slice::from_ref(&node),
             changed_files: &files,
             commit_messages: &["feat: x".into()],
             signals: &sig,

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderQualityGauges } from '../render/sections/quality_gauges.ts';
+import { validate, extractBlocks, isInstalled } from '../../scripts/validate-mermaid.mjs';
 import type { GaugeLevel, PrReviewExt, QualityGauge } from '../report.ts';
 
 function g(id: string, group: string, label: string, score: number, hib: boolean, level: GaugeLevel): QualityGauge {
@@ -137,10 +138,16 @@ test('gauges: all shields + quickchart URLs are encoded (no raw spaces)', () => 
   }
 });
 
-test('gauges: single-series radar is emitted', () => {
+test('gauges: single-series radar-beta chart is emitted', () => {
   const out = renderQualityGauges(fullExt())!;
-  assert.match(out, /Full metric profile radar/);
-  assert.match(out, /quickchart\.io\/chart\?bkg=%230d0d10/);
+  // The radar is a Mermaid `radar-beta` chart (dark theme), not a quickchart image.
+  assert.match(out, /```mermaid\n---\nconfig:[\s\S]*?radar-beta/);
+  assert.match(out, /^ {2}title This PR$/m);
+  assert.match(out, /axis tf\["Token footprint"\]/);
+  assert.match(out, /curve pr\["This PR"\]\{[\d, ]+\}/);
+  assert.match(out, /^ {2}max 100$/m);
+  assert.match(out, /^ {2}graticule polygon$/m);
+  assert.doesNotMatch(out, /quickchart\.io\/chart\?bkg=%230d0d10/, 'no quickchart radar anymore');
 });
 
 test('gauges: renders REAL profiler output (golden fixture, full Rust→JSON→TS round-trip)', () => {
@@ -154,8 +161,8 @@ test('gauges: renders REAL profiler output (golden fixture, full Rust→JSON→T
   for (let n = 1; n <= 6; n++) assert.match(out, new RegExp(`### ${n}\\. `), `group ${n}`);
   // Real token footprint (3120 tokens) → fits the standard window.
   assert.match(out, /FITS .*tokens/);
-  // Radar present; every chart/badge URL is properly encoded (no raw spaces/markup).
-  assert.match(out, /Full metric profile radar/);
+  // Radar present (Mermaid radar-beta); every chart/badge URL is properly encoded.
+  assert.match(out, /radar-beta/);
   const urls = out.match(/https:\/\/(?:img\.shields\.io|quickchart\.io)\/[^)\s]*/g) ?? [];
   assert.ok(urls.length >= 18);
   for (const u of urls) assert.doesNotMatch(u, /\s|[<>"]/, `unencoded URL: ${u}`);
@@ -176,4 +183,18 @@ test('gauges: matches the copy layout (embed-ready)', () => {
   assert.doesNotMatch(out, /Higher is better.*quality metrics/s);
   // Body opens on the LLM-context badge immediately after the H2.
   assert.match(out, /^## Complexity & Risk Report\n\n\*\*LLM Context:\*\*/);
+});
+
+test('gauges: the radar-beta block PARSES in the real Mermaid engine (not just string-matched)', async (t) => {
+  if (!(await isInstalled())) return void t.skip('mermaid validator not installed');
+  // The radar is a Mermaid v11 `radar-beta` chart with a config frontmatter —
+  // a syntax GitHub silently fails to render if it's malformed. Validate the
+  // ACTUAL block (incl. its `--- config --- ` frontmatter + the live curve data)
+  // against the real mermaid parser, not just a string assertion.
+  const out = renderQualityGauges(fullExt())!;
+  const blocks = await extractBlocks(out);
+  assert.equal(blocks.length, 1, 'gauges emit exactly one mermaid block (the radar)');
+  assert.match(blocks[0], /radar-beta/, 'the one block is the radar-beta chart');
+  const res = await validate(blocks[0]);
+  assert.ok(res.ok, `radar-beta failed real-parser validation: ${res.error}\n---\n${blocks[0]}`);
 });

@@ -24360,52 +24360,54 @@ function llmContextBadge(s) {
   return `![LLM context: EXCEEDED ${tk} tokens (${limit} limit)](${shield("LLM_CONTEXT", `EXCEEDED ${tk} tokens (${limit} limit)`, LEVEL_HEX.critical)})`;
 }
 var RADAR_AXES = [
-  { id: "token_footprint", label: "Token footprint" },
-  { id: "context_window_pressure", label: "Context window pressure" },
-  { id: "agent_reviewability", label: "Agent reviewability" },
-  { id: "semantic_density", label: "Semantic density" },
-  { id: "explainability", label: "Explainability" },
-  { id: "context_dependency", label: "Context dependency" },
-  { id: "maintenance_burden", label: "Maintenance burden" },
-  { id: "fragility_index", label: "Fragility index" },
-  { id: "test_coverage", label: "Test coverage" },
-  { id: "edge_case_surface", label: "Edge case surface" },
-  { id: "rollback_complexity", label: "Rollback complexity" },
-  { id: "blast_radius", label: "Blast radius" },
-  { id: "knowledge_concentration", label: "Knowledge concentration" },
-  { id: "review_fatigue", label: "Review fatigue risk" }
+  { id: "token_footprint", key: "tf", label: "Token footprint" },
+  { id: "context_window_pressure", key: "cwp", label: "Context window pressure" },
+  { id: "agent_reviewability", key: "ar", label: "Agent reviewability" },
+  { id: "semantic_density", key: "sd", label: "Semantic density" },
+  { id: "explainability", key: "ex", label: "Explainability" },
+  { id: "context_dependency", key: "cd", label: "Context dependency" },
+  { id: "maintenance_burden", key: "mb", label: "Maintenance burden" },
+  { id: "fragility_index", key: "fi", label: "Fragility index" },
+  { id: "test_coverage", key: "tc", label: "Test coverage" },
+  { id: "edge_case_surface", key: "ecs", label: "Edge case surface" },
+  { id: "rollback_complexity", key: "rc", label: "Rollback complexity" },
+  { id: "blast_radius", key: "br", label: "Blast radius" },
+  { id: "knowledge_concentration", key: "kc", label: "Knowledge concentration" },
+  { id: "review_fatigue", key: "rfr", label: "Review fatigue risk" }
 ];
 function radar(byId) {
-  const labels = RADAR_AXES.map((a) => a.label);
-  const data = RADAR_AXES.map((a) => byId.get(a.id)?.score ?? 0);
-  const config = {
-    type: "radar",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "This PR",
-          backgroundColor: "rgba(79,142,230,0.18)",
-          borderColor: "rgb(79,142,230)",
-          pointBackgroundColor: "rgb(79,142,230)",
-          borderWidth: 2,
-          pointRadius: 3,
-          data
-        }
-      ]
-    },
-    options: {
-      legend: { position: "top", labels: { fontColor: "#c8ccd2", fontSize: 13, usePointStyle: true } },
-      scale: {
-        ticks: { min: 0, max: 100, stepSize: 25, backdropColor: "rgba(0,0,0,0)", fontColor: "#7a7f87" },
-        gridLines: { color: "rgba(255,255,255,0.07)" },
-        angleLines: { color: "rgba(255,255,255,0.07)" },
-        pointLabels: { fontColor: "#9aa0a6", fontSize: 13 }
-      }
-    }
-  };
-  const url = `https://quickchart.io/chart?bkg=%230d0d10&w=1000&h=720&v=2&c=${encodeURIComponent(JSON.stringify(config))}`;
-  return `![Full metric profile radar](${url})`;
+  const axisLines = [];
+  for (let i = 0; i < RADAR_AXES.length; i += 3) {
+    axisLines.push("  axis " + RADAR_AXES.slice(i, i + 3).map((a) => `${a.key}["${a.label}"]`).join(", "));
+  }
+  const data = RADAR_AXES.map((a) => Math.round(byId.get(a.id)?.score ?? 0)).join(", ");
+  return [
+    "```mermaid",
+    "---",
+    "config:",
+    "  theme: dark",
+    "  themeVariables:",
+    '    cScale0: "#5b9bd5"',
+    '    background: "#0a0a0e"',
+    "    radar:",
+    "      curveTension: 1",
+    "      curveOpacity: 0.18",
+    "      curveStrokeWidth: 2",
+    '      axisColor: "#2c2c34"',
+    "      axisLabelFontSize: 12",
+    '      graticuleColor: "#2c2c34"',
+    "      graticuleOpacity: 0.55",
+    "---",
+    "radar-beta",
+    "  title This PR",
+    ...axisLines,
+    `  curve pr["This PR"]{${data}}`,
+    "  max 100",
+    "  min 0",
+    "  graticule polygon",
+    "  ticks 4",
+    "```"
+  ].join("\n");
 }
 function renderQualityGauges(ext) {
   const gauges = ext?.pr_quality?.gauges;
