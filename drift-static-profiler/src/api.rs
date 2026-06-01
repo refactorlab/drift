@@ -19,7 +19,7 @@ use crate::{
     sql_lint::{SqlDialect, SqlFileOpts},
     tags::extract_tags_for_files,
     tree::{CallTreeNode, TreeBuilder},
-    walker::{walk_files_classified_with, WalkOpts},
+    walker::{walk_files_classified_with, ClassifiedFile, WalkOpts},
     FileTags, Language,
 };
 
@@ -170,8 +170,93 @@ struct GraphContext {
     walk_opts: WalkOpts,
 }
 
+/// The supported language most represented among a PR's changed files (by
+/// file count; ties broken alphabetically by slug for determinism).
+///
+/// Returns `None` when no changed file maps to a supported language — the
+/// caller then falls back to the whole-repo dominant language. This is the
+/// fix for the single-dominant-language scan ignoring a PR that only touches
+/// a *non-dominant* language: a PR editing only the TypeScript action in this
+/// Rust-dominant repo used to be profiled as Rust, so every changed file
+/// landed outside the parsed graph and `affected` came back 0. We can only
+/// profile ONE language per scan (the call graph is built for a single
+/// language), so "the language this PR mostly touches" is the right pick.
+fn dominant_changed_language(changed_files: &[PathBuf]) -> Option<Language> {
+    Language::all()
+        .iter()
+        .copied()
+        .map(|lang| {
+            let count = changed_files
+                .iter()
+                .filter(|p| Language::from_path(p.as_path()) == Some(lang))
+                .count();
+            (lang, count)
+        })
+        .filter(|&(_, count)| count > 0)
+        // Most-changed wins; on a tie the alphabetically-first slug wins so the
+        // pick never depends on `Language` enum declaration order.
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.slug().cmp(a.0.slug())))
+        .map(|(lang, _)| lang)
+}
+
+/// Every supported language the PR touches, deduped (declaration order).
+///
+/// Drives the MULTI-LANGUAGE parse filter: a monorepo PR that edits both Rust
+/// and TypeScript must parse BOTH languages so the call graph — and the
+/// change-anchored diff diagram — can show the changes in each. (A single
+/// dominant pick would silently drop every file in the non-dominant language,
+/// which is exactly why a TS feature change was invisible on a Rust-heavy
+/// branch.) Empty for a full-repo scan with no changed files, where the caller
+/// falls back to the single repo-dominant language to bound parse cost.
+fn changed_languages(changed_files: &[PathBuf]) -> Vec<Language> {
+    let mut langs: Vec<Language> = Vec::new();
+    for p in changed_files {
+        if let Some(l) = Language::from_path(p.as_path()) {
+            if !langs.contains(&l) {
+                langs.push(l);
+            }
+        }
+    }
+    langs
+}
+
+/// Re-point the reported dominant language at the language we actually
+/// profiled, so `report.rs`'s `profiled_language` / `profiled_language_percent`
+/// stay truthful when `build_graph_context` profiles the changed-files language
+/// instead of the whole-repo dominant one. The `breakdown` is left untouched
+/// (it still shows the real repo mix); only the "dominant supported" pointer
+/// the report reads is realigned, and its percent is taken from the matching
+/// breakdown entry so the number is exactly what the linguist computed.
+fn realign_dominant_to_profiled(
+    stats: &mut LanguageStats,
+    walked: &[ClassifiedFile],
+    profiled: Language,
+) {
+    if stats.dominant_supported == Some(profiled) {
+        return;
+    }
+    // `lang_name` is the linguist display label (e.g. "TypeScript"), carried on
+    // every classified file AND used as the `breakdown` entry key — so it maps
+    // the profiled `Language` → its display name → its already-computed percent.
+    let name = walked
+        .iter()
+        .find(|f| f.language == Some(profiled))
+        .and_then(|f| f.lang_name);
+    let percent = name.and_then(|n| {
+        stats
+            .breakdown
+            .iter()
+            .find(|e| e.language == n)
+            .map(|e| e.percent)
+    });
+    stats.dominant_supported = Some(profiled);
+    stats.dominant_supported_name = name.map(str::to_string);
+    stats.dominant_supported_percent = percent;
+}
+
 fn build_graph_context(
     root: &Path,
+    changed_files: &[PathBuf],
     opts: &AnalyzeOptions,
     progress: &dyn Progress,
 ) -> GraphContext {
@@ -206,34 +291,62 @@ fn build_graph_context(
         ..WalkOpts::default()
     };
     let walked = walk_files_classified_with(root, &walk_opts, progress);
-    let language_stats = compute_language_stats_from_entries(&walked);
-    let profiled_language = language_stats.dominant_supported;
+    let mut language_stats = compute_language_stats_from_entries(&walked);
+    // Prefer the language this PR actually touches. In a polyglot repo the
+    // whole-repo dominant language is often NOT the one a given PR changes
+    // (e.g. a TS-only PR in a Rust-dominant repo); profiling the repo-dominant
+    // language there parses files the PR never touched and reports 0 affected.
+    // For a full-repo scan `changed_files` is empty → we keep the repo
+    // dominant. We can only profile one language, so realign the reported
+    // "dominant supported" to match what we parse (keeps report.rs truthful).
+    let repo_dominant = language_stats.dominant_supported;
+    let changed_dominant = dominant_changed_language(changed_files);
+    let profiled_language = changed_dominant.or(repo_dominant);
+    if let Some(profiled) = profiled_language {
+        realign_dominant_to_profiled(&mut language_stats, &walked, profiled);
+    }
+    // Languages to PARSE. A PR is profiled MULTI-LANGUAGE: every language the
+    // diff touches is parsed, so a mixed Rust+TS change graphs both (a single
+    // dominant pick would drop the non-dominant language's files before parsing,
+    // hiding those changes entirely). A full-repo scan (no changed files) has no
+    // diff to anchor on, so it keeps the single repo-dominant language to bound
+    // parse cost. `profiled_language` above stays the *reported* dominant.
+    let parse_languages: Vec<Language> = {
+        let changed = changed_languages(changed_files);
+        if !changed.is_empty() {
+            changed
+        } else {
+            profiled_language.into_iter().collect()
+        }
+    };
     tracing::info!(
         walked = walked.len(),
+        changed_files = changed_files.len(),
+        repo_dominant = repo_dominant.map(|l| l.slug()).unwrap_or("none"),
         profiled = profiled_language.map(|l| l.slug()).unwrap_or("none"),
+        parse_languages = parse_languages.iter().map(|l| l.slug()).collect::<Vec<_>>().join("+").as_str(),
+        changed_driven = changed_dominant.is_some(),
         "language picked"
     );
 
-    // ── 2. Filter to source files in the profiled language ──────────────
+    // ── 2. Filter to source files in ANY parsed language ────────────────
     //
-    // Single pass through `walked` keeping only entries whose
-    // `Language` matches the dominant pick. The `walked` vector is
-    // consumed here — we don't need it again after this step, so we
-    // drop it to release the path/size memory before the parse loop's
-    // peak (which holds source strings for parallelism × largest_file
-    // bytes simultaneously).
-    let files: Vec<(PathBuf, Language)> = match profiled_language {
-        Some(target) => walked
+    // Single pass through `walked` keeping every entry whose `Language` is in
+    // `parse_languages` (multi-language; see above). The `walked` vector is
+    // consumed here — we don't need it again after this step, so we drop it to
+    // release the path/size memory before the parse loop's peak (which holds
+    // source strings for parallelism × largest_file bytes simultaneously).
+    let files: Vec<(PathBuf, Language)> = if parse_languages.is_empty() {
+        drop(walked);
+        Vec::new()
+    } else {
+        walked
             .into_iter()
             .filter_map(|f| match f.language {
-                Some(lang) if lang == target => Some((f.path, lang)),
+                Some(lang) if parse_languages.contains(&lang) => Some((f.path, lang)),
                 _ => None,
             })
-            .collect(),
-        None => {
-            drop(walked);
-            Vec::new()
-        }
+            .collect()
     };
 
     // ── 3. Parse all source files in parallel ────────────────────────────
@@ -442,7 +555,8 @@ pub fn analyze_with_progress(
         entries = entries.len(),
         "analyze start"
     );
-    let ctx = build_graph_context(root, opts, progress);
+    // Full-repo scan: no PR scope, so the whole-repo dominant language is used.
+    let ctx = build_graph_context(root, &[], opts, progress);
 
     progress.phase("resolving entry points…");
     let mut entry_ids = Vec::new();
@@ -535,7 +649,8 @@ pub fn analyze_roots_with_progress(
         max_roots = discover.max_roots,
         "analyze-roots start"
     );
-    let ctx = build_graph_context(root, opts, progress);
+    // Full-repo scan: no PR scope, so the whole-repo dominant language is used.
+    let ctx = build_graph_context(root, &[], opts, progress);
     // discover_roots_with_progress emits its own "scanning roots"
     // step bar — no extra `phase()` label needed here.
     let discovered = crate::roots::discover_roots_with_progress(
@@ -669,7 +784,9 @@ pub fn analyze_pr_with_progress(
         min_reach = discover.min_reach,
         "analyze-pr start"
     );
-    let ctx = build_graph_context(root, opts, progress);
+    // PR scan: profile the language this PR actually changes (falls back to the
+    // whole-repo dominant when no changed file maps to a supported language).
+    let ctx = build_graph_context(root, changed_files, opts, progress);
     // Capture graph N now (for pr_quality's pagerank×N centrality); cheap,
     // and avoids any borrow concern at the outcome-construction site below.
     let total_symbols = ctx.graph.symbols.len();
@@ -870,7 +987,8 @@ pub fn analyze_picked_with_progress<F>(
 where
     F: FnOnce(&[PickerRoot]) -> Option<usize>,
 {
-    let ctx = build_graph_context(root, opts, progress);
+    // Interactive picker over the full repo: no PR scope → whole-repo dominant.
+    let ctx = build_graph_context(root, &[], opts, progress);
     let discovered = crate::roots::discover_roots_with_progress(
         &ctx.graph,
         root,
@@ -972,4 +1090,135 @@ fn decorate_roots_for_picker(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linguist::{LangKind, LanguageBreakdownEntry};
+
+    fn paths(ps: &[&str]) -> Vec<PathBuf> {
+        ps.iter().map(PathBuf::from).collect()
+    }
+
+    fn cf(path: &str, name: Option<&'static str>, lang: Option<Language>) -> ClassifiedFile {
+        ClassifiedFile {
+            path: PathBuf::from(path),
+            size: 100,
+            lang_name: name,
+            lang_kind: name.map(|_| LangKind::Programming),
+            language: lang,
+        }
+    }
+
+    #[test]
+    fn dominant_changed_language_empty_is_none() {
+        assert_eq!(dominant_changed_language(&[]), None);
+    }
+
+    #[test]
+    fn dominant_changed_language_picks_the_only_supported_language() {
+        // A PR that only touches the TypeScript action profiles TypeScript —
+        // the regression this whole change fixes.
+        let files = paths(&["action/src/render/sections/quality_gauges.ts", "action/x.tsx"]);
+        assert_eq!(dominant_changed_language(&files), Some(Language::TypeScript));
+    }
+
+    #[test]
+    fn dominant_changed_language_picks_the_most_changed() {
+        // 3 Rust vs 1 TS → Rust wins on count regardless of repo composition.
+        let files = paths(&["a.rs", "b.rs", "c.rs", "d.ts"]);
+        assert_eq!(dominant_changed_language(&files), Some(Language::Rust));
+    }
+
+    #[test]
+    fn dominant_changed_language_ignores_unsupported_files() {
+        // Non-source files don't count; a lone .ts still wins.
+        assert_eq!(
+            dominant_changed_language(&paths(&["README.md", "data.json", "x.ts"])),
+            Some(Language::TypeScript)
+        );
+        // No supported file at all → None, so the caller falls back to the
+        // whole-repo dominant language (old behaviour, unchanged).
+        assert_eq!(dominant_changed_language(&paths(&["README.md", "ci.yaml"])), None);
+    }
+
+    #[test]
+    fn dominant_changed_language_tie_breaks_alphabetically_not_by_enum_order() {
+        // 1 .ts + 1 .js is a count tie. TypeScript precedes JavaScript in the
+        // `Language` enum, but slug "javascript" < "typescript", so the
+        // alphabetical winner (JavaScript) proves the pick ignores enum order.
+        assert_eq!(
+            dominant_changed_language(&paths(&["a.ts", "b.js"])),
+            Some(Language::JavaScript)
+        );
+        // Order of the input list must not change the deterministic winner.
+        assert_eq!(
+            dominant_changed_language(&paths(&["b.js", "a.ts"])),
+            Some(Language::JavaScript)
+        );
+    }
+
+    #[test]
+    fn realign_repoints_dominant_to_profiled_language() {
+        let mut stats = LanguageStats {
+            total_bytes: 1000,
+            total_files: 10,
+            breakdown: vec![
+                LanguageBreakdownEntry {
+                    language: "Rust".into(),
+                    bytes: 600,
+                    files: 6,
+                    percent: 60.0,
+                    supported: true,
+                },
+                LanguageBreakdownEntry {
+                    language: "TypeScript".into(),
+                    bytes: 300,
+                    files: 3,
+                    percent: 30.0,
+                    supported: true,
+                },
+            ],
+            dominant_supported: Some(Language::Rust),
+            dominant_supported_name: Some("Rust".into()),
+            dominant_supported_percent: Some(60.0),
+        };
+        let walked = vec![
+            cf("a.rs", Some("Rust"), Some(Language::Rust)),
+            cf("b.ts", Some("TypeScript"), Some(Language::TypeScript)),
+        ];
+        realign_dominant_to_profiled(&mut stats, &walked, Language::TypeScript);
+        // The reported dominant pointer + percent now match what we profile,
+        // and the percent is taken verbatim from the breakdown entry.
+        assert_eq!(stats.dominant_supported, Some(Language::TypeScript));
+        assert_eq!(stats.dominant_supported_name.as_deref(), Some("TypeScript"));
+        assert_eq!(stats.dominant_supported_percent, Some(30.0));
+        // The breakdown is untouched — it still reports the real repo mix.
+        assert_eq!(stats.breakdown.len(), 2);
+        assert_eq!(stats.breakdown[0].language, "Rust");
+    }
+
+    #[test]
+    fn realign_is_a_noop_when_already_dominant() {
+        let mut stats = LanguageStats {
+            total_bytes: 1000,
+            total_files: 10,
+            breakdown: vec![LanguageBreakdownEntry {
+                language: "Rust".into(),
+                bytes: 600,
+                files: 6,
+                percent: 60.0,
+                supported: true,
+            }],
+            dominant_supported: Some(Language::Rust),
+            dominant_supported_name: Some("Rust".into()),
+            dominant_supported_percent: Some(60.0),
+        };
+        let walked = vec![cf("a.rs", Some("Rust"), Some(Language::Rust))];
+        realign_dominant_to_profiled(&mut stats, &walked, Language::Rust);
+        assert_eq!(stats.dominant_supported, Some(Language::Rust));
+        assert_eq!(stats.dominant_supported_name.as_deref(), Some("Rust"));
+        assert_eq!(stats.dominant_supported_percent, Some(60.0));
+    }
 }

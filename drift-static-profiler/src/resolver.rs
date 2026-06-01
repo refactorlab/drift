@@ -32,7 +32,7 @@
 //! is a single linear scan over all symbols with `parent.is_some()`.
 
 use crate::graph::SymbolId;
-use crate::{CallForm, Symbol, SymbolKind};
+use crate::{CallForm, Language, Symbol, SymbolKind};
 use std::collections::HashMap;
 
 /// Read-only index over the project's symbols. Resolvers consume this
@@ -115,7 +115,8 @@ impl<'a> SymbolIndex<'a> {
             .flat_map(|v| v.iter().filter(|t| *t != exclude).cloned())
             .collect();
 
-        // (1) Same-file preference — high-confidence local resolution.
+        // (1) Same-file preference — high-confidence local resolution. (A
+        // same-file definition is, by construction, the same language too.)
         if let Some(caller_file) = self.symbols.get(exclude).map(|s| &s.file) {
             let local: Vec<SymbolId> = candidates
                 .iter()
@@ -127,11 +128,25 @@ impl<'a> SymbolIndex<'a> {
             }
         }
 
-        // (2) Cross-file fan-out cap — drop names too ambiguous to be a real edge.
-        if candidates.len() > MAX_CROSS_FILE_FANOUT {
+        // (2) Cross-file: restrict to the caller's OWN language. A multi-language
+        // scan parses every language the PR touches into ONE `by_name` index, so
+        // without this a TypeScript call to `build()` could resolve to a Rust
+        // `build()` (or a Python one) — a phantom cross-language edge. Imports
+        // are within-language, so same-language is a necessary condition for a
+        // real cross-file call. No-op on a single-language scan.
+        let caller_lang = self.symbols.get(exclude).and_then(|s| Language::from_path(&s.file));
+        let cross: Vec<SymbolId> = candidates
+            .into_iter()
+            .filter(|t| {
+                self.symbols.get(t).and_then(|s| Language::from_path(&s.file)) == caller_lang
+            })
+            .collect();
+
+        // (3) Cross-file fan-out cap — drop names too ambiguous to be a real edge.
+        if cross.len() > MAX_CROSS_FILE_FANOUT {
             return Vec::new().into_iter();
         }
-        candidates.into_iter()
+        cross.into_iter()
     }
 }
 
@@ -311,6 +326,24 @@ mod tests {
         let resolved =
             DefaultResolver.resolve("renderOverview", None, CallForm::Bare, &caller, &idx);
         assert_eq!(resolved.len(), 1);
+    }
+
+    #[test]
+    fn cross_language_same_name_does_not_resolve() {
+        // A multi-language graph: `build` defined once in Rust and once in TS.
+        // A TS caller must resolve only to the TS `build`, never the Rust one.
+        let defs = vec![
+            mk_symbol_in("build", "engine/report.rs"),
+            mk_symbol_in("build", "web/report.ts"),
+            mk_symbol_in("caller", "web/page.ts"),
+        ];
+        let (symbols, by_name) = mk_index(defs);
+        let idx = SymbolIndex::build(&symbols, &by_name);
+        let caller = by_name["caller"][0].clone();
+        let resolved = DefaultResolver.resolve("build", None, CallForm::Bare, &caller, &idx);
+        assert_eq!(resolved.len(), 1, "exactly one same-language target");
+        let target = idx.symbols.get(&resolved[0]).unwrap();
+        assert_eq!(target.file, PathBuf::from("web/report.ts"), "must pick the TS build, not the Rust one");
     }
 
     #[test]
