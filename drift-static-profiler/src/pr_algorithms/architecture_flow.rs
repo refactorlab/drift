@@ -854,7 +854,7 @@ fn build_diff_merged_flowchart(
 ) -> Flowchart {
     // Same HEAD topology + real status colours as AFTER (no rename relabel).
     let no_renames: BTreeMap<String, String> = BTreeMap::new();
-    let (mut nodes, edges, rendered) = build_call_graph(
+    let (mut nodes, mut edges, rendered) = build_call_graph(
         entries,
         changed_files,
         GraphMode {
@@ -869,12 +869,13 @@ fn build_diff_merged_flowchart(
     // from the call-graph slice above for legitimate reasons: it's an isolated
     // symbol (no callers), or it lives in a low-reach root whose bounded call
     // tree was never built (common in a multi-language scan where one language
-    // dominates the tree budget). Rather than silently drop it, append a
-    // standalone tinted node per such file — the diagram then shows the FULL
-    // diff, with call context where we have it and a bare node where we don't.
-    // Removed files are already shown as placeholder cards; files with no
-    // recognized source language (Cargo.lock, Makefile, *.md) carry no symbols.
-    append_unrendered_changed_files(&mut nodes, changed_files, &rendered);
+    // dominates the tree budget). Rather than silently drop it, hang each such
+    // file off a labelled "Changed (no call edges)" hub — a CONNECTED cluster
+    // so renderers (and reviewers) can't lose it the way they lose a floating,
+    // edge-less node. The diagram then shows the FULL diff: call context where
+    // we have it, an explicit hub for the rest. Removed files are placeholder
+    // cards; files with no recognized source language carry no symbols.
+    append_unrendered_changed_files(&mut nodes, &mut edges, changed_files, &rendered);
 
     // Surface deletions as red placeholder cards (identical to the BEFORE chart).
     append_removed_placeholders(&mut nodes, changed_files);
@@ -1017,11 +1018,16 @@ fn append_removed_placeholders(nodes: &mut Vec<FlowNode>, changed_files: &[Chang
 /// thousand-file PR can't blow up the comment.
 fn append_unrendered_changed_files(
     nodes: &mut Vec<FlowNode>,
+    edges: &mut Vec<FlowEdge>,
     changed_files: &[ChangedFile],
     rendered: &BTreeSet<String>,
 ) {
     const MAX_STANDALONE: usize = 24;
-    let mut id_counter = 0usize;
+    const HUB_ID: &str = "chg_hub";
+
+    // First collect the files that need a node, so we only emit the hub when
+    // there's at least one (no empty/dangling hub).
+    let mut pending: Vec<(String, FileStatus)> = Vec::new();
     let mut total = 0usize;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for cf in changed_files {
@@ -1040,25 +1046,48 @@ fn append_unrendered_changed_files(
             continue;
         }
         total += 1;
-        if id_counter >= MAX_STANDALONE {
-            continue;
+        if pending.len() < MAX_STANDALONE {
+            pending.push((basename(&cf.path).to_string(), status));
         }
-        let id = format!("chg_{id_counter}");
-        id_counter += 1;
+    }
+
+    if pending.is_empty() {
+        return;
+    }
+
+    // The hub: a single labelled anchor every uncovered changed file hangs off,
+    // so the cluster is CONNECTED (renderers don't drop it the way they drop a
+    // lone edge-less node) and reads as "changed, but outside the call slice".
+    nodes.push(FlowNode {
+        id: HUB_ID.into(),
+        label: "✏️ Changed — no call edges".into(),
+        shape: NodeShape::Rect,
+        class: Some("changed".into()),
+    });
+    for (i, (label, status)) in pending.into_iter().enumerate() {
+        let id = format!("chg_{i}");
         nodes.push(FlowNode {
-            id,
-            label: basename(&cf.path).to_string(),
+            id: id.clone(),
+            label,
             shape: NodeShape::Rect,
             class: class_for_status(status).map(String::from),
         });
+        edges.push(FlowEdge {
+            from: HUB_ID.into(),
+            to: id,
+            label: None,
+            style: EdgeStyle::Solid,
+        });
     }
-    if total > id_counter {
+    if total > MAX_STANDALONE {
+        let id = "chg_more".to_string();
         nodes.push(FlowNode {
-            id: "chg_more".into(),
-            label: format!("+{} more changed", total - id_counter),
+            id: id.clone(),
+            label: format!("+{} more changed", total - MAX_STANDALONE),
             shape: NodeShape::Rect,
             class: Some("changed".into()),
         });
+        edges.push(FlowEdge { from: HUB_ID.into(), to: id, label: None, style: EdgeStyle::Solid });
     }
 }
 
