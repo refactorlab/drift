@@ -262,14 +262,24 @@ test('ai-suggest E2E: envelope + diff + report + deferSticky → ONE sticky comm
     assert.ok(post, `sticky create (POST issues/comments) missing — stdout:\n${result.stdout}`);
 
     // ── The single surface carries BOTH halves ──────────────────────────────
+    // Post-redesign there is NO separate "AI-refined code suggestions" block:
+    // every finding (deterministic + AI) renders as ONE row in the single
+    // priority table. The AI suggestion on db.py:8 merges into the report (AI
+    // wins the path:line collision with the deterministic db.py:8), so the
+    // heading TOTAL stays 3 and the AI finding surfaces as the db.py:8 row.
     const body = String((post!.body as Record<string, unknown>).body);
     assert.match(body, /<!-- drift:sticky-comment -->/, 'must carry the sticky marker');
-    // Deterministic findings → the "Code suggestions" section (3 in the fixture).
-    assert.match(body, /Code suggestions \(3\)/, 'deterministic findings must be in the sticky');
-    // AI-refined → its own heading + the model + the on-diff file/line.
-    assert.match(body, /🤖 AI-refined code suggestions \(1\)/, 'the AI-refined block must be in the SAME comment');
-    assert.match(body, /openai\/gpt-4o/, 'the AI model must be shown on the AI-refined block');
-    assert.match(body, new RegExp(`${aiFile.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}:8`));
+    // Deterministic + AI findings share ONE "Code suggestions" section (3 total).
+    assert.match(body, /Code suggestions \(3\)/, 'all findings counted in the single heading');
+    // The single priority table is present …
+    assert.match(body, /\| Priority \| Finding \| Location \| Confidence \|/, 'the single priority table header must be present');
+    // … and the AI finding appears as a ROW: its on-diff file:line permalink at
+    // its confidence (90%). fileLink renders the location as `basename:line`
+    // with the full path in the permalink URL.
+    assert.match(body, new RegExp(`\\[\`db\\.py:8\`\\]\\(https://github\\.com/[^)]*${aiFile.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}#L8\\)`), 'the AI finding must surface as a priority-table row with its file:line permalink');
+    assert.match(body, /\[`db\.py:8`\][^|]*\| 90% \|/, 'the AI finding row carries its 90% confidence');
+    // The one batched Fix-All handoff dispatches the shown findings.
+    assert.match(body, /🤖 <strong>Fix-All handoff<\/strong>/, 'the single Fix-All handoff block must be present');
 
     // The invariant: no inline review, ever.
     assertNoReview(stub, 42, result.stdout);
@@ -314,10 +324,11 @@ test('ai-suggest E2E: deeper-than-diff envelope path → suffix-match keeps it (
     assert.ok(post, `sticky create missing — bundle dropped due to path mismatch?\n${result.stdout}`);
     const body = String((post!.body as Record<string, unknown>).body);
 
-    // The suffix-match bridge MUST keep the deeper-pathed suggestion, so the
-    // AI-refined block appears in the sticky, carrying the model's path.
-    assert.match(body, /🤖 AI-refined code suggestions \(1\)/, 'suffix-match bridge MUST keep the deeper-pathed suggestion');
-    assert.match(body, new RegExp(`${deepFile.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}:3`));
+    // The suffix-match bridge MUST keep the deeper-pathed suggestion, so it
+    // merges into the single priority table (no separate AI block anymore) and
+    // surfaces as a ROW — carrying the model's deeper path in its permalink.
+    assert.match(body, /\| Priority \| Finding \| Location \| Confidence \|/, 'the single priority table header must be present');
+    assert.match(body, new RegExp(`\\[\`a\\.py:3\`\\]\\(https://github\\.com/[^)]*${deepFile.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}#L3\\)`), 'suffix-match bridge MUST keep the deeper-pathed suggestion as a priority-table row with its deeper path');
 
     // The "1 on-diff" log (and ZERO drops) confirms the bridge fired.
     assert.match(result.stdout, /1 on-diff.*1 AI-refined/);
@@ -475,8 +486,14 @@ test('ai-suggest E2E: DRIFT_MAX_AI_SUGGESTIONS caps the AI-refined block after t
     const post = stub.requests.find((r) => r.method === 'POST' && /issues\/99\/comments/.test(r.url));
     assert.ok(post, `sticky create missing — stdout:\n${result.stdout}`);
     const body = String((post!.body as Record<string, unknown>).body);
-    // cap=2 → the AI-refined heading shows 2, not 3.
-    assert.match(body, /🤖 AI-refined code suggestions \(2\)/, 'cap=2 must clip the AI-refined block to 2');
+    // cap=2 clips the AI half BEFORE merge → only 2 of the 3 AI findings merge
+    // into the single priority table. With 3 deterministic fixture findings the
+    // heading TOTAL is 5 (3 det + 2 AI), and the table carries the 2 survivors
+    // (a.py:1, b.py:1) as rows but NOT the capped third (c.py:1).
+    assert.match(body, /Code suggestions \(5\)/, 'cap=2 → 3 deterministic + 2 AI merged = 5 in the single heading');
+    assert.match(body, /\[`a\.py:1`\]\(https:\/\/github\.com\/[^)]*svc\/a\.py#L1\)/, 'first AI survivor renders as a priority-table row');
+    assert.match(body, /\[`b\.py:1`\]\(https:\/\/github\.com\/[^)]*svc\/b\.py#L1\)/, 'second AI survivor renders as a priority-table row');
+    assert.ok(!/svc\/c\.py#L1/.test(body), 'the capped third AI finding (c.py:1) must NOT render');
     // The funnel log: 3 candidates pass + are on-diff, but only 2 survive the cap.
     assert.match(result.stdout, /3 candidate.*3 pass.*3 on-diff.*2 AI-refined \(cap=2\)/);
 

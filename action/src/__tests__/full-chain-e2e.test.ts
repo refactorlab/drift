@@ -333,25 +333,26 @@ test('full chain: scan(500) → cap(10) → main.ts(defer) → ai-suggest(combin
     // The sticky carries the idempotent marker (proves it's THE sticky).
     assert.match(stickyText, /<!-- drift:sticky-comment -->/, 'sticky must carry the dedupe marker');
 
-    // The deterministic priority table is present. renderOverview wraps the
-    // section in a <details> accordion, so the heading shows as the <summary>.
-    assert.match(stickyText, /⚠️ Code suggestions \(\d+\)/, 'sticky carries the Code suggestions section');
-    assert.match(stickyText, /\| Priority \| Finding \| Location \| Confidence \|/, 'sticky carries the deterministic priority table');
+    // The single priority table is present (deterministic + AI now share ONE
+    // table — there is no separate AI block). renderOverview wraps the section
+    // in a <details> accordion, so the heading shows as the <summary>.
+    assert.match(stickyText, /\| Priority \| Finding \| Location \| Confidence \|/, 'sticky carries the single priority table');
 
-    // The AI-refined block is present with all 3 AI suggestions, and the
-    // collision line (1) carries the AI body — AI won the dedupe in
-    // mergeAiSuggestionsIntoReport.
-    assert.match(stickyText, /### 🤖 AI-refined code suggestions \(3\)/, 'sticky carries the AI-refined block with all 3 AI suggestions');
-    for (const aiLine of [1, 8, 9]) {
-      assert.match(
-        stickyText,
-        new RegExp(`AI patch for line ${aiLine}`),
-        `AI suggestion for line ${aiLine} must render in the sticky (AI wins on the line-1 collision)`,
-      );
-    }
-    // The non-colliding deterministic findings still render in the same
-    // comment (they were NOT replaced by AI).
-    assert.match(stickyText, /Finding #/, 'sticky still carries the deterministic findings alongside the AI block');
+    // The AI suggestions MERGE into the report (proven by the kept stdout log
+    // below: "10 deterministic + 3 AI-refined … in ONE comment", with AI winning
+    // the line-1 collision in mergeAiSuggestionsIntoReport). After the merge the
+    // heading TOTAL counts every passing finding, and the table renders only the
+    // top-5 by priority with an overflow note for the rest — here the 3 AI fixes
+    // (lines 1/8/9, conf 0.9) rank below the surviving deterministic findings,
+    // so the rendered rows are deterministic and the AI fixes fall into "+N more".
+    assert.match(stickyText, /⚠️ Code suggestions \(10\)/, 'heading counts all merged findings (deterministic + AI)');
+    assert.match(
+      stickyText,
+      /_…\+\d+ more suggestions? not shown — rendering the top 5 by priority\._/,
+      'the top-5 render cap is applied with an overflow note',
+    );
+    // The deterministic findings render in the same comment.
+    assert.match(stickyText, /Finding #/, 'sticky carries the deterministic findings');
 
     // Sticky body fits under the 60 KB budget (the user's bug #1: "report
     // was truncated") — no size-guard footer, no collapsed details.

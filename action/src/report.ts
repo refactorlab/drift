@@ -70,14 +70,19 @@ export type MermaidFlowchart = {
 };
 
 export type ArchitectureFlow = {
+  // PRIMARY: a single color-coded diff diagram merging BEFORE and AFTER — the
+  // call graph at HEAD with every node tinted by its file's diff status (green
+  // added, amber modified/renamed, no class unchanged) plus a red `🗑 removed`
+  // card per deletion. The renderer prefers this single chart.
+  diff_merged_mermaid?: string;
   // Two separate charts — 🔴 BEFORE (the call graph pre-PR) and 🟢 AFTER
-  // (at HEAD). The renderer prefers these when both are present, falling
-  // back to `combined_mermaid` only for legacy/older-scanner reports.
+  // (at HEAD). FALLBACK for older-scanner reports that predate the merged
+  // diagram; the renderer uses these only when `diff_merged_mermaid` is absent.
   before_mermaid?: string;
   after_mermaid?: string;
   // Legacy single combined chart (BEFORE+AFTER+DS in one graph). Retained
   // for back-compat with older scanner builds; superseded by the
-  // before/after pair above.
+  // merged diagram above.
   combined_mermaid?: string;
   // Structured companions (see MermaidFlowchart). Populated alongside the
   // matching `*_mermaid` string; not consumed by the markdown renderer.
@@ -303,6 +308,51 @@ export type PrReviewExt = {
   duplication?: Duplication;
   tests_in_graph?: TestsInGraph;
   nfr_edge_cases?: NfrEdgeCases;
+  pr_quality?: PrQuality;
+};
+
+// ─── pr_quality (six dimensions + composite + the 18 render-ready gauges) ─
+
+export type GaugeLevel = 'low' | 'moderate' | 'high' | 'critical';
+
+/** One render-ready gauge — all orientation/normalization done in Rust. */
+export type QualityGauge = {
+  id: string;
+  group: string;
+  label: string;
+  /** Raw 0..100 → bar length. */
+  score: number;
+  /** Quality metric ("higher is better") vs risk metric. */
+  higher_is_better: boolean;
+  /** Band on the RISK magnitude → pill + bar colour. */
+  level: GaugeLevel;
+  /** `↑` risk · `↓` quality. */
+  arrow: string;
+  description: string;
+};
+
+export type GaugeRef = { label: string; score: number };
+
+export type GaugeSummary = {
+  context_fits?: boolean;
+  token_estimate?: number;
+  token_limit?: number;
+  highest?: GaugeRef[];
+  lowest?: GaugeRef[];
+};
+
+export type QualityComposite = {
+  score?: number;
+  band?: string;
+  label?: string;
+  confidence?: string;
+};
+
+export type PrQuality = {
+  composite?: QualityComposite;
+  /** The flat 18-metric projection the gauge report renders. */
+  gauges?: QualityGauge[];
+  gauge_summary?: GaugeSummary;
 };
 
 export type ScanPrOutput = {

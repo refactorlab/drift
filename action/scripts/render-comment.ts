@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { loadReport } from '../src/report.ts';
 import { renderOverview } from '../src/render/overview.ts';
+import { DEFAULT_MAX_SUGGESTIONS } from '../src/render/sections/suggestions.ts';
 import type { PrContext } from '../src/render/context.ts';
 
 // Split argv into `--flag=value` options and bare positionals so the three
@@ -68,13 +69,16 @@ writeFileSync(outputPath, body);
 const sigil = (cond: boolean) => (cond ? '✓' : '·');
 const has = (s: string) => body.includes(s);
 console.log(`✓ wrote ${outputPath} (${body.length} bytes / 65 536 cap)${ctx ? ' [with PR context → permalinks]' : ''}`);
-console.log(`  ${sigil(/\[!(TIP|WARNING|NOTE)\]/.test(body))} header verdict   ${sigil(has('### ✅ Before you merge'))} merge checklist`);
+// The verdict is now the 3-badge TL;DR row, the checklist is an H2, and the
+// gauge report leads the body — match the CURRENT markers (not the removed
+// callout / since-last-review line) so this summary tells the truth.
+console.log(`  ${sigil(/Address before merge|Looks good|Advisory/.test(body))} verdict badges   ${sigil(has('## ✅ Before you merge'))} merge checklist`);
 // Section titles are moved into <summary> by wrapSection, so match the title
 // text (not the stripped `## ` heading).
-console.log(`  ${sigil(has('📊 Business value'))} business value   ${sigil(has('Since last review'))} since-last-review`);
+console.log(`  ${sigil(has('📊 Business value'))} business value   ${sigil(has('Risk Report'))} complexity report`);
 console.log(`  ${sigil(has('⚠️ Code suggestions'))} code suggestions ${sigil(has('🛰 Risks'))} risks`);
 console.log(`  ${sigil(has('🏗 Architecture'))} architecture     ${sigil(has('🧪 Extended findings'))} extended findings`);
-console.log(`  suggestions render cap: ${maxSuggestions ?? 'default (10)'}${has('more not shown — rendering the top') ? ' (overflow trimmed)' : ''}`);
+console.log(`  suggestions render cap: ${maxSuggestions ?? `default (${DEFAULT_MAX_SUGGESTIONS})`}${has('more not shown — rendering the top') ? ' (overflow trimmed)' : ''}`);
 
 if (body.length > 60_000) console.warn(`! body exceeds 60 KiB soft budget (cap is 65 536)`);
 

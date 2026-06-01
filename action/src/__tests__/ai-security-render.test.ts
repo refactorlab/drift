@@ -105,41 +105,27 @@ test('XSS: hostile generator.tool/version in the footer is HTML-escaped (no <scr
 
 // ─── 3. Scanner findings — `why_it_matters` / `function` ───────────────
 
-test('XSS: hostile scanner why_it_matters — trust boundary documented in the body', () => {
-  // TRUST-BOUNDARY DOCUMENTATION (pinned by this test, not enforced
-  // by the renderer):
-  //
-  // The renderer puts `why_it_matters` VERBATIM inside a <details>
-  // markdown body. We DON'T HTML-escape it here because the scanner
-  // legitimately uses markdown formatting in those messages (code
-  // spans, **bold**, etc.). The contract is: GitHub's HTML
-  // sanitizer is the last line of defense for raw HTML in markdown
-  // comments — it strips <script>, onerror=, javascript: URLs, etc.
-  //
-  // What WE own (and what this file tests elsewhere):
-  //   • Attribute-context escaping in the footer's href.
-  //   • <code> escaping for tool/version.
-  //   • Code-span escaping in the title heading.
-  //   • Table-cell escape of `|` in function names.
-  //
-  // What this test asserts:
-  //   1. The hostile string survives as TEXT in the body (proves the
-  //      rendering happens — we're not silently dropping content).
-  //   2. The body still parses (sticky marker, footer, etc. intact).
-  //   3. The scanner cannot inject a markdown heading at SOL — that
-  //      is a CONTENT-SHAPE invariant the renderer does need to own
-  //      (a heading mid-comment would visually deface the review).
+test('XSS: hostile scanner finding label cannot break the suggestions table row', () => {
+  // The suggestions section no longer renders `why_it_matters` (the old
+  // per-finding <details> body is gone — the comment is a priority TABLE
+  // now), so there is no longer a verbatim-markdown trust boundary to pin
+  // there. The one scanner-derived value still rendered in the suggestions
+  // output is the finding LABEL (the suffix of `category_label`), which lands
+  // in a markdown table cell. A stray `|` there would split the cell into a
+  // fake column, so the renderer escapes it (`cell()` → `\|`). This test pins
+  // that the hostile label survives as ONE well-formed cell.
   const report = baseReport({
     pr_review: {
       code_suggestions: [
         {
           category: 'B',
+          // hostile suffix carries a pipe (would inject a fake column) and a
+          // `## heading`-shaped fragment (must NOT become a real heading).
+          category_label: 'Product correctness — EVIL_COL | ## INJECTED_FROM_SCANNER',
           file: 'svc/a.py',
-          function: 'load_user',
           line: 12,
           confidence: 0.9,
-          why_it_matters:
-            '<script>alert(1)</script>\n## INJECTED_FROM_SCANNER\nbenign trailing content',
+          why_it_matters: 'load-bearing text here, longer than 10',
           references: [{ url: 'https://example.com/x' }],
         },
       ],
@@ -147,9 +133,18 @@ test('XSS: hostile scanner why_it_matters — trust boundary documented in the b
   });
   const out = renderOverview(report);
 
-  // The hostile text appears as bytes (we don't drop content) — the
-  // GitHub sanitizer is responsible for rendering it safely.
-  assert.ok(out.includes('INJECTED_FROM_SCANNER'));
+  // The label is rendered (we're not silently dropping content)…
+  const row = out.split('\n').find((l) => l.startsWith('|') && l.includes('EVIL_COL'))!;
+  assert.ok(row, 'the finding label renders as a table row');
+  // …but the `|` inside it is escaped so it stays ONE cell — no fake column.
+  assert.match(row, /EVIL_COL \\\| ## INJECTED_FROM_SCANNER/);
+  assert.doesNotMatch(row, /EVIL_COL \| ## INJECTED/, 'raw `|` would split the cell into extra columns');
+  // The `## …` fragment is trapped mid-cell, never at start of a line, so it
+  // can never render as a real markdown heading that defaces the review.
+  for (const m of out.matchAll(/## INJECTED_FROM_SCANNER/g)) {
+    const sol = out.lastIndexOf('\n', m.index! - 1) + 1;
+    assert.notEqual(out.slice(sol, m.index!), '', 'hostile "## INJECTED_FROM_SCANNER" landed at start of a line');
+  }
   // Sticky marker + footer still anchor the body.
   assert.ok(out.includes('<!-- drift:sticky-comment -->'));
   assert.match(out, /Posted by <a href="https:\/\/drift\.dev">Drift<\/a>/);

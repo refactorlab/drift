@@ -35,6 +35,11 @@ regex = { version = "1", default-features = false, features = ["std", "perf"] }
 # the Python rapidfuzz dep used by the previous Python implementation.
 # Pure-Rust, no system deps.
 strsim = "0.11"
+# Identifier case-splitting (camelCase / snake_case / SCREAMING_SNAKE →
+# words) for the `pr_algorithms::pr_quality` comprehensibility naming
+# metric. Zero-dependency, std-only, MIT/Apache-2.0. Chosen over
+# convert_case (which pulls unicode-segmentation). See PR_QUALITY_RESEARCH §8.1.
+heck = "0.5"
 petgraph = "0.8"
 # Data-parallelism for tree-sitter parsing across files. Each worker
 # thread owns its own Parser and pre-compiled Query (one per language),
@@ -99,6 +104,17 @@ jsonschema = { version = "0.46", default-features = false }
 # and to perf-gate the resolver/containment changes coming in Phases 1+.
 # `html_reports` lets us inspect distributions when a number moves.
 criterion = { version = "0.5", features = ["html_reports"] }
+# Token-count ORACLE for the `pr_quality::tokens` byte-based estimator
+# validation (o200k_base / cl100k_base). Dev-only: the embedded BPE blob
+# never ships in the release binary; MIT; fully offline (no network in CI).
+# Validates our `bytes/K_code` estimate against real OpenAI tokenization.
+# See PR_QUALITY_RESEARCH §8.2.
+tiktoken-rs = "0.11"
+# Property-based tests for the six pr_quality scorers: bounds ∈ [0,1],
+# determinism, order-independence, monotonicity, NaN/Inf guards. Shrinking
+# + persisted `proptest-regressions/` seeds match the constants-regression
+# governance discipline. Dev-only.
+proptest = "1"
 
 [[bench]]
 name = "scan_pipeline"

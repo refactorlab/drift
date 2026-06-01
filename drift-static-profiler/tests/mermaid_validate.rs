@@ -431,6 +431,11 @@ fn architecture_flow_pipeline_validates_for_adversarial_repos() {
     if !arch.after_mermaid.is_empty() {
         validate_pipeline("arch.after_mermaid", &arch.after_mermaid);
     }
+    // The PRIMARY merged diff diagram (AFTER topology + removed cards) must
+    // parse too — it's what the PR comment now leads with.
+    if !arch.diff_merged_mermaid.is_empty() {
+        validate_pipeline("arch.diff_merged_mermaid", &arch.diff_merged_mermaid);
+    }
 }
 
 /// END-TO-END: synthetic-name nodes (`<module>` / `<anonymous@N>`, incl. an

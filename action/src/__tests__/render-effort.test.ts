@@ -1,7 +1,9 @@
 // Review-effort model: the deterministic 1–5 "how much careful review does this
-// need" score, its time band, and its drivers — plus the header elements it
-// feeds (the hero "bottom line", the "Look here first" pointer, the effort
-// badge). These are the principal-engineer TLDR additions, so they're pinned.
+// need" score, its time band, and its drivers — plus the header element it now
+// feeds: the REVIEW EFFORT KPI gauge tile (and the risk/review-time TL;DR badge).
+// The old prose hero "bottom line" and "Look here first" pointer were removed, so
+// the effort signal lives in the gauge dashboard, not prose. These are the
+// principal-engineer TLDR additions, so they're pinned.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,6 +44,13 @@ function axis(name: ValueAxis['name'], delta: number): ValueAxis {
 function tile(html: string, title: string): string {
   const cell = html.split('</picture>').find((c) => c.includes(`alt="${title} `));
   return cell ? `${cell}</picture>` : '';
+}
+
+// The header's first block is a centered 3-badge TL;DR: verdict · merge-confidence
+// · risk + review-time band. This returns that `<p align="center">…</p>` row so a
+// test can assert the risk/review-time badge the effort score feeds.
+function badgeRow(html: string): string {
+  return html.split('\n').find((l) => l.startsWith('<p align="center">')) ?? '';
 }
 
 // ── effort scoring ────────────────────────────────────────────────────────────
@@ -88,10 +97,15 @@ test('effort: monotonic — more findings never lowers the score', () => {
 
 // ── header surface ──────────────────────────────────────────────────────────
 
-test('header: hero bottom-line leads with a verdict dot and the move', () => {
+test('header: the TL;DR badge row leads with the verdict recommendation', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  const heroLine = h.split('\n').find((l) => /Address before merge|Looks good|Advisory/.test(l)) ?? '';
-  assert.match(heroLine, /^> (🟢|🟡|🔴|🔵) /, 'hero line opens with a status dot');
+  // The verdict (the "move") now leads the header as the first centered badge —
+  // the prose hero bottom-line was removed. The header opens with the badge row.
+  assert.ok(h.startsWith('<p align="center">'), 'header opens with the centered TL;DR badge row');
+  const row = badgeRow(h);
+  const firstBadge = row.match(/<img alt="([^"]+)"/)?.[1] ?? '';
+  assert.match(firstBadge, /^(✓ Looks good|⚠ Address before merge|ℹ Advisory)$/, 'first badge is the verdict recommendation');
+  assert.match(firstBadge, /⚠ Address before merge/, 'kotlin-ktor → "⚠ Address before merge"');
 });
 
 test('header: dashboard carries both 0–5 gauge tiles (confidence + effort), no prose signal line', () => {
@@ -102,17 +116,10 @@ test('header: dashboard carries both 0–5 gauge tiles (confidence + effort), no
   assert.match(tile(h, 'REVIEW EFFORT'), /alt="REVIEW EFFORT \d\/5"/, 'review-effort gauge tile (N/5)');
 });
 
-test('header: confidence trend sparkline renders only with ≥2 pushes of history', () => {
-  const report = loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json'));
-  const first = renderHeader(report, CTX, { confTrend: [3] });
-  assert.doesNotMatch(first, /trend `/, 'no sparkline on the first push');
-  const later = renderHeader(report, CTX, { confTrend: [2, 3, 4] });
-  assert.match(
-    later,
-    /<sub>🛡️ Merge-confidence trend `[▁▂▃▄▅▆▇█]+` \(over the last 3 pushes\)<\/sub>/,
-    'full trend line: <sub> wrapper + glyphs + push count',
-  );
-});
+// (Removed) "confidence trend sparkline" — the `🛡️ Merge-confidence trend …`
+// sub-line was deleted from the header; the confidence signal now lives solely in
+// the MERGE CONFIDENCE gauge tile (covered above). No badge equivalent exists, so
+// the test has nothing to re-point at.
 
 test('header: effort + confidence KPI gauge tiles render in the dashboard', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
@@ -120,34 +127,30 @@ test('header: effort + confidence KPI gauge tiles render in the dashboard', () =
   assert.notEqual(tile(h, 'MERGE CONFIDENCE'), '', 'merge-confidence tile present');
 });
 
-test('header: "Look here first" points at the top correctness finding with a permalink', () => {
+test('header: the effort score feeds the risk + review-time TL;DR badge', () => {
+  // The old prose "Look here first" pointer was removed; the effort model's
+  // header surface is now the third TL;DR badge — "<risk> risk · <time> review".
+  // A small, low-effort PR (1/5) → "Low risk · … review", coloured green.
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  assert.match(h, /👉 \*\*Look here first:\*\* \[`OrdersRepository\.kt:17`\]/);
-  assert.match(h, /raw SQL concatenation · \d+% confidence/);
+  assert.match(badgeRow(h), /<img alt="Low risk · \d+ min review" src="https:\/\/img\.shields\.io\/badge\/[^"]*-2ea043\?style=flat-square"/, 'green "Low risk · N min review" badge from a 1–2/5 effort');
 });
 
-test('header: callout TL;DR no longer restates the recommendation (hero owns it)', () => {
-  const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  // The "address before merge" call appears exactly once (the hero line), not
-  // duplicated inside the [!WARNING] TL;DR paragraph.
-  const inCallout = h.split('[!WARNING]')[1] ?? '';
-  const tldrPara = inCallout.split('\n').find((l) => /\*\*TL;DR/.test(l)) ?? '';
-  assert.doesNotMatch(tldrPara, /address before merge/i, 'TL;DR paragraph does not echo the recommendation');
-  // The advisory status rides the sub-line now, not a prose note inside the TL;DR.
-  assert.doesNotMatch(tldrPara, /Advisory — does not fail the check/, 'advisory note no longer rides in the TL;DR');
-  assert.match(h, /advisory — does not gate the merge/, 'advisory is surfaced in the sub-line');
-});
+// (Removed) "callout TL;DR no longer restates the recommendation" — both the GFM
+// callout (`[!WARNING]` + `**TL;DR —**`) and the advisory sub-line were deleted
+// from the header. The recommendation now appears exactly once, as the first
+// TL;DR badge (asserted by "the TL;DR badge row leads with the verdict
+// recommendation" above), so there is no callout/sub-line surface left to test.
 
-test('header: clean improvement → green dot, "ship it", effort gauge still present', () => {
+test('header: clean improvement → green "✓ Looks good" badge, 1/5 green effort tile', () => {
   const r = makeReport({
     overall_drift: { percent: 8, direction: 'up', confidence: 'high' },
     value_card: { axes: [axis('customer', 8)] },
     counts: { new_test_files: { value: 4, label: 'New test files' } },
   });
   const h = renderHeader(r, CTX);
-  const heroLine = h.split('\n').find((l) => /Looks good/.test(l)) ?? '';
-  assert.match(heroLine, /^> 🟢 /, 'green dot for a clean improvement');
-  assert.match(heroLine, /ship it/i);
+  // Clean improvement → the verdict badge is green "✓ Looks good" (was the green
+  // hero dot + "ship it" prose).
+  assert.match(badgeRow(h), /<img alt="✓ Looks good" src="https:\/\/img\.shields\.io\/badge\/[^"]*-2ea043\?style=flat-square"/, 'green "✓ Looks good" verdict badge for a clean improvement');
   assert.match(tile(h, 'REVIEW EFFORT'), /alt="REVIEW EFFORT 1\/5"/, '1/5 effort tile');
   assert.match(tile(h, 'REVIEW EFFORT'), /%234ae3b0/, '1/5 effort → green');
 });

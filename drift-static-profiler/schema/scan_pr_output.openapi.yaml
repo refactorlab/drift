@@ -124,6 +124,86 @@ components:
         duplication: { $ref: '#/components/schemas/DuplicationBlock' }
         tests_in_graph: { $ref: '#/components/schemas/TestsInGraphBlock' }
         nfr_edge_cases: { $ref: '#/components/schemas/NfrCoverageBlock' }
+        pr_quality: { $ref: '#/components/schemas/PrQualityBlock' }
+
+    PrQualityBlock:
+      type: object
+      description: |
+        Six research-grounded PR-quality dimensions + a unified composite
+        (see PR_QUALITY_RESEARCH.md / PR_QUALITY_METRICS_PLAN.md). Each
+        dimension carries a machine `score` (0..1) and a presentational
+        `band`; the composite is a weighted geometric mean. Advisory —
+        these never gate a merge. Implemented by
+        `src/pr_algorithms/pr_quality/`.
+      properties:
+        composite: { $ref: '#/components/schemas/QualityComposite' }
+        comprehensibility: { $ref: '#/components/schemas/QualityDimension' }
+        longevity: { $ref: '#/components/schemas/QualityDimension' }
+        correctness_confidence: { $ref: '#/components/schemas/QualityDimension' }
+        operational_risk: { $ref: '#/components/schemas/QualityDimension' }
+        team_process: { $ref: '#/components/schemas/QualityDimension' }
+        llm_complexity: { $ref: '#/components/schemas/LlmComplexityBlock' }
+        gauges:
+          type: array
+          description: Flat, render-ready 18-metric projection (charts-of-metrics.md).
+          items: { $ref: '#/components/schemas/QualityGauge' }
+        gauge_summary: { type: object }
+
+    QualityGauge:
+      type: object
+      description: One render-ready gauge — a 0..100 metric with band + polarity.
+      properties:
+        id: { type: string }
+        group: { type: string }
+        label: { type: string }
+        score: { type: integer, minimum: 0, maximum: 100, description: "raw value → bar length" }
+        higher_is_better: { type: boolean }
+        level: { type: string, enum: [low, moderate, high, critical], description: "band on RISK magnitude" }
+        arrow: { type: string, description: "↑ risk · ↓ quality" }
+        description: { type: string }
+
+    QualityDimension:
+      type: object
+      description: One 0..1 quality dimension. `score` is machine-only; render `band`.
+      properties:
+        score: { type: number, minimum: 0, maximum: 1 }
+        band: { type: string, description: "green | amber | red" }
+        direction: { type: string, enum: [up, down, neutral] }
+        confidence: { type: string, enum: [low, medium, high] }
+        components: { type: array, items: { type: object } }
+        formula: { type: string }
+        inputs: { type: object }
+        kv: { type: array, items: { type: object } }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceCitationBlock' }
+        notes: { type: array, items: { type: string } }
+
+    QualityComposite:
+      type: object
+      description: Weighted-geometric-mean PR-health headline (A..E band). Advisory.
+      properties:
+        score: { type: number, minimum: 0, maximum: 1 }
+        band: { type: string, description: "letter A..E" }
+        label: { type: string }
+        confidence: { type: string, enum: [low, medium, high] }
+        aggregation: { type: string }
+        weights: { type: object }
+        modifiers: { type: array, items: { type: object } }
+        notes: { type: array, items: { type: string } }
+
+    LlmComplexityBlock:
+      type: object
+      description: |
+        Flagship: token footprint, context-window pressure, an 0..1
+        agent-reviewability dimension, semantic density, and the
+        small-diff/high-centrality inversion flag.
+      properties:
+        reviewability: { $ref: '#/components/schemas/QualityDimension' }
+        token_footprint: { type: object }
+        context: { type: object }
+        semantic_density: { type: object }
+        inversion: { type: object }
 
     TechDebtBlock:
       type: object
@@ -432,6 +512,13 @@ components:
         after_mermaid:
           type: string
           description: Mermaid source for the AFTER subgraph
+        diff_merged_mermaid:
+          type: string
+          description: |
+            PRIMARY: a single color-coded diff diagram merging BEFORE and
+            AFTER — the AFTER (HEAD) topology with file-status colouring plus
+            a red `🗑 removed` card per deletion. The action renderer prefers
+            this; before/after remain a fallback for older renderers.
         combined_mermaid:
           type: string
           description: 'Alternative: a single mermaid combining both sides'
@@ -450,6 +537,9 @@ components:
             O3: structured form of `combined_mermaid` (the
             three-subgraph BEFORE/AFTER/DS layout). Mirrors the
             rendered string 1-to-1.
+        diff_merged_structured:
+          $ref: '#/components/schemas/MermaidFlowchart'
+          description: 'Structured form of `diff_merged_mermaid` (1-to-1 with the rendered string).'
         data_structures:
           type: array
           items: { $ref: '#/components/schemas/DataStructureEntry' }

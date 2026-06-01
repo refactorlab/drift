@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderOverview } from '../render/overview.ts';
+import { DEFAULT_MAX_SUGGESTIONS } from '../render/sections/suggestions.ts';
 import type { ScanPrOutput, CodeSuggestion } from '../report.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -58,11 +59,14 @@ function tableRows(body: string): number {
 
 // ─── UNIT: renderOverview cap ──────────────────────────────────────────────
 
-test('default cap: 25 findings → 10 table rows, true total in heading, overflow note', () => {
+test('default cap: 25 findings → DEFAULT_MAX_SUGGESTIONS rows, true total in heading, overflow note', () => {
   const body = renderOverview(reportWith(25));
-  assert.equal(tableRows(body), 10, 'priority table must cap at the default 10');
+  assert.equal(tableRows(body), DEFAULT_MAX_SUGGESTIONS, `priority table must cap at the default ${DEFAULT_MAX_SUGGESTIONS}`);
   assert.match(body, /⚠️ Code suggestions \(25\)/, 'heading keeps the TRUE total (25)');
-  assert.match(body, /…\+15 more suggestions not shown — rendering the top 10 by priority\./);
+  assert.match(
+    body,
+    new RegExp(`…\\+${25 - DEFAULT_MAX_SUGGESTIONS} more suggestions not shown — rendering the top ${DEFAULT_MAX_SUGGESTIONS} by priority\\.`),
+  );
 });
 
 test('override (max=3): 25 findings → 3 rows + "+22 more" note', () => {
@@ -78,16 +82,16 @@ test('override above total (max=100): all 25 rendered, NO overflow note', () => 
   assert.doesNotMatch(body, /more suggestions? not shown/);
 });
 
-test('cap never trips when total ≤ cap (8 findings → 8 rows, no note)', () => {
-  const body = renderOverview(reportWith(8));
-  assert.equal(tableRows(body), 8);
+test('cap never trips when total ≤ cap (no overflow note)', () => {
+  const body = renderOverview(reportWith(DEFAULT_MAX_SUGGESTIONS));
+  assert.equal(tableRows(body), DEFAULT_MAX_SUGGESTIONS);
   assert.doesNotMatch(body, /more suggestions? not shown/);
 });
 
-test('invalid overrides (0, negative, NaN) fall back to the default 10', () => {
+test('invalid overrides (0, negative, NaN) fall back to the default', () => {
   for (const bad of [0, -5, Number.NaN]) {
     const body = renderOverview(reportWith(25), { maxSuggestions: bad });
-    assert.equal(tableRows(body), 10, `max=${bad} must fall back to 10`);
+    assert.equal(tableRows(body), DEFAULT_MAX_SUGGESTIONS, `max=${bad} must fall back to ${DEFAULT_MAX_SUGGESTIONS}`);
   }
 });
 
@@ -125,9 +129,9 @@ function runCli(env: Record<string, string>, extraArgs: string[]): Promise<{ cod
   });
 }
 
-test('CLI: default (no flag) caps the rendered comment at 10', async () => {
+test('CLI: default (no flag) caps the rendered comment at the default', async () => {
   const { body } = await runCli({}, []);
-  assert.equal(tableRows(body), 10);
+  assert.equal(tableRows(body), DEFAULT_MAX_SUGGESTIONS);
   assert.match(body, /⚠️ Code suggestions \(25\)/);
 });
 

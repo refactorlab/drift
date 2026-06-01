@@ -1,0 +1,533 @@
+{
+  "pr_review_ext": {
+    "pr_quality": {
+      "composite": {
+        "score": 0.47,
+        "band": "D",
+        "label": "significant concerns",
+        "confidence": "low",
+        "aggregation": "weighted_geometric_mean",
+        "weights": {
+          "comprehensibility": 0.14,
+          "correctness_confidence": 0.24,
+          "llm_complexity": 0.06,
+          "longevity": 0.18,
+          "operational_risk": 0.28,
+          "team_process": 0.1
+        },
+        "notes": [
+          "Advisory — does not gate the merge. Weighted geometric mean (partial non-compensability); destructive migrations apply a hard cap."
+        ]
+      },
+      "comprehensibility": {
+        "score": 0.7921042805405765,
+        "band": "green",
+        "direction": "up",
+        "confidence": "medium",
+        "components": [
+          {
+            "key": "explainability",
+            "value": 0.77,
+            "weight": 0.45,
+            "detail": "control-flow + comment density + naming"
+          },
+          {
+            "key": "decision_transparency",
+            "value": 1.0,
+            "weight": 0.3,
+            "detail": "magic numbers + rationale − TODO"
+          },
+          {
+            "key": "context_dependency",
+            "value": 0.58,
+            "weight": 0.25,
+            "detail": "ease = 1 − coupling/centrality cost"
+          }
+        ],
+        "formula": "comprehensibility = 0.45·explainability + 0.30·transparency + 0.25·context_ease",
+        "inputs": {
+          "comment_density": 0.0,
+          "has_commit_narrative": true,
+          "magic_ratio": 0.0,
+          "naming_clear_fraction": 1.0
+        },
+        "sources": [
+          {
+            "label": "understandability",
+            "source": "Bacchelli & Bird (review challenge) + SonarQube Cognitive Complexity + Lawrie naming",
+            "source_link": "https://www.sonarsource.com/resources/cognitive-complexity/"
+          }
+        ],
+        "notes": [
+          "Control-flow term uses a complexity+nesting cognitive surrogate (capped); true cognitive complexity is a planned upgrade."
+        ]
+      },
+      "longevity": {
+        "score": 0.9305557547055167,
+        "band": "green",
+        "direction": "up",
+        "confidence": "medium",
+        "components": [
+          {
+            "key": "fragility",
+            "value": 0.15,
+            "weight": 0.45,
+            "detail": "afferent blast surface (fan-in/centrality/HK)"
+          },
+          {
+            "key": "net_debt",
+            "value": 0.0,
+            "weight": 0.35,
+            "detail": "SQALE debt ratio over new code (signed delta)"
+          },
+          {
+            "key": "burden",
+            "value": 0.0,
+            "weight": 0.2,
+            "detail": "TODO + hardcoded-value density"
+          }
+        ],
+        "formula": "longevity = 1 − (0.45·fragility + 0.35·net_debt_ratio + 0.20·burden)",
+        "inputs": {
+          "debt_introduced_hours": 2.0,
+          "debt_resolved_hours": 3.0,
+          "fragility_max": 0.21,
+          "magic_literals": 0.0,
+          "net_debt_hours": -1.0,
+          "net_debt_usd": -95.0,
+          "todo_markers": 0.0
+        },
+        "sources": [
+          {
+            "label": "fragility",
+            "source": "CK/Henry-Kafura coupling + NDepend Rank (PageRank×N)",
+            "source_link": "https://www.ndepend.com/docs/code-metrics"
+          },
+          {
+            "label": "net debt",
+            "source": "SonarQube SQALE debt ratio (30 min/LOC)",
+            "source_link": "https://docs.sonarsource.com/sonarqube-server/user-guide/code-metrics/metrics-definition"
+          }
+        ]
+      },
+      "correctness_confidence": {
+        "score": 0.12236046061619103,
+        "band": "red",
+        "direction": "down",
+        "confidence": "low",
+        "components": [
+          {
+            "key": "coverage",
+            "value": 0.0,
+            "weight": 0.45,
+            "detail": "static test-reachability of changed roots"
+          },
+          {
+            "key": "repeatability",
+            "value": 0.92,
+            "weight": 0.3,
+            "detail": "idempotency/determinism of side effects"
+          },
+          {
+            "key": "edge_case_surface",
+            "value": 0.98,
+            "weight": 0.25,
+            "detail": "input-assumption surface (params + branches)"
+          }
+        ],
+        "formula": "geometric mean: coverage^0.45 · repeatability^0.30 · edge^0.25 (weakest-link)",
+        "inputs": {
+          "affected_roots": 1.0,
+          "coverage_is_proxy": true,
+          "new_test_files": 0.0,
+          "uncovered_roots": 1.0
+        },
+        "sources": [
+          {
+            "label": "coverage gate",
+            "source": "SonarQube Coverage-on-New-Code (80%) — static reachability is a proxy",
+            "source_link": "https://docs.sonarsource.com/sonarqube-server/user-guide/code-metrics/metrics-definition"
+          },
+          {
+            "label": "idempotency",
+            "source": "AWS making-retries-safe + RFC 9110 method idempotency",
+            "source_link": "https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/"
+          }
+        ],
+        "notes": [
+          "Coverage is a STATIC reachability proxy, not executed coverage (over/under-approximates). Supply a real patch-coverage % to lift confidence."
+        ]
+      },
+      "operational_risk": {
+        "score": 0.48748664823676974,
+        "band": "amber",
+        "direction": "down",
+        "confidence": "medium",
+        "components": [
+          {
+            "key": "rollback",
+            "value": 0.3,
+            "weight": 0.45,
+            "detail": "revert difficulty (migrations, removed files)"
+          },
+          {
+            "key": "blast_radius",
+            "value": 0.44,
+            "weight": 0.35,
+            "detail": "entrypoint reach + centrality"
+          },
+          {
+            "key": "observability",
+            "value": 1.0,
+            "weight": 0.2,
+            "detail": "I/O roots with no logging (blind spots)"
+          }
+        ],
+        "formula": "risk = 0.45·rollback + 0.35·blast + 0.20·observability; floor 0.80 on destructive DDL",
+        "inputs": {
+          "affected_roots": 1.0,
+          "blocking_migration": false,
+          "destructive_migration": false,
+          "removed_or_renamed_files": false
+        },
+        "sources": [
+          {
+            "label": "rollback",
+            "source": "strong_migrations / squawk (irreversible vs blocking DDL)",
+            "source_link": "https://github.com/ankane/strong_migrations"
+          },
+          {
+            "label": "blast radius",
+            "source": "Google SRE — gradual rollout cohorts",
+            "source_link": "https://sre.google/sre-book/reliable-product-launches/"
+          }
+        ],
+        "notes": [
+          "Higher = riskier. Advisory — does not gate the merge."
+        ]
+      },
+      "team_process": {
+        "score": 0.896,
+        "band": "green",
+        "direction": "up",
+        "confidence": "medium",
+        "components": [
+          {
+            "key": "review_fatigue",
+            "value": 0.1,
+            "weight": 1.0,
+            "detail": "PR-size reviewability (SmartBear 200/400 LOC, Google 50 files)"
+          },
+          {
+            "key": "knowledge_concentration",
+            "value": 0.53,
+            "weight": 0.0,
+            "detail": "static specialization approx (Herfindahl); not bus factor"
+          }
+        ],
+        "formula": "team_process = 1 − review_fatigue;  review_fatigue = max(smoothstep(loc,200,400), smoothstep(files,10,50))",
+        "inputs": {
+          "files_changed": 2.0,
+          "knowledge_concentration": 0.53,
+          "loc_changed": 240.0,
+          "review_fatigue": 0.1
+        },
+        "sources": [
+          {
+            "label": "review size",
+            "source": "SmartBear/Cisco study (≤200 ideal, >400 overwhelms) + Google eng-practices",
+            "source_link": "https://google.github.io/eng-practices/review/developer/small-cls.html"
+          }
+        ],
+        "notes": [
+          "Advisory — process signal, does not gate the merge.",
+          "knowledge_concentration is a STATIC specialization approximation (Herfindahl over churn), NOT CHAOSS bus factor (needs git authorship).",
+          "Few files changed — concentration index is not meaningful at this size."
+        ]
+      },
+      "llm_complexity": {
+        "reviewability": {
+          "score": 0.8994866666666667,
+          "band": "green",
+          "direction": "up",
+          "confidence": "medium",
+          "components": [
+            {
+              "key": "token_fit",
+              "value": 0.09,
+              "weight": 0.45,
+              "detail": "diff token footprint vs usable context"
+            },
+            {
+              "key": "cross_file_coupling",
+              "value": 0.1,
+              "weight": 0.25,
+              "detail": "outgoing edges from changed code"
+            },
+            {
+              "key": "files_changed",
+              "value": 0.0,
+              "weight": 0.2,
+              "detail": "context-switching surface"
+            },
+            {
+              "key": "dispersion",
+              "value": 0.33,
+              "weight": 0.1,
+              "detail": "change scatter (files / functions)"
+            }
+          ],
+          "formula": "reviewability = 1 − (0.45·token_fit + 0.25·coupling + 0.20·files + 0.10·dispersion)",
+          "inputs": {
+            "context_load": 0.09,
+            "diff_tokens": 3120.0,
+            "files_changed": 2.0
+          },
+          "sources": [
+            {
+              "label": "review degrades with context",
+              "source": "SWE-PRBench: LLM review quality degrades monotonically as reviewed context grows",
+              "source_link": "https://arxiv.org/abs/2603.26130"
+            }
+          ]
+        },
+        "token_footprint": {
+          "estimate": 3120,
+          "lo": 2496,
+          "hi": 3744,
+          "source": "loc×13 (fallback)"
+        },
+        "context": {
+          "band": "green",
+          "target_window": 1000000,
+          "usable_budget": 275000,
+          "load": 0.09373333333333334,
+          "note": "assumes ~30% usable context (long-context degradation: NoLiMa/Chroma)"
+        },
+        "semantic_density": {
+          "value": 208.0,
+          "band": "normal"
+        },
+        "inversion": {
+          "active": false,
+          "severity": 0.0
+        }
+      },
+      "gauges": [
+        {
+          "id": "token_footprint",
+          "group": "LLM Complexity",
+          "label": "Token footprint",
+          "score": 1,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "How many tokens this PR consumes when fed to a model — a direct proxy for how hard it is to reason about automatically."
+        },
+        {
+          "id": "context_window_pressure",
+          "group": "LLM Complexity",
+          "label": "Context window pressure",
+          "score": 9,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "Does the full diff fit in a single context window, or must it be chunked? Chunking loses semantic coherence and misses cross-file coupling."
+        },
+        {
+          "id": "agent_reviewability",
+          "group": "LLM Complexity",
+          "label": "Agent reviewability",
+          "score": 90,
+          "higher_is_better": true,
+          "level": "low",
+          "arrow": "↓",
+          "description": "Can an LLM give useful feedback, or is the change too large and tangled to reason about reliably?"
+        },
+        {
+          "id": "semantic_density",
+          "group": "LLM Complexity",
+          "label": "Semantic density",
+          "score": 50,
+          "higher_is_better": false,
+          "level": "moderate",
+          "arrow": "↑",
+          "description": "Tokens per logical change — distinguishes heavy boilerplate from dense, complex business logic."
+        },
+        {
+          "id": "explainability",
+          "group": "Comprehensibility",
+          "label": "Explainability score",
+          "score": 77,
+          "higher_is_better": true,
+          "level": "low",
+          "arrow": "↓",
+          "description": "Can an unfamiliar engineer understand the change without asking someone? Comment density, naming clarity, control-flow simplicity."
+        },
+        {
+          "id": "context_dependency",
+          "group": "Comprehensibility",
+          "label": "Context dependency",
+          "score": 42,
+          "higher_is_better": false,
+          "level": "moderate",
+          "arrow": "↑",
+          "description": "How much prior knowledge is needed to review this PR? Does it touch highly-coupled core abstractions or isolated modules?"
+        },
+        {
+          "id": "decision_transparency",
+          "group": "Comprehensibility",
+          "label": "Decision transparency",
+          "score": 100,
+          "higher_is_better": true,
+          "level": "low",
+          "arrow": "↓",
+          "description": "Are non-obvious engineering choices explained (algorithm choice, the rationale behind a magic number)?"
+        },
+        {
+          "id": "maintenance_burden",
+          "group": "Longevity",
+          "label": "Maintenance burden",
+          "score": 0,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "How much will this code need to be touched again? Coupling, hardcoded values, and TODO density."
+        },
+        {
+          "id": "debt_delta",
+          "group": "Longevity",
+          "label": "Debt introduced vs. resolved",
+          "score": 0,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "Net technical-debt delta from this PR — debt added relative to what it cleans up."
+        },
+        {
+          "id": "fragility_index",
+          "group": "Longevity",
+          "label": "Fragility index",
+          "score": 15,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "How many other components quietly break if this code changes? High fan-out coupling and downstream dependents."
+        },
+        {
+          "id": "test_coverage",
+          "group": "Correctness Confidence",
+          "label": "Test coverage (changed lines)",
+          "score": 0,
+          "higher_is_better": true,
+          "level": "critical",
+          "arrow": "↓",
+          "description": "Not overall coverage — specifically the test reachability of the lines changed or added in this PR."
+        },
+        {
+          "id": "repeatability",
+          "group": "Correctness Confidence",
+          "label": "Repeatability",
+          "score": 92,
+          "higher_is_better": true,
+          "level": "low",
+          "arrow": "↓",
+          "description": "Are side effects isolated and deterministic? Can you run this twice and get identical results?"
+        },
+        {
+          "id": "edge_case_surface",
+          "group": "Correctness Confidence",
+          "label": "Edge case surface",
+          "score": 2,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "The volume of implicit input/state assumptions — high surface means many boundary/failure conditions are easy to overlook."
+        },
+        {
+          "id": "rollback_complexity",
+          "group": "Operational",
+          "label": "Rollback complexity",
+          "score": 30,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "If this fails in production, how hard is the rollback? Migrations, API changes, and stateful data transforms raise it."
+        },
+        {
+          "id": "observability",
+          "group": "Operational",
+          "label": "Observability",
+          "score": 0,
+          "higher_is_better": true,
+          "level": "critical",
+          "arrow": "↓",
+          "description": "Does this change add logging/metrics/tracing, or introduce an operational blind spot?"
+        },
+        {
+          "id": "blast_radius",
+          "group": "Operational",
+          "label": "Blast radius",
+          "score": 44,
+          "higher_is_better": false,
+          "level": "moderate",
+          "arrow": "↑",
+          "description": "What share of the system is exposed if this breaks? Centrality, entrypoint reach, and fan-in."
+        },
+        {
+          "id": "knowledge_concentration",
+          "group": "Team & Process",
+          "label": "Knowledge concentration",
+          "score": 53,
+          "higher_is_better": false,
+          "level": "moderate",
+          "arrow": "↑",
+          "description": "Is the change concentrated in code only a few people own? A static specialization proxy (not a git bus factor)."
+        },
+        {
+          "id": "review_fatigue",
+          "group": "Team & Process",
+          "label": "Review fatigue risk",
+          "score": 10,
+          "higher_is_better": false,
+          "level": "low",
+          "arrow": "↑",
+          "description": "Is the PR too large to get a real review? Reviewers miss issues in the latter half of a big diff."
+        }
+      ],
+      "gauge_summary": {
+        "context_fits": true,
+        "token_estimate": 3120,
+        "token_limit": 128000,
+        "highest": [
+          {
+            "label": "Observability",
+            "score": 0
+          },
+          {
+            "label": "Test coverage (changed lines)",
+            "score": 0
+          },
+          {
+            "label": "Knowledge concentration",
+            "score": 53
+          },
+          {
+            "label": "Semantic density",
+            "score": 50
+          }
+        ],
+        "lowest": [
+          {
+            "label": "Maintenance burden",
+            "score": 0
+          },
+          {
+            "label": "Decision transparency",
+            "score": 100
+          }
+        ]
+      }
+    }
+  }
+}

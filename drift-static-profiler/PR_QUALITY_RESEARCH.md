@@ -353,3 +353,66 @@ silently; record cited-vs-knob provenance + corpus percentiles in `CALIBRATION.m
 8. **Confidence discipline:** proxy-only ⇒ cap Medium; missing source text ⇒ drop a
    level; tiny PR ⇒ lower; knowledge-concentration labeled `static-approx` (never "bus
    factor").
+
+---
+
+## 8. FINAL VERIFIED RECORD — authoritative (supersedes earlier sections on conflict)
+
+Reconciliation of two independent research bodies — this repo's round 1–3 agents **and** a parallel `deep-research` sweep (210+ adversarially-verified agent-calls; see `PR_QUALITY_research_agent.json`) — plus a final primary-source verification pass. Tags: **[FACT]** = verified primary source; **[KNOB]** = tuning value, no authoritative source, calibrate empirically; **[FACT+CAVEAT]** = real but with a load-bearing nuance.
+
+### 8.1 Crate build-vs-buy — FINAL
+| Crate | Decision | Ver / License | Why |
+|---|---|---|---|
+| **heck** | **ADOPT (runtime)** | 0.5 · MIT/Apache | zero-dep identifier case-split for naming **[FACT]** |
+| **tiktoken-rs** | **ADOPT (dev oracle)** | 0.11.0 (2026-04-08) · MIT | pure-Rust, **offline** (vocab `include_str!`), o200k+cl100k; **OpenAI only** — calibrate our byte estimator against it in `cargo test` **[FACT]** |
+| **proptest** | **ADOPT (dev)** | 1.x · MIT/Apache | property tests + persisted regression seeds **[FACT]** |
+| **tokei** | **MIRROR + oracle** | 14.0.0 · MIT/Apache | lib exists, but yields **line counts, not the per-byte code/comment spans we need** (+ known edge-case bugs) → mirror its 9-state machine; oracle only **[FACT]** |
+| **rust-code-analysis** | **SKIP → BUILD** | 0.0.25 (2023) · **MPL-2.0** | **dead** (3.4 yr stale), **Go cognitive unconfirmed**, copyleft, pins `tree-sitter =0.20.9` (exact) — **can't unify** with repo's 0.25 → reimplement Campbell on our walk **[FACT]** |
+| **scc** | mirror / subprocess oracle | MIT · Go | not a Rust lib; design reference + cross-check **[FACT]** |
+| **sqlparser / pg_query** | already in deps | — | parallel sweep found these present — prefer over regex for migration parsing **[FACT]** |
+
+Net Cargo additions: `heck` (runtime); `tiktoken-rs`, `proptest` (dev). **Zero copyleft, zero second tree-sitter, zero runtime BPE blob.**
+
+### 8.2 Token estimation — FINAL
+- **No offline Claude tokenizer exists in 2026** (only the server-side `count_tokens` endpoint; official `@anthropic-ai/tokenizer` is "a rough approximation," inaccurate for Claude 3+) ⇒ the **bytes/token ratio is a [KNOB]**, not a fact. **[FACT]**
+- Primary: `bytes / K_code`, `K_code ≈ 2.8` **[KNOB]** — calibrate against `tiktoken-rs` (OpenAI o200k) in a test; blog "measurements" (claudecodecamp 2.69 TS, etc.) are directional. Cross-check via `token_shingles` word-count × ~2.1 **[KNOB]**; LOC fallback `(adds+dels)×13` **[KNOB]**. Report a ±band; assert it brackets tiktoken-rs truth ≥80% of files.
+
+### 8.3 Cognitive complexity — FINAL (BUILD, corrected labels)
+- Compute **true cognitive complexity** on the existing `metrics.rs` walk (new `cognitive_complexity` field); the `complexity+nesting` surrogate is rejected (unbounded error on dispatch tables).
+- **Campbell v1.7 (29 Aug 2023)** increment types are canonically **Nesting / Structural / Fundamental / Hybrid** **[FACT]** — *correction: drop the "B1/B2/B3" labels.* Rules **[FACT]**: nesting `+1+level`; **switch = one increment** (not per-case); **+1 per contiguous run of same boolean operator**; `+1`/method in a recursion cycle; each `catch` = one structural; labeled jumps = fundamental; method+`try` add no nesting (`catch` does).
+- **Validate against `gocognit` + SonarQube S3776 only** — **lizard is CYCLOMATIC, NOT a cognitive reference** **[FACT]**. Limit = **15** **[FACT]**.
+
+### 8.4 Context windows + degradation — FINAL [FACT]
+| Model | Window |
+|---|---|
+| Claude Opus 4.8/4.7/4.6, Sonnet 4.6 | **1,000,000** (Opus 4.8 = 200K only on MS Foundry) |
+| Claude Sonnet 4.5 / Opus 4.5/4.1 / Haiku 4.5 | **200,000** |
+| GPT-4.1 family | **1,000,000** (1,047,576); prior GPT-4o = 128,000 |
+| **GPT-5 / GPT-5 pro** | **400,000 ctx / 128,000 out** (practical ~272K cap in some harnesses) |
+| Gemini 2.5 Pro, **3 Pro, 3 Flash** | **1,000,000** — *correction: Flash is 1M, not 200K* |
+
+- **Degradation [FACT]:** NoLiMa "effective length" (≥85% of base) = **2K–8K** on the *older* models tested (GPT-4o 8K, Claude 3.5 Sonnet 4K) — **do NOT transplant onto 2026 frontier models**; at 32K, 10/12 models ≤half base. Lost-in-the-Middle ~30pt mid-context drop. Quan et al.: effective ≤ half of training length.
+- **Usable fraction = [KNOB]**: <1.0 strongly evidenced (upper bound ~0.5 per Quan); the specific **0.30** is a tunable choice. Bands derived from it are [KNOB].
+
+### 8.5 Coupling / fragility / centrality — FINAL
+- **Shatnawi 2010 CBO ≈ 9** is the real number (VARL/Bender logistic) **[FACT+CAVEAT]** — but **VARL is the weakest threshold method** (Arar & Ayan 2016: ROC outperforms it) → treat as a **weak prior**, not a law.
+- **Henry-Kafura** `length × (fan_in × fan_out)²` (IEEE TSE SE-7(5), 1981) **[FACT]** — their fan-in/out are **data-flow** (a superset of call edges); our call-graph version is "related but narrower" — don't claim it's literally H&K.
+- **Class→function transferability = category error → [KNOB]** **[FACT]**: CK CBO/Martin bands are class/package-level; NDepend keeps separate method-level metrics, CodeScene re-derives per-function, SonarQube does coupling per-file. ⇒ function-level coupling must be **independently calibrated**.
+- **PageRank × N = [FACT] + precedent**: raw PageRank shrinks ~1/N → scale-dependent; **NDepend Rank normalizes so average = 1** (homothety 0.15) = exactly `pagerank × N`. Sound, scale-invariant.
+- **log1p/log1p(SAT) = [FACT] technique, [KNOB] SAT**: software fan-in/out **are power-law** (Louridas, Spinellis & Vlachos, *Power Laws in Software*, ACM TOSEM 2008, incl. function level); log compression is the textbook skewed-count transform. SAT seeded at corpus **p90**.
+- **Martin Instability** I=Ce/(Ca+Ce), Main Sequence, D=|A+I−1|/√2 (paper's /2 is a typo) **[FACT]**; the **I≥0.7/≤0.3 bands = [KNOB]**.
+
+### 8.6 Validation methodology — FINAL
+- **sMAPE [FACT+CAVEAT]**: use the **Chen-Yang abs-denominator form** `2|y−ŷ|/(|y|+|ŷ|)` for the **[0,200%]** bound; beats MAPE near zero. *Caveat:* Hyndman prefers **MASE** in general — frame sMAPE as "a bounded choice for near-zero targets," consider MASE as headline.
+- **Spearman ρ [FACT]**: monotonic rank — correct for rank-ordering PR risk (Pearson assumes linearity, wrong).
+- **Composite calibration [FACT] (OECD/JRC Handbook 2008)**: PCA/factor analysis = recognized de-double-counting for correlated indicators; **percentile (p90) anchoring is a recognized normalization** (specific p90 = [KNOB]); mandatory uncertainty+sensitivity analysis; winsorize outliers vs min-max distortion. "Dead sub-score" detection = my operationalization (PCA/variance-grounded, not a named test).
+- Aggregation stands: comprehensibility = weighted mean; correctness = **geometric mean**; operational_risk = **max + 0.80 floor**; reviewability = additive (HDI-2010 + OECD compensability theory).
+
+### 8.7 AI-review / large-diff literature — FINAL (now concrete) [FACT]
+- **GitHub official guidance**: larger unscoped PRs "correlate strongly with agent abandonment or misalignment" → keep PRs small/scoped. Operational anchor for review-fatigue + context-pressure.
+- **arXiv 2603.26130 (SWE-PRBench, Mar 2026)** — the load-bearing flagship citation: 8 frontier models detect only **15–31%** of human-flagged diff issues, **degrade monotonically as reviewed context grows**, and a **structured 2K-token diff beats a 2.5K full-context prompt across all 8 models** → bigger/fuller ≠ better; validates token-footprint + context-pressure + "structured-small wins."
+- **arXiv 2601.21276 (MSR '26)** — AI PRs = **more code, less reuse, higher redundancy**; reviewers **under-penalize** plausible AI code → silent tech-debt. *Directional.* Surfaces an AI-era duplication/density smell — **never authorship detection**.
+- **arXiv 2604.03196** — Codex 400k+ PRs in 2 months; CRA-only PRs merge far less than human. Sizes the agent-PR context.
+
+### 8.8 Status: RESEARCH CLOSED
+Every load-bearing value is tagged [FACT] (primary source) or [KNOB] (calibrate against the repo's own corpus, governed by `CALIBRATION.md` + the `every_value_has_a_citation` / new `pr_quality_constants_match_calibrated_values` / `weights_sum_to_one` tests). Remaining unknowns are **empirical calibration values** settable only by running against real PRs — i.e. implementation work, not literature. **Next step: the build.**

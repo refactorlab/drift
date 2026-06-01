@@ -7,8 +7,10 @@ import type { PrContext } from '../context.ts';
 import { fileLink } from '../context.ts';
 import { inlineList, plural, basename } from '../lib/format.ts';
 
-const MAX_DUP = 8;
-const MAX_INLINE = 10;
+// Cap every list at 5 items (then a "+N more" rollup) — the comment shows the
+// top few of each finding family, not an exhaustive dump.
+const MAX_DUP = 5;
+const MAX_INLINE = 5;
 
 export function renderExt(ext?: PrReviewExt, ctx?: PrContext): string | null {
   if (!ext) return null;

@@ -51,6 +51,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { renderOverview } from '../render/overview.ts';
+import { DEFAULT_MAX_SUGGESTIONS } from '../render/sections/suggestions.ts';
 import { loadReport, type ScanPrOutput } from '../report.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -136,11 +137,11 @@ function runCapStep(reportPath: string, max: string): { code: number | null; std
 
 // ─── A. TRUNCATION FIX ─────────────────────────────────────────────────
 
-test('render cap: a RAW (uncapped) 500-entry report now fits under budget — renderer shows top 10, true total stays visible', () => {
+test('render cap: a RAW (uncapped) 500-entry report now fits under budget — renderer shows the top few, true total stays visible', () => {
   // Before the render-only cap, a 500-entry report rendered RAW overflowed the
   // 60 KB budget and the size-guard had to collapse/hard-cut sections (losing
   // information silently). The renderer now caps the Code-suggestions section to
-  // DEFAULT_MAX_SUGGESTIONS (10) on its own, so even an UNCAPPED report fits and
+  // DEFAULT_MAX_SUGGESTIONS on its own, so even an UNCAPPED report fits and
   // the size-guard never fires. This is belt-and-suspenders with the action.yml
   // jq cap (proven by the next test) — either alone keeps the comment bounded.
   const report = makeReportWith(500);
@@ -159,11 +160,14 @@ test('render cap: a RAW (uncapped) 500-entry report now fits under budget — re
   assert.ok(body.length < BODY_SIZE_BUDGET, `raw render must now fit under ${BODY_SIZE_BUDGET}; got ${body.length}`);
   assert.doesNotMatch(body, /report truncated \(size guard\)/, 'render cap must keep the hard-cut from firing');
   assert.doesNotMatch(body, /_collapsed \(size guard\)_/, 'render cap must keep the details-collapse from firing');
-  // True total preserved in the heading; only 10 rows rendered; overflow noted.
+  // True total preserved in the heading; only DEFAULT_MAX_SUGGESTIONS rows rendered; overflow noted.
   assert.match(body, /⚠️ Code suggestions \(500\)/, 'heading keeps the TRUE total (500)');
   const rows = (body.match(/^\| (?:🔴 High|🟡 Medium|⚪ Low) \|/gm) ?? []).length;
-  assert.equal(rows, 10, `priority table must cap at the default 10 rows; got ${rows}`);
-  assert.match(body, /…\+490 more suggestions not shown — rendering the top 10 by priority\./);
+  assert.equal(rows, DEFAULT_MAX_SUGGESTIONS, `priority table must cap at the default ${DEFAULT_MAX_SUGGESTIONS} rows; got ${rows}`);
+  assert.match(
+    body,
+    new RegExp(`…\\+${500 - DEFAULT_MAX_SUGGESTIONS} more suggestions not shown — rendering the top ${DEFAULT_MAX_SUGGESTIONS} by priority\\.`),
+  );
 });
 
 test('truncation: cap step trims 500 → 10 then rendered body fits cleanly under budget', () => {
@@ -652,24 +656,22 @@ test('e2e ai-suggest.js: deterministic + AI in one report → ONE sticky comment
     // The sticky carries the dedupe marker so the next run finds + updates it.
     assert.match(stickyBody, /<!-- drift:sticky-comment -->/);
 
-    // ── Deterministic findings render in the sticky's Code-suggestions section.
-    // det=3 (lines 1,2,3) + AI=2 (lines 1,4); AI wins line 1 → 4 total.
+    // ── All findings (det + AI) render as ROWS in the single Code-suggestions
+    // table. det=3 (lines 1,2,3) + AI=2 (lines 1,4); AI wins line 1 → 4 total.
     assert.match(stickyBody, /⚠️ Code suggestions \(4\)/, 'heading reflects 3 det − 1 collision + 2 AI');
-    // The surviving deterministic entries (lines 2 + 3) are present in the body.
-    assert.match(stickyBody, /det entry on line 2/, 'surviving det finding (line 2) renders');
-    assert.match(stickyBody, /det entry on line 3/, 'surviving det finding (line 3) renders');
+    assert.match(stickyBody, /\| Priority \| Finding \| Location \| Confidence \|/, 'priority table present');
+    // The surviving deterministic findings (lines 2 + 3) are rows, by location.
+    assert.match(stickyBody, /\[`retry_0\.py:2`\]/, 'surviving det finding (line 2) renders as a row');
+    assert.match(stickyBody, /\[`retry_0\.py:3`\]/, 'surviving det finding (line 3) renders as a row');
 
-    // ── The AI-refined block is present in the SAME comment.
-    assert.match(
-      stickyBody,
-      /### 🤖 AI-refined code suggestions \(2\)/,
-      'AI-refined block heading must render the 2 merged AI suggestions',
-    );
-    // The collision: line 1 must carry the AI body, not the deterministic one.
-    assert.match(stickyBody, /AI-version/, 'AI text for the colliding line (1) must appear');
-    assert.doesNotMatch(stickyBody, /det entry on line 1/, 'AI wins on path:line collision — det line 1 must be dropped');
-    // The unique AI line (4) must be present too.
-    assert.match(stickyBody, /AI-only/, 'AI-only line (4) must ship in the sticky');
+    // ── The AI findings ship as rows in the SAME table — no separate AI block.
+    assert.doesNotMatch(stickyBody, /### 🤖 AI-refined code suggestions/, 'no separate AI-refined block; AI is a table row');
+    assert.match(stickyBody, /\[`retry_0\.py:1`\]/, 'AI finding (collision line 1) renders as a row');
+    assert.match(stickyBody, /\[`retry_0\.py:4`\]/, 'unique AI finding (line 4) renders as a row');
+    // The collision: line 1's row is the AI finding (category A → 🅐), proving the
+    // deterministic category-B (🅑) entry for line 1 was dropped on the path:line dedupe.
+    const line1Row = stickyBody.split('\n').find((l) => l.startsWith('|') && l.includes('`retry_0.py:1`')) ?? '';
+    assert.match(line1Row, /🅐/, 'line-1 row is the AI finding (🅐), not the dropped det 🅑');
 
     // ── Diagnostics: the combined sticky summary + AI funnel log lines.
     assert.match(

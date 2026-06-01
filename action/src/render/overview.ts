@@ -3,22 +3,21 @@
 // the extended findings:
 //
 //   marker
-//   1. Header           — title · advisory verdict · KPI badges
-//   2. Reviewer's guide — triage panel (changed files · key issues)
-//   3. Architecture     — flow/business/mindmap diagrams (+ dead-code callout)
-//   4. Business value   — composite + per-axis dashboard
-//   5. Code suggestions — priority table + per-finding details
-//   6. Blast radius     — reached entry points · coverage
-//   7. Risks            — impact-ordered table + quadrant map
-//   8. Extended findings
-//   9. Before you merge — the actionable, GitHub-tallied checklist (closes the comment)
-//   10. Footer          — attribution + (optional) audio link
+//   1. Header           — 3-badge TL;DR + KPI gauge dashboard
+//   2. Complexity gauges — the lead complexity/risk profile
+//   3. Architecture     — color-coded diff graph · business · mindmap
+//   4. Business value   — single per-axis drift chart
+//   5. Code suggestions — priority table (one row per finding) + Fix-All prompt
+//   6. Risks            — impact-ordered table + quadrant map
+//   7. Extended findings
+//   8. Before you merge — the actionable, GitHub-tallied checklist (closes the comment)
+//   9. Footer           — attribution + (optional) audio link
 //   state blob          — invisible snapshot, diffed on the next push
 //
 // Every section returns null when its data is absent, so the comment degrades
 // cleanly from a full value-model report down to a factual-only one.
 
-import type { ScanPrOutput } from '../report.ts';
+import type { ScanPrOutput, PrReviewExt } from '../report.ts';
 import type { PrContext } from './context.ts';
 import { type DriftState, stateFromReport, serializeState, appendConfHistory } from './state.ts';
 import { extractFacts, type PrFacts } from './lib/facts.ts';
@@ -28,18 +27,31 @@ import { wrapSection } from './lib/section.ts';
 import { signedPercent, plural, int, escapeHtml } from './lib/format.ts';
 
 import { renderHeader } from './sections/header.ts';
-import { renderReviewersGuide } from './sections/reviewers_guide.ts';
+import { renderQualityGauges } from './sections/quality_gauges.ts';
 import { renderValueCard } from './sections/value_card.ts';
 import { renderSuggestions } from './sections/suggestions.ts';
 import { renderRisks } from './sections/risks.ts';
 import { renderArchitecture } from './sections/architecture.ts';
-import { renderBlastRadius } from './sections/blast_radius.ts';
 import { renderExt } from './sections/ext.ts';
 import { renderBeforeMerge } from './sections/before_merge.ts';
 import { renderFooter } from './sections/footer.ts';
 import { renderScanArtifacts } from './sections/artifacts.ts';
 
 export const STICKY_MARKER = '<!-- drift:sticky-comment -->';
+
+// Architecture is the one section the size guard must NEVER collapse or cut:
+// the before/after diagrams ARE the "what changed" payload, useless once folded
+// to a one-line marker. We bracket the rendered Architecture block with these
+// invisible HTML-comment sentinels (GitHub renders comments to nothing) so
+// `guardSize` can locate the protected span and skip every <details> inside it;
+// all other sections still collapse first to make room. Kept distinct from the
+// `drift:state`/`drift:status` markers so the state-snapshot parser never trips
+// on them.
+export const ARCH_GUARD_OPEN = '<!-- drift:arch:nocollapse -->';
+export const ARCH_GUARD_CLOSE = '<!-- /drift:arch:nocollapse -->';
+
+/** Bracket a rendered block with the Architecture no-collapse sentinels. */
+const protectArchitecture = (block: string): string => `${ARCH_GUARD_OPEN}\n${block}\n${ARCH_GUARD_CLOSE}`;
 
 // GitHub caps comment bodies at 65 536 chars. We aim for 60 000 to leave
 // headroom for the markers; over budget, <details> contents are collapsed.
@@ -135,17 +147,10 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   currentState.confHistory = confTrend;
 
   const header = renderHeader(report, ctx, { confTrend });
-  // 🧭 Reviewer's guide — the always-visible triage panel right under the
-  // header (Qodo's `/describe` walkthrough + `/review` Reviewer Guide, rebuilt
-  // deterministically). Reads the changed-file scope + the cross-push state.
-  const guide = renderReviewersGuide({
-    facts,
-    changedFiles: report.pr_scope.changed_files,
-    unreachable: report.pr_scope.unreachable_changes,
-    ctx,
-    priorState,
-    currentState,
-  });
+  // 📊 Complexity & Risk gauges — the lead gauge report (charts-of-metrics.md).
+  // All 18 metrics are computed by the profiler (pr_quality.gauges); this is
+  // pure presentation. Sits right under the header as the initial reporting.
+  const qualityGauges = renderQualityGauges(report.pr_review_ext);
   const valueCard = renderValueCard({
     counts: review?.counts,
     card: review?.value_card,
@@ -160,10 +165,8 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
     arch: review?.architecture_flow,
     business: review?.business_logic,
     keyFiles: review?.visual_summary?.key_files,
-    deadCodeCount: facts.deadCode.length,
     ctx,
   });
-  const blastRadius = renderBlastRadius(facts);
   const ext = renderExt(report.pr_review_ext, ctx);
   // The "✅ Before you merge" checklist now closes the comment (moved out of the
   // header). Visible (not collapsed) so GitHub tallies the task boxes.
@@ -184,17 +187,18 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   // arrow) is the toggle. The banner can't be the toggle — clicking an image
   // opens the image, never the <details>.
   const sections: string[] = [withImage('drift-review.png', 'Drift review', header)];
-  if (architecture) sections.push(withImage('architecture.png', 'Architecture', wrapSection(architecture, { tldr: tldrArchitecture(facts) })));
+  // Lead with the gauge report — the at-a-glance complexity/risk profile.
+  if (qualityGauges)
+    sections.push(withImage('complexity-risk-report.png', 'Complexity & Risk Report', wrapSection(qualityGauges, { tldr: tldrGauges(report.pr_review_ext) })));
+  // Architecture is bracketed with no-collapse sentinels so the size guard
+  // leaves its color-coded diff graph fully expanded even when the comment is
+  // over budget (every other section collapses first to make room).
+  if (architecture)
+    sections.push(protectArchitecture(withImage('architecture.png', 'Architecture', wrapSection(architecture, { tldr: tldrArchitecture(facts) }))));
   if (valueCard) sections.push(withImage('business-value.png', 'Business value', wrapSection(valueCard, { tldr: tldrValue(facts) })));
   if (suggestions) sections.push(withImage('code-suggestions.png', 'Code suggestions', wrapSection(suggestions, { tldr: tldrSuggestions(facts) })));
-  // Blast radius & coverage — what's exposed if this breaks, and is it tested.
-  if (blastRadius) sections.push(wrapSection(blastRadius, { tldr: tldrBlastRadius(facts) }));
   if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts) }));
   if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
-  // Reviewer's guide — demoted from its prominent under-header slot to a
-  // collapsed accordion near the end (it's a reference/triage map, not a
-  // headline). No section banner here — it's an appendix now.
-  if (guide) sections.push(wrapSection(guide, { tldr: tldrGuide(facts, report.pr_scope.changed_files) }));
   // Closes the comment: the actionable, GitHub-tallied merge checklist.
   sections.push(beforeMerge);
 
@@ -275,30 +279,12 @@ function tldrRisks(f: PrFacts): string {
   return `${f.totalRisks} ${plural(f.totalRisks, 'risk')} · none gating`;
 }
 
-function tldrGuide(f: PrFacts, changedFiles: string[]): string {
-  const issues =
-    f.correctness.length > 0
-      ? `${int(f.correctness.length)} key ${plural(f.correctness.length, 'issue')}`
-      : `${int(f.passing.length)} ${plural(f.passing.length, 'suggestion')}`;
-  return `At-a-glance triage · ${issues} · ${int(changedFiles.length)} changed ${plural(changedFiles.length, 'file')}`;
-}
-
-function tldrBlastRadius(f: PrFacts): string {
-  const reached = f.perRootCoverage.length;
-  const untested = f.perRootCoverage.filter((r) => !r.tested).length;
-  const unguarded = f.perRootCoverage.filter((r) => r.missing.length > 0).length;
-  const bits = [`${int(reached)} reached`];
-  if (untested > 0) bits.push(`${int(untested)} untested`);
-  if (unguarded > 0) bits.push(`${int(unguarded)} unguarded`);
-  return bits.join(' · ');
-}
-
 function tldrArchitecture(f: PrFacts): string {
-  // The section is diagrams-only now (flow before/after · business-logic reach
-  // · key-file mindmap), plus a dead-code callout when changed files are
-  // unreachable — so the teaser describes the diagrams, not a reach count.
+  // The section is diagrams-only (the color-coded diff graph · business-logic
+  // reach · key-file mindmap) — so the teaser describes the diagrams. A terse
+  // unreachable hint is kept even though the verbose callout was removed.
   const dead = f.unreachable > 0 ? ` · ${int(f.unreachable)} unreachable` : '';
-  return `Before vs after diagrams${dead}`;
+  return `Color-coded diff graph${dead}`;
 }
 
 function tldrExt(f: PrFacts): string {
@@ -311,10 +297,32 @@ function tldrExt(f: PrFacts): string {
   return bits.length > 0 ? bits.join(' · ') : 'Duplication · uncovered roots · reliability gaps · tech debt';
 }
 
+function tldrGauges(ext: PrReviewExt | undefined): string {
+  const pq = ext?.pr_quality;
+  const gauges = pq?.gauges ?? [];
+  if (gauges.length === 0) return 'Complexity & risk gauges';
+  const crit = gauges.filter((g) => g.level === 'critical').length;
+  const high = gauges.filter((g) => g.level === 'high').length;
+  const bits: string[] = [];
+  const top = pq?.gauge_summary?.highest?.[0];
+  if (top) bits.push(`${top.label} ${top.score}`);
+  if (crit > 0) bits.push(`${crit} critical`);
+  else if (high > 0) bits.push(`${high} high`);
+  if (pq?.gauge_summary?.context_fits === false) bits.push('LLM context exceeded');
+  bits.push(`${gauges.length} metrics`);
+  return bits.join(' · ');
+}
+
 /**
  * Keep the body under GitHub's cap. Collapses <details> bodies INNERMOST-first
  * (so nested disclosures don't get mangled), then hard-truncates as a last
  * resort. A no-op on the normal ~20–30 KB body.
+ *
+ * The Architecture section is EXEMPT: the slice between ARCH_GUARD_OPEN and
+ * ARCH_GUARD_CLOSE is never collapsed and never cut, so its before/after
+ * diagrams always render in full. Every other section collapses first to claw
+ * back budget; only if that still isn't enough does the hard-truncate fire, and
+ * even then it refuses to slice into the protected span.
  */
 function guardSize(body: string): string {
   if (body.length <= BODY_SIZE_BUDGET) return body;
@@ -343,16 +351,64 @@ function guardSize(body: string): string {
   // `<details>` simply fails to match (its body can't reach a `</details>`
   // without crossing the forbidden `<details>`), so only true-innermost blocks
   // collapse — until their tagless markers free the parent to collapse next.
-  const innermost = /<details(?: open)?>\s*<summary>((?:(?!<\/summary>)[\s\S])*?)<\/summary>(?:(?!<details(?: open)?>)[\s\S])*?<\/details>/;
+  // The `g` flag lets us WALK the matches instead of always replacing the
+  // first one: we collapse the first innermost <details> that does NOT overlap
+  // the exempt Architecture span, leaving that section's diagram disclosures
+  // untouched. Recomputed each pass because every replacement shifts indices.
+  const innermost = /<details(?: open)?>\s*<summary>((?:(?!<\/summary>)[\s\S])*?)<\/summary>(?:(?!<details(?: open)?>)[\s\S])*?<\/details>/g;
   let out = body;
   for (let i = 0; i < 1000 && out.length > BODY_SIZE_BUDGET; i++) {
-    const next = out.replace(innermost, (_m, summary: string) => `<sub>${summary.trim()} — _collapsed (size guard)_</sub>`);
-    if (next === out) break;
-    out = next;
+    const arch = archSpan(out);
+    innermost.lastIndex = 0;
+    // Collapse BOTTOM-UP: walk every innermost <details> and remember the LAST
+    // one that doesn't overlap the protected Architecture span, then collapse
+    // that. The comment is laid out lead-first — the at-a-glance gauge report,
+    // then business value and code suggestions, with the reviewer's guide and
+    // extended findings as an appendix at the bottom. Shedding the last block
+    // in document order first therefore reclaims budget from the appendix
+    // before the lead, so the gauge report stays expanded right under the
+    // banner even when the body is over budget. (Picking the FIRST match would
+    // collapse the lead gauges first — exactly backwards.) Innermost-first is
+    // preserved because the regex only matches leaf <details>; once a section's
+    // children are folded to tagless markers its outer block becomes a leaf and
+    // collapses on a later pass, so collapse marches appendix→lead, depth-first.
+    let target: { start: number; end: number; summary: string } | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = innermost.exec(out)) !== null) {
+      const start = m.index;
+      const end = start + m[0].length;
+      // Skip any disclosure that overlaps the protected Architecture span.
+      if (arch && start < arch.end && end > arch.start) continue;
+      target = { start, end, summary: m[1].trim() };
+    }
+    // Nothing left to collapse outside Architecture — stop (the hard-cut below
+    // is the only remaining lever, and it too spares the protected span).
+    if (!target) break;
+    out = `${out.slice(0, target.start)}<sub>${target.summary} — _collapsed (size guard)_</sub>${out.slice(target.end)}`;
   }
 
   if (out.length > HARD_CAP) {
-    out = `${out.slice(0, HARD_CAP - 80)}\n\n<sub>…report truncated (size guard).</sub>`;
+    // Last resort tail-cut. Never slice into the exempt Architecture span: if
+    // the normal cut point would land before its close sentinel, push the cut
+    // out to the end of that span so the diagrams survive whole. The body may
+    // then exceed HARD_CAP — the accepted cost of exempting Architecture, and
+    // unreachable in practice once every other section has collapsed.
+    const arch = archSpan(out);
+    const cut = arch ? Math.max(HARD_CAP - 80, arch.end) : HARD_CAP - 80;
+    out = `${out.slice(0, cut)}\n\n<sub>…report truncated (size guard).</sub>`;
   }
   return out;
+}
+
+/**
+ * Locate the no-collapse Architecture span — the slice between ARCH_GUARD_OPEN
+ * and ARCH_GUARD_CLOSE that `guardSize` must leave untouched. Null when the
+ * section is absent (factual-only reports carry no diagrams, so no sentinels).
+ */
+function archSpan(body: string): { start: number; end: number } | null {
+  const start = body.indexOf(ARCH_GUARD_OPEN);
+  if (start === -1) return null;
+  const closeIdx = body.indexOf(ARCH_GUARD_CLOSE, start);
+  if (closeIdx === -1) return null;
+  return { start, end: closeIdx + ARCH_GUARD_CLOSE.length };
 }

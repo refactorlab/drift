@@ -9,7 +9,7 @@ use crate::pr_algorithms::counts::ChangedFile;
 use crate::pr_algorithms::types::*;
 use crate::pr_algorithms::{
     architecture_flow, business_logic, code_suggestions, counts, duplication, nfr_edge_cases,
-    pr_signals, tech_debt, tests_in_graph, value_customer, value_money, value_runtime,
+    pr_quality, pr_signals, tech_debt, tests_in_graph, value_customer, value_money, value_runtime,
     value_runtime_ux, visual_summary,
 };
 use crate::progress::{NullProgress, Progress};
@@ -528,6 +528,23 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         signals: Some(&signals),
     });
 
+    p.phase("PR quality (comprehensibility · longevity · correctness · operational · team · LLM-complexity)");
+    // Computed BEFORE the struct literals so it can read `tig` / `counts_block`
+    // before they're moved into PrReviewExt / PrReview. Reuses inputs already
+    // computed here — no new CLI plumbing.
+    let pr_quality = pr_quality::compute(pr_quality::QualityInputs {
+        entries,
+        changed_files: inputs.changed_files,
+        signals: &signals,
+        commit_messages: inputs.commit_messages,
+        repo_root: inputs.repo_root,
+        affected_roots: affected_root_names.len(),
+        uncovered_roots: tig.uncovered_roots.len(),
+        new_test_files: counts_block.new_test_files.value,
+        // Real graph N → the inversion/blast centrality `pagerank × N` arm is live.
+        total_symbols: inputs.outcome.total_symbols,
+    });
+
     let pr_review = PrReview {
         generated_at: Some(Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         overall_drift: overall_drift(&axes, &signals),
@@ -572,6 +589,8 @@ pub fn enrich(inputs: EnrichInputs<'_>) -> EnrichedReport {
         duplication: dup,
         tests_in_graph: tig,
         nfr_edge_cases: nfr,
+        // Six research-grounded PR-quality dimensions (computed above).
+        pr_quality,
     };
 
     EnrichedReport {

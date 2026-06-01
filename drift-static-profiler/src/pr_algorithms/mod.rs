@@ -36,6 +36,7 @@ pub mod duplication;
 pub mod mermaid;
 pub mod merge;
 pub mod nfr_edge_cases;
+pub mod pr_quality;
 pub mod pr_signals;
 pub mod symbol_label;
 pub mod tech_debt;
