@@ -67,9 +67,10 @@ test('gauges: renders all 18 across six numbered groups with pills, bars, detail
   // every gauge heading present (18 #### headings)
   const headings = out.match(/^#### /gm) ?? [];
   assert.equal(headings.length, 18, `expected 18 gauge headings, got ${headings.length}`);
-  // pill + bar + details for a representative gauge
-  assert.match(out, /#### Token footprint !\[/);
-  assert.match(out, /quickchart\.io\/chart\?/); // gauge bars
+  // pill badge + Mermaid bar + (non-LLM) description block
+  assert.match(out, /#### Token footprint !\[/); // shields pill badge on the heading
+  assert.match(out, /```mermaid\n%%\{init:[\s\S]*?flowchart LR\n {4}f\["█+"\]:::done/); // Mermaid bar, not quickchart
+  assert.doesNotMatch(out, /quickchart\.io\/chart\?/, 'gauge bars are Mermaid now, not quickchart');
   assert.match(out, /<summary>Description &amp; analysis<\/summary>/);
 });
 
@@ -128,14 +129,17 @@ test('gauges: descriptions are HTML-escaped (no injection)', () => {
   assert.doesNotMatch(out, /<script>/);
 });
 
-test('gauges: all shields + quickchart URLs are encoded (no raw spaces)', () => {
+test('gauges: all shields URLs are encoded; bars + radar carry no quickchart', () => {
   const out = renderQualityGauges(fullExt())!;
-  const urls = out.match(/https:\/\/(?:img\.shields\.io|quickchart\.io)\/[^)\s]*/g) ?? [];
-  assert.ok(urls.length >= 18, `expected many chart/badge URLs, got ${urls.length}`);
+  // 18 gauge pills + the LLM-context badge are shields; the bars + radar are
+  // Mermaid (no quickchart). Every shields URL must be properly encoded.
+  const urls = out.match(/https:\/\/img\.shields\.io\/[^)\s]*/g) ?? [];
+  assert.ok(urls.length >= 18, `expected ≥18 shields badge URLs (pills + context), got ${urls.length}`);
   for (const u of urls) {
     assert.doesNotMatch(u, /\s/, `URL must not contain raw whitespace: ${u}`);
     assert.doesNotMatch(u, /[<>"]/, `URL must not contain raw markup chars: ${u}`);
   }
+  assert.doesNotMatch(out, /quickchart\.io/, 'bars + radar are Mermaid — no quickchart anywhere');
 });
 
 test('gauges: single-series radar-beta chart is emitted', () => {
@@ -161,10 +165,10 @@ test('gauges: renders REAL profiler output (golden fixture, full Rust→JSON→T
   for (let n = 1; n <= 6; n++) assert.match(out, new RegExp(`### ${n}\\. `), `group ${n}`);
   // Real token footprint (3120 tokens) → fits the standard window.
   assert.match(out, /FITS .*tokens/);
-  // Radar present (Mermaid radar-beta); every chart/badge URL is properly encoded.
+  // Radar present (Mermaid radar-beta); bars are Mermaid too — no quickchart left.
   assert.match(out, /radar-beta/);
-  const urls = out.match(/https:\/\/(?:img\.shields\.io|quickchart\.io)\/[^)\s]*/g) ?? [];
-  assert.ok(urls.length >= 18);
+  assert.doesNotMatch(out, /quickchart\.io/, 'no quickchart images — bars + radar are Mermaid');
+  const urls = out.match(/https:\/\/img\.shields\.io\/[^)\s]*/g) ?? [];
   for (const u of urls) assert.doesNotMatch(u, /\s|[<>"]/, `unencoded URL: ${u}`);
 });
 
@@ -185,16 +189,19 @@ test('gauges: matches the copy layout (embed-ready)', () => {
   assert.match(out, /^## Complexity & Risk Report\n\n\*\*LLM Context:\*\*/);
 });
 
-test('gauges: the radar-beta block PARSES in the real Mermaid engine (not just string-matched)', async (t) => {
+test('gauges: every Mermaid block (18 bars + the radar) PARSES in the real engine', async (t) => {
   if (!(await isInstalled())) return void t.skip('mermaid validator not installed');
-  // The radar is a Mermaid v11 `radar-beta` chart with a config frontmatter —
-  // a syntax GitHub silently fails to render if it's malformed. Validate the
-  // ACTUAL block (incl. its `--- config --- ` frontmatter + the live curve data)
-  // against the real mermaid parser, not just a string assertion.
+  // The 18 per-gauge bars + the radar-beta chart are all Mermaid (with init
+  // directives / config frontmatter) — syntaxes GitHub silently fails to render
+  // if malformed. Validate every emitted block against the REAL mermaid parser,
+  // not just string assertions.
   const out = renderQualityGauges(fullExt())!;
   const blocks = await extractBlocks(out);
-  assert.equal(blocks.length, 1, 'gauges emit exactly one mermaid block (the radar)');
-  assert.match(blocks[0], /radar-beta/, 'the one block is the radar-beta chart');
-  const res = await validate(blocks[0]);
-  assert.ok(res.ok, `radar-beta failed real-parser validation: ${res.error}\n---\n${blocks[0]}`);
+  assert.equal(blocks.length, 19, `expected 18 bars + 1 radar = 19 mermaid blocks, got ${blocks.length}`);
+  assert.ok(blocks.some((b) => /radar-beta/.test(b)), 'the radar-beta chart is among them');
+  assert.ok(blocks.some((b) => /flowchart LR\n {4}f\["█+"\]:::done/.test(b)), 'the gauge bars are among them');
+  for (const b of blocks) {
+    const res = await validate(b);
+    assert.ok(res.ok, `Mermaid block failed real-parser validation: ${res.error}\n---\n${b}`);
+  }
 });
