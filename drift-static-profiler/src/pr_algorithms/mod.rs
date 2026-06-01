@@ -75,7 +75,24 @@ pub fn in_pr_changed_files(file_path: &str, changed_files: &[String]) -> bool {
     if file_path.is_empty() {
         return false;
     }
-    changed_files.iter().any(|p| file_path.ends_with(p))
+    changed_files.iter().any(|p| path_suffix_match(file_path, p))
+}
+
+/// Component-aware suffix match: `file_path` ends with `changed` at a path
+/// boundary. A plain string `ends_with` over-matches at non-`/` boundaries —
+/// e.g. `.../other_users.ts` would spuriously match a changed `users.ts`, and
+/// `.../my-dist/index.js` would match `dist/index.js`. Comparing on the `/`
+/// boundary (or whole-string equality) keeps the cheap suffix convention while
+/// rejecting those partial-component collisions. Leading `./` on either side is
+/// trimmed so repo-relative and `./`-prefixed paths compare equal.
+fn path_suffix_match(file_path: &str, changed: &str) -> bool {
+    let f = file_path.trim_start_matches("./");
+    let c = changed.trim_start_matches("./");
+    if f == c {
+        return true;
+    }
+    f.strip_suffix(c)
+        .is_some_and(|prefix| prefix.ends_with('/'))
 }
 
 #[cfg(test)]
