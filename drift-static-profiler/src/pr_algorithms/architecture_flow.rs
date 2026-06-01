@@ -588,7 +588,7 @@ fn build_call_graph(
     changed_files: &[ChangedFile],
     mode: GraphMode,
     rename_old: &BTreeMap<String, String>,
-) -> (Vec<FlowNode>, Vec<FlowEdge>) {
+) -> (Vec<FlowNode>, Vec<FlowEdge>, BTreeSet<String>) {
     let mut nodes: Vec<FlowNode> = Vec::new();
     let mut edges: Vec<FlowEdge> = Vec::new();
     let mut id_for: BTreeMap<String, String> = BTreeMap::new();
@@ -644,7 +644,7 @@ fn build_call_graph(
     // it needs more depth headroom and a slightly larger node budget to reach
     // the leaves a PR actually touches — still bounded for comment size.
     let max_depth = if mode.anchor_on_changes { 8 } else { 3 };
-    let max_nodes = if mode.anchor_on_changes { 40 } else { 16 };
+    let max_nodes = if mode.anchor_on_changes { 48 } else { 16 };
 
     let class_for = |status: FileStatus| -> Option<&'static str> {
         if mode.force_muted {
@@ -667,14 +667,16 @@ fn build_call_graph(
         entries.iter().take(8).collect()
     };
 
-    // Per-root share of the budget (change-anchored only). Without it a single
-    // heavily-changed root could spend the whole budget, starving later
-    // coverage roots — so a 1-line-changed file reached by its own root would
-    // still vanish. Giving each selected root an equal slice (floor 12, enough
-    // to descend to the source functions a test root exercises) keeps EVERY
-    // covered changed file visible. Reach-anchored keeps one global pool.
+    // Per-root share of the budget (change-anchored only). The whole budget is
+    // divided EVENLY across the chosen coverage roots so none is starved — a
+    // floor (12) would let the first few roots eat the global pool and a later
+    // coverage root (e.g. a 1-line-changed file reached only by its own root)
+    // would never render. With `roots.len() <= 8` the even split keeps the total
+    // within `max_nodes` on its own, so there is NO global top-of-loop cutoff
+    // that could skip a chosen root. Small floor (3) so each root still shows
+    // its node plus a hop of context. Reach-anchored keeps one global pool.
     let per_root_budget = if mode.anchor_on_changes {
-        (max_nodes / roots.len().max(1)).max(12)
+        (max_nodes / roots.len().max(1)).max(3)
     } else {
         max_nodes
     };
@@ -684,13 +686,9 @@ fn build_call_graph(
     let mut rendered_changed_files: BTreeSet<String> = BTreeSet::new();
 
     for root in roots {
-        // Stop opening NEW roots once the GLOBAL budget is spent — otherwise a
-        // root interned here whose change-path can't fit leaves a context-less
-        // orphan box (the per-root BFS below would break immediately). Better
-        // to render fewer roots fully than many as bare, edgeless boxes.
-        if nodes.len() >= max_nodes {
-            break;
-        }
+        // NO global top-of-loop cutoff here: the even per-root split already
+        // bounds the total, and cutting off would starve the LATER coverage
+        // roots (exactly the lightly-changed files we picked them to show).
         // Each root may add at most `per_root_budget` nodes (see above).
         let root_node_floor = nodes.len();
         let root_status = classify_file(&root.file, changed_files);
@@ -731,8 +729,9 @@ fn build_call_graph(
             queue.push_back((c, 1, rid.clone()));
         }
         while let Some((node, depth, parent_id)) = queue.pop_front() {
-            // Stop on EITHER the global cap or this root's fair share.
-            if nodes.len() >= max_nodes || nodes.len() - root_node_floor >= per_root_budget {
+            // Stop on this root's fair share (the even split keeps the global
+            // total bounded; `max_nodes` is a hard backstop for safety).
+            if nodes.len() - root_node_floor >= per_root_budget || nodes.len() >= max_nodes {
                 break;
             }
             let n_status = classify_file(&node.file, changed_files);
@@ -782,7 +781,7 @@ fn build_call_graph(
         }
     }
 
-    (nodes, edges)
+    (nodes, edges, rendered_changed_files)
 }
 
 /// Build the AFTER-state flowchart — the call graph AT HEAD with each
@@ -815,7 +814,7 @@ fn build_after_flowchart(
 
     // AFTER shows HEAD names → no rename relabeling (empty map).
     let no_renames: BTreeMap<String, String> = BTreeMap::new();
-    let (nodes, edges) = build_call_graph(
+    let (nodes, edges, _rendered) = build_call_graph(
         entries,
         changed_files,
         GraphMode {
@@ -855,7 +854,7 @@ fn build_diff_merged_flowchart(
 ) -> Flowchart {
     // Same HEAD topology + real status colours as AFTER (no rename relabel).
     let no_renames: BTreeMap<String, String> = BTreeMap::new();
-    let (mut nodes, edges) = build_call_graph(
+    let (mut nodes, edges, rendered) = build_call_graph(
         entries,
         changed_files,
         GraphMode {
@@ -865,6 +864,17 @@ fn build_diff_merged_flowchart(
         },
         &no_renames,
     );
+
+    // Guarantee EVERY changed source file is visible. A change can be absent
+    // from the call-graph slice above for legitimate reasons: it's an isolated
+    // symbol (no callers), or it lives in a low-reach root whose bounded call
+    // tree was never built (common in a multi-language scan where one language
+    // dominates the tree budget). Rather than silently drop it, append a
+    // standalone tinted node per such file — the diagram then shows the FULL
+    // diff, with call context where we have it and a bare node where we don't.
+    // Removed files are already shown as placeholder cards; files with no
+    // recognized source language (Cargo.lock, Makefile, *.md) carry no symbols.
+    append_unrendered_changed_files(&mut nodes, changed_files, &rendered);
 
     // Surface deletions as red placeholder cards (identical to the BEFORE chart).
     append_removed_placeholders(&mut nodes, changed_files);
@@ -994,6 +1004,64 @@ fn append_removed_placeholders(nodes: &mut Vec<FlowNode>, changed_files: &[Chang
     }
 }
 
+/// Append a standalone tinted node for every ADDED / MODIFIED / RENAMED source
+/// file whose code did NOT make it into the rendered call-graph slice, so the
+/// diff diagram shows the COMPLETE set of changed source files — never silently
+/// dropping a change that the bounded call-tree walk couldn't reach.
+///
+/// `rendered` holds the node-file strings of changed nodes already drawn (from
+/// `build_call_graph`); a file matching any of them via [`paths_match`] is
+/// skipped. Removed files are handled by `append_removed_placeholders`; files
+/// with no recognized source language (lockfiles, Makefiles, docs) carry no
+/// symbols and are not diagrammed. Capped with an overflow summary so a
+/// thousand-file PR can't blow up the comment.
+fn append_unrendered_changed_files(
+    nodes: &mut Vec<FlowNode>,
+    changed_files: &[ChangedFile],
+    rendered: &BTreeSet<String>,
+) {
+    const MAX_STANDALONE: usize = 24;
+    let mut id_counter = 0usize;
+    let mut total = 0usize;
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cf in changed_files {
+        let status = classify_file(&cf.path, changed_files);
+        if matches!(status, FileStatus::Removed | FileStatus::Unchanged) {
+            continue;
+        }
+        if crate::Language::from_path(std::path::Path::new(&cf.path)).is_none() {
+            continue; // non-source: no symbols to graph
+        }
+        if rendered.iter().any(|f| paths_match(f, &cf.path)) {
+            continue; // already shown with call context
+        }
+        let norm = cf.path.trim_start_matches("./").trim_start_matches('/').to_string();
+        if !seen.insert(norm) {
+            continue;
+        }
+        total += 1;
+        if id_counter >= MAX_STANDALONE {
+            continue;
+        }
+        let id = format!("chg_{id_counter}");
+        id_counter += 1;
+        nodes.push(FlowNode {
+            id,
+            label: basename(&cf.path).to_string(),
+            shape: NodeShape::Rect,
+            class: class_for_status(status).map(String::from),
+        });
+    }
+    if total > id_counter {
+        nodes.push(FlowNode {
+            id: "chg_more".into(),
+            label: format!("+{} more changed", total - id_counter),
+            shape: NodeShape::Rect,
+            class: Some("changed".into()),
+        });
+    }
+}
+
 /// Build the BEFORE-state flowchart by reconstructing the pre-PR call
 /// graph from diff signals — NO `--base-sha` checkout required.
 ///
@@ -1018,7 +1086,7 @@ fn build_before_flowchart(
     changed_files: &[ChangedFile],
 ) -> Flowchart {
     let renames = rename_old_map(changed_files);
-    let (mut nodes, edges) = build_call_graph(
+    let (mut nodes, edges, _rendered) = build_call_graph(
         entries,
         changed_files,
         GraphMode {
@@ -2041,15 +2109,27 @@ mod tests {
         assert!(merged.contains("\"renderHeader\""), "header.ts source must surface despite the heavy test diff:\n{merged}");
     }
 
-    /// All-cases coverage: non-empty entries but NO root reaches the diff (e.g.
-    /// the changed file isn't in the parsed graph) → honest "No affected
-    /// entries" placeholder rather than an arbitrary reach-sorted slice.
+    /// All-cases coverage: a changed SOURCE file that NO root reaches (isolated,
+    /// or its tree wasn't built) is still surfaced as a standalone tinted node —
+    /// never silently dropped to a bare "No affected entries". This is the
+    /// guarantee behind "every change shows in the graph".
     #[test]
-    fn diff_merged_placeholder_when_no_root_reaches_change() {
+    fn diff_merged_surfaces_changed_file_with_no_reaching_root() {
         let entries = vec![mk_node("a", "app/a.py"), mk_node("b", "app/b.py")];
         let changed = vec![cf("app/elsewhere.py", "modified")];
         let merged = &compute_with_diff(&entries, &changed).diff_merged_mermaid;
-        assert!(merged.contains("No affected entries"), "must fall back to the placeholder:\n{merged}");
+        assert!(merged.contains("\"elsewhere.py\""), "isolated changed file must still appear:\n{merged}");
+        assert!(!merged.contains("No affected entries"), "must NOT fall back to the empty placeholder:\n{merged}");
+    }
+
+    /// The empty placeholder fires ONLY when there is genuinely nothing to draw:
+    /// no call-graph slice AND no changed *source* file (e.g. a docs/lockfile-only
+    /// diff carries no graphable symbols).
+    #[test]
+    fn diff_merged_placeholder_only_when_nothing_graphable() {
+        let changed = vec![cf("README.md", "modified"), cf("Cargo.lock", "modified")];
+        let merged = &compute_with_diff(&[], &changed).diff_merged_mermaid;
+        assert!(merged.contains("No affected entries"), "non-source-only diff → placeholder:\n{merged}");
     }
 
     /// Gap-#2 CONTRACT: for a graph UNDER the node cap (no truncation),
