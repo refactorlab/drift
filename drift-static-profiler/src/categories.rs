@@ -431,6 +431,14 @@ mod tests {
         assert!(classify_module("my.custom.user.code").is_none());
     }
 
+    #[test]
+    fn react_data_libs_classify_network() {
+        // React-ecosystem data layers (seed/react overrides) hit the network.
+        assert_eq!(classify_module("@tanstack/react-query"), Some(Category::Network));
+        assert_eq!(classify_module("swr"), Some(Category::Network));
+        assert_eq!(classify_module("@apollo/client"), Some(Category::Network));
+    }
+
     // ─── Tests for OTel-derived (build_otel_registry.py) data ──────────
 
     #[test]

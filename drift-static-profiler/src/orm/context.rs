@@ -214,6 +214,12 @@ pub enum IterKind {
 /// and every `OrmRule::matches`.
 pub struct PyOrmContext<'a> {
     pub file: &'a str,
+    /// The full file source. Most detectors work off the structured `chains`
+    /// / `for_loops` / `imports`, but some framework rules (e.g. React's
+    /// `dangerouslySetInnerHTML` / `key={i}`, which are JSX *attributes*, not
+    /// call chains) need to scan the raw text. Empty in `Default` / unit
+    /// contexts; every `build_context` stores the source it parsed.
+    pub source: &'a str,
     pub imports: ImportMap,
     pub bindings: BindingMap,
     pub for_loops: Vec<LoopRange>,
@@ -234,6 +240,7 @@ impl<'a> Default for PyOrmContext<'a> {
     fn default() -> Self {
         Self {
             file: "",
+            source: "",
             imports: ImportMap::default(),
             bindings: BindingMap::new(),
             for_loops: Vec::new(),

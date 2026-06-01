@@ -62,6 +62,8 @@ pub mod python;
 pub mod rust;
 pub mod scala;
 pub mod typescript;
+/// TSX / React — JSX-aware variant of the TypeScript profile (grammar + query).
+pub mod typescript_xml;
 
 /// Everything language-specific that the scan pipeline needs. One
 /// implementation per supported language, registered via [`profile_for`].

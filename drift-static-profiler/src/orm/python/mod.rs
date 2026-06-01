@@ -24,6 +24,7 @@ use tree_sitter::{Node, Tree};
 /// AFTER the single walk because they read state populated during it.
 pub fn build_context<'a>(source: &'a str, tree: &'a Tree) -> PyOrmContext<'a> {
     let mut ctx = PyOrmContext {
+        source,
         file: "<inline>",
         ..PyOrmContext::default()
     };
