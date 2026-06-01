@@ -606,6 +606,42 @@ fn read_changed_files(
     Ok(out)
 }
 
+/// Drop generated / vendored / build-output paths (`dist/`, `build/`,
+/// `node_modules/`, `target/`, …) from the changed-file set BEFORE any
+/// downstream use — the call graph, the dominant-language pick, AND the
+/// suggestion/value enrichment all then see only real source changes.
+///
+/// Why this matters: a PR that regenerates a bundle ships a 26k-line
+/// `dist/*.js` in its diff. The walker already excludes that file from the call
+/// graph, but without this filter it still drives review — flooding the report
+/// with hundreds of false findings inside minified output and skewing the
+/// single-language pick toward whichever language the bundles happen to be.
+///
+/// Safety valve: if EVERY changed file is generated (a bundle-only commit),
+/// the original list is kept rather than filtered to empty — an empty list
+/// would otherwise make downstream review fall back to whole-repo scope.
+fn drop_generated_paths(changed: Vec<PathBuf>) -> Vec<PathBuf> {
+    use drift_static_profiler::walker::path_in_ignored_dir;
+    let kept: Vec<PathBuf> = changed
+        .iter()
+        .filter(|p| !path_in_ignored_dir(p))
+        .cloned()
+        .collect();
+    let dropped = changed.len() - kept.len();
+    if dropped > 0 {
+        eprintln!(
+            "note: excluding {dropped} generated/vendored file(s) (dist/, build/, node_modules/ …) from PR review"
+        );
+        tracing::info!(dropped, kept = kept.len(), "scan-pr: filtered generated/vendored changed files");
+    }
+    // Never filter to empty (see "Safety valve" above).
+    if kept.is_empty() {
+        changed
+    } else {
+        kept
+    }
+}
+
 /// PR-scoped scan entry point.
 ///
 /// Wires the CLI flags into [`drift_static_profiler::analyze_pr_with_progress`],
@@ -660,7 +696,7 @@ fn run_scan_pr(
     };
 
     let scan_pr_started_at = std::time::Instant::now();
-    let changed = read_changed_files(changed_files_path, changed_files_stdin)?;
+    let changed = drop_generated_paths(read_changed_files(changed_files_path, changed_files_stdin)?);
     if changed.is_empty() {
         eprintln!("note: changed-files list is empty — emitting an empty PR-scope envelope");
         tracing::warn!("scan-pr: changed-files list is empty");
@@ -2201,6 +2237,43 @@ fn print_category_breakdown(s: &drift_static_profiler::report::Summary) {
             .map(|(fam, n)| format!("{fam}={n}"))
             .collect();
         eprintln!("  orm-family breakdown: {}", parts.join(", "));
+    }
+}
+
+#[cfg(test)]
+mod drop_generated_paths_tests {
+    //! `drop_generated_paths` keeps the reviewed diff to real source: it drops
+    //! generated/vendored paths but never empties a non-empty list.
+    use super::drop_generated_paths;
+    use std::path::PathBuf;
+
+    fn p(s: &[&str]) -> Vec<PathBuf> {
+        s.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn drops_dist_and_build_artifacts_keeps_source() {
+        let out = drop_generated_paths(p(&[
+            "action/src/render/overview.ts",
+            "dist/ai-suggest.js",
+            "dist/index.js",
+            "drift-static-profiler/target/debug/foo.rs",
+        ]));
+        assert_eq!(out, p(&["action/src/render/overview.ts"]));
+    }
+
+    #[test]
+    fn bundle_only_commit_keeps_original_rather_than_emptying() {
+        // Every file is generated → keep the list (empty would wrongly trigger
+        // whole-repo review downstream).
+        let input = p(&["dist/ai-suggest.js", "dist/index.js"]);
+        assert_eq!(drop_generated_paths(input.clone()), input);
+    }
+
+    #[test]
+    fn pure_source_diff_is_untouched() {
+        let input = p(&["a.ts", "b.rs", "pkg/c.py"]);
+        assert_eq!(drop_generated_paths(input.clone()), input);
     }
 }
 

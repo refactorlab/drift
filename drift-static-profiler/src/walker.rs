@@ -470,6 +470,19 @@ fn hits_default_ignore(path: &Path) -> bool {
     })
 }
 
+/// True iff `path` lives inside a generated / vendored / build-output directory
+/// from [`DEFAULT_IGNORE_DIRS`] (`dist/`, `build/`, `target/`, `node_modules/`,
+/// `vendor/`, `out/`, `coverage/`, venvs, …).
+///
+/// The walker already skips these when building the call graph; PR-review uses
+/// this same predicate to drop such files from the *changed-file set* too, so a
+/// regenerated bundle (`dist/*.js`) can't flood the report with false findings
+/// or skew the dominant-language pick. Keeping both consumers on ONE predicate
+/// guarantees "what we graph" and "what we review" never diverge.
+pub fn path_in_ignored_dir(path: &Path) -> bool {
+    hits_default_ignore(path)
+}
+
 /// True iff any component of `path` matches one of [`STATIC_ASSET_DIRS`]
 /// (case-sensitive — every convention this targets uses lowercase). We match
 /// at any depth, not just the project root, because vendored static

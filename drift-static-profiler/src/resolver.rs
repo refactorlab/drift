@@ -78,20 +78,70 @@ impl<'a> SymbolIndex<'a> {
         }
     }
 
-    /// Convenience: candidates with this name, minus `exclude`. Mirrors
-    /// the filter the legacy resolver did inline. Returns an iterator
-    /// so callers can `.collect()` into whatever shape they want.
+    /// Candidate targets for a call to `name`, minus the caller itself.
+    ///
+    /// A pure global by-name lookup (the original behavior) is catastrophic on
+    /// a polyglot monorepo: ubiquitous identifiers — `map`, `get`, `has`,
+    /// `forEach`, `push`, `then` … — are *defined* dozens of times (every
+    /// store/util/class method), so a single `arr.map(...)` wires an edge to
+    /// every same-named symbol across every package. Those phantom edges fuse
+    /// otherwise-disjoint subsystems into one strongly-connected blob, which in
+    /// turn makes PR-scope reverse-reachability ([`crate::pr_scope::affected_roots`])
+    /// report nearly every root as "affected" and the architecture diagram
+    /// render an arbitrary, uncolored slice of the whole repo. See
+    /// refactorlab/drift call-graph over-linking.
+    ///
+    /// Two language-neutral confidence filters tame this without needing a full
+    /// import/type resolver:
+    ///   1. **Same-file wins.** If any candidate lives in the caller's own
+    ///      file, resolve to those alone — an intra-file call almost never means
+    ///      a same-named symbol in some unrelated package.
+    ///   2. **Fan-out cap.** Otherwise, a *cross-file* name resolving to more
+    ///      than [`MAX_CROSS_FILE_FANOUT`] distinct sites carries no usable
+    ///      single-target signal (it's a generic/builtin-shaped name), so we
+    ///      emit no edge rather than a fan of phantom ones.
+    ///
+    /// Uniquely- and few-defined names (real domain functions) are unaffected,
+    /// so ordinary cross-module calls still wire correctly.
     pub fn candidates_by_name(
         &self,
         name: &str,
         exclude: &'a SymbolId,
     ) -> impl Iterator<Item = SymbolId> + 'a {
-        self.by_name
+        let candidates: Vec<SymbolId> = self
+            .by_name
             .get(name)
             .into_iter()
-            .flat_map(move |v| v.iter().filter(move |t| *t != exclude).cloned())
+            .flat_map(|v| v.iter().filter(|t| *t != exclude).cloned())
+            .collect();
+
+        // (1) Same-file preference — high-confidence local resolution.
+        if let Some(caller_file) = self.symbols.get(exclude).map(|s| &s.file) {
+            let local: Vec<SymbolId> = candidates
+                .iter()
+                .filter(|t| self.symbols.get(*t).map(|s| &s.file) == Some(caller_file))
+                .cloned()
+                .collect();
+            if !local.is_empty() {
+                return local.into_iter();
+            }
+        }
+
+        // (2) Cross-file fan-out cap — drop names too ambiguous to be a real edge.
+        if candidates.len() > MAX_CROSS_FILE_FANOUT {
+            return Vec::new().into_iter();
+        }
+        candidates.into_iter()
     }
 }
+
+/// Upper bound on how many distinct cross-file definitions a single call-site
+/// name may resolve to before we treat it as too ambiguous to wire. Tuned to
+/// keep genuine cross-module fan-out (a handful of same-named `compute`/`render`
+/// helpers) while dropping generic connectors (`map`, `get`, `has`, `forEach`)
+/// that are defined far more widely. Deliberately language-neutral: the failure
+/// mode it guards against (name collisions fusing the graph) is universal.
+pub const MAX_CROSS_FILE_FANOUT: usize = 8;
 
 /// Per-language resolution policy. Implementations live next to the
 /// language's tags query in `src/languages/<lang>.rs`. The default
@@ -219,6 +269,66 @@ mod tests {
         let resolved = DefaultResolver.resolve("foo", None, CallForm::Bare, &caller, &idx);
         assert_eq!(resolved.len(), 1);
         assert_ne!(resolved[0], caller);
+    }
+
+    /// Like `mk_symbol` but pins the defining file, so tests can exercise the
+    /// same-file-preference / cross-file-fan-out logic in `candidates_by_name`.
+    fn mk_symbol_in(name: &str, file: &str) -> Symbol {
+        let mut s = mk_symbol(name, SymbolKind::Function, None);
+        s.file = PathBuf::from(file);
+        s
+    }
+
+    #[test]
+    fn cross_file_fanout_cap_drops_overlinked_generic_names() {
+        // `map` defined in MANY files (a generic connector) → no edge wired.
+        let mut defs: Vec<Symbol> = (0..MAX_CROSS_FILE_FANOUT + 2)
+            .map(|i| mk_symbol_in("map", &format!("pkg{i}/store.ts")))
+            .collect();
+        // The caller lives in its own, distinct file with no local `map`.
+        defs.push(mk_symbol_in("caller", "feature/view.tsx"));
+        let (symbols, by_name) = mk_index(defs);
+        let idx = SymbolIndex::build(&symbols, &by_name);
+        let caller = by_name["caller"][0].clone();
+        let resolved = DefaultResolver.resolve("map", None, CallForm::Bare, &caller, &idx);
+        assert!(
+            resolved.is_empty(),
+            "an over-linked generic name must wire no edges, got {}",
+            resolved.len()
+        );
+    }
+
+    #[test]
+    fn rare_cross_file_name_still_resolves() {
+        // A uniquely-named domain function keeps its cross-file edge.
+        let defs = vec![
+            mk_symbol_in("renderOverview", "render/overview.ts"),
+            mk_symbol_in("caller", "render/header.ts"),
+        ];
+        let (symbols, by_name) = mk_index(defs);
+        let idx = SymbolIndex::build(&symbols, &by_name);
+        let caller = by_name["caller"][0].clone();
+        let resolved =
+            DefaultResolver.resolve("renderOverview", None, CallForm::Bare, &caller, &idx);
+        assert_eq!(resolved.len(), 1);
+    }
+
+    #[test]
+    fn same_file_definition_wins_over_cross_file_collisions() {
+        // `helper` is defined widely (over the cap) AND once in the caller's
+        // file. Same-file preference must pick the local one and ignore the rest.
+        let mut defs: Vec<Symbol> = (0..MAX_CROSS_FILE_FANOUT + 2)
+            .map(|i| mk_symbol_in("helper", &format!("pkg{i}/util.ts")))
+            .collect();
+        defs.push(mk_symbol_in("helper", "feature/view.tsx"));
+        defs.push(mk_symbol_in("caller", "feature/view.tsx"));
+        let (symbols, by_name) = mk_index(defs);
+        let idx = SymbolIndex::build(&symbols, &by_name);
+        let caller = by_name["caller"][0].clone();
+        let resolved = DefaultResolver.resolve("helper", None, CallForm::Bare, &caller, &idx);
+        assert_eq!(resolved.len(), 1, "same-file preference should pick exactly one");
+        let target = idx.symbols.get(&resolved[0]).unwrap();
+        assert_eq!(target.file, PathBuf::from("feature/view.tsx"));
     }
 
     #[test]

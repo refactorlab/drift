@@ -118,6 +118,43 @@ fn classify_file(path: &str, changed: &[ChangedFile]) -> FileStatus {
     FileStatus::Unchanged
 }
 
+/// True iff `node` or any descendant lives in a changed file — i.e. this
+/// subtree leads to (or IS) part of the diff. Drives the change-anchored
+/// walk: roots that fail this are dropped, and within a kept root the walker
+/// only descends into children that pass (so the bounded node budget is spent
+/// on the path to the diff, not on unrelated high-reach branches). Bounded by
+/// the per-tree node cap applied upstream, so the linear scan is cheap.
+fn subtree_has_change(node: &CallTreeNode, changed: &[ChangedFile]) -> bool {
+    let mut stack: Vec<&CallTreeNode> = vec![node];
+    while let Some(n) = stack.pop() {
+        if !matches!(classify_file(&n.file, changed), FileStatus::Unchanged) {
+            return true;
+        }
+        for c in &n.children {
+            stack.push(c);
+        }
+    }
+    false
+}
+
+/// Count of nodes in `node`'s subtree (incl. itself) that live in a changed
+/// file. Used to ORDER change-anchored roots so the diagram leads with the
+/// root that contains the most of the diff, rather than merely the
+/// highest-reach one — the lead subgraph then best showcases what changed.
+fn subtree_change_count(node: &CallTreeNode, changed: &[ChangedFile]) -> usize {
+    let mut count = 0;
+    let mut stack: Vec<&CallTreeNode> = vec![node];
+    while let Some(n) = stack.pop() {
+        if !matches!(classify_file(&n.file, changed), FileStatus::Unchanged) {
+            count += 1;
+        }
+        for c in &n.children {
+            stack.push(c);
+        }
+    }
+    count
+}
+
 /// Detect the source-language scope label from a file extension.
 /// Used as `DataStructureEntry.scope` so renderers can show "Python class",
 /// "TypeScript interface", etc.
@@ -335,6 +372,16 @@ struct GraphMode {
     /// When true, override every retained node's class to `"muted"` —
     /// the BEFORE chart's signature look.
     force_muted: bool,
+    /// When true, ANCHOR the graph on the diff instead of on reach. The
+    /// walker then (a) keeps only roots whose subtree contains a changed
+    /// node, (b) spends its node budget walking DOWN to those changes
+    /// (pruning branches that lead nowhere near the diff) plus one hop of
+    /// callee context around each changed node. This is what makes the
+    /// "color-coded diff" graph actually show the diff: without it, the
+    /// reach-sorted top roots and their shallow top-down subtrees almost
+    /// never reach the deep leaves a PR touches, so nothing gets tinted.
+    /// BEFORE/AFTER keep `false` (reach-anchored, byte-identical to before).
+    anchor_on_changes: bool,
 }
 
 /// When rendering the BEFORE chart, any node whose displayed label embeds
@@ -445,9 +492,13 @@ fn build_call_graph(
         id
     }
 
-    const MAX_DEPTH: usize = 3;
-    const MAX_NODES: usize = 16;
     const MAX_CHILDREN_PER_NODE: usize = 6;
+    // Reach-anchored (BEFORE/AFTER) keeps the original shallow, broad shape.
+    // Change-anchored (diff-merged) walks DEEPER along pruned change-paths, so
+    // it needs more depth headroom and a slightly larger node budget to reach
+    // the leaves a PR actually touches — still bounded for comment size.
+    let max_depth = if mode.anchor_on_changes { 8 } else { 3 };
+    let max_nodes = if mode.anchor_on_changes { 28 } else { 16 };
 
     let class_for = |status: FileStatus| -> Option<&'static str> {
         if mode.force_muted {
@@ -457,11 +508,50 @@ fn build_call_graph(
         }
     };
 
-    for root in entries.iter().take(8) {
+    // Should the walker descend from `parent` into `child`?
+    //   - reach-anchored: always (original breadth-first behavior).
+    //   - change-anchored: only if the child leads to the diff, OR the parent
+    //     is itself a changed node (then show its direct callees as one hop of
+    //     context). This prunes branches that never approach the diff so the
+    //     budget reaches the changed leaves.
+    let descend_into = |parent_changed: bool, child: &CallTreeNode| -> bool {
+        if !mode.anchor_on_changes {
+            return true;
+        }
+        parent_changed || subtree_has_change(child, changed_files)
+    };
+
+    // Root set. Reach-anchored: the top-8 reach-sorted roots (unchanged).
+    // Change-anchored: only roots whose subtree touches the diff, preserving
+    // reach order, capped at 8 — a root that reaches nothing changed is not
+    // part of "what changed" and is dropped (graph falls back to the
+    // "No affected entries" placeholder when NONE qualify).
+    let roots: Vec<&CallTreeNode> = if mode.anchor_on_changes {
+        let mut reaching: Vec<&CallTreeNode> = entries
+            .iter()
+            .filter(|r| subtree_has_change(r, changed_files))
+            .collect();
+        // Lead with the root holding the most of the diff. Stable sort keeps
+        // the upstream reach order as the tie-break, so output stays deterministic.
+        reaching.sort_by_key(|r| std::cmp::Reverse(subtree_change_count(r, changed_files)));
+        reaching.into_iter().take(8).collect()
+    } else {
+        entries.iter().take(8).collect()
+    };
+
+    for root in roots {
+        // Stop opening NEW roots once the budget is spent — otherwise a root
+        // interned here whose change-path can't fit leaves a context-less
+        // orphan box (the per-root BFS below would break immediately). Better
+        // to render fewer roots fully than many as bare, edgeless boxes.
+        if nodes.len() >= max_nodes {
+            break;
+        }
         let root_status = classify_file(&root.file, changed_files);
         if root_status == mode.skip_status {
             continue;
         }
+        let root_changed = root_status != FileStatus::Unchanged;
         let root_override =
             before_rename_label(mode, &root.name, &root.parent_class, &root.file, root.line, rename_old);
         let rid = intern_node(
@@ -476,19 +566,22 @@ fn build_call_graph(
             root_override.as_deref(),
         );
 
+        // Queue carries whether the PARENT node is changed, so `descend_into`
+        // can grant one hop of callee context around each changed node.
         let mut queue: std::collections::VecDeque<(&CallTreeNode, usize, String)> =
             std::collections::VecDeque::new();
-        for c in root.children.iter().take(MAX_CHILDREN_PER_NODE) {
+        for c in root.children.iter().filter(|c| descend_into(root_changed, c)).take(MAX_CHILDREN_PER_NODE) {
             queue.push_back((c, 1, rid.clone()));
         }
         while let Some((node, depth, parent_id)) = queue.pop_front() {
-            if nodes.len() >= MAX_NODES {
+            if nodes.len() >= max_nodes {
                 break;
             }
             let n_status = classify_file(&node.file, changed_files);
             if n_status == mode.skip_status {
                 continue;
             }
+            let n_changed = n_status != FileStatus::Unchanged;
             let n_override =
                 before_rename_label(mode, &node.name, &node.parent_class, &node.file, node.line, rename_old);
             let nid = intern_node(
@@ -513,8 +606,8 @@ fn build_call_graph(
                     });
                 }
             }
-            if depth < MAX_DEPTH {
-                for c in node.children.iter().take(MAX_CHILDREN_PER_NODE) {
+            if depth < max_depth {
+                for c in node.children.iter().filter(|c| descend_into(n_changed, c)).take(MAX_CHILDREN_PER_NODE) {
                     queue.push_back((c, depth + 1, nid.clone()));
                 }
             }
@@ -560,6 +653,7 @@ fn build_after_flowchart(
         GraphMode {
             skip_status: FileStatus::Removed,
             force_muted: false,
+            anchor_on_changes: false,
         },
         &no_renames,
     );
@@ -599,6 +693,7 @@ fn build_diff_merged_flowchart(
         GraphMode {
             skip_status: FileStatus::Removed,
             force_muted: false,
+            anchor_on_changes: true,
         },
         &no_renames,
     );
@@ -761,6 +856,7 @@ fn build_before_flowchart(
         GraphMode {
             skip_status: FileStatus::Added,
             force_muted: true,
+            anchor_on_changes: false,
         },
         &renames,
     );
@@ -1663,11 +1759,17 @@ mod tests {
     #[test]
     fn diff_merged_is_one_graph_with_adds_changes_and_removals() {
         let entries = vec![
-            mk_node("services.py", "app/services.py"),   // Modified → amber
+            // shared.py is an UNCHANGED CALLEE of the modified services.py —
+            // the change-anchored graph keeps it for one hop of callee context
+            // (an unchanged file that is NOT reached from any changed code is
+            // correctly dropped, so it must sit under a changed root here).
+            with_children(
+                mk_node("services.py", "app/services.py"), // Modified → amber
+                vec![mk_node("shared.py", "lib/shared.py")], // Unchanged callee → no class
+            ),
             mk_node("new_api.py", "app/new_api.py"),     // Added    → green
             mk_node("routes.py", "app/routes.py"),       // Renamed  → amber, NEW name
             mk_node("copy_util.py", "app/copy_util.py"), // Copied   → green
-            mk_node("shared.py", "lib/shared.py"),       // Unchanged → no class
         ];
         let changed = vec![
             cf("app/services.py", "modified"),
@@ -1698,6 +1800,53 @@ mod tests {
 
         // Unchanged stays uncoloured — the muted palette is a BEFORE-only device.
         assert!(!merged.contains("classDef muted"), "merged must NOT use the muted palette:\n{merged}");
+    }
+
+    /// The core "color-coded diff" contract: the merged graph must ANCHOR on
+    /// the diff. A changed leaf buried several hops under unchanged ancestors
+    /// is surfaced AND tinted, the unchanged ancestors on the path to it are
+    /// kept (uncoloured) for context, and a high-reach root that reaches
+    /// nothing changed is dropped entirely. This is the regression guard for
+    /// the bug where the diagram rendered reach-sorted roots and tinted nothing.
+    #[test]
+    fn diff_merged_anchors_on_deep_changed_leaf_and_drops_unrelated_roots() {
+        let entries = vec![
+            // Change-reaching root: unchanged entry → unchanged mid → CHANGED leaf.
+            with_children(
+                mk_node("entry", "app/entry.py"),
+                vec![with_children(
+                    mk_node("mid", "app/mid.py"),
+                    vec![mk_node("touched_fn", "app/touched.py")],
+                )],
+            ),
+            // Unrelated high-reach root: reaches nothing in the diff.
+            with_children(
+                mk_node("noise_root", "app/noise_root.py"),
+                vec![mk_node("noise_child", "app/noise_child.py")],
+            ),
+        ];
+        let changed = vec![cf("app/touched.py", "modified")];
+        let merged = &compute_with_diff(&entries, &changed).diff_merged_mermaid;
+
+        // Deep changed leaf is present AND tinted.
+        assert!(merged.contains("\"touched_fn\""), "changed leaf must be surfaced:\n{merged}");
+        assert!(merged.contains("classDef changed"), "changed leaf must be tinted:\n{merged}");
+        // Path-to-change ancestors kept for context.
+        assert!(merged.contains("\"entry\"") && merged.contains("\"mid\""), "ancestors on the change path kept:\n{merged}");
+        // Unrelated root + its subtree dropped.
+        assert!(!merged.contains("noise_root") && !merged.contains("noise_child"),
+            "a root that reaches nothing changed must be dropped:\n{merged}");
+    }
+
+    /// All-cases coverage: non-empty entries but NO root reaches the diff (e.g.
+    /// the changed file isn't in the parsed graph) → honest "No affected
+    /// entries" placeholder rather than an arbitrary reach-sorted slice.
+    #[test]
+    fn diff_merged_placeholder_when_no_root_reaches_change() {
+        let entries = vec![mk_node("a", "app/a.py"), mk_node("b", "app/b.py")];
+        let changed = vec![cf("app/elsewhere.py", "modified")];
+        let merged = &compute_with_diff(&entries, &changed).diff_merged_mermaid;
+        assert!(merged.contains("No affected entries"), "must fall back to the placeholder:\n{merged}");
     }
 
     /// Gap-#2 CONTRACT: for a graph UNDER the node cap (no truncation),
