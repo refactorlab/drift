@@ -36,6 +36,48 @@ pub struct Constants {
     /// every output URL is grounded in the JSON file, not hardcoded.
     #[serde(default)]
     pub axis_sources: std::collections::BTreeMap<String, Vec<SourceEntry>>,
+    /// Constants for `src/pr_algorithms/pr_quality/*` (the six quality
+    /// dimensions + composite). See PR_QUALITY_RESEARCH.md §8.
+    pub pr_quality: PrQuality,
+}
+
+/// PR-quality constants: a flat keyed map of scalar constants (each
+/// FACT/KNOB-tagged + cited) plus the per-language comment-syntax table
+/// the source scanner loops over. The flat map keeps ~108 cited values
+/// maintainable without ~108 named struct fields; the `pq_num` accessor
+/// gives algorithm modules a readable lookup.
+#[derive(Debug, Deserialize)]
+pub struct PrQuality {
+    pub numbers: std::collections::BTreeMap<String, NumberWithCitation>,
+    pub comment_syntax: Vec<CommentSyntax>,
+}
+
+/// Per-language comment / string delimiters consumed by
+/// `pr_quality::source_scan`'s byte-level state machine (mirrors
+/// scc/tokei). Keeps all per-language knowledge as DATA, so the scanner
+/// stays language-agnostic (clean-architecture rule).
+#[derive(Debug, Deserialize, Clone)]
+pub struct CommentSyntax {
+    pub language: String,
+    pub line: Vec<String>,
+    pub block: Vec<DelimPair>,
+    pub strings: Vec<StringDelim>,
+    pub nested_block: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DelimPair {
+    pub open: String,
+    pub close: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StringDelim {
+    pub open: String,
+    pub close: String,
+    /// Raw string (no escape processing): Go backtick, Rust `r#"…"#`.
+    #[serde(default)]
+    pub raw: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -98,12 +140,17 @@ pub struct NumberWithCitation {
     #[allow(dead_code)]
     #[serde(default)]
     pub as_of: String,
-    #[allow(dead_code)]
     #[serde(default)]
     pub citation: String,
     #[allow(dead_code)]
     #[serde(default)]
     pub notes: String,
+    /// `fact` = verified primary source · `knob` = tuning value
+    /// calibrated against the repo's own corpus. Empty on the legacy
+    /// rates/heuristics entries (only `pr_quality` entries set it).
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub tag: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -288,6 +335,50 @@ pub fn axis_sources(axis: &str) -> Vec<crate::pr_algorithms::types::ReferenceLin
         .unwrap_or_default()
 }
 
+// ───────────────────────────────────────────────────────────────────
+// pr_quality accessors. The flat keyed map is the SSOT for all six
+// quality dimensions + the composite. `pq_num` panics on a missing key
+// because every key the code reads is part of the embedded, test-checked
+// data file (same fail-fast discipline as the rest of this module).
+// ───────────────────────────────────────────────────────────────────
+
+fn pr_quality() -> &'static PrQuality {
+    &constants().pr_quality
+}
+
+/// Scalar pr_quality constant by dotted key (e.g. `"tokens.bytes_per_token_code"`).
+pub fn pq_num(key: &str) -> f64 {
+    pr_quality()
+        .numbers
+        .get(key)
+        .map(|n| n.value)
+        .unwrap_or_else(|| {
+            panic!(
+                "pr_quality constant {key:?} is missing in \
+                 schema/pr_algorithms_constants.json (pr_quality.numbers)"
+            )
+        })
+}
+
+/// Citation URL/prose backing a pr_quality constant (empty if unknown).
+pub fn pq_cite(key: &str) -> &'static str {
+    pr_quality()
+        .numbers
+        .get(key)
+        .map(|n| n.citation.as_str())
+        .unwrap_or("")
+}
+
+/// Per-language comment/string syntax for the source scanner. `None`
+/// for languages without a table entry (scanner then degrades to
+/// line/blank only — no comment/string suppression).
+pub fn comment_syntax_for(language: &str) -> Option<&'static CommentSyntax> {
+    pr_quality()
+        .comment_syntax
+        .iter()
+        .find(|c| c.language == language)
+}
+
 /// Test-file regex *patterns* (raw strings) as `&'static [String]`.
 /// Returns cloned strings from the parsed JSON; the `&'static`
 /// lifetime is safe because the parsed `Constants` lives in a
@@ -439,6 +530,94 @@ mod tests {
         for p in test_function_patterns() {
             regex::Regex::new(p)
                 .unwrap_or_else(|e| panic!("invalid function regex {p:?}: {e}"));
+        }
+    }
+
+    /// Every `pr_quality` constant must carry a citation AND a
+    /// fact|knob tag (the integrity contract from PR_QUALITY_RESEARCH §8:
+    /// a knob must say so, never masquerade as a fact). Mirrors
+    /// `every_value_has_a_citation` for the new block.
+    #[test]
+    fn pr_quality_every_value_is_cited_and_tagged() {
+        let pq = pr_quality();
+        assert!(!pq.numbers.is_empty(), "pr_quality.numbers is empty");
+        for (key, n) in &pq.numbers {
+            assert!(
+                !n.citation.is_empty(),
+                "pr_quality constant {key:?} has no citation"
+            );
+            assert!(
+                n.tag == "fact" || n.tag == "knob",
+                "pr_quality constant {key:?} has tag {:?}, expected fact|knob",
+                n.tag
+            );
+        }
+        // comment_syntax must cover all 8 supported languages.
+        let langs: std::collections::HashSet<&str> =
+            pq.comment_syntax.iter().map(|c| c.language.as_str()).collect();
+        for lang in ["python", "javascript", "typescript", "java", "go", "rust", "scala", "kotlin"] {
+            assert!(langs.contains(lang), "comment_syntax missing {lang}");
+        }
+    }
+
+    /// Regression guard: load-bearing pr_quality constants must keep
+    /// their calibrated values so a silent edit to the JSON forces a
+    /// deliberate test change (mirrors
+    /// `json_values_match_previous_hardcoded_constants`). When a knob is
+    /// re-calibrated, update this test AND CALIBRATION.md in the same PR.
+    #[test]
+    fn pr_quality_constants_match_calibrated_values() {
+        assert_eq!(pq_num("tokens.bytes_per_token_code"), 2.8);
+        assert_eq!(pq_num("llm.context_window_default"), 1_000_000.0);
+        assert_eq!(pq_num("llm.context_usable_fraction"), 0.30);
+        assert_eq!(pq_num("inversion.centrality_hub_mult"), 5.0);
+        assert_eq!(pq_num("comprehensibility.cognitive_complexity_limit"), 15.0);
+        assert_eq!(pq_num("operational.destructive_floor"), 0.80);
+        assert_eq!(pq_num("team.review_max_loc"), 400.0);
+        assert_eq!(pq_num("composite.destructive_cap"), 0.40);
+    }
+
+    /// All weight-sets that feed a weighted mean/penalty must sum to ~1.0
+    /// (the `weights_sum_to_one` governance invariant). Catches a typo
+    /// that would silently skew a composite.
+    #[test]
+    fn pr_quality_weight_sets_sum_to_one() {
+        let sets: &[(&str, &[&str])] = &[
+            ("composite", &[
+                "composite.w_operational", "composite.w_correctness", "composite.w_longevity",
+                "composite.w_comprehensibility", "composite.w_team", "composite.w_llm",
+            ]),
+            ("longevity", &["longevity.w_fragility", "longevity.w_debt", "longevity.w_burden"]),
+            ("fragility", &[
+                "longevity.fragility_w_fanin", "longevity.fragility_w_centrality",
+                "longevity.fragility_w_hk", "longevity.fragility_w_fanout",
+            ]),
+            ("operational", &[
+                "operational.risk_w_rollback", "operational.risk_w_blast",
+                "operational.risk_w_observability",
+            ]),
+            ("blast", &[
+                "operational.blast_w_roots", "operational.blast_w_centrality",
+                "operational.blast_w_percent", "operational.blast_w_fanin",
+            ]),
+            ("correctness", &[
+                "correctness.w_coverage", "correctness.w_repeatability", "correctness.w_edge",
+            ]),
+            ("comprehensibility", &[
+                "comprehensibility.w_explain", "comprehensibility.w_transparency",
+                "comprehensibility.w_context",
+            ]),
+            ("llm_reviewability", &[
+                "llm.review_w_tokens", "llm.review_w_coupling",
+                "llm.review_w_files", "llm.review_w_dispersion",
+            ]),
+        ];
+        for (name, keys) in sets {
+            let sum: f64 = keys.iter().map(|k| pq_num(k)).sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-9,
+                "weight set {name} sums to {sum}, expected 1.0"
+            );
         }
     }
 }

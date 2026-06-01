@@ -14,8 +14,6 @@
 //   Focused-PR verdict     — 🎯 focused · 🔀 consider splitting (cohort-grounded,
 //                            no LLM — Qodo's "Focused PR?" done from the graph)
 //   🔑 Key issues to review — Qodo's curated triage table (issue · where · why)
-//   🗂 Changes             — the cohort walkthrough table (collapsible TOC into
-//                            the diff — CodeRabbit's "Changes" map)
 //
 // All sourced from PrFacts + the changed-file scope + the cross-push state, so
 // it can never disagree with the deeper sections it points into. Degrades: with
@@ -32,8 +30,6 @@ import { mergeConfidence } from '../lib/confidence.ts';
 import { groupCohorts, type CohortSummary } from '../lib/cohorts.ts';
 
 const MAX_KEY_ISSUES = 5;
-const MAX_COHORT_ROWS = 8;
-const MAX_FILES_PER_COHORT = 6;
 const WHY_MAX = 90;
 // Mirror agent_prompt.ts: below this, a finding is a strong hint, not a fact —
 // so the guide flags it for verification rather than asserting it.
@@ -74,10 +70,6 @@ export function renderReviewersGuide(input: ReviewersGuideInput): string | null 
   lines.push(focusVerdict(cohorts), '');
 
   lines.push(keyIssues(facts, ctx));
-
-  // The walkthrough maps the changed files; skip it entirely when there are none
-  // (a suggestions-only edge case) rather than emit an empty table.
-  if (cohorts.totalFiles > 0) lines.push('', changesWalkthrough(cohorts, ctx));
 
   return lines.join('\n').trimEnd();
 }
@@ -184,7 +176,7 @@ function keyIssues(facts: PrFacts, ctx?: PrContext): string {
     return [
       '### \u{1F511} Key issues to review',
       '',
-      '✅ No must-review code issues flagged. Skim the **Changes** map below, then check **Blast radius** for coverage.',
+      '✅ No must-review code issues flagged — skim the suggestions and the architecture diagram below.',
     ].join('\n');
   }
 
@@ -225,32 +217,6 @@ function why(s: CodeSuggestion): string {
   const reason = dash >= 0 ? raw.slice(dash + 3).trim() : raw;
   const verify = s.confidence < VERIFY_BELOW ? ` <sub>(${confidencePercent(s.confidence)} — verify)</sub>` : '';
   return `${escapeCell(truncate(firstSentence(reason), WHY_MAX))}${verify}`;
-}
-
-// ── changes walkthrough — the cohort map (collapsible TOC into the diff) ───────
-
-function changesWalkthrough(cohorts: CohortSummary, ctx?: PrContext): string {
-  const summary = `\u{1F5C2} Changes — ${cohorts.cohorts.length} ${plural(cohorts.cohorts.length, 'area')} · ${int(cohorts.totalFiles)} files`;
-  const out = ['<details>', `<summary>${summary}</summary>`, '', '| Area | Files | Notes |', '|---|---|---|'];
-
-  for (const c of cohorts.cohorts.slice(0, MAX_COHORT_ROWS)) {
-    const links = c.files
-      .slice(0, MAX_FILES_PER_COHORT)
-      // escapeCell the label: a `|`/backtick in a path would otherwise break this
-      // table row (same defense already applied to the cohort label below).
-      .map((f) => fileLink(ctx, f, undefined, escapeCell(basenameOf(f))))
-      .join(' · ');
-    const more = c.files.length > MAX_FILES_PER_COHORT ? ` *…+${c.files.length - MAX_FILES_PER_COHORT}*` : '';
-    const count = `**${c.files.length}** ${plural(c.files.length, 'file')}`;
-    const note = c.unreachable > 0 ? `⚠️ ${c.unreachable} unreachable` : '—';
-    out.push(`| **${escapeCell(c.label)}** | ${count} · ${links}${more} | ${note} |`);
-  }
-  if (cohorts.cohorts.length > MAX_COHORT_ROWS) {
-    out.push(`| *…+${cohorts.cohorts.length - MAX_COHORT_ROWS} more areas* | | |`);
-  }
-
-  out.push('', '</details>');
-  return out.join('\n');
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────

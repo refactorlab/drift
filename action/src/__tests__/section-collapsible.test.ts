@@ -103,6 +103,7 @@ function fullReport(): ScanPrOutput {
       value_card: card([axis('money', 3), axis('customer', 30), axis('runtime', -4)]),
       code_suggestions: [deadCode('src/a.ts', 'unused', 5)],
       architecture_flow: {
+        diff_merged_mermaid: 'flowchart LR\n    n0["x"]\n    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px\n    class n0 changed',
         before_mermaid: 'flowchart LR\n    n0["x"]\n    classDef muted fill:#6e7681,stroke:#6e7681,color:#fff\n    class n0 muted',
         after_mermaid: 'flowchart LR\n    n0["x"]\n    classDef changed fill:#9e6a03,stroke:#d29922,color:#fff,stroke-width:2px\n    class n0 changed',
       },
@@ -128,7 +129,7 @@ test('overview: every detail section is an expandable <details> with a TLDR summ
     /<details>\n<summary><strong>📊 Business value<\/strong> — Overall drift \+18\.0% ▲/,
     /<details>\n<summary><strong>⚠️ Code suggestions \(1\)<\/strong> — 1 suggestion/,
     /<details>\n<summary><strong>🛰 Risks<\/strong> — 1 to address · 2 total<\/summary>/,
-    /<details>\n<summary><strong>🏗 Architecture<\/strong> — Before vs after diagrams<\/summary>/,
+    /<details>\n<summary><strong>🏗 Architecture<\/strong> — Color-coded diff graph<\/summary>/,
   ]) {
     assert.match(body, re, `missing collapsible/TLDR: ${re}`);
   }
@@ -220,11 +221,12 @@ test('overview: Risks stays collapsed regardless of act-before-merge items', () 
   assert.doesNotMatch(closed, /<details open>\n<summary><strong>🛰 Risks/);
 });
 
-test('overview: the two before/after mermaid charts survive inside the nested architecture <details>', () => {
+test('overview: the merged color-coded diff chart survives inside the nested architecture <details>', () => {
   const body = renderOverview(fullReport(), { ctx: CTX });
-  // Architecture is now an OUTER <details>; the BEFORE/AFTER charts are inner.
-  assert.match(body, /🔴 BEFORE — what the code was:/);
-  assert.match(body, /🟢 AFTER — what the code is now:/);
-  const fences = (body.match(/```mermaid/g) ?? []).length;
-  assert.ok(fences >= 2, `expected ≥2 mermaid fences (before+after), got ${fences}`);
+  // Architecture is an OUTER <details>; the single merged diff chart is inner.
+  assert.match(body, /🧭 Call graph — color-coded diff/, 'merged diff chart present');
+  // The before/after split is gone — no BEFORE/AFTER headings remain.
+  assert.doesNotMatch(body, /🔴 BEFORE/);
+  assert.doesNotMatch(body, /🟢 AFTER/);
+  assert.ok((body.match(/```mermaid/g) ?? []).length >= 1, 'at least the merged chart fence');
 });

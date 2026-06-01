@@ -1,21 +1,8 @@
-# PR #156 — Complexity & Risk Gauges
-
-![Address before merge](https://img.shields.io/badge/⚠%20Address%20before%20merge-C2A63B?style=flat-square) ![Merge confidence](https://img.shields.io/badge/Merge%20confidence%201%2F5-E0533D?style=flat-square) ![High risk](https://img.shields.io/badge/High%20risk%20·%2060%2B%20min%20review-D33A2C?style=flat-square) 
-
----
-
-Per-metric complexity and risk scores for this PR. Each bar fills to the metric's score out of 100 on a dark track; the status pill repeats the exact value with an arrow for direction.
-
 ![LOW 0–39](https://img.shields.io/badge/LOW-0%E2%80%9339-22c55e?style=for-the-badge) ![MODERATE 40–59](https://img.shields.io/badge/MODERATE-40%E2%80%9359-eab308?style=for-the-badge) ![HIGH 60–79](https://img.shields.io/badge/HIGH-60%E2%80%9379-f97316?style=for-the-badge) ![CRITICAL 80–100](https://img.shields.io/badge/CRITICAL-80%E2%80%93100-ef4444?style=for-the-badge)
 
 **LLM Context Limit:** ![FITS IN CONTEXT: NO (128k limit exceeded)](https://img.shields.io/badge/LLM_CONTEXT-EXCEEDED_134k_tokens-ef4444?style=for-the-badge)  
 **Highest Complexity/Risk:** Blast radius (95) · Token footprint (92) · Context dependency (90) · Review fatigue risk (90)  
 **Lowest Complexity/Risk:** Agent reviewability (28) · Observability (35)
-
-> [!IMPORTANT]
-> **Why LLM Complexity Matters:** As AI code review becomes standard, this is a critical operational concern. When a PR exceeds model context limits (128k for standard agents), AI tooling silently degrades, reviewing file chunks in isolation without semantic coherence.
->
-> **The Interesting Inversion:** A PR can have low traditional complexity (small LOC, few files) but high LLM complexity because it modifies a foundational abstraction, requiring an understanding of the entire codebase to evaluate. Our gauges track this critical gap.
 
 ---
 
@@ -259,9 +246,12 @@ Organizational dynamics and review safety.
 
 ---
 
-> **Reading the scale** — Colour and length track the raw 0–100 score (green → low, red → high). 
-> * **Lower is better** for most risk metrics (e.g. blast radius, token footprint, maintenance burden).
-> * **Higher is better** for quality metrics flagged *"higher is better"* (Agent reviewability, Explainability score, Decision transparency, Repeatability, Observability, Test coverage). For these quality metrics, a low score (green) represents a sub-optimal/deficient state, whereas a high score (red) represents optimal quality.
+<details>
+<summary>Reading the scale</summary>
+**Reading the scale** — Colour and length track the raw 0–100 score (green → low, red → high). 
+ * **Lower is better** for most risk metrics (e.g. blast radius, token footprint, maintenance burden).
+ * **Higher is better** for quality metrics flagged *"higher is better"* (Agent reviewability, Explainability score, Decision transparency, Repeatability, Observability, Test coverage). For these quality metrics, a low score (green) represents a sub-optimal/deficient state, whereas a high score (red) represents optimal quality.
+</details>
 
 ---
 

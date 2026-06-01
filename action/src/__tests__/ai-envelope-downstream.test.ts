@@ -659,13 +659,23 @@ test('full ai-index chain: envelope + spy Octokit → suggestions merged into th
     const md = renderSuggestions(merged.pr_review?.code_suggestions, undefined);
     assert.ok(md, 'sticky comment must carry a Code suggestions section');
 
-    // 6. Both postable findings render as a markdown diff; dropped + capped do not.
-    assert.match(md!, /```diff/);
-    assert.match(md!, /FIXED_A/);
-    assert.match(md!, /FIXED_B/);
-    assert.ok(!md!.includes('FIXED_C'), 'off-diff finding must not render');
-    assert.ok(!md!.includes('FIXED_D'), 'over-cap finding must not render');
-    assert.match(md!, /openai\/gpt-4o/);
+    // 6. Both postable findings render as priority-table ROWS (det + AI share
+    //    one row each now — no per-finding diff block). The heading total + cap
+    //    reflect the 2 passed in; the dropped (svc/c.py) and over-cap (svc/d.py)
+    //    findings never reach the section at all.
+    assert.match(md!, /## ⚠️ Code suggestions \(2\)/, 'heading totals the 2 merged findings');
+    assert.match(md!, /\| Priority \| Finding \| Location \| Confidence \|/, 'priority table');
+    assert.match(md!, /^\| .* \| .* \| `a\.py:12` \| 95% \|$/m, 'svc/a.py finding is a table row');
+    assert.match(md!, /^\| .* \| .* \| `b\.py:8` \| 92% \|$/m, 'svc/b.py finding is a table row');
+    // The category-B finding drives the product-correctness CAUTION callout.
+    assert.match(md!, /\[!CAUTION\]/, 'product-correctness CAUTION present');
+    // Exactly the two postable findings render — no more, no fewer.
+    const rows = (md!.match(/^\| (?:🔴 High|🟡 Medium|⚪ Low) \|/gm) ?? []).length;
+    assert.equal(rows, 2, 'exactly the two postable findings render as rows');
+    assert.ok(!md!.includes('c.py'), 'off-diff finding (svc/c.py) must not render');
+    assert.ok(!md!.includes('d.py'), 'over-cap finding (svc/d.py) must not render');
+    // after_code is no longer rendered (no per-finding diff block).
+    assert.ok(!md!.includes('FIXED_A') && !md!.includes('FIXED_B'), 'no per-finding diff block');
 
     // 7. The contract: exactly ONE read call, and NEVER a createReview — the
     //    AI suggestions live only in the sticky comment.

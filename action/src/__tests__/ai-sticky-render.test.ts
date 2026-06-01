@@ -1,12 +1,15 @@
 // AI suggestions in the sticky "Code suggestions" section.
 //
-// Covers the three new pieces of the AI-suggestion-in-sticky feature:
+// Covers the three pieces of the AI-suggestion-in-sticky feature:
 //   1. ai/to-code-suggestion.ts — reconstruct a faithful red/green diff from
 //      the PR patch (the `-` side) + the model's after_code (the `+` side),
 //      with surrounding context; fail-soft to after-only with no patch.
-//   2. render/sections/suggestions.ts — AI findings render as expanded
-//      "code suggestion" blocks (narrative + diff) separate from the
-//      deterministic priority table, and never get capped out of view.
+//   2. render/sections/suggestions.ts — AI findings are NO LONGER special:
+//      they render as ordinary priority-TABLE rows (label / location /
+//      confidence) alongside the deterministic findings, are counted in the
+//      heading total, and are subject to the SAME render cap. (The old expanded
+//      "code suggestion" blocks, the `### 🤖 AI-refined code suggestions`
+//      subheading, and the AI-only `<details open>` were removed.)
 //   3. action.yml — the sticky comment is deferred to the combined poster
 //      when AI is on, with the footer/artifact env threaded through.
 
@@ -17,7 +20,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { aiToCodeSuggestion, reconstructDiff, mergeAiSuggestionsIntoReport } from '../ai/to-code-suggestion.ts';
-import { renderSuggestions } from '../render/sections/suggestions.ts';
+import { renderSuggestions, DEFAULT_MAX_SUGGESTIONS } from '../render/sections/suggestions.ts';
 import type { AISuggestion } from '../ai/schema.ts';
 import type { CodeSuggestion, ScanPrOutput } from '../report.ts';
 import type { PrContext } from '../render/context.ts';
@@ -134,53 +137,72 @@ function det(over: Partial<CodeSuggestion> = {}): CodeSuggestion {
   };
 }
 
-test('renderSuggestions: AI finding renders an expanded "code suggestion" block', () => {
+test('renderSuggestions: AI finding renders as an ordinary priority-table row', () => {
+  // AI findings are no longer special — same table, same cap as deterministic
+  // ones. The expanded block / AI subheading / <details open> are gone.
   const out = renderSuggestions([aiToCodeSuggestion(ai(), PATCH, 'openai/gpt-4.1')], CTX)!;
   assert.match(out, /## ⚠️ Code suggestions \(1\)/);
-  assert.match(out, /### 🤖 AI-refined code suggestions \(1\)/);
-  assert.match(out, /<details open>/);
-  assert.match(out, /🤖 <strong>code suggestion<\/strong>/);
-  assert.match(out, /<code>openai\/gpt-4\.1<\/code>/);
-  assert.match(out, /\*\*What\*\* — Replace the two lines/);
-  assert.match(out, /\*\*Why it matters\*\* — because/);
-  // the red/green diff with context
-  assert.match(out, /- oldA\n- oldB\n\+ newA\n\+ newB/);
-  // AI-only ⇒ NO deterministic priority table
-  assert.ok(!out.includes('| Priority | Finding | Location | Confidence |'), 'no table when AI-only');
+  assert.match(out, /\| Priority \| Finding \| Location \| Confidence \|/);
+  // The AI finding is a single row: label (derived category_label), location, confidence.
+  const row = out.split('\n').find((l) => l.startsWith('|') && l.includes('`auth.ts:13`'))!;
+  assert.ok(row, 'AI finding rendered as a table row');
+  assert.match(row, /🅐 Optimization/);
+  assert.match(row, /\| 90% \|/);
+  // The removed AI-only surface must NOT come back.
+  assert.doesNotMatch(out, /AI-refined code suggestions/);
+  assert.doesNotMatch(out, /<details open>/);
+  assert.doesNotMatch(out, /code suggestion<\/strong>/);
+  assert.doesNotMatch(out, /\*\*Why it matters\*\*/);
 });
 
-test('renderSuggestions: mixed det + AI — table for det, block for AI, count spans both', () => {
+test('renderSuggestions: mixed det + AI — one table holds both rows, count spans both', () => {
+  // det + AI now share ONE priority table (no separate AI block). The high-sev
+  // deterministic finding outranks the low AI finding.
   const out = renderSuggestions(
     [det({ severity: 'high' } as Partial<CodeSuggestion>), aiToCodeSuggestion(ai(), PATCH, 'm')],
     CTX,
   )!;
   assert.match(out, /## ⚠️ Code suggestions \(2\)/);
-  assert.match(out, /\| Priority \| Finding \| Location \| Confidence \|/); // det table present
-  assert.match(out, /### 🤖 AI-refined code suggestions \(1\)/); // AI block present
-  // deterministic detail block uses the closed <details>, AI uses <details open>
-  assert.match(out, /<details open>/);
+  assert.match(out, /\| Priority \| Finding \| Location \| Confidence \|/);
+  // Both findings are rows in the same table; det (High) is ordered above AI (Low).
+  const detIdx = out.indexOf('`d.ts:6`');
+  const aiIdx = out.indexOf('`auth.ts:13`');
+  assert.ok(detIdx > 0 && aiIdx > 0 && detIdx < aiIdx, 'det (high) row precedes AI (low) row');
+  assert.match(out, /🔴 High \| 🅐 Optimization \| \[`d\.ts:6`\]/);
+  assert.match(out, /⚪ Low \| 🅐 Optimization \| \[`auth\.ts:13`\]/);
+  // No separate AI block survives.
+  assert.doesNotMatch(out, /AI-refined code suggestions/);
+  assert.doesNotMatch(out, /<details open>/);
 });
 
-test('renderSuggestions: AI block is never capped out by the deterministic table cap', () => {
-  // 12 deterministic (cap defaults to 10) + 1 AI. The AI block must still show.
+test('renderSuggestions: AI findings are counted in the total and subject to the same cap', () => {
+  // AI is NO LONGER exempt from the cap. 12 deterministic (low, conf 1) + 1 AI
+  // (low, conf 0.9): all 13 are counted in the heading, only the top
+  // DEFAULT_MAX_SUGGESTIONS render, and the AI row — lowest by confidence among
+  // the lows — is itself capped out (the exact inverse of the old "never
+  // capped" guarantee).
   const many = Array.from({ length: 12 }, (_, i) => det({ file: `src/f${i}.ts`, line: i + 1 }));
   const out = renderSuggestions([...many, aiToCodeSuggestion(ai(), PATCH, 'm')], CTX)!;
+  // The AI finding counts toward the total.
   assert.match(out, /## ⚠️ Code suggestions \(13\)/);
-  assert.match(out, /_…\+2 more suggestion/); // 12 det − 10 shown = 2 overflow (det only)
-  assert.match(out, /### 🤖 AI-refined code suggestions \(1\)/); // AI still rendered
+  // Only DEFAULT_MAX_SUGGESTIONS rows render; overflow covers the rest (13 − cap).
+  const dataRows = out.split('\n').filter((l) => l.startsWith('|') && /`[\w.]+:\d+`/.test(l));
+  assert.equal(dataRows.length, DEFAULT_MAX_SUGGESTIONS);
+  assert.match(out, new RegExp(`_…\\+${13 - DEFAULT_MAX_SUGGESTIONS} more suggestions not shown — rendering the top ${DEFAULT_MAX_SUGGESTIONS} by priority\\._`));
+  // The AI row is among the capped-out findings — it is not privileged.
+  assert.ok(!out.includes('`auth.ts:13`'), 'AI finding is subject to the cap, not exempt');
+  // And the removed AI-only block does not reappear.
+  assert.doesNotMatch(out, /AI-refined code suggestions/);
 });
 
-test('renderSuggestions: AI <summary> HTML-escapes a PR-controlled file path', () => {
-  const evil = aiToCodeSuggestion(ai({ file: 'src/<img>.ts' }), undefined, 'm');
-  const out = renderSuggestions([evil], CTX)!;
-  // The structural <summary> line must carry the ESCAPED path — a raw `<img>`
-  // there would close <summary>/<code> early and inject a tag. (The path also
-  // appears verbatim inside the agent-prompt ```text fence, where GitHub
-  // renders it literally — that's safe, so we scope the check to <summary>.)
-  const summaryLine = out.split('\n').find((l) => l.includes('code suggestion') && l.startsWith('<summary>'))!;
-  assert.match(summaryLine, /src\/&lt;img&gt;\.ts/);
-  assert.ok(!summaryLine.includes('<img>'), 'raw tag must not survive into the <summary>');
-});
+// (DELETED) "renderSuggestions: AI <summary> HTML-escapes a PR-controlled file
+// path" — the per-finding AI <details>/<summary> was removed, so there is no
+// AI-specific structural HTML context for a hostile path to break out of. An AI
+// finding's file path now renders exactly like a deterministic one: the
+// Location cell's markdown `code span` with a URL-encoded href, an inert
+// context. That PR-controlled-path-in-the-table escaping is pinned by the
+// "hostile PR-controlled label + file path stay one well-formed table row" test
+// in render-suggestions.test.ts, so re-asserting it here would only duplicate it.
 
 // ── 3b. mergeAiSuggestionsIntoReport (the deferred-sticky merge) ──────────────
 

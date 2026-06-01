@@ -1,7 +1,9 @@
-// Header section: title, sub-line, advisory callout, KPI gauges, the
-// "Before you merge" checklist, and merge-readiness — across the real fixtures
-// and synthetic edge cases (mixed / regression / clean / no value model / no
-// context).
+// Header section: the trimmed, gauge-forward header — a centered 3-badge TL;DR
+// (verdict · merge-confidence · risk/review) and the KPI gauge dashboard table —
+// across the real fixtures and synthetic edge cases (mixed / regression / clean /
+// no value model / no context). The old hero bottom-line, GFM callout, "look here
+// first" pointer, confidence-trend sparkline and sub-line were removed; the
+// verdict (and its red-vs-amber severity) now rides the first badge's text+colour.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,6 +28,22 @@ function tile(html: string, title: string): string {
 // Dark-variant arc hexes from the accessible gauge palette (lib/gauge.ts).
 const GAUGE = { green: '%234ae3b0', amber: '%23e3b341', red: '%23ff7b6b', blue: '%2379c0ff', grey: '%239aa5b1' };
 
+// The header opens with a single centered 3-badge TL;DR row: the verdict, the
+// merge-confidence (N/5), and the risk + review-time band. This returns that
+// `<p align="center">…</p>` block so a test can assert the badge text + colour.
+function badgeRow(html: string): string {
+  return html.split('\n').find((l) => l.startsWith('<p align="center">')) ?? '';
+}
+// shields.io badge palette (no `#`), shared with the gauges via lib/severity.ts.
+const BADGE = { green: '2ea043', amber: 'd29922', red: 'd1242f', blue: '58a6ff' };
+// Match a verdict <img> badge in the centered row by its alt text (+ optional
+// colour hex). The badges are HTML `<img>` tags — NOT markdown `![]()` — because
+// GitHub does NOT parse markdown inside a block-level `<p align="center">`.
+function badgeImg(alt: string, hex?: string): RegExp {
+  const src = hex ? `https://img\\.shields\\.io/badge/[^"]*-${hex}\\?style=flat-square` : 'https://img\\.shields\\.io/badge/';
+  return new RegExp(`<img alt="${alt}" src="${src}`);
+}
+
 function makeReport(over: Partial<ScanPrOutput['pr_review']>, scope?: Partial<ScanPrOutput['pr_scope']>): ScanPrOutput {
   return {
     schema_version: '1.2',
@@ -49,12 +67,11 @@ function axis(name: ValueAxis['name'], delta: number, conf: ValueAxis['confidenc
 
 // ── real fixtures ────────────────────────────────────────────────────────────
 
-test('header(python): TIP verdict, all-up drift, gauge dashboard (checklist now lives at the END, not here)', () => {
+test('header(python): TIP verdict badge (green ✓ Looks good), all-up drift, gauge dashboard', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output.json')), CTX);
   assert.doesNotMatch(h, /^## .*Drift review/m, 'no duplicate H2 title — the brand banner is the title now');
-  assert.match(h, /\[`acme\/shop`\]\(https:\/\/github\.com\/acme\/shop\)/, 'repo permalink');
-  assert.match(h, /\[!TIP\]/, 'all-up → TIP');
-  assert.match(h, /advisory — does not gate the merge/, 'does-not-gate advisory folded into the sub-line');
+  // All-up → TIP: the first badge is the verdict, "✓ Looks good", in green.
+  assert.match(badgeRow(h), badgeImg('✓ Looks good', BADGE.green), 'all-up → green "✓ Looks good" verdict badge');
   // Drift tile renders the signed percent and is green when up.
   assert.match(tile(h, 'DRIFT'), /alt="DRIFT \+21\.0%"/, 'drift tile shows +21.0%');
   assert.match(tile(h, 'DRIFT'), new RegExp(GAUGE.green), 'green drift tile when up');
@@ -62,8 +79,10 @@ test('header(python): TIP verdict, all-up drift, gauge dashboard (checklist now 
   // Files-changed & net-LOC tiles are intentionally gone (GitHub's PR header shows both).
   assert.equal(tile(h, 'FILES CHANGED'), '', 'no files tile');
   assert.equal(tile(h, 'NET LOC'), '', 'no net-LOC tile');
-  assert.doesNotMatch(h, /img\.shields\.io/, 'no shields pills — the dashboard is gauges now');
-  // The checklist + readiness bar moved out of the header → not here anymore.
+  // The header is now exactly the badge row + the gauge dashboard — no hero
+  // bottom-line, no GFM callout, no sub-line, no checklist/readiness bar.
+  assert.doesNotMatch(h, /\[!TIP\]|\[!WARNING\]|\[!NOTE\]/, 'no GFM callout in the header');
+  assert.doesNotMatch(h, /^> /m, 'no hero bottom-line blockquote');
   assert.doesNotMatch(h, /Before you merge/, 'checklist is no longer in the header');
   assert.doesNotMatch(h, /Merge readiness/, 'readiness bar is no longer in the header');
 });
@@ -93,49 +112,51 @@ test('header: KPI dashboard is a gauge table in priority order, files/net-LOC om
   assert.match(tile(h, 'DRIFT'), new RegExp(GAUGE.red), 'red drift tile when down');
 });
 
-test('header(kotlin): cat-B → WARNING + amber hero dot + narrative (no checklist in header)', () => {
+test('header(kotlin): cat-B → WARNING verdict badge, amber (attention, not net-regression)', () => {
   const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')), CTX);
-  assert.match(h, /\[!WARNING\]/);
-  assert.match(h, /^> 🟡 /m, 'amber hero dot for the mixed/attention case');
-  assert.match(h, /product-correctness issue\*\* flagged/, 'narrative mentions the finding');
+  // A correctness finding → WARNING: the verdict badge reads "⚠ Address before
+  // merge". It's amber (not red) because this is an attention case, not a pure
+  // net regression — the same red-vs-amber split the old hero dot encoded.
+  assert.match(badgeRow(h), badgeImg('⚠ Address before merge', BADGE.amber), 'amber "⚠ Address before merge" verdict badge for the attention case');
+  // No prose narrative / checklist in the header anymore.
+  assert.doesNotMatch(h, /product-correctness issue\*\* flagged/, 'no narrative in the header');
   assert.doesNotMatch(h, /Fix the product-correctness issue at/, 'checklist item is no longer in the header');
 });
 
 // ── context degradation ──────────────────────────────────────────────────────
 
-test('header(no context): no PR-title suffix, no repo link, code-span fallbacks', () => {
-  const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json')));
+test('header(no context): no repo link / permalinks, badge row still renders', () => {
+  const h = renderHeader(loadReport(join(fixtureDir, 'scan-pr-output-kotlin-ktor.json'))); // no ctx
   assert.doesNotMatch(h, /^## .*Drift review/m, 'no H2 title in the header (banner carries it)');
   assert.doesNotMatch(h, /📍/, 'no repo pin without owner/repo');
-  assert.match(h, /Look here first:\*\* `OrdersRepository\.kt:17`/, 'focus location is a code span, not a link');
-  assert.doesNotMatch(h, /\]\(https:\/\/github\.com/, 'no permalinks anywhere');
+  assert.doesNotMatch(h, /github\.com/, 'no GitHub permalinks anywhere without a context');
+  // The TL;DR badges are context-independent, so the verdict still renders.
+  assert.match(badgeRow(h), badgeImg('⚠ Address before merge'), 'verdict badge renders even without ctx');
 });
 
 // ── synthetic verdicts ───────────────────────────────────────────────────────
 
-test('header(mixed axes): amber "mixed", narrative says "led by" the top gain', () => {
+test('header(mixed axes): WARNING verdict badge, amber (the gain offsets the regression)', () => {
   const r = makeReport({
     overall_drift: { percent: 10.3, direction: 'up', confidence: 'low' },
     value_card: { axes: [axis('money', -15.9), axis('customer', 60), axis('runtime', -3), axis('runtime_ux', 0)] },
   });
   const h = renderHeader(r, CTX);
-  assert.match(h, /\[!WARNING\]/, 'divergent signs warn');
-  assert.match(h, /led by 👥 Customer value \(\*\*\+60\.0%\*\*\)/);
-  assert.match(h, /\*\*💰 Money −15\.9%\*\* and \*\*⚙️ Runtime −3\.0%\*\* regressed/);
-  assert.match(h, /^> 🟡 /m, 'amber hero dot for a mixed case (the gain offsets the regression)');
+  // Divergent signs warn → "⚠ Address before merge", but AMBER not red: this is a
+  // mixed case (the big customer gain offsets the regression), the same nuance
+  // the old amber hero dot carried.
+  assert.match(badgeRow(h), badgeImg('⚠ Address before merge', BADGE.amber), 'amber WARNING verdict badge for a mixed case');
 });
 
-test('header(all down): net-regression narrative, WARNING', () => {
+test('header(all down): WARNING verdict badge, red on a pure net regression', () => {
   const r = makeReport({
     overall_drift: { percent: -12, direction: 'down', confidence: 'low' },
     value_card: { axes: [axis('money', -12), axis('runtime', -4)] },
   });
   const h = renderHeader(r, CTX);
-  assert.match(h, /\[!WARNING\]/);
-  assert.match(h, /net regression/);
+  // A pure net regression → the verdict badge is RED (was the red hero dot).
+  assert.match(badgeRow(h), badgeImg('⚠ Address before merge', BADGE.red), 'red WARNING verdict badge on a pure net regression');
   assert.match(tile(h, 'DRIFT'), new RegExp(GAUGE.red), 'red drift tile when down');
-  // The hero dot is red on a pure net regression.
-  assert.match(h, /^> 🔴 /m, 'red hero dot on a pure net regression');
 });
 
 test('header(all-down axes, no overall_drift block): still red — the per-axis composite drives net-regression, not the optional drift sign', () => {
@@ -147,33 +168,33 @@ test('header(all-down axes, no overall_drift block): still red — the per-axis 
     // deliberately NO overall_drift block
   });
   const h = renderHeader(r, CTX);
-  assert.match(h, /\[!WARNING\]/);
-  assert.match(h, /^> 🔴 /m, 'red hero dot from the all-down composite, even without overall_drift');
+  // The verdict badge is RED from the all-down composite, even without an
+  // overall_drift sign to lean on (was the red hero dot).
+  assert.match(badgeRow(h), badgeImg('⚠ Address before merge', BADGE.red), 'red WARNING verdict badge from the all-down composite, even without overall_drift');
 });
 
-test('header(no value model): NOTE verdict, factual narrative, no drift/LOC badges', () => {
+test('header(no value model): NOTE verdict badge (blue ℹ Advisory), no drift tile', () => {
   const r = makeReport({}, { changed_files: ['x.ts', 'y.ts'], affected_roots: ['main'], unreachable_changes: [] });
   const h = renderHeader(r, CTX);
-  assert.match(h, /\[!NOTE\]/);
-  assert.match(h, /2 changed files, 1 entry point reached\./);
-  assert.match(h, /advisory — does not gate the merge/, 'does-not-gate advisory shows on a NOTE verdict too');
+  // No findings/regressions → NOTE: the verdict badge reads "ℹ Advisory", in blue.
+  assert.match(badgeRow(h), badgeImg('ℹ Advisory', BADGE.blue), 'blue "ℹ Advisory" verdict badge with no value model');
   assert.equal(tile(h, 'DRIFT'), '', 'no drift tile without a value model');
   // Confidence + effort + suggestions tiles always render (call-graph facts only).
   assert.notEqual(tile(h, 'MERGE CONFIDENCE'), '', 'confidence tile always present');
   assert.notEqual(tile(h, 'SUGGESTIONS'), '', 'suggestions tile always present');
 });
 
-test('header(clean improvement, tests added): no "Add tests" item', () => {
+test('header(clean improvement, tests added): TIP verdict badge, green NEW TESTS tile', () => {
   const r = makeReport({
     overall_drift: { percent: 8, direction: 'up', confidence: 'high' },
     value_card: { axes: [axis('customer', 8)] },
     counts: { new_test_files: { value: 4, label: 'New test files' } },
   });
   const h = renderHeader(r, CTX);
-  assert.match(h, /\[!TIP\]/);
+  // Clean improvement → TIP: green "✓ Looks good" verdict badge.
+  assert.match(badgeRow(h), badgeImg('✓ Looks good', BADGE.green), 'green "✓ Looks good" verdict badge for a clean improvement');
   assert.match(tile(h, 'NEW TESTS'), /alt="NEW TESTS 4"/, 'new-tests tile shows 4');
   assert.match(tile(h, 'NEW TESTS'), new RegExp(GAUGE.green), 'new tests > 0 → green');
-  assert.doesNotMatch(h, /Add tests/, 'no test-gap item when tests were added');
 });
 
 // ── facts + checklist units ──────────────────────────────────────────────────
@@ -227,7 +248,7 @@ test('header: a hostile PR title cannot inject a heading (the title is never ren
     const h = renderHeader(makeReport({ value_card: { axes: [axis('customer', 1)] } }), { ...CTX, prTitle: t });
     assert.doesNotMatch(h, /^## /m, 'no H2 heading in the header at all');
     assert.doesNotMatch(h, /INJECTED/, 'no injected heading text from the title');
-    // The header still renders its hero verdict line, so structure survived.
-    assert.match(h, /^> (🟢|🟡|🔴|🔵) /m, 'hero verdict line still present');
+    // The header still renders its TL;DR badge row, so structure survived.
+    assert.match(badgeRow(h), badgeImg('(✓ Looks good|⚠ Address before merge|ℹ Advisory)'), 'TL;DR verdict badge still present');
   }
 });

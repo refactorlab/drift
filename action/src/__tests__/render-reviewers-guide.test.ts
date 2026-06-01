@@ -202,17 +202,6 @@ test('guide: a pipe in the file PATH cannot break the key-issues "Where" cell', 
   assert.equal((row.match(/(?<!\\)\|/g) ?? []).length, 4, 'one 3-column row — pipe in path escaped');
 });
 
-test('guide: a pipe in a changed-file path cannot break the Changes walkthrough row', () => {
-  const r = makeReport(
-    { value_card: { axes: [axis('customer', 5)] } },
-    { changed_files: ['src/app/we|rd.ts', 'src/app/ok.ts'], affected_roots: ['main'], unreachable_changes: [] },
-  );
-  const g = guide(r, { ctx: CTX });
-  const row = g.split('\n').find((l) => l.startsWith('| **src/app**')) ?? '';
-  assert.ok(row, 'cohort row present');
-  assert.equal((row.match(/(?<!\\)\|/g) ?? []).length, 4, 'one 3-column cohort row');
-});
-
 test('guide: a backtick in a source dir cannot unbalance the split-PR verdict code spans', () => {
   const r = makeReport(
     { value_card: { axes: [axis('customer', 5)] } },

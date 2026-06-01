@@ -426,11 +426,16 @@ test('user-PR-snapshot: the EXACT scenario from the bug report → ONE sticky co
     const stickyBody = sticky.body.body ?? '';
     // The single comment IS the sticky comment (hidden marker) …
     assert.match(stickyBody, /<!-- drift:sticky-comment -->/);
-    // … carrying the AI-refined suggestions under their own heading …
-    assert.match(stickyBody, /### 🤖 AI-refined code suggestions \(\d+\)/);
-    assert.match(stickyBody, /<code>app\/db\.py:3<\/code>/);
-    assert.match(stickyBody, /<code>app\/repos\.py:5<\/code>/);
-    assert.match(stickyBody, /<code>openai\/gpt-4\.1<\/code>/);
+    // … carrying ALL findings (deterministic + AI) as rows in ONE priority
+    // table — there is no separate "AI-refined" heading, no per-AI diff block,
+    // and the model name is no longer in the body (it stays in the CI log,
+    // asserted above). The 2 AI fixes (db.py:3 + repos.py:5) merge onto distinct
+    // on-diff lines and surface as rows; the 2 deterministic dead-code findings
+    // on db.py:1 share a line+kind and dedupe to one → heading TOTAL is 4.
+    assert.match(stickyBody, /\| Priority \| Finding \| Location \| Confidence \|/);
+    // The AI findings appear as rows (file:line permalinks, basename label).
+    assert.match(stickyBody, /\[`db\.py:3`\]\(https:\/\/github\.com\/[^)]*app\/db\.py#L3\)/);
+    assert.match(stickyBody, /\[`repos\.py:5`\]\(https:\/\/github\.com\/[^)]*app\/repos\.py#L5\)/);
     // … AND the deterministic findings (db.py:1 + repos.py:2) in the same body.
     assert.match(stickyBody, /<strong>⚠️ Code suggestions \(\d+\)<\/strong>/);
     assert.match(stickyBody, /db\.py:1/);

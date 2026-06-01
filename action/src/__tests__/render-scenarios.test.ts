@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderOverview, STICKY_MARKER } from '../render/overview.ts';
+import { DEFAULT_MAX_SUGGESTIONS } from '../render/sections/suggestions.ts';
 import { validate, extractBlocks, isInstalled } from '../../scripts/validate-mermaid.mjs';
 import type { ScanPrOutput, ValueAxis, ValueCard, CodeSuggestion, RiskItem } from '../report.ts';
 import type { PrContext } from '../render/context.ts';
@@ -75,8 +76,13 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     report: base({ pr_scope: { changed_files: ['a.yml', 'b.json'], affected_roots: [], unreachable_changes: ['a.yml'] } }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /\[!NOTE\]/);
-      assert.match(b, /<summary><strong>🏗 Architecture<\/strong> — /);
+      // No value model → the verdict badge reads "ℹ Advisory" (the old header
+      // [!NOTE] callout was removed).
+      assert.match(b, /ℹ Advisory/);
+      assert.doesNotMatch(b, /\[!NOTE\]/);
+      // Config-only PR: no call graph → no diagram → no Architecture section
+      // (the dead-code callout that used to carry it was removed).
+      assert.doesNotMatch(b, /🏗 Architecture/);
       assert.doesNotMatch(b, /📊 Business value/);
     },
   },
@@ -99,8 +105,13 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /\[!WARNING\]/, 'mixed → warn');
-      assert.match(b, /<strong>mixed<\/strong>: a \+60\.0% customer gain masks a −15\.9% money regression/);
+      // Mixed signs → the verdict badge reads "⚠ Address before merge" (the old
+      // header [!WARNING] callout + the value-card bottom-line prose were both
+      // removed). The mixed story now lives in the per-axis drift chart + the
+      // before-merge triage item.
+      assert.match(b, /⚠ Address before merge/, 'mixed → address before merge');
+      assert.doesNotMatch(b, /\[!WARNING\]/, 'no header WARNING callout anymore');
+      assert.doesNotMatch(b, /customer gain masks/, 'no value-card bottom-line prose');
       assert.match(b, /Triage the .*💰 Money −15\.9%.* and .*⚙️ Runtime −3\.0%.* regressions/);
       assert.match(b, /Remove or wire up 1 dead export: \[`Example`\]/);
       assert.match(b, /<summary><strong>🛰 Risks<\/strong> — /);
@@ -116,8 +127,11 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /\[!WARNING\]/);
-      assert.match(b, /net regression/);
+      // A net regression → "⚠ Address before merge" verdict badge (the old
+      // header [!WARNING] callout + "net regression" prose were removed). The
+      // red DRIFT KPI tile still signals the downward drift.
+      assert.match(b, /⚠ Address before merge/);
+      assert.doesNotMatch(b, /\[!WARNING\]/, 'no header WARNING callout anymore');
       assert.match(tile(b, 'DRIFT'), /%23ff7b6b/, 'red drift tile when down');
     },
   },
@@ -131,8 +145,12 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /Composite&nbsp; ⚪ 0\.0%/);
-      assert.match(b, /░░░░░░░░░░/, 'empty bars for flat axes');
+      // The value-card composite row + empty bars were removed. Flat drift now
+      // reads as a neutral verdict + a grey DRIFT tile, with the per-axis drift
+      // chart carrying the detail.
+      assert.match(b, /ℹ Advisory/, 'flat → advisory verdict');
+      assert.match(tile(b, 'DRIFT'), /%239aa5b1/, 'grey drift tile when flat');
+      assert.match(b, /!\[PR value drift\]\(https:\/\/quickchart\.io\/chart/, 'per-axis drift chart present');
     },
   },
   {
@@ -146,7 +164,10 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /\[!TIP\]/);
+      // All-up + tests present → "✓ Looks good" verdict badge (the old header
+      // [!TIP] callout was removed).
+      assert.match(b, /✓ Looks good/);
+      assert.doesNotMatch(b, /\[!TIP\]/, 'no header TIP callout anymore');
       assert.match(tile(b, 'NEW TESTS'), /alt="NEW TESTS 5"/, 'new-tests tile shows 5');
       assert.match(tile(b, 'NEW TESTS'), /%234ae3b0/, 'new tests > 0 → green');
       assert.doesNotMatch(b, /Add tests/);
@@ -202,13 +223,29 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
             why_it_matters: 'Generic equality may shadow Eq.',
             references: [{ url: 'https://doc.rust-lang.org/std/cmp/trait.Eq.html', title: 'Eq' }],
           },
+          {
+            // A Next.js-style dynamic path: its `[id]` segment must URL-encode
+            // cleanly in the suggestion's file link (the path-encoding case the
+            // removed unreachable callout used to cover).
+            category: 'A',
+            severity: 'low',
+            category_label: 'Optimization — Dead code in changed file',
+            kind: 'dead_code_in_changed_file',
+            file: 'src/app/[id]/page.tsx',
+            function: 'Page',
+            line: 1,
+            confidence: 1,
+            why_it_matters: 'Page is unused.',
+            references: [{ url: 'https://refactoring.guru/smells/dead-code', title: 'r' }],
+          },
         ],
         visual_summary: { risks: { items: [risk('Untested generic', 0.7, 0.8, 'act_before_merge')] } },
       },
     }),
     ctx: CTX,
     expect: (b) => {
-      assert.match(b, /\[!WARNING\]/, 'mixed signs → warn');
+      assert.match(b, /⚠ Address before merge/, 'mixed signs → address before merge');
+      assert.doesNotMatch(b, /\[!WARNING\]/, 'no header WARNING callout anymore');
       // pathological symbol from the suggestion's category_label survives verbatim
       assert.match(b, /operator==<T> ambiguity/);
       // Next.js-style dynamic path renders as a permalink without breaking the link
@@ -220,9 +257,9 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
   {
     // Volume stressor: many cat-A dead-code findings. Exercises the checklist
     // "dead exports" truncation (`MAX_DEAD_EXPORTS_LINKED = 5`) and the
-    // Code-suggestions render cap (`DEFAULT_MAX_SUGGESTIONS = 10`) — the table
-    // shows the top 10, the heading keeps the true total (25), and an overflow
-    // note accounts for the rest — while keeping the comment under 60 KiB.
+    // Code-suggestions render cap (`DEFAULT_MAX_SUGGESTIONS`) — the table shows
+    // the top few, the heading keeps the true total (25), and an overflow note
+    // accounts for the rest — while keeping the comment under 60 KiB.
     name: 'high-volume dead-code (25 findings) — truncation + body cap',
     report: base({
       pr_review: {
@@ -246,11 +283,14 @@ const scenarios: { name: string; report: ScanPrOutput; ctx?: PrContext; expect?:
       assert.match(b, /<summary><strong>⚠️ Code suggestions \(25\)<\/strong> — /, 'header shows full count');
       // Checklist truncates at MAX_DEAD_EXPORTS_LINKED = 5 with a more-tail.
       assert.match(b, /\*…\+20 more\*/, 'checklist truncation note');
-      // Render cap = DEFAULT_MAX_SUGGESTIONS = 10 → 10 table rows + an overflow
-      // note for the remaining 15.
-      assert.match(b, /…\+15 more suggestions? not shown — rendering the top 10 by priority\./);
+      // Render cap = DEFAULT_MAX_SUGGESTIONS → that many table rows + an overflow
+      // note for the rest.
+      assert.match(
+        b,
+        new RegExp(`…\\+${25 - DEFAULT_MAX_SUGGESTIONS} more suggestions? not shown — rendering the top ${DEFAULT_MAX_SUGGESTIONS} by priority\\.`),
+      );
       const tableRows = (b.match(/^\| (?:🔴 High|🟡 Medium|⚪ Low) \|/gm) ?? []).length;
-      assert.equal(tableRows, 10, `priority table must cap at 10 rows (got ${tableRows})`);
+      assert.equal(tableRows, DEFAULT_MAX_SUGGESTIONS, `priority table must cap at ${DEFAULT_MAX_SUGGESTIONS} rows (got ${tableRows})`);
       assert.ok(b.length < 60_000, `body within budget: ${b.length}`);
     },
   },
@@ -336,11 +376,16 @@ test('scenarios: every Mermaid block validates against the real parser', async (
 });
 
 test('scenario: identical render with and without context (only links differ)', () => {
-  // Includes an unreachable file so the (diagrams-only) Architecture section
-  // still renders its dead-code callout — whose file links are ctx-dependent.
+  // The ctx-dependent file links now come from the Code-suggestions section
+  // (the dead-code callout was removed). An architecture diagram keeps the
+  // Architecture section present so all three headings render in both renders.
   const report = base({
     pr_scope: { changed_files: ['a.ts', 'src/dead.tsx'], affected_roots: ['main'], unreachable_changes: ['src/dead.tsx'] },
-    pr_review: { value_card: card([axis('customer', 12)]), code_suggestions: [deadCode('src/A.tsx', 'A', 3)] },
+    pr_review: {
+      value_card: card([axis('customer', 12)]),
+      code_suggestions: [deadCode('src/A.tsx', 'A', 3)],
+      architecture_flow: { diff_merged_mermaid: GOOD_FLOW },
+    },
   });
   const withCtx = renderOverview(report, { ctx: CTX });
   const noCtx = renderOverview(report);
@@ -352,8 +397,7 @@ test('scenario: identical render with and without context (only links differ)', 
   }
 });
 
-test('scenario: since-last-review delta appears with a prior snapshot', () => {
-  const report = base({ pr_review: { value_card: card([axis('money', 2.9), axis('runtime', -3)]) } });
-  const body = renderOverview(report, { ctx: CTX, priorState: { v: 1, axes: { money: 0.8, runtime: -2 } } });
-  assert.match(body, /Since last review\*\* &nbsp; 💰 ▲ \+2\.1pp · ⚙️ ▼ −1\.0pp/);
-});
+// NOTE: the "since-last-review" per-axis delta line was removed from the value
+// card (it no longer renders in the comment), so the scenario that asserted the
+// rendered line was dropped. The `sinceLastReview` state helper itself is still
+// unit-tested in render-lib.test.ts.

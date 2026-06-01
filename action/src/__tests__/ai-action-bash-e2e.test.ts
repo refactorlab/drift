@@ -571,13 +571,23 @@ test('bash-e2e: 3 findings → loop produces 3 + post step posts ONE sticky comm
     assert.match(sticky.url, /\/issues\/7\/comments/, 'sticky upsert targets PR #7 issue comments');
 
     // The single body carries the sticky marker AND all 3 AI-refined fixes.
+    // Post-redesign there is NO separate AI block and NO per-finding diff (so
+    // the model's `after_code` FIXED_1/2/3 no longer renders). Every finding —
+    // deterministic + AI — is ONE row in the single priority table. The 3 AI
+    // findings land on distinct on-diff lines (db.py:3, db.py:4, repos.py:3),
+    // merge into the report, and surface as 3 rows (2 deterministic dead-code
+    // findings dedupe to db.py:1 + repos.py:1 → heading TOTAL is 5).
     const body = sticky.body as Record<string, unknown>;
     const text = String(body.body ?? '');
     assert.match(text, /<!-- drift:sticky-comment -->/, 'sticky marker present');
-    assert.match(text, /AI-refined code suggestions \(3\)/, 'all 3 AI suggestions surfaced');
-    assert.match(text, /FIXED_1/);
-    assert.match(text, /FIXED_2/);
-    assert.match(text, /FIXED_3/);
+    assert.match(text, /Code suggestions \(5\)/, 'deterministic + all 3 AI findings counted in the single heading');
+    assert.match(text, /\| Priority \| Finding \| Location \| Confidence \|/, 'the single priority table header must be present');
+    // All 3 AI findings surface as priority-table rows (file:line permalinks).
+    assert.match(text, /\[`db\.py:3`\]\(https:\/\/github\.com\/[^)]*app\/db\.py#L3\)/, 'AI finding db.py:3 surfaced as a row');
+    assert.match(text, /\[`db\.py:4`\]\(https:\/\/github\.com\/[^)]*app\/db\.py#L4\)/, 'AI finding db.py:4 surfaced as a row');
+    assert.match(text, /\[`repos\.py:3`\]\(https:\/\/github\.com\/[^)]*app\/repos\.py#L3\)/, 'AI finding repos.py:3 surfaced as a row');
+    // The one batched Fix-All handoff dispatches the shown findings.
+    assert.match(text, /🤖 <strong>Fix-All handoff<\/strong>/, 'the single Fix-All handoff block must be present');
 
     // The bundle's own breadcrumbs confirm the single-comment funnel.
     assert.match(postResult.stdout, /3 on-diff → 3 AI-refined \(cap=3\)/);

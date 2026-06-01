@@ -1,6 +1,8 @@
-// Architecture (diagrams-only): unreachable/dead-code callout, nested
-// diagrams/tables (flow before/after, business-logic, data structures,
-// mindmap), and degradation to null when there's nothing to draw.
+// Architecture (diagrams-only): the single color-coded diff diagram, the
+// supporting business/data-structure/mindmap blocks, the newest-shape-first
+// fallback chain, and degradation to null when there's nothing to draw. The
+// dead-code callout and the BEFORE/AFTER prose were removed — the diagram's
+// colours are self-explanatory.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +18,7 @@ function scope(over: Partial<PrScope> = {}): PrScope {
 
 test('architecture: diagrams-only — no reach prose, table, or root list ever rendered', () => {
   // Even with a full key-file block and multiple roots, the section emits only
-  // the mindmap diagram — never the old "N entry points reach…" prose or the
-  // "files most callers depend on" reach table.
+  // the mindmap diagram — never the old "N entry points reach…" prose or table.
   const out = renderArchitecture({
     prScope: scope({ affected_roots: ['App', 'Worker'] }),
     keyFiles: {
@@ -28,39 +29,57 @@ test('architecture: diagrams-only — no reach prose, table, or root list ever r
   })!;
   assert.doesNotMatch(out, /entry points? reach/i, 'no reach prose');
   assert.doesNotMatch(out, /files most callers depend on/i, 'no reach-intro sentence');
-  assert.doesNotMatch(out, /\| File \| Roots reaching it \|/, 'no reach table');
-  assert.match(out, /## 🏗 Architecture\b/, 'renamed header (no "& reach")');
+  assert.match(out, /## 🏗 Architecture\b/, 'header');
   assert.match(out, /<summary>🗂 Key files — hot-touch mindmap<\/summary>/, 'mindmap diagram kept');
 });
 
-test('architecture: null when only affected roots exist (no diagrams, no unreachable)', () => {
-  // Roots alone produce neither a diagram nor a dead-code callout, so the whole
-  // diagrams-only section is omitted.
+test('architecture: null when only roots / unreachable exist (no diagrams, no callout)', () => {
+  // Roots or unreachable files alone produce no diagram — and the dead-code
+  // callout was removed — so the diagrams-only section is omitted entirely.
   assert.equal(renderArchitecture({ prScope: scope({ affected_roots: ['App', 'Worker'] }), ctx: CTX }), null);
+  assert.equal(renderArchitecture({ prScope: scope({ unreachable_changes: ['x.ts'] }), ctx: CTX }), null);
 });
 
-test('architecture: unreachable callout links files + notes dead-code match', () => {
+test('architecture: the verbose prose is gone (no callout, no BEFORE/AFTER legend, no anon note)', () => {
   const out = renderArchitecture({
-    prScope: scope({ unreachable_changes: ['src/components/Example.tsx', 'src/components/Hero.tsx'] }),
-    deadCodeCount: 2,
+    prScope: scope({ unreachable_changes: ['types.rs'] }),
+    arch: { diff_merged_mermaid: 'flowchart LR\n n0["foo"]\n class n0 changed' },
     ctx: CTX,
   })!;
-  assert.match(out, /\*\*2 changed files are unreachable\*\*/);
-  assert.match(out, /\[`Example\.tsx`\]\(https:\/\/github\.com\/acme\/shop\/blob\/cafe\/src\/components\/Example\.tsx\)/);
-  assert.match(out, /\(These match the dead-code suggestions below\.\)/);
+  assert.doesNotMatch(out, /unreachable/i, 'no dead-code callout');
+  assert.doesNotMatch(out, /🔴 BEFORE/, 'no BEFORE legend');
+  assert.doesNotMatch(out, /🟢 AFTER/, 'no AFTER legend');
+  assert.doesNotMatch(out, /reconstructs the call graph/, 'no before/after explanation');
+  assert.doesNotMatch(out, /anonymous functions\/callbacks/, 'no anon-node note');
 });
 
-test('architecture: unreachable callout omits dead-code note when none', () => {
-  const out = renderArchitecture({ prScope: scope({ unreachable_changes: ['x.ts'] }), deadCodeCount: 0, ctx: CTX })!;
-  assert.match(out, /\*\*1 changed file is unreachable\*\*/);
-  assert.doesNotMatch(out, /match the dead-code suggestions/);
+test('architecture: the merged diff diagram renders as ONE color-coded block (prefers diff_merged)', () => {
+  const out = renderArchitecture({
+    prScope: scope(),
+    arch: {
+      diff_merged_mermaid: 'flowchart LR\n n0["foo"]\n class n0 changed',
+      // before/after/combined are accepted but MUST NOT win over diff_merged.
+      after_mermaid: 'flowchart LR\n a0["after"]',
+      before_mermaid: 'flowchart LR\n b0["before"]',
+      combined_mermaid: 'flowchart TB\n stale --> ignored',
+    },
+    ctx: CTX,
+  })!;
+  assert.match(out, /<summary>🧭 Call graph — color-coded diff<\/summary>/);
+  assert.match(out, /```mermaid\nflowchart LR\n n0\["foo"\]\n class n0 changed\n```/);
+  // Only the merged diagram renders — the fallbacks must not also appear.
+  assert.doesNotMatch(out, /b0\["before"\]/);
+  assert.doesNotMatch(out, /a0\["after"\]/);
+  assert.doesNotMatch(out, /stale --> ignored/);
+  const fenceCount = (out.match(/```mermaid/g) ?? []).length;
+  assert.equal(fenceCount, 1, `exactly ONE call-graph mermaid fence, got ${fenceCount}:\n${out}`);
 });
 
 test('architecture: collapsible diagrams + data-structure table', () => {
   const out = renderArchitecture({
     prScope: scope(),
     arch: {
-      combined_mermaid: 'flowchart TB\n a --> b',
+      diff_merged_mermaid: 'flowchart TB\n a --> b',
       data_structures: [
         { name: 'OrderService', kind: 'modified', scope: 'python', description: '4 method(s) in scope' },
       ],
@@ -69,8 +88,7 @@ test('architecture: collapsible diagrams + data-structure table', () => {
     keyFiles: { mermaid: 'mindmap\n root((x))' },
     ctx: CTX,
   })!;
-  assert.match(out, /<summary>🧭 Architecture flow diagram — before vs after<\/summary>/);
-  assert.match(out, /anon ‹file:line›/, 'anonymous-callable note present');
+  assert.match(out, /<summary>🧭 Call graph — color-coded diff<\/summary>/);
   assert.match(out, /<summary>🧠 Business-logic reach diagram<\/summary>/);
   assert.match(out, /> \*\*Summary —\*\* why this exists/);
   assert.match(out, /<summary>📦 Data structures touched \(1\)<\/summary>/);
@@ -80,75 +98,33 @@ test('architecture: collapsible diagrams + data-structure table', () => {
   assert.doesNotMatch(out, /<\/details>\n<details>/, 'siblings need a blank line between them');
 });
 
-test('architecture: no context → code-span fallbacks, still valid', () => {
-  const out = renderArchitecture({ prScope: scope({ unreachable_changes: ['x.ts'] }) })!;
-  assert.doesNotMatch(out, /\]\(https:\/\/github\.com/, 'no permalinks without context');
-  assert.match(out, /`x\.ts`/);
+test('architecture: fallback chain — combined → after → before when diff_merged absent', () => {
+  // Legacy/older-scanner reports still produce a single block.
+  const combined = renderArchitecture({ prScope: scope(), arch: { combined_mermaid: 'flowchart TB\n a --> b' }, ctx: CTX })!;
+  assert.match(combined, /```mermaid\nflowchart TB\n a --> b\n```/);
+  assert.equal((combined.match(/```mermaid/g) ?? []).length, 1);
+
+  const after = renderArchitecture({ prScope: scope(), arch: { after_mermaid: 'flowchart LR\n a0["x"]' }, ctx: CTX })!;
+  assert.match(after, /```mermaid\nflowchart LR\n a0\["x"\]\n```/);
+
+  const before = renderArchitecture({ prScope: scope(), arch: { before_mermaid: 'flowchart LR\n b0["y"]' }, ctx: CTX })!;
+  assert.match(before, /```mermaid\nflowchart LR\n b0\["y"\]\n```/);
 });
 
-test('architecture: null when there is nothing to show', () => {
-  assert.equal(renderArchitecture({ prScope: { changed_files: [], affected_roots: [], unreachable_changes: [] } }), null);
-});
-
-// Two-chart layout — the post-fix scanner output. When both `before_mermaid`
-// and `after_mermaid` are non-empty, the renderer must emit them as TWO
-// separate ```mermaid``` blocks (under "🔴 BEFORE" / "🟢 AFTER" headings)
-// instead of one combined block.
-test('architecture: two-chart layout — before AND after rendered as separate mermaid blocks', () => {
+test('architecture: whitespace-only diagrams fall through (no empty fence)', () => {
   const out = renderArchitecture({
     prScope: scope(),
     arch: {
-      before_mermaid: 'flowchart LR\n n0["foo"]',
-      after_mermaid: 'flowchart LR\n a0["foo"]\n class a0 changed',
-      // combined is OPTIONAL — caller may still set it; the two-chart path
-      // must win when before+after are both present.
-      combined_mermaid: 'flowchart TB\n stale --> ignored',
-    },
-    ctx: CTX,
-  })!;
-
-  // Both heading labels rendered.
-  assert.match(out, /\*\*🔴 BEFORE — what the code was:\*\*/);
-  assert.match(out, /\*\*🟢 AFTER — what the code is now:\*\*/);
-  // Each mermaid block appears exactly once with its own content.
-  assert.match(out, /```mermaid\nflowchart LR\n n0\["foo"\]\n```/);
-  assert.match(out, /```mermaid\nflowchart LR\n a0\["foo"\]\n class a0 changed\n```/);
-  // The legacy `combined_mermaid` MUST NOT be emitted when the two-chart
-  // pair is available (otherwise we'd post three diagrams).
-  assert.doesNotMatch(out, /flowchart TB\n stale --> ignored/);
-  // Exactly TWO mermaid fences (no orphaned third).
-  const fenceCount = (out.match(/```mermaid/g) ?? []).length;
-  assert.equal(fenceCount, 2, `expected exactly 2 mermaid fences, got ${fenceCount}:\n${out}`);
-});
-
-// Legacy fallback — when the scanner only emits `combined_mermaid`
-// (older builds or test fixtures), the renderer must fall back to a
-// single ```mermaid``` block. No "BEFORE / AFTER" headings appear.
-test('architecture: single-chart fallback for legacy combined-only output', () => {
-  const out = renderArchitecture({
-    prScope: scope(),
-    arch: { combined_mermaid: 'flowchart TB\n a --> b' },
-    ctx: CTX,
-  })!;
-  assert.match(out, /```mermaid\nflowchart TB\n a --> b\n```/);
-  assert.doesNotMatch(out, /\*\*🔴 BEFORE/);
-  assert.doesNotMatch(out, /\*\*🟢 AFTER/);
-  const fenceCount = (out.match(/```mermaid/g) ?? []).length;
-  assert.equal(fenceCount, 1, `expected 1 mermaid fence in legacy fallback, got ${fenceCount}`);
-});
-
-// Whitespace-only diagrams must NOT count as "present" — those would
-// emit empty mermaid fences. The renderer trims first.
-test('architecture: whitespace-only before/after fall through to the single-chart fallback', () => {
-  const out = renderArchitecture({
-    prScope: scope(),
-    arch: {
-      before_mermaid: '   \n',
+      diff_merged_mermaid: '   \n',
       after_mermaid: '',
       combined_mermaid: 'flowchart TB\n a --> b',
     },
     ctx: CTX,
   })!;
   assert.match(out, /```mermaid\nflowchart TB\n a --> b\n```/);
-  assert.doesNotMatch(out, /\*\*🔴 BEFORE/);
+  assert.equal((out.match(/```mermaid/g) ?? []).length, 1);
+});
+
+test('architecture: null when there is nothing to show', () => {
+  assert.equal(renderArchitecture({ prScope: { changed_files: [], affected_roots: [], unreachable_changes: [] } }), null);
 });

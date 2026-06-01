@@ -624,6 +624,12 @@ pub struct PrScopeSummary {
 pub struct AnalyzePrOutcome {
     pub outcome: AnalyzeOutcome,
     pub pr_scope: PrScopeSummary,
+    /// Total symbols in the call graph (NOT just the affected subset).
+    /// The denominator for `centrality_multiple = pagerank × N` — pagerank
+    /// values sum to ~1.0 over all N nodes, so they shrink as N grows;
+    /// multiplying by N yields a scale-invariant "× the uniform baseline"
+    /// used by `pr_quality`'s inversion/blast-radius centrality arms.
+    pub total_symbols: usize,
 }
 
 /// PR-scoped scan: build the graph, discover ALL roots, then filter
@@ -664,6 +670,9 @@ pub fn analyze_pr_with_progress(
         "analyze-pr start"
     );
     let ctx = build_graph_context(root, opts, progress);
+    // Capture graph N now (for pr_quality's pagerank×N centrality); cheap,
+    // and avoids any borrow concern at the outcome-construction site below.
+    let total_symbols = ctx.graph.symbols.len();
 
     // Discover EVERY root first; the pr_scope filter winnows it down
     // afterward. We can't short-circuit discovery to "just the
@@ -805,7 +814,7 @@ pub fn analyze_pr_with_progress(
         elapsed_ms = started_at.elapsed().as_millis() as u64,
         "analyze-pr end"
     );
-    Ok(AnalyzePrOutcome { outcome, pr_scope })
+    Ok(AnalyzePrOutcome { outcome, pr_scope, total_symbols })
 }
 
 /// One row of display data for the interactive root picker — enough

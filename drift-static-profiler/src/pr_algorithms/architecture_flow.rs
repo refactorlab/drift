@@ -570,6 +570,66 @@ fn build_after_flowchart(
     }
 }
 
+/// Build the SINGLE color-coded "diff" flowchart that replaces the separate
+/// BEFORE/AFTER pair in the PR comment: the call graph AT HEAD (current
+/// topology) with every node tinted by its file's diff status —
+///   • Added/Copied → green   (new in this PR)
+///   • Modified/Renamed → amber
+///   • Unchanged     → uncoloured (transitive callee outside the PR slice)
+/// — PLUS a red, dashed `🗑 removed — <file>` placeholder card per deleted
+/// file (deduped + capped, same treatment as the BEFORE chart). A reviewer
+/// sees additions, changes, AND deletions in one graph instead of diffing two.
+///
+/// Removed files are skipped from the BFS (no AST at HEAD) and surfaced only as
+/// the placeholder cards; the empty-graph fallback fires only when there is
+/// neither topology nor a deletion to show.
+fn build_diff_merged_flowchart(
+    entries: &[CallTreeNode],
+    changed_files: &[ChangedFile],
+) -> Flowchart {
+    // Same HEAD topology + real status colours as AFTER (no rename relabel).
+    let no_renames: BTreeMap<String, String> = BTreeMap::new();
+    let (mut nodes, edges) = build_call_graph(
+        entries,
+        changed_files,
+        GraphMode {
+            skip_status: FileStatus::Removed,
+            force_muted: false,
+        },
+        &no_renames,
+    );
+
+    // Surface deletions as red placeholder cards (identical to the BEFORE chart).
+    append_removed_placeholders(&mut nodes, changed_files);
+
+    if nodes.is_empty() {
+        return Flowchart {
+            direction: FlowDirection::LR,
+            title: None,
+            subgraphs: vec![],
+            nodes: vec![FlowNode {
+                id: "diff_empty".into(),
+                label: "No affected entries".into(),
+                shape: NodeShape::Rect,
+                class: Some("muted".into()),
+            }],
+            edges: vec![],
+            class_defs: vec![muted_class_def()],
+        };
+    }
+
+    Flowchart {
+        direction: FlowDirection::LR,
+        title: None,
+        subgraphs: vec![],
+        nodes,
+        edges,
+        // All three diff classes are offered; only the ones actually assigned
+        // to a node are emitted by the renderer.
+        class_defs: vec![changed_class_def(), added_class_def(), removed_class_def()],
+    }
+}
+
 /// Build the new_path → old_path map for files RENAMED in this PR. Used by
 /// the BEFORE chart to relabel file-named nodes to their pre-PR names.
 ///
@@ -607,6 +667,66 @@ fn basename(p: &str) -> &str {
     p.rsplit('/').next().unwrap_or(p)
 }
 
+/// Append `🗑 removed — <basename>` placeholder cards (RED, dashed) for every
+/// file with `status = Removed | Deleted`. These files have no AST at HEAD, so
+/// the call-graph BFS never sees them — but they DID exist, and a reviewer
+/// needs to see them disappear.
+///
+/// Bounded + deduped: a mass-deletion PR (50–200 files) would otherwise produce
+/// that many red cards, blowing out the chart (and the BFS's MAX_NODES budget,
+/// which doesn't cover post-BFS cards). We dedup on a NORMALIZED path (so `./x`
+/// and `x` collapse) and cap the card count, collapsing the overflow into a
+/// single `🗑 +N more removed` summary card. Shared by the BEFORE chart and the
+/// merged diff chart so both surface deletions identically.
+fn append_removed_placeholders(nodes: &mut Vec<FlowNode>, changed_files: &[ChangedFile]) {
+    const MAX_REMOVED_CARDS: usize = 8;
+    let mut removed_id_counter = 0usize;
+    let mut total_removed = 0usize;
+    let mut seen_removed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for cf in changed_files {
+        let is_removed = matches!(
+            cf.status.as_deref().map(str::to_ascii_lowercase).as_deref(),
+            Some("removed") | Some("deleted")
+        );
+        if !is_removed {
+            continue;
+        }
+        // Dedup on the normalized path (mirrors `paths_match`'s norm) so a
+        // duplicate TSV row or a `./`-vs-bare spelling can't double-render.
+        let norm = cf.path.trim_start_matches("./").trim_start_matches('/').to_string();
+        if !seen_removed.insert(norm) {
+            continue;
+        }
+        total_removed += 1;
+        if removed_id_counter >= MAX_REMOVED_CARDS {
+            continue; // counted for the summary card; not rendered individually
+        }
+        let id = format!("rm_{removed_id_counter}");
+        removed_id_counter += 1;
+        // Format: `🗑 removed — <basename>`. Parens and brackets are stripped by
+        // `safe_label` (mermaid uses them as node-shape delimiters), so we encode
+        // "removed" with an emoji + em-dash separator that survives sanitization
+        // AND reads cleanly.
+        nodes.push(FlowNode {
+            id,
+            label: format!("🗑 removed — {}", basename(&cf.path)),
+            shape: NodeShape::Rect,
+            class: Some("removed".into()),
+        });
+    }
+    // Overflow summary so a 200-file deletion reads "🗑 +192 more removed"
+    // instead of rendering (or silently dropping) 192 extra cards.
+    if total_removed > removed_id_counter {
+        let overflow = total_removed - removed_id_counter;
+        nodes.push(FlowNode {
+            id: "rm_more".into(),
+            label: format!("🗑 +{overflow} more removed"),
+            shape: NodeShape::Rect,
+            class: Some("removed".into()),
+        });
+    }
+}
+
 /// Build the BEFORE-state flowchart by reconstructing the pre-PR call
 /// graph from diff signals — NO `--base-sha` checkout required.
 ///
@@ -641,62 +761,10 @@ fn build_before_flowchart(
         &renames,
     );
 
-    // Emit one placeholder per file with `status = Removed`. These files
-    // have no AST at HEAD (so the BFS never saw them), but they DID exist
-    // before — the reviewer needs to see them disappear.
-    //
-    // Bounded + deduped: a mass-deletion PR (50–200 files) would otherwise
-    // produce that many red cards, blowing out the chart (and the BFS's
-    // own MAX_NODES budget, which doesn't cover post-BFS cards). We dedup
-    // on a NORMALIZED path (so `./x` and `x` collapse) and cap the card
-    // count, collapsing the overflow into a single `🗑 +N more removed`
-    // summary card.
-    const MAX_REMOVED_CARDS: usize = 8;
-    let mut removed_id_counter = 0usize;
-    let mut total_removed = 0usize;
-    let mut seen_removed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for cf in changed_files {
-        let is_removed = matches!(
-            cf.status.as_deref().map(str::to_ascii_lowercase).as_deref(),
-            Some("removed") | Some("deleted")
-        );
-        if !is_removed {
-            continue;
-        }
-        // Dedup on the normalized path (mirrors `paths_match`'s norm) so a
-        // duplicate TSV row or a `./`-vs-bare spelling can't double-render.
-        let norm = cf.path.trim_start_matches("./").trim_start_matches('/').to_string();
-        if !seen_removed.insert(norm) {
-            continue;
-        }
-        total_removed += 1;
-        if removed_id_counter >= MAX_REMOVED_CARDS {
-            continue; // counted for the summary card; not rendered individually
-        }
-        let id = format!("rm_{removed_id_counter}");
-        removed_id_counter += 1;
-        // Format: `🗑 removed — <basename>`. Parens and brackets are
-        // stripped by `safe_label` (mermaid uses them as node-shape
-        // delimiters), so we encode "removed" with an emoji + em-dash
-        // separator that survives sanitization AND reads cleanly.
-        nodes.push(FlowNode {
-            id,
-            label: format!("🗑 removed — {}", basename(&cf.path)),
-            shape: NodeShape::Rect,
-            class: Some("removed".into()),
-        });
-    }
-    // Overflow summary so a 200-file deletion reads "🗑 +192 more removed"
-    // instead of rendering (or silently dropping) 192 extra cards.
-    if total_removed > removed_id_counter {
-        let overflow = total_removed - removed_id_counter;
-        nodes.push(FlowNode {
-            id: "rm_more".into(),
-            label: format!("🗑 +{overflow} more removed"),
-            shape: NodeShape::Rect,
-            class: Some("removed".into()),
-        });
-    }
+    // Surface deletions as red `🗑 removed — <file>` placeholder cards (deduped
+    // + capped with a `🗑 +N more removed` overflow). Shared with the merged
+    // diff chart so both surface deletions identically.
+    append_removed_placeholders(&mut nodes, changed_files);
 
     if nodes.is_empty() {
         return Flowchart {
@@ -932,6 +1000,10 @@ pub fn compute(entries: &[CallTreeNode], changed_files: &[String]) -> Architectu
 ///   • `after_mermaid` — current HEAD call graph with file-status
 ///     colouring: green = added/copied, amber = modified/renamed, no
 ///     class = unchanged transitive callee.
+///   • `diff_merged_mermaid` — PRIMARY: the AFTER topology with the same
+///     status colouring PLUS the BEFORE chart's red `🗑 removed` cards, so a
+///     single graph shows additions, changes, and deletions at once. The
+///     action renderer prefers this; before/after are the fallback.
 ///   • `combined_mermaid` — LEGACY single graph: BEFORE + AFTER + DS
 ///     subgraphs joined by dashed "evolves to" / "uses" edges, with the
 ///     no-orphan invariant (every AFTER node has an inbound edge). The
@@ -950,6 +1022,9 @@ pub fn compute_with_diff(
     let before_mermaid = before_struct.render();
     let after_struct = build_after_flowchart(entries, changed_files);
     let after_mermaid = after_struct.render();
+    // PRIMARY: one color-coded diff graph (HEAD topology + removed cards).
+    let diff_merged_struct = build_diff_merged_flowchart(entries, changed_files);
+    let diff_merged_mermaid = diff_merged_struct.render();
     let changed_paths: Vec<String> = changed_files.iter().map(|f| f.path.clone()).collect();
     let data_structures = collect_data_structures(entries, &changed_paths);
     let combined_struct = build_combined_flowchart(&before_struct, &after_struct, &data_structures);
@@ -957,10 +1032,12 @@ pub fn compute_with_diff(
     ArchitectureFlow {
         before_mermaid,
         after_mermaid,
+        diff_merged_mermaid,
         combined_mermaid: Some(combined_mermaid),
         before_structured: Some(before_struct),
         after_structured: Some(after_struct),
         combined_structured: Some(combined_struct),
+        diff_merged_structured: Some(diff_merged_struct),
         data_structures,
         reference_link: Some(ReferenceLink {
             url: "https://mermaid.js.org/syntax/flowchart.html".into(),
@@ -1574,6 +1651,49 @@ mod tests {
             "BEFORE must declare muted + removed classes:\n{before}");
         assert!(!before.contains("classDef added") && !before.contains("classDef changed"),
             "BEFORE must NOT carry added/changed palettes:\n{before}");
+    }
+
+    /// The PRIMARY merged diff diagram: ONE flat flowchart carrying the AFTER
+    /// topology + real status colours AND the BEFORE chart's red removed cards,
+    /// so additions, changes, and deletions all read from a single graph.
+    #[test]
+    fn diff_merged_is_one_graph_with_adds_changes_and_removals() {
+        let entries = vec![
+            mk_node("services.py", "app/services.py"),   // Modified → amber
+            mk_node("new_api.py", "app/new_api.py"),     // Added    → green
+            mk_node("routes.py", "app/routes.py"),       // Renamed  → amber, NEW name
+            mk_node("copy_util.py", "app/copy_util.py"), // Copied   → green
+            mk_node("shared.py", "lib/shared.py"),       // Unchanged → no class
+        ];
+        let changed = vec![
+            cf("app/services.py", "modified"),
+            cf("app/new_api.py", "added"),
+            cf_renamed("app/routes.py", "app/legacy_routes.py"),
+            ChangedFile { path: "app/copy_util.py".into(), status: Some("copied".into()), old_path: Some("app/orig_util.py".into()), ..Default::default() },
+            cf("app/deleted_thing.py", "removed"),
+        ];
+        let merged = &compute_with_diff(&entries, &changed).diff_merged_mermaid;
+
+        // ── one graph, not two: a single flowchart header, no subgraphs ───
+        assert_eq!(merged.matches("flowchart").count(), 1, "exactly ONE flowchart header:\n{merged}");
+        assert!(!merged.contains("subgraph "), "merged diff must be FLAT — no subgraphs:\n{merged}");
+
+        // ── adds + changes under HEAD (AFTER) names ───────────────────────
+        assert!(merged.contains("classDef added") && merged.contains("classDef changed"),
+            "merged must declare added + changed palettes:\n{merged}");
+        assert!(merged.contains("\"new_api.py\"") && merged.contains("\"copy_util.py\""),
+            "added/copied files present (green):\n{merged}");
+        assert!(merged.contains("\"routes.py\"") && !merged.contains("legacy_routes"),
+            "renamed file shows NEW name, never the BEFORE name:\n{merged}");
+        assert!(merged.contains("\"shared.py\""), "unchanged callee present:\n{merged}");
+
+        // ── deletions surfaced as red cards (the BEFORE-only signal, now here) ──
+        assert!(merged.contains("🗑 removed — deleted_thing.py"),
+            "deleted file → red placeholder card IN THE MERGED graph:\n{merged}");
+        assert!(merged.contains("classDef removed"), "merged must declare the removed palette:\n{merged}");
+
+        // Unchanged stays uncoloured — the muted palette is a BEFORE-only device.
+        assert!(!merged.contains("classDef muted"), "merged must NOT use the muted palette:\n{merged}");
     }
 
     /// Gap-#2 CONTRACT: for a graph UNDER the node cap (no truncation),

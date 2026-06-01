@@ -5,7 +5,7 @@
 
 import type { PrContext } from '../context.ts';
 import { fileLink, symbolLink } from '../context.ts';
-import { signedInt, signedPercent, int, plural, basename } from './format.ts';
+import { signedPercent, int, plural, basename } from './format.ts';
 import type { PrFacts } from './facts.ts';
 
 const MAX_DEAD_EXPORTS_LINKED = 5;
@@ -26,13 +26,10 @@ export function buildChecklist(facts: PrFacts, ctx?: PrContext): string[] {
     items.push(`Resolve ${extra} more product-correctness ${plural(extra, 'issue')} (see Suggestions)`);
   }
 
-  // 2. Test gap — code shipped with no new tests.
-  if (facts.newTestFiles === 0) {
-    if (facts.locAdded !== null && facts.locAdded > 0) {
-      items.push(`Add tests — **${signedInt(facts.locAdded)}** LOC landed with **0** new test files`);
-    } else if (facts.changedFiles > 0) {
-      items.push('Add tests — this PR shipped **0** new test files');
-    }
+  // 2. Test gap — code shipped with no new tests. (The +LOC count was dropped —
+  // GitHub's PR header already shows it.)
+  if (facts.newTestFiles === 0 && (facts.changedFiles > 0 || (facts.locAdded ?? 0) > 0)) {
+    items.push('Add tests — this PR shipped **0** new test files');
   }
 
   // 3. Regressions — axes trending down.
