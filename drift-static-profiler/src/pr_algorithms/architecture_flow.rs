@@ -30,7 +30,7 @@ use crate::pr_algorithms::types::*;
 use crate::tags::{is_anonymous_symbol_name, is_synthetic_module_name};
 use crate::tree::CallTreeNode;
 use crate::SymbolKind;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What a file's diff says about its existence ACROSS the PR boundary.
 ///
@@ -153,6 +153,152 @@ fn subtree_change_count(node: &CallTreeNode, changed: &[ChangedFile]) -> usize {
         }
     }
     count
+}
+
+/// The children of `parent` to walk into, filtered and ordered for the diagram.
+///
+/// Reach-anchored (`anchor == false`): original behaviour — every child, in
+/// declaration order, capped at `max_children`.
+///
+/// Change-anchored: (a) descend only into children that lead to the diff, OR
+/// any child when `parent_changed` (one hop of callee context around a changed
+/// node); (b) then ORDER so children reaching a changed file not yet in
+/// `rendered` come first — so the bounded walk spends its budget reaching NEW
+/// changed files (the source a test exercises) instead of piling up siblings
+/// from an already-shown file.
+fn ordered_children<'a>(
+    parent: &'a CallTreeNode,
+    parent_changed: bool,
+    changed: &[ChangedFile],
+    rendered: &BTreeSet<String>,
+    anchor: bool,
+    max_children: usize,
+) -> Vec<&'a CallTreeNode> {
+    let mut kids: Vec<&CallTreeNode> = parent
+        .children
+        .iter()
+        .filter(|c| !anchor || parent_changed || subtree_has_change(c, changed))
+        .collect();
+    if anchor {
+        kids.sort_by_key(|c| usize::from(!subtree_reaches_unrendered(c, changed, rendered)));
+    }
+    kids.into_iter().take(max_children).collect()
+}
+
+/// True iff `node`'s subtree contains a changed node whose file is NOT yet in
+/// `rendered` — i.e. descending here would surface a changed file the diagram
+/// hasn't shown. Steers the bounded walk toward NEW changed files instead of
+/// piling up sibling changes from one already-shown file (e.g. a changed test
+/// file's many `it()` closures) before ever reaching the source functions they
+/// call. `rendered` holds node-file strings, the same space as `node.file`.
+fn subtree_reaches_unrendered(
+    node: &CallTreeNode,
+    changed: &[ChangedFile],
+    rendered: &BTreeSet<String>,
+) -> bool {
+    let mut stack: Vec<&CallTreeNode> = vec![node];
+    while let Some(n) = stack.pop() {
+        if !matches!(classify_file(&n.file, changed), FileStatus::Unchanged)
+            && !rendered.contains(&n.file)
+        {
+            return true;
+        }
+        for c in &n.children {
+            stack.push(c);
+        }
+    }
+    false
+}
+
+/// The set of changed-file paths whose code appears anywhere in `node`'s
+/// subtree. Powers coverage-aware root selection: two roots that each reach a
+/// DIFFERENT changed file are both worth rendering even if one reaches far more
+/// changed nodes than the other.
+fn subtree_changed_files(node: &CallTreeNode, changed: &[ChangedFile]) -> BTreeSet<String> {
+    let mut set: BTreeSet<String> = BTreeSet::new();
+    let mut stack: Vec<&CallTreeNode> = vec![node];
+    while let Some(n) = stack.pop() {
+        for cf in changed {
+            if paths_match(&n.file, &cf.path) {
+                set.insert(cf.path.clone());
+            }
+        }
+        for c in &n.children {
+            stack.push(c);
+        }
+    }
+    set
+}
+
+/// Choose up to `cap` change-anchored roots that, together, COVER as many
+/// distinct changed files as possible — so a changed file reached only by a
+/// low-density root still appears in the diagram. Greedy weighted set-cover:
+///   1. each round, pick the root covering the most still-uncovered changed
+///      files (tie-break: more total changed nodes, then upstream reach order);
+///   2. once every reachable changed file is covered, spend any leftover slots
+///      on the highest change-density roots for richer context.
+///
+/// Deterministic: candidates keep `entries` order, so ties resolve stably.
+fn select_roots_for_coverage<'a>(
+    entries: &'a [CallTreeNode],
+    changed: &[ChangedFile],
+    cap: usize,
+) -> Vec<&'a CallTreeNode> {
+    // (root, files-it-covers, total-changed-nodes) for every root touching the diff.
+    let candidates: Vec<(&CallTreeNode, BTreeSet<String>, usize)> = entries
+        .iter()
+        .map(|r| (r, subtree_changed_files(r, changed), subtree_change_count(r, changed)))
+        .filter(|(_, files, _)| !files.is_empty())
+        .collect();
+
+    let mut uncovered: BTreeSet<String> =
+        candidates.iter().flat_map(|(_, files, _)| files.iter().cloned()).collect();
+    let mut used = vec![false; candidates.len()];
+    let mut chosen: Vec<&CallTreeNode> = Vec::new();
+
+    // Phase 1: cover every reachable changed file.
+    while chosen.len() < cap && !uncovered.is_empty() {
+        let best = candidates
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !used[*i])
+            .max_by_key(|(_, (_, files, n_changed))| {
+                let gain = files.iter().filter(|f| uncovered.contains(*f)).count();
+                // gain dominates; then density; index handled by stable max_by_key
+                // (returns the LAST max, so negate index to prefer the earliest).
+                (gain, *n_changed)
+            });
+        let Some((i, (root, files, _))) = best else { break };
+        // No remaining candidate adds coverage → stop phase 1.
+        if files.iter().all(|f| !uncovered.contains(f)) {
+            break;
+        }
+        used[i] = true;
+        for f in files {
+            uncovered.remove(f);
+        }
+        chosen.push(*root);
+    }
+
+    // Phase 2: add a SMALL number of extra context roots (densest unused),
+    // capped so coverage doesn't get drowned by many redundant roots that
+    // re-cover the same files (e.g. dozens of tests all calling the changed
+    // source). Coverage already guarantees every changed file is reachable;
+    // these just add a little surrounding call context.
+    const MAX_CONTEXT_ROOTS: usize = 2;
+    let mut context_added = 0;
+    if chosen.len() < cap {
+        let mut rest: Vec<usize> = (0..candidates.len()).filter(|i| !used[*i]).collect();
+        rest.sort_by_key(|&i| std::cmp::Reverse(candidates[i].2));
+        for i in rest {
+            if chosen.len() >= cap || context_added >= MAX_CONTEXT_ROOTS {
+                break;
+            }
+            chosen.push(candidates[i].0);
+            context_added += 1;
+        }
+    }
+    chosen
 }
 
 /// Detect the source-language scope label from a file extension.
@@ -498,7 +644,7 @@ fn build_call_graph(
     // it needs more depth headroom and a slightly larger node budget to reach
     // the leaves a PR actually touches — still bounded for comment size.
     let max_depth = if mode.anchor_on_changes { 8 } else { 3 };
-    let max_nodes = if mode.anchor_on_changes { 28 } else { 16 };
+    let max_nodes = if mode.anchor_on_changes { 40 } else { 16 };
 
     let class_for = |status: FileStatus| -> Option<&'static str> {
         if mode.force_muted {
@@ -508,45 +654,45 @@ fn build_call_graph(
         }
     };
 
-    // Should the walker descend from `parent` into `child`?
-    //   - reach-anchored: always (original breadth-first behavior).
-    //   - change-anchored: only if the child leads to the diff, OR the parent
-    //     is itself a changed node (then show its direct callees as one hop of
-    //     context). This prunes branches that never approach the diff so the
-    //     budget reaches the changed leaves.
-    let descend_into = |parent_changed: bool, child: &CallTreeNode| -> bool {
-        if !mode.anchor_on_changes {
-            return true;
-        }
-        parent_changed || subtree_has_change(child, changed_files)
-    };
-
     // Root set. Reach-anchored: the top-8 reach-sorted roots (unchanged).
-    // Change-anchored: only roots whose subtree touches the diff, preserving
-    // reach order, capped at 8 — a root that reaches nothing changed is not
-    // part of "what changed" and is dropped (graph falls back to the
-    // "No affected entries" placeholder when NONE qualify).
+    // Change-anchored: pick roots for COVERAGE of the diff, not raw reach — a
+    // changed file reached only by a low-reach/low-density root (e.g. a 1-line
+    // edit deep under one entry point) must still appear, even when other files
+    // changed far more. `select_roots_for_coverage` greedily picks roots so
+    // every changed file that is reachable from SOME root is represented (up to
+    // the cap), then fills any remaining slots by change density.
     let roots: Vec<&CallTreeNode> = if mode.anchor_on_changes {
-        let mut reaching: Vec<&CallTreeNode> = entries
-            .iter()
-            .filter(|r| subtree_has_change(r, changed_files))
-            .collect();
-        // Lead with the root holding the most of the diff. Stable sort keeps
-        // the upstream reach order as the tie-break, so output stays deterministic.
-        reaching.sort_by_key(|r| std::cmp::Reverse(subtree_change_count(r, changed_files)));
-        reaching.into_iter().take(8).collect()
+        select_roots_for_coverage(entries, changed_files, 8)
     } else {
         entries.iter().take(8).collect()
     };
 
+    // Per-root share of the budget (change-anchored only). Without it a single
+    // heavily-changed root could spend the whole budget, starving later
+    // coverage roots — so a 1-line-changed file reached by its own root would
+    // still vanish. Giving each selected root an equal slice (floor 12, enough
+    // to descend to the source functions a test root exercises) keeps EVERY
+    // covered changed file visible. Reach-anchored keeps one global pool.
+    let per_root_budget = if mode.anchor_on_changes {
+        (max_nodes / roots.len().max(1)).max(12)
+    } else {
+        max_nodes
+    };
+
+    // Changed files already rendered (node-file strings). Drives the walk's
+    // steering toward changed files not yet shown. Anchor-mode only.
+    let mut rendered_changed_files: BTreeSet<String> = BTreeSet::new();
+
     for root in roots {
-        // Stop opening NEW roots once the budget is spent — otherwise a root
-        // interned here whose change-path can't fit leaves a context-less
+        // Stop opening NEW roots once the GLOBAL budget is spent — otherwise a
+        // root interned here whose change-path can't fit leaves a context-less
         // orphan box (the per-root BFS below would break immediately). Better
         // to render fewer roots fully than many as bare, edgeless boxes.
         if nodes.len() >= max_nodes {
             break;
         }
+        // Each root may add at most `per_root_budget` nodes (see above).
+        let root_node_floor = nodes.len();
         let root_status = classify_file(&root.file, changed_files);
         if root_status == mode.skip_status {
             continue;
@@ -566,15 +712,27 @@ fn build_call_graph(
             root_override.as_deref(),
         );
 
-        // Queue carries whether the PARENT node is changed, so `descend_into`
+        if root_changed {
+            rendered_changed_files.insert(root.file.clone());
+        }
+
+        // Queue carries whether the PARENT node is changed, so `ordered_children`
         // can grant one hop of callee context around each changed node.
         let mut queue: std::collections::VecDeque<(&CallTreeNode, usize, String)> =
             std::collections::VecDeque::new();
-        for c in root.children.iter().filter(|c| descend_into(root_changed, c)).take(MAX_CHILDREN_PER_NODE) {
+        for c in ordered_children(
+            root,
+            root_changed,
+            changed_files,
+            &rendered_changed_files,
+            mode.anchor_on_changes,
+            MAX_CHILDREN_PER_NODE,
+        ) {
             queue.push_back((c, 1, rid.clone()));
         }
         while let Some((node, depth, parent_id)) = queue.pop_front() {
-            if nodes.len() >= max_nodes {
+            // Stop on EITHER the global cap or this root's fair share.
+            if nodes.len() >= max_nodes || nodes.len() - root_node_floor >= per_root_budget {
                 break;
             }
             let n_status = classify_file(&node.file, changed_files);
@@ -606,8 +764,18 @@ fn build_call_graph(
                     });
                 }
             }
+            if n_changed {
+                rendered_changed_files.insert(node.file.clone());
+            }
             if depth < max_depth {
-                for c in node.children.iter().filter(|c| descend_into(n_changed, c)).take(MAX_CHILDREN_PER_NODE) {
+                for c in ordered_children(
+                    node,
+                    n_changed,
+                    changed_files,
+                    &rendered_changed_files,
+                    mode.anchor_on_changes,
+                    MAX_CHILDREN_PER_NODE,
+                ) {
                     queue.push_back((c, depth + 1, nid.clone()));
                 }
             }
@@ -1836,6 +2004,41 @@ mod tests {
         // Unrelated root + its subtree dropped.
         assert!(!merged.contains("noise_root") && !merged.contains("noise_child"),
             "a root that reaches nothing changed must be dropped:\n{merged}");
+    }
+
+    /// Coverage: a changed file with FEW changed nodes, reached only via a
+    /// heavily-changed test root, must still surface — the walk steers past the
+    /// test's own closures to the source it exercises. Regression guard for
+    /// "I don't see overview.ts" (a 1-line edit drowned by a 70-line test diff).
+    #[test]
+    fn diff_merged_surfaces_lightly_changed_file_under_heavy_test_root() {
+        // A changed test root with several changed closures, two of which call
+        // into DIFFERENT lightly-changed source files.
+        let entries = vec![with_children(
+            mk_node("feature.test.ts", "app/feature.test.ts"),
+            vec![
+                with_children(
+                    mk_node("it_a", "app/feature.test.ts"),
+                    vec![mk_node("renderWidget", "app/widget.ts")],
+                ),
+                mk_node("it_b", "app/feature.test.ts"),
+                mk_node("it_c", "app/feature.test.ts"),
+                mk_node("it_d", "app/feature.test.ts"),
+                with_children(
+                    mk_node("it_e", "app/feature.test.ts"),
+                    vec![mk_node("renderHeader", "app/header.ts")],
+                ),
+            ],
+        )];
+        let changed = vec![
+            cf("app/feature.test.ts", "modified"),
+            cf("app/widget.ts", "modified"),
+            cf("app/header.ts", "modified"), // the lightly-changed file, reached last
+        ];
+        let merged = &compute_with_diff(&entries, &changed).diff_merged_mermaid;
+        // Both source files the test exercises are surfaced, not just the test closures.
+        assert!(merged.contains("\"renderWidget\""), "widget.ts source must surface:\n{merged}");
+        assert!(merged.contains("\"renderHeader\""), "header.ts source must surface despite the heavy test diff:\n{merged}");
     }
 
     /// All-cases coverage: non-empty entries but NO root reaches the diff (e.g.
