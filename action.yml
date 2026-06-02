@@ -2479,63 +2479,6 @@ runs:
     # permissions. Fail-soft.
     # See https://github.blog/changelog/2026-02-26-github-actions-now-supports-uploading-and-downloading-non-zipped-artifacts/
 
-    # ─── 8d.4 Transcode WAV → MP4 (sibling artifact for inline player) ─
-    # GitHub's markdown sanitiser STRIPS <audio> in PR comments — confirmed
-    # across every host (release assets, raw.githubusercontent, gh-pages).
-    # The ONLY host whose URLs auto-embed an HTML5 media player in comments
-    # is github.com/user-attachments/assets/<hash>, which is mintable only
-    # via the web upload-policies endpoint authenticated by a user-session
-    # cookie (NOT by GITHUB_TOKEN). So we can't ship an inline-playing audio
-    # link from CI directly.
-    #
-    # What we CAN do: produce a sibling .mp4 (silent black 320×60 frame +
-    # AAC audio). A logged-in reviewer who drag-drops that MP4 into a reply
-    # comment gets GitHub's native <video> player. The MP4 is roughly the
-    # same byte-size as the WAV (≈ 1 MB at AAC 64 kbps for 60-90s of speech)
-    # so it fits well under GitHub's 10 MB comment-upload cap.
-    # Fail-soft: missing ffmpeg → ::warning::, no mp4_path output, footer
-    # still emits the WAV link. ubuntu-latest has ffmpeg by default.
-    - name: Transcode audio WAV → MP4 (inline-player sibling)
-      id: audio-mp4
-      if: >-
-        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.audio.outputs.synthesized == 'true' &&
-        steps.pr-ctx.outputs.head_sha != ''
-      continue-on-error: true
-      shell: bash
-      env:
-        WAV_PATH: ${{ steps.audio.outputs.wav_path }}
-      run: |
-        if ! command -v ffmpeg >/dev/null 2>&1; then
-          echo "ℹ️  ffmpeg not on PATH — skipping MP4 sibling (fail-soft, WAV-only footer)."
-          exit 0
-        fi
-        if [ -z "${WAV_PATH:-}" ] || [ ! -s "${WAV_PATH}" ]; then
-          echo "ℹ️  wav_path missing or empty — skipping MP4 sibling (fail-soft)."
-          exit 0
-        fi
-        MP4_PATH="${WAV_PATH%.wav}.mp4"
-        # Silent black single-frame video carrying the audio. -shortest stops
-        # at audio EOF; yuv420p ensures Safari/Chrome decode compatibility;
-        # -tune stillimage hints the encoder to spend bits on the audio.
-        if ffmpeg -y -loglevel error \
-            -f lavfi -i color=c=black:s=320x60:d=1 \
-            -i "${WAV_PATH}" \
-            -c:v libx264 -tune stillimage -pix_fmt yuv420p \
-            -c:a aac -b:a 64k -shortest \
-            "${MP4_PATH}" 2>/dev/null; then
-          sz=$(wc -c < "${MP4_PATH}" | tr -d ' ')
-          if [ "$sz" -gt 10485760 ]; then
-            echo "::warning::🎬 MP4 sibling exceeded 10 MB cap (${sz} B) — dropping."
-            rm -f "${MP4_PATH}"
-          else
-            echo "mp4_path=${MP4_PATH}" >> "$GITHUB_OUTPUT"
-            echo "🎬 MP4 sibling created: ${MP4_PATH} (${sz} bytes) — logged-in reviewers can drag-drop into a reply for the inline <video> player."
-          fi
-        else
-          echo "::warning::🎬 ffmpeg transcode failed — skipping MP4 sibling (fail-soft, WAV-only footer)."
-        fi
-
     # ─── 8d.5 Upload precheck — verify wav_path resolves to a non-empty file ─
     # actions/upload-artifact@v7 with archive:false + if-no-files-found:warn
     # (the default) treats a glob that resolves to zero files as
@@ -2587,24 +2530,6 @@ runs:
         # the literal "Re-run jobs" button case.
         overwrite: true
 
-    # ─── 8e.2 Upload MP4 sibling artifact ────────────────────────────
-    # Same upload semantics as the WAV: archive:false, fail-soft. Gates
-    # only on mp4-path being non-empty so a ffmpeg-missing runner
-    # (transcode step exited 0 with no output) cleanly skips.
-    - name: Upload audio MP4 sibling artifact
-      id: audio-mp4-upload
-      if: >-
-        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.audio-mp4.outputs.mp4_path != '' &&
-        steps.pr-ctx.outputs.head_sha != ''
-      continue-on-error: true
-      uses: actions/upload-artifact@v7
-      with:
-        path: ${{ steps.audio-mp4.outputs.mp4_path }}
-        archive: false
-        retention-days: 14
-        overwrite: true
-
     # ─── 8e.5 Resolve audio artifact URL (two-source fallback) ───────
     # Even on a `success` outcome, actions/upload-artifact@v7 can leave
     # `artifact-url` empty (hot-replica 404 on its post-upload metadata
@@ -2654,34 +2579,6 @@ runs:
           echo "🔊 url-source=${source} resolved audio_url=${url}"
         else
           echo "::warning::🔊 audio_url could not be resolved (direct + artifact-id both empty; upload outcome=${UPLOAD_OUTCOME:-?}). 🔊 Listen link will be ABSENT."
-        fi
-        exit 0
-
-    # ─── 8e.6 Resolve MP4 sibling URL (same two-source fallback) ─────
-    - name: Resolve MP4 sibling URL
-      id: audio-mp4-url
-      if: >-
-        (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.audio-mp4.outputs.mp4_path != '' &&
-        steps.pr-ctx.outputs.head_sha != ''
-      continue-on-error: true
-      shell: bash
-      env:
-        DIRECT_URL:  ${{ steps.audio-mp4-upload.outputs.artifact-url }}
-        ARTIFACT_ID: ${{ steps.audio-mp4-upload.outputs.artifact-id }}
-        SERVER_URL:  ${{ github.server_url }}
-        REPO:        ${{ github.repository }}
-        RUN_ID:      ${{ github.run_id }}
-      run: |
-        url=""
-        if [ -n "${DIRECT_URL:-}" ]; then
-          url="${DIRECT_URL}"
-        elif [ -n "${ARTIFACT_ID:-}" ]; then
-          url="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}/artifacts/${ARTIFACT_ID}"
-        fi
-        echo "audio_mp4_url=${url}" >> "$GITHUB_OUTPUT"
-        if [ -n "${url}" ]; then
-          echo "🎬 resolved audio_mp4_url=${url} — surfaced in footer as the 'inline-player' affordance."
         fi
         exit 0
 
@@ -2772,23 +2669,29 @@ runs:
     # docs-only PR now ALSO gets a commit-based spoken summary (the audio
     # gates were relaxed to fire on has_source=false), so by here
     # DRIFT_AUDIO_URL is resolved and the notice can carry the 🔊 Listen
-    # link + MP4 sibling — exactly like the full report's sticky comment.
+    # link — exactly like the full report's sticky comment.
     # Fail-soft like every Drift step — never fails the PR.
     - name: Post no-source notice (docs/config-only PR)
       continue-on-error: true   # advisory: never fail the PR on our own error
+      # `!= 'true'` (not `== 'false'`) on purpose: has_source is the empty
+      # string — not 'false' — if the diff step is killed before it writes the
+      # output (runner OOM/timeout mid-script). With `== 'false'` BOTH the scan
+      # path (needs 'true') and this path would skip → a fully silent Drift run,
+      # the exact "looks broken" outcome this notice exists to prevent. `!= 'true'`
+      # still can't double-post: the full comment requires scan_ran=='true', which
+      # requires has_source=='true', so the two paths stay mutually exclusive.
       if: >-
         steps.pr-ctx.outputs.head_sha != '' &&
-        steps.diff.outputs.has_source == 'false'
+        steps.diff.outputs.has_source != 'true'
       shell: bash
       env:
         # The newline-delimited changed-files listing the diff step wrote;
         # the renderer tags each path docs/config/other in a collapsed table.
         DRIFT_CHANGED_PATH:  ${{ steps.diff.outputs.changed_path }}
-        # Audio links, resolved by the (now-relaxed) audio pipeline above.
+        # Audio link, resolved by the (now-relaxed) audio pipeline above.
         # Empty when audio is disabled or synthesis failed → the renderer
         # omits the 🔊 banner + footer link (fail-soft).
         DRIFT_AUDIO_URL:     ${{ steps.audio-url.outputs.audio_url }}
-        DRIFT_AUDIO_MP4_URL: ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
         GITHUB_TOKEN:        ${{ inputs.github-token }}
       run: node "${{ github.action_path }}/dist/no-source.js"
 
@@ -2982,16 +2885,6 @@ runs:
         # synthesis failed → dist/index.js omits the "🔊 Listen" footer). With
         # archive:false this URL serves the raw .wav, not a zip.
         DRIFT_AUDIO_URL:     ${{ steps.audio-url.outputs.audio_url }}
-        # MP4 sibling (silent black 320×60 video + AAC audio). GitHub's
-        # markdown sanitiser strips <audio> tags everywhere, and ALL hosts
-        # we can write to (releases, raw.githubusercontent, gh-pages) force
-        # Content-Disposition: attachment for .wav files — so a true inline
-        # audio player from CI is not achievable. The MP4 exists so a
-        # logged-in reviewer can drag-drop it into a reply comment and get
-        # GitHub's native <video> player (the only host that auto-embeds a
-        # player is github.com/user-attachments/, which only the web UI can
-        # write to). Footer surfaces both links when this is set.
-        DRIFT_AUDIO_MP4_URL: ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
         # Artifact URLs of the machine-readable scan outputs, surfaced in a
         # collapsed accordion at the bottom of the sticky comment. Read from
         # the resolver (NOT the upload steps directly) so an empty
@@ -3014,11 +2907,16 @@ runs:
     # `pull-requests: write` permission. No new scopes needed.
     - name: Validate audio link landed in sticky comment
       id: audio-link-validate
+      # Same eligibility as the rest of the audio pipeline: validate whenever
+      # audio was attempted — on a real scan OR a docs/config-only PR
+      # (has_source=false), which now also carries the 🔊 link in its
+      # no-source sticky comment. (synthesized + audio_url gates already ensure
+      # there's actually a link to check.)
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         steps.audio.outputs.synthesized == 'true' &&
         steps.audio-url.outputs.audio_url != '' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
@@ -3247,7 +3145,6 @@ runs:
         # keeps full fidelity — audio button + machine-readable scan links.
         DRIFT_DEFER_STICKY_COMMENT: ${{ (steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' && 'true' || '' }}
         DRIFT_AUDIO_URL:          ${{ steps.audio-url.outputs.audio_url }}
-        DRIFT_AUDIO_MP4_URL:      ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
         DRIFT_SCAN_JSON_URL:      ${{ steps.scan-artifacts-url.outputs.scan_json_url }}
         DRIFT_SCAN_CONTEXT_URL:   ${{ steps.scan-artifacts-url.outputs.scan_context_url }}
         GITHUB_TOKEN:             ${{ inputs.github-token }}

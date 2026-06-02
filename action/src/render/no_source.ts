@@ -51,8 +51,6 @@ export type NoSourceOptions = {
    * like the full report. Absent → both are omitted (fail-soft).
    */
   audioUrl?: string;
-  /** Artifact URL of the MP4 sibling, surfaced in the footer alongside the WAV. */
-  audioMp4Url?: string;
   /** Cap on how many files the changed-files table lists (the rest are summarized). */
   maxFiles?: number;
 };
@@ -65,7 +63,6 @@ export function renderNoSource(opts: NoSourceOptions = {}): string {
   const files = (opts.changedFiles ?? []).filter((f) => f.trim().length > 0);
   const gen = opts.generator ?? { tool: 'drift-static-profiler', version: '—' };
   const audioUrl = opts.audioUrl?.trim() || undefined;
-  const audioMp4Url = opts.audioMp4Url?.trim() || undefined;
 
   const banner = sectionImage('drift-review.png', 'Drift review');
 
@@ -81,7 +78,7 @@ export function renderNoSource(opts: NoSourceOptions = {}): string {
   // attribution/audio text line, then the Andy sign-off — mirrors overview.ts.
   const footer = [
     audioUrl ? audioBanner(audioUrl) : '',
-    renderFooter(gen, audioUrl, audioMp4Url),
+    renderFooter(gen, audioUrl),
     andySignoff(),
   ]
     .filter(Boolean)
@@ -107,12 +104,14 @@ function badges(files: string[]): string {
   ]);
 }
 
-/** Accurate change-category label for the badge: never claims "docs/config"
- *  when an "other" (e.g. binary/asset) file is present. */
+/** Accurate change-category label for the badge. Stays TRUE for every PR on
+ *  this path: docs/config-only PRs name the bucket; anything else (binary,
+ *  assets, OR real source in a language Drift doesn't analyze — .rb/.cpp/.php)
+ *  is "No analyzed source", never the false "docs/config" or "non-code". */
 function categoryBadgeLabel(files: string[]): string {
   if (files.length === 0) return 'No source files';
   const cats = new Set(files.map(categoryOf));
-  if (cats.has('other')) return 'Non-code changes';
+  if (cats.has('other')) return 'No analyzed source';
   const parts: string[] = [];
   if (cats.has('docs')) parts.push('docs');
   if (cats.has('config')) parts.push('config');
@@ -120,14 +119,16 @@ function categoryBadgeLabel(files: string[]): string {
   return `${joined.charAt(0).toUpperCase()}${joined.slice(1)} only`;
 }
 
-/** The one-paragraph explanation — a GitHub NOTE callout, no hero prose. */
+/** The one-paragraph explanation — a GitHub NOTE callout, no hero prose.
+ *  Wording is accurate for the WHOLE has_source=false set: docs/config AND
+ *  source in a language Drift doesn't analyze (the analyzed set below is
+ *  narrower than "all code"), so it never falsely claims "only docs/config". */
 function callout(): string {
   return [
     '> [!NOTE]',
-    '> **This PR changes only documentation and configuration** — no source files in a',
-    `> language Drift analyzes (${ANALYZED_LANGUAGES}).`,
-    '> There is no code drift, complexity shift, or business-value change to report, so the',
-    "> usual value & risk dashboard is intentionally skipped. Drift ran and found nothing to flag.",
+    `> **This PR changes no files in a language Drift analyzes** (${ANALYZED_LANGUAGES}).`,
+    '> So there is no code drift, complexity shift, or business-value change to report, and the',
+    '> usual value & risk dashboard is intentionally skipped. Drift ran and found nothing to flag.',
   ].join('\n');
 }
 
@@ -142,7 +143,7 @@ function changedFilesTable(files: string[], ctx: PrContext | undefined, maxFiles
   const rows = shown.map((f) => `| ${fileLink(ctx, f)} | ${categoryOf(f)} |`).join('\n');
   const overflowNote =
     overflow > 0 ? `\n\n<sub>… and ${int(overflow)} more ${plural(overflow, 'file')} not shown.</sub>` : '';
-  const summary = `📄 Files changed (${int(files.length)}) — all docs / config / non-code`;
+  const summary = `📄 Files changed (${int(files.length)}) — none in a language Drift analyzes`;
   return [
     '<details>',
     `<summary>${summary}</summary>`,

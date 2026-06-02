@@ -39,33 +39,19 @@ function escapeText(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
-export function renderFooter(gen: Generator, audioUrl?: string, audioMp4Url?: string): string {
+export function renderFooter(gen: Generator, audioUrl?: string): string {
   const url = audioUrl?.trim();
-  const mp4 = audioMp4Url?.trim();
   // Footer audio segment. Honest UX wording, because:
   //   1. Artifact URLs 404 for unauthenticated viewers (GitHub gates them
   //      regardless of repo visibility) — verified live (307 → 404 with
   //      "Not Found" body).
   //   2. GitHub's markdown sanitizer strips <audio> tags in comments
   //      universally, so no host produces an inline player for raw WAVs.
-  //   3. The ONLY host whose URLs auto-embed a <video> player in comments
-  //      is github.com/user-attachments/assets/<hash>, which the workflow
-  //      GITHUB_TOKEN cannot write to (only the web UI session can).
-  // What we CAN do: ship an MP4 sibling so a logged-in reviewer can
-  // drag-drop it into a reply comment and get GitHub's native <video>
-  // player there. The footer states this affordance honestly: no false
-  // "click to listen" promise that would 404 in incognito.
+  // So the link is a download, not a click-to-play: we say so plainly rather
+  // than make a "click to listen" promise that would 404 in incognito.
   let audio = '';
   if (url) {
-    audio = ` · 🔊 <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
-    if (mp4) {
-      audio += ` · <a href="${escapeAttr(mp4)}">MP4</a>`;
-    }
-    audio += ' <sup>(sign in to GitHub to download';
-    if (mp4) {
-      audio += '; drop the MP4 into a reply for an inline player';
-    }
-    audio += ')</sup>';
+    audio = ` · 🔊 <a href="${escapeAttr(url)}">Listen (WAV)</a> <sup>(sign in to GitHub to download)</sup>`;
   }
   return (
     `<sub>Posted by <a href="https://drift.dev">Drift</a> · static-analysis report from ` +

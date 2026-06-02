@@ -16,9 +16,9 @@ test('footer: appends a Listen link when an audio URL is provided', () => {
   assert.match(out, /Posted by <a href="https:\/\/drift\.dev">Drift<\/a>/);
   assert.match(out, /<code>drift-static-profiler<\/code> v0\.6\.0/);
   assert.match(out, /🔊 <a href="https:\/\/github\.com\/acme\/shop\/actions\/runs\/26514602459\/artifacts\/7241682155">Listen \(WAV\)<\/a>/);
-  // Footer wording must (a) state the GitHub login requirement honestly
-  // and (b) when an MP4 sibling is provided, mention the drag-drop
-  // affordance that gives logged-in reviewers a real inline player.
+  // Footer wording must state the GitHub login requirement honestly: the
+  // artifact link is a download (and 404s for signed-out viewers), not a
+  // click-to-play.
   assert.match(out, /Listen \(WAV\)/, 'WAV link present with disambiguating label');
   assert.match(out, /sign in to GitHub to download/, 'login requirement stated up-front');
 });
@@ -43,29 +43,15 @@ test('renderOverview threads the audio URL into the footer', () => {
   assert.doesNotMatch(without, /🔊/);
 });
 
-test('footer: when MP4 sibling URL is provided, both links surface + drag-drop hint appears', () => {
-  // The MP4 affordance is the ONLY within-permissions way to get a real
-  // inline player in PR comments (GitHub auto-embeds <video> for
-  // user-attachments URLs only; a logged-in reviewer drag-dropping the
-  // MP4 into a reply produces that). Without this hint a reviewer would
-  // not know to do it.
-  const MP4 = 'https://github.com/acme/shop/actions/runs/26514602459/artifacts/7241682156';
-  const out = renderFooter(GEN, URL, MP4);
-  assert.match(out, /Listen \(WAV\)/, 'WAV link present');
-  assert.match(out, /<a href="[^"]*7241682156">MP4<\/a>/, 'MP4 link present with the right href');
-  assert.match(
-    out,
-    /drop the MP4 into a reply for an inline player/,
-    'drag-drop hint present so reviewers know how to get the inline player',
-  );
-});
-
-test('footer: WAV without MP4 → only WAV link + simpler hint (no MP4 mention)', () => {
+test('footer: WAV-only — Listen link + login hint, never an MP4 affordance', () => {
+  // The MP4 inline-player sibling was removed (unverified drag-drop affordance,
+  // extra ffmpeg transcode). The footer is WAV-download-only now; guard that
+  // no MP4 link or drag-drop hint can reappear without updating this test.
   const out = renderFooter(GEN, URL);
   assert.match(out, /Listen \(WAV\)/);
-  assert.doesNotMatch(out, /MP4/, 'no MP4 mention when not provided');
-  assert.match(out, /sign in to GitHub to download/, 'login hint still present');
-  assert.doesNotMatch(out, /drop the MP4/, 'no drag-drop hint without MP4');
+  assert.match(out, /sign in to GitHub to download/, 'login hint present');
+  assert.doesNotMatch(out, /MP4/, 'no MP4 link');
+  assert.doesNotMatch(out, /drop the MP4/, 'no drag-drop hint');
 });
 
 test('footer: no audio at all → no audio segment, no hints', () => {
@@ -73,19 +59,6 @@ test('footer: no audio at all → no audio segment, no hints', () => {
   assert.doesNotMatch(out, /🔊/);
   assert.doesNotMatch(out, /sign in to GitHub/);
   assert.doesNotMatch(out, /MP4/);
-});
-
-test('renderOverview threads BOTH audioUrl + audioMp4Url into the footer', () => {
-  const MP4 = 'https://github.com/acme/shop/actions/runs/26514602459/artifacts/7241682156';
-  const report: ScanPrOutput = {
-    schema_version: '1.2',
-    mode: 'static',
-    generator: GEN,
-    pr_scope: { changed_files: ['a.ts'], affected_roots: ['main'], unreachable_changes: [] },
-  };
-  const withBoth = renderOverview(report, { audioUrl: URL, audioMp4Url: MP4 });
-  assert.match(withBoth, /Listen \(WAV\)/);
-  assert.match(withBoth, /<a href="[^"]*7241682156">MP4<\/a>/);
 });
 
 test('footer: hostile audio URL cannot escape the href attribute (XSS defense)', () => {
