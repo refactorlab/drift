@@ -35,6 +35,20 @@ on:
     branches: [main]
     paths:
       - 'drift-chrome-extension/**'
+      # The bundled scanner wasm is COMPILED FROM drift-static-profiler at build
+      # time (scripts/build-wasm.sh) and stamped with its Cargo.toml version into
+      # drift-scanner.meta.json. So a profiler VERSION BUMP must also rebuild +
+      # republish the extension — otherwise the store package keeps shipping the
+      # old wasm while the CLI release moves on. Gating on Cargo.toml (the SAME
+      # "version bump = release" signal drift-static-profiler-release.yml uses)
+      # keeps the two artifacts in lockstep off a SINGLE bump.
+      #
+      # Why Cargo.toml and not 'drift-static-profiler/**': the extension ships to
+      # the Web Store on every trigger. A source-only profiler change leaves the
+      # meta.json version unchanged, so the extension's update-detection (a
+      # version compare) wouldn't re-download the wasm anyway — republishing then
+      # would be pure churn + review noise. The version bump is the contract.
+      - 'drift-static-profiler/Cargo.toml'
   # Manual escape hatch — e.g. to re-ship after rotating the OAuth secrets.
   workflow_dispatch:
 

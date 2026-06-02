@@ -65,14 +65,18 @@ jobs:
         run: cargo test --locked
 
   # Builds the MV3 extension (so newly added src files actually compile) and
-  # runs the vitest suite. Only runs when drift-chrome-extension/** changed —
-  # same path-filter gate as the profiler. This is the "build on every change"
-  # safety net; the actual Web Store publish lives in
-  # drift-chrome-extension-release.yml and only fires on main.
+  # runs the vitest suite. This is the "build on every change" safety net; the
+  # actual Web Store publish lives in drift-chrome-extension-release.yml and
+  # only fires on main.
+  #
+  # Runs when the extension OR the profiler changed: the bundled scanner wasm is
+  # compiled from drift-static-profiler, so a profiler change (especially the
+  # version bump that the publish workflow will ship) must prove the wasm still
+  # builds in the SAME PR — not surface later as a publish-on-main failure.
   chrome-ext:
     name: chrome-ext / build + test
     needs: changes
-    if: needs.changes.outputs.chrome_ext == 'true'
+    if: needs.changes.outputs.chrome_ext == 'true' || needs.changes.outputs.profiler == 'true'
     runs-on: ubuntu-latest
     # Single-sourced wasi-sdk version: feeds BOTH the cache key below and
     # build-wasm.sh (inherited by the build step), so they can never drift.
