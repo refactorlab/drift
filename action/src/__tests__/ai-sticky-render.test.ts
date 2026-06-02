@@ -278,7 +278,6 @@ test('action.yml: sticky poster receives the defer flag + footer/artifact env', 
   for (const key of [
     'DRIFT_DEFER_STICKY_COMMENT',
     'DRIFT_AUDIO_URL',
-    'DRIFT_AUDIO_MP4_URL',
     'DRIFT_SCAN_JSON_URL',
     'DRIFT_SCAN_CONTEXT_URL',
   ]) {

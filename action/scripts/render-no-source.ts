@@ -56,7 +56,6 @@ const body = renderNoSource({
   changedFiles: changedFiles.length > 0 ? changedFiles : DEFAULT_FILES,
   // Preview the 🔊 affordance with `--audio=<url>` or DRIFT_AUDIO_URL.
   audioUrl: flags.get('audio') ?? process.env.DRIFT_AUDIO_URL,
-  audioMp4Url: process.env.DRIFT_AUDIO_MP4_URL,
 });
 
 mkdirSync(dirname(outputPath), { recursive: true });

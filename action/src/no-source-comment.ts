@@ -18,7 +18,6 @@
 //   DRIFT_PR_TITLE, DRIFT_PR_HTML_URL, DRIFT_PR_AUTHOR
 //   DRIFT_CHANGED_PATH        — file listing the PR's changed paths (one per line)
 //   DRIFT_AUDIO_URL           — optional WAV artifact URL → 🔊 banner + footer link
-//   DRIFT_AUDIO_MP4_URL       — optional MP4 sibling URL → footer link
 
 import { readFileSync } from 'node:fs';
 import * as core from '@actions/core';
@@ -60,9 +59,8 @@ async function run(): Promise<void> {
   // audio pipeline gates fire on has_source=false), so the notice carries the
   // 🔊 link when the upload resolved. Empty → renderer omits it (fail-soft).
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || undefined;
-  const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || undefined;
 
-  const body = renderNoSource({ ctx: prCtx, changedFiles, audioUrl, audioMp4Url });
+  const body = renderNoSource({ ctx: prCtx, changedFiles, audioUrl });
 
   // Reuse the prior sticky's id so we UPDATE in place (replacing any stale full
   // report) instead of stacking a second comment.

@@ -828,27 +828,19 @@ test('audio-link end-to-end chain: synth → precheck → upload → resolver �
   assert.match(distSource, /audioUrl/, 'bundle threads audioUrl into render');
 });
 
-test('audio-link UX: dist/index.js renders the GitHub-login hint + MP4 drag-drop affordance in the footer', () => {
+test('audio-link UX: dist/index.js renders the GitHub-login hint in the footer', () => {
   // The render bundle is what consumers actually invoke (dist/index.js).
   // The honest footer wording is load-bearing UX: GitHub's artifact
   // endpoint returns 404 to unauthenticated viewers even on public
   // repos, so an incognito-tab reviewer clicking the link sees
   // "Not Found" and reasonably reports "no audio link". The footer
-  // must (a) state the login requirement up-front and (b) surface the
-  // MP4 drag-drop affordance — the only within-permissions way to get
-  // GitHub's native inline <video> player in PR comments. If a future
-  // TS edit changes the source but skips `npm run build`, this catches
-  // it.
+  // must state the login requirement up-front. If a future TS edit
+  // changes the source but skips `npm run build`, this catches it.
   const distSource = readFileSync(join(REPO, 'dist/index.js'), 'utf8');
   assert.match(
     distSource,
     /sign in to GitHub to download/,
     'dist/index.js footer text must include login requirement (rebuild dist if this fails)',
-  );
-  assert.match(
-    distSource,
-    /drop the MP4 into a reply for an inline player/,
-    'dist/index.js footer text must include MP4 drag-drop affordance',
   );
 });
 

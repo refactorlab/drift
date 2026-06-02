@@ -19,7 +19,7 @@
 //   DRIFT_AI_MODEL             — model id, shown on each AI suggestion block
 //   DRIFT_DRY_RUN              — "true" → render + log, don't POST
 //   GITHUB_TOKEN               — auth (required unless DRIFT_DRY_RUN)
-//   DRIFT_AUDIO_URL / DRIFT_AUDIO_MP4_URL / DRIFT_SCAN_JSON_URL /
+//   DRIFT_AUDIO_URL / DRIFT_SCAN_JSON_URL /
 //   DRIFT_SCAN_CONTEXT_URL     — footer/artifact links threaded into the sticky
 //
 // Failure policy: fail-soft. Any unrecoverable error logs a warning and
@@ -181,7 +181,6 @@ async function postDeferredSticky(args: {
     report: mergedReport,
     ctx,
     audioUrl: optEnv('DRIFT_AUDIO_URL'),
-    audioMp4Url: optEnv('DRIFT_AUDIO_MP4_URL'),
     scanJsonUrl: optEnv('DRIFT_SCAN_JSON_URL'),
     scanContextUrl: optEnv('DRIFT_SCAN_CONTEXT_URL'),
     dryRun: args.dryRun,

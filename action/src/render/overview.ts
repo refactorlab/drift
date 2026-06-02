@@ -71,13 +71,6 @@ export type RenderOptions = {
   /** Artifact URL of the spoken-summary WAV, linked in the footer. */
   audioUrl?: string;
   /**
-   * Artifact URL of the MP4 sibling (silent black frame + AAC audio). Surfaced
-   * in the footer alongside the WAV. The MP4 exists because GitHub strips
-   * <audio> in PR comments but auto-embeds a <video> player when a logged-in
-   * reviewer drag-drops the MP4 into a reply.
-   */
-  audioMp4Url?: string;
-  /**
    * Artifact URL of the raw scanner report (pr-scan.json), linked in the
    * collapsed scan-artifacts accordion at the bottom of the comment. Absent →
    * the accordion omits that link (and omits the whole block if both URLs are
@@ -101,7 +94,7 @@ export type RenderOptions = {
 };
 
 export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): string {
-  const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
+  const { ctx, priorState, audioUrl, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
@@ -179,7 +172,7 @@ export function renderOverview(report: ScanPrOutput, opts: RenderOptions = {}): 
   // segment returns '' when its data is absent, so the block degrades cleanly.
   const footer = [
     audioUrl?.trim() ? audioBanner(audioUrl.trim()) : '',
-    renderFooter(report.generator, audioUrl, audioMp4Url),
+    renderFooter(report.generator, audioUrl),
     renderScanArtifacts({ scanJsonUrl, scanContextUrl }),
     andySignoff(),
   ]

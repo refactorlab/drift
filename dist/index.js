@@ -24947,20 +24947,11 @@ function escapeAttr(s) {
 function escapeText(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function renderFooter(gen, audioUrl, audioMp4Url) {
+function renderFooter(gen, audioUrl) {
   const url = audioUrl?.trim();
-  const mp4 = audioMp4Url?.trim();
   let audio = "";
   if (url) {
-    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
-    if (mp4) {
-      audio += ` \xB7 <a href="${escapeAttr(mp4)}">MP4</a>`;
-    }
-    audio += " <sup>(sign in to GitHub to download";
-    if (mp4) {
-      audio += "; drop the MP4 into a reply for an inline player";
-    }
-    audio += ")</sup>";
+    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a> <sup>(sign in to GitHub to download)</sup>`;
   }
   return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
 }
@@ -24991,7 +24982,7 @@ ${ARCH_GUARD_CLOSE}`;
 var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
 function renderOverview(report, opts = {}) {
-  const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
+  const { ctx, priorState, audioUrl, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
   const review = report.pr_review;
   const facts = extractFacts(report);
   const currentState = stateFromReport(report);
@@ -25030,7 +25021,7 @@ function renderOverview(report, opts = {}) {
   sections.push(beforeMerge);
   const footer = [
     audioUrl?.trim() ? audioBanner(audioUrl.trim()) : "",
-    renderFooter(report.generator, audioUrl, audioMp4Url),
+    renderFooter(report.generator, audioUrl),
     renderScanArtifacts({ scanJsonUrl, scanContextUrl }),
     andySignoff()
   ].filter(Boolean).join("\n\n");
@@ -25173,7 +25164,6 @@ async function buildAndUpsertSticky(args) {
     ctx,
     priorState,
     audioUrl: args.audioUrl,
-    audioMp4Url: args.audioMp4Url,
     scanJsonUrl: args.scanJsonUrl,
     scanContextUrl: args.scanContextUrl,
     maxSuggestions: args.maxSuggestions
@@ -25822,7 +25812,6 @@ async function main() {
     author: pr.author
   };
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
-  const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || void 0;
   const scanJsonUrl = process.env.DRIFT_SCAN_JSON_URL?.trim() || void 0;
   const scanContextUrl = process.env.DRIFT_SCAN_CONTEXT_URL?.trim() || void 0;
   const deferInlineReview = process.env.DRIFT_DEFER_INLINE_REVIEW === "true";
@@ -25862,7 +25851,6 @@ async function main() {
         report,
         ctx: prCtx,
         audioUrl,
-        audioMp4Url,
         scanJsonUrl,
         scanContextUrl
       }).catch((err) => warning(`sticky comment failed: ${describeError(err)}`))
@@ -25874,7 +25862,7 @@ async function main() {
 
 > Drift tracking issue for ${prLink} \u2014 refreshed each time \`/drift issue\` runs.
 
-` + renderOverview(report, { ctx: prCtx, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl });
+` + renderOverview(report, { ctx: prCtx, audioUrl, scanJsonUrl, scanContextUrl });
     const issueTitle = `Drift findings \u2014 PR #${prNumber}${prCtx.prTitle ? `: ${prCtx.prTitle}` : ""}`;
     tasks.push(
       upsertTrackingIssue({ octokit, owner, repo, prNumber, title: issueTitle, body: issueBody }).catch(

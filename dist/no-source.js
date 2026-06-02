@@ -23885,20 +23885,11 @@ function escapeAttr(s) {
 function escapeText(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function renderFooter(gen, audioUrl, audioMp4Url) {
+function renderFooter(gen, audioUrl) {
   const url = audioUrl?.trim();
-  const mp4 = audioMp4Url?.trim();
   let audio = "";
   if (url) {
-    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
-    if (mp4) {
-      audio += ` \xB7 <a href="${escapeAttr(mp4)}">MP4</a>`;
-    }
-    audio += " <sup>(sign in to GitHub to download";
-    if (mp4) {
-      audio += "; drop the MP4 into a reply for an inline player";
-    }
-    audio += ")</sup>";
+    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a> <sup>(sign in to GitHub to download)</sup>`;
   }
   return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
 }
@@ -23914,7 +23905,6 @@ function renderNoSource(opts = {}) {
   const files = (opts.changedFiles ?? []).filter((f) => f.trim().length > 0);
   const gen = opts.generator ?? { tool: "drift-static-profiler", version: "\u2014" };
   const audioUrl = opts.audioUrl?.trim() || void 0;
-  const audioMp4Url = opts.audioMp4Url?.trim() || void 0;
   const banner = sectionImage("drift-review.png", "Drift review");
   const sections = [
     banner,
@@ -23925,7 +23915,7 @@ function renderNoSource(opts = {}) {
   ].filter(Boolean);
   const footer = [
     audioUrl ? audioBanner(audioUrl) : "",
-    renderFooter(gen, audioUrl, audioMp4Url),
+    renderFooter(gen, audioUrl),
     andySignoff()
   ].filter(Boolean).join("\n\n");
   let body = `${STICKY_MARKER}
@@ -23950,7 +23940,7 @@ function badges(files) {
 function categoryBadgeLabel(files) {
   if (files.length === 0) return "No source files";
   const cats = new Set(files.map(categoryOf));
-  if (cats.has("other")) return "Non-code changes";
+  if (cats.has("other")) return "No analyzed source";
   const parts = [];
   if (cats.has("docs")) parts.push("docs");
   if (cats.has("config")) parts.push("config");
@@ -23960,9 +23950,8 @@ function categoryBadgeLabel(files) {
 function callout() {
   return [
     "> [!NOTE]",
-    "> **This PR changes only documentation and configuration** \u2014 no source files in a",
-    `> language Drift analyzes (${ANALYZED_LANGUAGES}).`,
-    "> There is no code drift, complexity shift, or business-value change to report, so the",
+    `> **This PR changes no files in a language Drift analyzes** (${ANALYZED_LANGUAGES}).`,
+    "> So there is no code drift, complexity shift, or business-value change to report, and the",
     "> usual value & risk dashboard is intentionally skipped. Drift ran and found nothing to flag."
   ].join("\n");
 }
@@ -23974,7 +23963,7 @@ function changedFilesTable(files, ctx, maxFiles) {
   const overflowNote = overflow > 0 ? `
 
 <sub>\u2026 and ${int(overflow)} more ${plural(overflow, "file")} not shown.</sub>` : "";
-  const summary2 = `\u{1F4C4} Files changed (${int(files.length)}) \u2014 all docs / config / non-code`;
+  const summary2 = `\u{1F4C4} Files changed (${int(files.length)}) \u2014 none in a language Drift analyzes`;
   return [
     "<details>",
     `<summary>${summary2}</summary>`,
@@ -24070,8 +24059,7 @@ async function run() {
   };
   const changedFiles = readChangedFiles(process.env.DRIFT_CHANGED_PATH);
   const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
-  const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || void 0;
-  const body = renderNoSource({ ctx: prCtx, changedFiles, audioUrl, audioMp4Url });
+  const body = renderNoSource({ ctx: prCtx, changedFiles, audioUrl });
   let existingId = null;
   try {
     existingId = (await findSticky(octokit, owner, repo, pr.number))?.id ?? null;

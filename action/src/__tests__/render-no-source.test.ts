@@ -53,7 +53,10 @@ test('the file-count badge agrees with the changed-file list', () => {
 test('explains WHY there is no report in a NOTE callout', () => {
   const body = renderNoSource({ ctx: CTX, changedFiles: FILES });
   assert.match(body, /> \[!NOTE\]/);
-  assert.match(body, /only documentation and configuration/i);
+  // Wording must be accurate for the WHOLE has_source=false set (docs/config
+  // AND non-analyzed source like .rb/.cpp), so it must NOT claim "only docs/config".
+  assert.match(body, /no files in a language Drift analyzes/i);
+  assert.doesNotMatch(body, /only documentation and configuration/i);
   // Names the analyzed languages so a reviewer knows what WOULD trigger a report.
   assert.match(body, /Python/);
   assert.match(body, /Rust/);
@@ -108,10 +111,16 @@ test('renders untrusted file paths inside a code span (no raw HTML execution)', 
   assert.match(body, /`docs\/<img src=x onerror=alert\(1\)>\.md`/);
 });
 
-test('category badge never claims docs/config when an "other" file is present', () => {
-  const body = renderNoSource({ ctx: CTX, changedFiles: ['assets/logo.png'] });
-  assert.match(body, /alt="Non-code changes"/);
+test('category badge never claims docs/config for binary/asset or non-analyzed-source PRs', () => {
+  // Binary/asset.
+  let body = renderNoSource({ ctx: CTX, changedFiles: ['assets/logo.png'] });
+  assert.match(body, /alt="No analyzed source"/);
   assert.doesNotMatch(body, /alt="Docs &amp; config only"/);
+  // Real source in a language Drift does NOT analyze (Ruby) — must NOT be
+  // mislabeled "docs/config" or "non-code"; it's simply not analyzed.
+  body = renderNoSource({ ctx: CTX, changedFiles: ['lib/widget.rb', 'src/main.cpp'] });
+  assert.match(body, /alt="No analyzed source"/);
+  assert.doesNotMatch(body, /documentation and configuration/i);
 });
 
 test('category badge is accurate for docs-only and config-only PRs', () => {
@@ -127,13 +136,6 @@ test('surfaces the 🔊 audio banner + footer link when an audio URL is present'
   assert.match(body, new RegExp(`<a href="${audioUrl.replace(/\//g, '\\/')}"`));
   // Footer text link.
   assert.match(body, /Listen \(WAV\)/);
-});
-
-test('adds the MP4 sibling link in the footer when present', () => {
-  const audioUrl = 'https://example.com/a.wav';
-  const audioMp4Url = 'https://example.com/a.mp4';
-  const body = renderNoSource({ ctx: CTX, changedFiles: FILES, audioUrl, audioMp4Url });
-  assert.match(body, />MP4<\/a>/);
 });
 
 test('omits all audio affordances when no audio URL is given', () => {

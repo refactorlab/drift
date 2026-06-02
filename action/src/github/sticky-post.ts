@@ -30,7 +30,6 @@ export type StickyPostArgs = {
   ctx: PrContext;
   /** Footer/section inputs threaded through to renderOverview (all optional). */
   audioUrl?: string;
-  audioMp4Url?: string;
   scanJsonUrl?: string;
   scanContextUrl?: string;
   maxSuggestions?: number;
@@ -61,7 +60,6 @@ export async function buildAndUpsertSticky(args: StickyPostArgs): Promise<void> 
     ctx,
     priorState,
     audioUrl: args.audioUrl,
-    audioMp4Url: args.audioMp4Url,
     scanJsonUrl: args.scanJsonUrl,
     scanContextUrl: args.scanContextUrl,
     maxSuggestions: args.maxSuggestions,
