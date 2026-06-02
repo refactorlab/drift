@@ -21,6 +21,7 @@ action/node_modules/
 !/dist/ai-context.js
 !/dist/ai-suggest.js
 !/dist/ai-infer-one.js
+!/dist/no-source.js
 drift-static-profiler/research/code-production-repositories
 drift-static-profiler/research/django-check
 

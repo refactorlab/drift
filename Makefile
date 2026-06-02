@@ -457,6 +457,8 @@ DRIFT_ACTION_TMPDIR         ?= tmp/action-inputs
 # eyeballing the comment before pushing.
 DRIFT_ACTION_COMMENT        ?= tmp/pr-comment-python-fastapi.md
 DRIFT_ACTION_COMMENT_KOTLIN ?= tmp/pr-comment-kotlin-ktor.md
+# The "no code to analyze" notice posted on a docs/config-only PR (no scan).
+DRIFT_ACTION_COMMENT_NOSRC  ?= tmp/pr-comment-no-source.md
 
 # Realistic synthesized inputs that mirror what the Action wrapper
 # pipes into scan-pr on a real PR. Override any of these with custom
@@ -795,6 +797,18 @@ action-render-comment-kotlin: ## Render tmp/scan-pr-output-kotlin-ktor.json → 
 	  | sed 's/^/    /'
 
 action-render-comments: action-render-comment action-render-comment-kotlin ## Render BOTH fixtures' PR-comment markdown
+
+action-render-no-source: ## Render the docs/config-only "no code to analyze" notice → tmp/pr-comment-no-source.md (needs NO scan output)
+	@printf "$(BLUE)▶$(RESET) rendering no-source PR notice (→ $(DRIFT_ACTION_COMMENT_NOSRC))\n"
+	@node --experimental-strip-types --no-warnings \
+	  action/scripts/render-no-source.ts $(DRIFT_ACTION_COMMENT_NOSRC) action/.dev/event.json \
+	  | sed 's/^/    /'
+	@printf "    preview MD: $(CYAN)code $(DRIFT_ACTION_COMMENT_NOSRC)$(RESET) (⇧⌘V)\n"
+
+action-test-no-source: ## Run ONLY the no-source renderer test suite (fast, no scan needed)
+	@printf "$(BLUE)▶$(RESET) node --test (render-no-source)\n"
+	@cd action && node --test --experimental-strip-types --no-warnings src/__tests__/render-no-source.test.ts 2>&1 \
+	  | grep -E "^(✔|✖|ℹ tests|ℹ pass|ℹ fail) "
 
 action-render-comment-self: ## Render tmp/scan-pr-output-self.json → tmp/pr-comment-self.md (uses the self-scan's synthesized event.json)
 	@test -s $(DRIFT_SELF_OUTPUT) || { \
