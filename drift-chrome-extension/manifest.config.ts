@@ -47,8 +47,12 @@ export default defineManifest({
     'sidePanel',
     'activeTab',
     'scripting',
+    // Optional Google sign-in.
+    'identity',
     // Download real artifacts using the browser's own GitHub session.
     'downloads',
+    // Detect GitHub's Turbo (pushState) PR→PR navigation reliably.
+    'webNavigation',
   ],
   // GitHub Actions artifact downloads redirect to unpredictable signed-blob CDN
   // hosts (githubusercontent / Azure blob / sometimes S3). Granting all https

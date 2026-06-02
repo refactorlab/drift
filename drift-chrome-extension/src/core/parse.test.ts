@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { parseReport, findReportRoot, isPrPage } from './parse';
+import { parseReport, findReportRoot, isPrPage, parseAudioSummary } from './parse';
 
 // A fixture mirroring how GitHub renders the Andy/Drift sticky comment:
 // markdown badges become <img alt="…"> and `### N.` / `#### Name ![…]` become
@@ -93,6 +93,26 @@ describe('parseReport', () => {
   it('returns an empty report when no Drift comment is present', () => {
     document.body.innerHTML = '<div class="comment-body">just a normal PR comment</div>';
     expect(parseReport(document).found).toBe(false);
+  });
+});
+
+describe('parseAudioSummary', () => {
+  const AUDIO_LINK =
+    '<p align="center"><a href="https://github.com/refactorlab/drift/actions/runs/26754583906/artifacts/7331330608">' +
+    '<img src="summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="200"></a></p>';
+
+  it('extracts the spoken-summary artifact link from the comment', () => {
+    document.body.innerHTML = `<div class="comment-body">${AUDIO_LINK}</div>`;
+    const audio = parseAudioSummary(document.body);
+    expect(audio?.url).toMatch(/artifacts\/7331330608$/);
+    expect(audio?.label).toContain('spoken summary');
+  });
+
+  it('ignores non-artifact links and unrelated images', () => {
+    document.body.innerHTML =
+      '<div class="comment-body"><a href="https://example.com/x"><img alt="🔊 something"></a>' +
+      '<a href="https://github.com/refactorlab/drift/actions/runs/1/artifacts/2"><img alt="📎 pr-scan.json"></a></div>';
+    expect(parseAudioSummary(document.body)).toBeNull();
   });
 });
 

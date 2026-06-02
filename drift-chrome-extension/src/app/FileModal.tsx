@@ -30,7 +30,7 @@ export function FileModal({
         </header>
         <div className="modal-body">
           {/* The card downloads + renders the real file; defaultOpen starts it */}
-          <ArtifactFile artifact={artifact} defaultOpen />
+          <ArtifactFile key={artifact.url ?? artifact.name} artifact={artifact} defaultOpen />
         </div>
       </div>
     </div>

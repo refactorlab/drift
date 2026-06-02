@@ -18,7 +18,7 @@ const step = (text: string): ReasoningStep => ({ level: 'step', text });
 const detail = (text: string): ReasoningStep => ({ level: 'detail', text });
 
 export function buildReasoning(ctx: PrContext): ReasoningStep[] {
-  const { pr, report, artifacts } = ctx;
+  const { pr, report, artifacts, audio } = ctx;
   const steps: ReasoningStep[] = [];
 
   steps.push(step(`Recognised a Drift scan on ${pr.repo}#${pr.number}.`));
@@ -75,6 +75,11 @@ export function buildReasoning(ctx: PrContext): ReasoningStep[] {
     const names = artifacts.map((a) => a.name).join(', ');
     steps.push(step(`Full scan attached: ${names}.`));
     steps.push(detail('Press a file below to download it with your GitHub session.'));
+  }
+
+  // Spoken summary.
+  if (audio) {
+    steps.push(step('A spoken summary is attached — play it below.'));
   }
 
   // Conclusion.
