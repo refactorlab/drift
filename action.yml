@@ -248,20 +248,27 @@ inputs:
   kokoro-model:
     description: |
       Kokoro model archive name from the sherpa-onnx `tts-models` release.
-      Default `kokoro-int8-multi-lang-v1_0` is int8-quantized (~126 MB,
-      `model.int8.onnx` ~109 MB) with 53 voices including af_heart. The
-      archive bundles `voices.bin`, `tokens.txt` and `espeak-ng-data`, so no
-      system espeak-ng install is needed. Downloaded from
+      Default `kokoro-multi-lang-v1_0` is FULL-PRECISION fp32 (~333 MB archive,
+      `model.onnx` ~311 MB) with 53 voices including af_heart — highest Kokoro
+      fidelity (no quantization), and on CPU it benchmarks AS FAST OR FASTER
+      than the int8 build (onnxruntime's fp32 GEMM path is well-optimized).
+      The archive bundles `voices.bin`, `tokens.txt` and `espeak-ng-data`, so
+      no system espeak-ng install is needed. To trade fidelity for a smaller
+      cache (~126 MB), set `kokoro-int8-multi-lang-v1_0` + its SHA instead.
+      Downloaded from
       `github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/<name>.tar.bz2`.
+      NOTE: `*-v1_1` is the Chinese-specialised `v1.1-zh` model (different
+      voice set, no af_heart) — do NOT use it for English summaries.
     required: false
-    default: 'kokoro-int8-multi-lang-v1_0'
+    default: 'kokoro-multi-lang-v1_0'
   kokoro-model-sha256:
     description: |
       SHA256 of the `<kokoro-model>.tar.bz2` archive. Verified before
       extraction; on mismatch the action warns and skips audio (fail-soft).
       Set to empty string to opt out. Bump in lockstep with `kokoro-model`.
+      (int8 build SHA: 75654a84864be26f345f020f4070c2c019e96dd1b7f9bf6e2ffd59efac6aa5a3)
     required: false
-    default: '75654a84864be26f345f020f4070c2c019e96dd1b7f9bf6e2ffd59efac6aa5a3'
+    default: 'c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046'
   # ─── PR context overrides (event-agnostic invocation) ──────────────
   # These are empty by default. On `pull_request` events the derivation
   # step (see `Resolve PR context`) fills them from github.event.pull_request.
@@ -1425,8 +1432,8 @@ runs:
         url="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${KOKORO_MODEL}.tar.bz2"
         mkdir -p "$KOKORO_DIR"
         echo "⬇️  kokoro model ${KOKORO_MODEL} ← ${url}"
-        # --connect-timeout 10 + --max-time 300 — the int8 archive is ~126 MB
-        # (fp32 ~330 MB), larger than the old Piper voice, so allow 5 minutes.
+        # --connect-timeout 10 + --max-time 300 — the default fp32 archive is
+        # ~333 MB (int8 ~126 MB), larger than the old Piper voice → allow 5 min.
         if ! curl -fSL --connect-timeout 10 --max-time 300 -o /tmp/kokoro.tar.bz2 "$url"; then
           echo "⚠️  kokoro model download failed — audio summary will be skipped (fail-soft)."
           exit 0
