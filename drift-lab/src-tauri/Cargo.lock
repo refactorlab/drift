@@ -1321,12 +1321,13 @@ dependencies = [
 
 [[package]]
 name = "drift-static-profiler"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
  "flate2",
+ "heck 0.5.0",
  "ignore",
  "indicatif",
  "libc",

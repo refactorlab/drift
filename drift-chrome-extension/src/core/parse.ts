@@ -254,7 +254,6 @@ export function parseReport(doc: Document = document): DriftReport {
 
   return {
     found: true,
-    demo: false,
     verdict: verdictFrom(banner.verdictLabel),
     verdictLabel: banner.verdictLabel,
     effortLabel: banner.effortLabel,
@@ -318,10 +317,11 @@ export function parseScanArtifacts(root: ParentNode): ArtifactRef[] {
 }
 
 // The action renders the audio link as `<a href=…artifacts/N><img alt="🔊
-// Listen to the spoken summary (Piper TTS)"></a>`. Match on the alt text (the
-// speaker glyph / "spoken summary" / "Piper TTS") so we don't depend on the
-// exact wording, and only accept a GitHub Actions artifact href.
-const AUDIO_ALT = /spoken summary|listen to the spoken|piper tts|🔊/i;
+// Listen to the spoken summary (Kokoro TTS)"></a>`. Match on the alt text (the
+// speaker glyph / "spoken summary" / engine name) so we don't depend on the
+// exact wording — and keep the legacy "piper tts" alternative so audio links
+// in older PR comments still resolve. Only accept a GitHub Actions artifact href.
+const AUDIO_ALT = /spoken summary|listen to the spoken|kokoro tts|piper tts|🔊/i;
 const ARTIFACT_HREF = /\/actions\/runs\/\d+\/artifacts\/\d+/i;
 
 /** Find the spoken-summary audio artifact link inside the Drift comment. */

@@ -18,10 +18,12 @@ export function Chat({
   settings,
   onOpenSettings,
   onOpenContext,
+  onOpenPipeline,
 }: {
   settings: Settings;
   onOpenSettings: () => void;
   onOpenContext: () => void;
+  onOpenPipeline: () => void;
 }) {
   // The conversation is bound to a PR url so persistence is always atomic.
   const [chat, setChat] = useState<{ url: string | null; messages: ChatMessage[] }>({
@@ -177,6 +179,13 @@ export function Chat({
           disabled={messages.length === 0}
         >
           ＋
+        </button>
+        <button
+          className="iconbtn"
+          title="Live pipeline — run the scan + render the PR comment here (no AI)"
+          onClick={onOpenPipeline}
+        >
+          ⚡
         </button>
         <button className="iconbtn" title="Settings" onClick={onOpenSettings}>
           ⚙

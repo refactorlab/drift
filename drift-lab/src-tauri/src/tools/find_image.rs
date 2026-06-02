@@ -405,8 +405,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_skips_third_party_service_and_picks_build_service() {
-        // Regression: this is the exact compose shape from
-        // /Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements.
+        // Regression: this mirrors a real monorepo service's compose shape (a
+        // bun TypeScript `api` plus third-party `redis`/`rabbitmq` services).
         // The old parser picked `redis` (valkey/valkey:8.0-alpine) — the wrong
         // image. We now must pick `api` because it has a `build:` block.
         let dir = tempdir("api-plus-deps");

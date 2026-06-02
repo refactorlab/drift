@@ -20,6 +20,14 @@
 /// when the syscall is unavailable. Monotonic non-decreasing over the
 /// process lifetime, so it doubles as a "have we ever crossed X?" guard
 /// without needing a separate current-RSS probe.
+// Without `libc` (wasm builds) there is no getrusage; RSS sampling degrades to
+// `None`, which every caller already handles (logs `rss_mb = ?`).
+#[cfg(not(feature = "native"))]
+pub fn peak_rss_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(feature = "native")]
 pub fn peak_rss_bytes() -> Option<u64> {
     // SAFETY: `getrusage` only writes into the `rusage` we pass it; a
     // zeroed struct is a valid initial state and we read one field back.

@@ -173,8 +173,8 @@ pub async fn run(args: Args) -> Result<Output> {
     }
 
     // For JS projects, distinguish JS vs TS by the presence of a tsconfig
-    // or any *.ts source. cf-mono is TypeScript-heavy; this matters because
-    // the test runner choice differs.
+    // or any *.ts source. Monorepo workspaces are often TypeScript-heavy; this
+    // matters because the test runner choice differs.
     if matches!(out.language, Language::JavaScript) && (root.join("tsconfig.json").is_file() || any_ts_source(&root)) {
         out.language = Language::TypeScript;
     }
@@ -234,10 +234,10 @@ fn inspect_package_json(
         .unwrap_or_default();
 
     // Pick the package manager. Local lockfile wins; otherwise fall back to
-    // *script content* signals — that catches monorepo workspaces like cf-mono
-    // where `bun.lock` lives at the monorepo root, not at this directory's
-    // root, but `"test": "bun test"` is unambiguous. Last resort: walk up the
-    // tree a few levels looking for a workspace-root lockfile.
+    // *script content* signals — that catches monorepo workspaces where
+    // `bun.lock` lives at the monorepo root, not at this directory's root, but
+    // `"test": "bun test"` is unambiguous. Last resort: walk up the tree a few
+    // levels looking for a workspace-root lockfile.
     let pm = if root.join("bun.lock").is_file() || root.join("bun.lockb").is_file() {
         PackageManager::Bun
     } else if root.join("pnpm-lock.yaml").is_file() {
@@ -403,7 +403,7 @@ mod tests {
 
     #[tokio::test]
     async fn detects_bun_typescript_project_with_test_script() {
-        // Mirror cf-mono's automation-enrichements shape.
+        // Mirror a real monorepo service's shape: bun + TS + Dockerfile.
         let dir = tempdir("bun-ts");
         std::fs::write(
             dir.join("package.json"),
@@ -437,8 +437,8 @@ mod tests {
 
     #[tokio::test]
     async fn detects_bun_via_test_script_when_no_local_lockfile() {
-        // Mirrors cf-mono/workspaces/automation-enrichements: lockfile lives
-        // at the monorepo root, this dir only has package.json + tsconfig.
+        // Mirrors a monorepo workspace: the lockfile lives at the monorepo
+        // root, so this dir only has package.json + tsconfig.
         let dir = tempdir("ws-no-lock");
         std::fs::write(
             dir.join("package.json"),

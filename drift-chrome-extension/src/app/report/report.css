@@ -1,0 +1,378 @@
+/* Native scan report — modern, theme-aware, zero markdown. All colours derive
+   from the shared --drift-* tokens so light/dark just work. */
+
+.rp-root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rp-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--drift-fg-muted);
+  font-size: 13px;
+}
+
+/* ── Verdict banner ───────────────────────────────────────────────────────── */
+.rp-verdict {
+  border: 1px solid var(--drift-border);
+  border-left-width: 4px;
+  border-radius: 14px;
+  padding: 13px 15px;
+  background: var(--drift-bg-elev);
+}
+.rp-verdict-good { border-left-color: var(--drift-good); }
+.rp-verdict-warn { border-left-color: var(--drift-warn); }
+.rp-verdict-bad { border-left-color: var(--drift-bad); }
+.rp-verdict-info { border-left-color: var(--drift-info); }
+.rp-verdict-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rp-verdict-label {
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+.rp-verdict-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--drift-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Headline KPI dials ───────────────────────────────────────────────────── */
+.rp-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+  gap: 10px;
+  padding: 4px 0;
+}
+.rp-arc {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.rp-arc-val {
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.rp-arc-label {
+  font-size: 10.5px;
+  color: var(--drift-fg-muted);
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* ── Section wrapper ──────────────────────────────────────────────────────── */
+.rp-section {
+  border: 1px solid var(--drift-border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--drift-bg-elev);
+}
+.rp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rp-section-head h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.rp-section-icon {
+  font-size: 15px;
+}
+
+/* ── Badge ────────────────────────────────────────────────────────────────── */
+.rp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ── Meter ────────────────────────────────────────────────────────────────── */
+.rp-meter {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--drift-track);
+  overflow: hidden;
+}
+.rp-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+/* ── Radar ────────────────────────────────────────────────────────────────── */
+.rp-radar-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.rp-radar {
+  max-width: 320px;
+}
+.rp-radar-ring {
+  fill: none;
+  stroke: var(--drift-border);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.rp-radar-spoke {
+  stroke: var(--drift-border);
+  stroke-width: 1;
+  opacity: 0.4;
+}
+.rp-radar-area {
+  fill: var(--drift-accent);
+  fill-opacity: 0.18;
+  stroke: var(--drift-accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.rp-radar-dot {
+  fill: var(--drift-accent);
+}
+.rp-radar-label {
+  fill: var(--drift-fg-muted);
+  font-size: 7.5px;
+}
+
+/* ── Complexity groups + metric rows ──────────────────────────────────────── */
+.rp-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rp-group-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--drift-fg-muted);
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--drift-border);
+}
+.rp-metric {
+  margin-bottom: 11px;
+}
+.rp-metric-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.rp-metric-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.rp-metric-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rp-metric-score {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rp-metric-arrow {
+  color: var(--drift-fg-muted);
+}
+.rp-metric-desc {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--drift-fg-muted);
+}
+
+/* ── Collapsible ──────────────────────────────────────────────────────────── */
+.rp-collapse {
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  background: var(--drift-bg);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.rp-collapse:last-child { margin-bottom: 0; }
+.rp-collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--drift-fg);
+  padding: 10px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+.rp-chevron {
+  transition: transform 0.18s ease;
+  color: var(--drift-fg-muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.rp-chevron.open { transform: rotate(90deg); }
+.rp-collapse-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  flex: 1;
+}
+.rp-collapse-sub {
+  color: var(--drift-fg-muted);
+  font-size: 11px;
+}
+.rp-collapse-body {
+  padding: 4px 12px 12px;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────────── */
+.rp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+.rp-table th,
+.rp-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--drift-border);
+  vertical-align: top;
+}
+.rp-table th {
+  color: var(--drift-fg-muted);
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.rp-table code,
+.rp-sugg-loc code {
+  font-size: 11px;
+}
+
+/* ── Mermaid card ─────────────────────────────────────────────────────────── */
+.rp-mermaid {
+  text-align: center;
+  overflow-x: auto;
+}
+.rp-mermaid svg { max-width: 100%; height: auto; }
+.rp-mermaid-fallback {
+  font-size: 10.5px;
+  line-height: 1.4;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--drift-fg-muted);
+  background: var(--drift-bg-elev);
+  padding: 8px;
+  border-radius: 8px;
+}
+
+/* ── Value axes ───────────────────────────────────────────────────────────── */
+.rp-axes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.rp-axis {
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--drift-bg);
+}
+.rp-axis-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.rp-axis-label { font-size: 12.5px; font-weight: 650; }
+.rp-axis-delta { font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.rp-axis-sub { font-size: 10.5px; color: var(--drift-fg-muted); margin-bottom: 7px; }
+.rp-axis-conf { font-size: 10px; color: var(--drift-fg-muted); margin-top: 5px; }
+
+/* ── Suggestions ──────────────────────────────────────────────────────────── */
+.rp-suggs { display: flex; flex-direction: column; gap: 10px; }
+.rp-sugg {
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: var(--drift-bg);
+}
+.rp-sugg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+.rp-sugg-title { font-size: 12.5px; font-weight: 650; }
+.rp-sugg-loc { font-size: 11px; margin-bottom: 6px; word-break: break-all; }
+.rp-sugg-why { margin: 0; font-size: 12px; line-height: 1.5; }
+.rp-sugg-fix { margin: 8px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--drift-fg-muted); }
+
+/* ── Diff ─────────────────────────────────────────────────────────────────── */
+.rp-diff {
+  margin: 8px 0 0;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 10.5px;
+  line-height: 1.5;
+  background: var(--drift-bg-elev);
+  border: 1px solid var(--drift-border);
+}
+.rp-diff-line { display: flex; padding: 0 8px; white-space: pre; }
+.rp-diff-gutter { width: 12px; flex: none; color: var(--drift-fg-muted); user-select: none; }
+.rp-diff-add { background: color-mix(in srgb, var(--drift-good) 16%, transparent); }
+.rp-diff-del { background: color-mix(in srgb, var(--drift-bad) 16%, transparent); }
+
+/* ── Risk quadrant ────────────────────────────────────────────────────────── */
+.rp-risk { display: flex; flex-direction: column; gap: 10px; }
+.rp-q { opacity: 0.10; }
+.rp-q-good { fill: var(--drift-good); }
+.rp-q-warn { fill: var(--drift-warn); }
+.rp-q-bad { fill: var(--drift-bad); }
+.rp-q-info { fill: var(--drift-info); }
+.rp-risk-axis { stroke: var(--drift-border); stroke-width: 1; }
+.rp-risk-axislabel { fill: var(--drift-fg-muted); font-size: 9px; }
+.rp-risk-dot { stroke: var(--drift-bg-elev); stroke-width: 1.5; }
+.rp-risk-dot.rp-tone-good { fill: var(--drift-good); }
+.rp-risk-dot.rp-tone-warn { fill: var(--drift-warn); }
+.rp-risk-dot.rp-tone-bad { fill: var(--drift-bad); }
+.rp-risk-dot.rp-tone-info { fill: var(--drift-info); }
+.rp-risk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rp-risk-list li { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.rp-risk-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-risk-nums { color: var(--drift-fg-muted); font-variant-numeric: tabular-nums; font-size: 10.5px; }
+
+/* ── Shared bits ──────────────────────────────────────────────────────────── */
+.rp-prose { margin: 0 0 10px; font-size: 12px; line-height: 1.5; }
+.rp-muted { color: var(--drift-fg-muted); }
+.rp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.rp-list { margin: 0; padding-left: 16px; font-size: 11.5px; line-height: 1.6; }
+.rp-list code { font-size: 11px; word-break: break-all; }

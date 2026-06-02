@@ -74,6 +74,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.chrome_ext == 'true'
     runs-on: ubuntu-latest
+    # Single-sourced wasi-sdk version: feeds BOTH the cache key below and
+    # build-wasm.sh (inherited by the build step), so they can never drift.
+    env:
+      WASI_SDK_VERSION: '24'
     defaults:
       run:
         working-directory: drift-chrome-extension
@@ -91,10 +95,35 @@ jobs:
       - name: Install
         run: npm ci
 
+      # Build the scanner wasm so it's present for BOTH the package and the
+      # tests. Without it, src/core/wasmScan.test.ts (`describeIf =
+      # haveWasm ? describe : describe.skip`) silently skips — the flagship
+      # live-scan integration would never actually run in CI.
+      #
+      # `scripts/build-wasm.sh` is the single source of truth for the build: it
+      # adds the rustup wasm target (runners ship rustup) AND self-installs
+      # wasi-sdk on a cold cache. The two cache steps are the only thing a shell
+      # script can't own — they restore the cargo target/ and the ~100MB
+      # wasi-sdk so the build is fast on a warm cache (shared with the release
+      # workflow via the same keys).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-static-profiler
+      - uses: actions/cache@v4
+        with:
+          path: ~/wasi-sdk
+          key: wasi-sdk-${{ env.WASI_SDK_VERSION }}-${{ runner.os }}
+      - name: Build scanner wasm
+        run: npm run build:wasm
+
       # `npm run build` already runs `tsc --noEmit` before `vite build`
       # (see package.json), so this covers the type check too.
       - name: Build
         run: npm run build
+
+      # Gate: the packaged dist/ must contain a valid scanner wasm + meta.
+      - name: Verify packaged assets
+        run: npm run verify:assets
 
       - name: Test
         run: npm test

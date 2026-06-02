@@ -23865,7 +23865,7 @@ var BANNER_WIDTH = 120;
 var AUDIO_BANNER_WIDTH = 200;
 var ANDY_WIDTH = 64;
 var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
-var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Kokoro TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
 var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 
 // src/render/lib/badge.ts

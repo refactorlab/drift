@@ -73,6 +73,7 @@ export function installChromeMock(): ChromeMock {
     },
     runtime: {
       lastError: undefined as { message?: string } | undefined,
+      getURL: (path: string) => `chrome-extension://test/${path.replace(/^\//, '')}`,
       sendMessage: (msg: unknown, cb?: (res: unknown) => void) => {
         Promise.resolve(responder(msg)).then(
           (res) => cb?.(res),

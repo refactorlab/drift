@@ -34,7 +34,9 @@ pub use api::{
     analyze_roots_with_progress, analyze_with_progress, AnalyzeOptions, AnalyzeOutcome,
     AnalyzePrOutcome, PickerCaller, PickerRoot, PrScopeSummary,
 };
-pub use progress::{CliProgress, NullProgress, Progress};
+#[cfg(feature = "native")]
+pub use progress::CliProgress;
+pub use progress::{NullProgress, Progress};
 pub use linguist::{compute_language_stats, LanguageStats};
 pub use pr_scope::{affected_roots, AffectedRoots};
 pub use roots::{discover_roots, DiscoverOpts, DiscoveredRoot};

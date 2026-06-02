@@ -11,6 +11,7 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { StrictMode } from 'react';
 import { isPrPage, parseReport, parsePrContext } from '../core/parse';
+import { readPrRefsFromDocument } from '../core/prRefs';
 import type { PrContext } from '../core/types';
 import { cacheReport, type Message, type Response } from '../core/messaging';
 import { setPrContext } from '../state/prContext';
@@ -130,6 +131,13 @@ chrome.runtime.onMessage.addListener(
   (msg: Message, _sender, sendResponse: (r: Response) => void) => {
     if (msg.type === 'GET_REPORT') {
       sendResponse({ ok: true, report: parseReport(document) });
+      return true;
+    }
+    if (msg.type === 'GET_PR_REFS') {
+      // Read base/head refs off the LIVE (React-rendered) DOM — works on any PR,
+      // no Drift comment required. This is the authoritative source the live
+      // scan uses (a cold HTML fetch often lacks the deferred React data).
+      sendResponse({ ok: true, refs: readPrRefsFromDocument(document) });
       return true;
     }
     if (msg.type === 'GET_CONTEXT') {

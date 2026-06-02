@@ -866,6 +866,72 @@ html[data-theme='dark'] body {
   color: var(--drift-fg-muted);
 }
 
+/* First-run setup checklist (scanner required · voice optional). */
+.ob-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 320px;
+  margin: 4px 0 2px;
+  text-align: left;
+}
+.ob-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  background: var(--drift-bg-elev);
+}
+.ob-step-icon {
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 18px;
+  flex: none;
+}
+.ob-step-icon.ob-pending {
+  color: var(--drift-fg-muted);
+}
+.ob-step-icon.ob-done {
+  color: var(--drift-good);
+}
+.ob-step-icon.ob-error {
+  color: var(--drift-bad);
+}
+.ob-step-icon.ob-skipped {
+  color: var(--drift-fg-muted);
+}
+.ob-step .spinner {
+  flex: none;
+  margin-top: 2px;
+}
+.ob-step-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ob-optional {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--drift-fg-muted);
+  border: 1px solid var(--drift-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.ob-step.ob-step-done {
+  border-color: color-mix(in srgb, var(--drift-good) 40%, var(--drift-border));
+}
+.ob-step.ob-step-error {
+  border-color: color-mix(in srgb, var(--drift-bad) 40%, var(--drift-border));
+}
+
 .btn {
   appearance: none;
   border: 1px solid var(--drift-border);
@@ -1231,4 +1297,414 @@ html[data-theme='dark'] body {
   font-size: 14px;
   margin: 0;
   font-weight: 700;
+}
+
+/* ── Live pipeline page ─────────────────────────────────────────────────── */
+.select {
+  background: var(--drift-bg-elev);
+  color: var(--drift-fg);
+  border: 1px solid var(--drift-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: 500 13px/1.2 var(--drift-font);
+}
+.pl-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.pl-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.pl-step .label {
+  font-weight: 600;
+}
+.pl-step-icon {
+  width: 16px;
+  text-align: center;
+  color: var(--drift-fg-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+.pl-active {
+  background: var(--drift-bg-elev);
+  border-color: var(--drift-border);
+}
+.pl-active .pl-step-icon {
+  color: var(--drift-info);
+  animation: pl-pulse 1s ease-in-out infinite;
+}
+.pl-done .pl-step-icon {
+  color: var(--drift-good);
+}
+.pl-skipped {
+  opacity: 0.6;
+}
+.pl-error .pl-step-icon {
+  color: var(--drift-bad-soft);
+}
+@keyframes pl-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.pl-comment {
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--drift-bg-elev);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pl-comment img {
+  max-width: 100%;
+}
+.pl-comment table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.pl-comment th,
+.pl-comment td {
+  border: 1px solid var(--drift-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.pl-comment pre {
+  background: var(--drift-bg);
+  border: 1px solid var(--drift-border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+}
+.pl-raw {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.4;
+  background: var(--drift-bg-elev);
+  border: 1px solid var(--drift-border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+/* Per-step timing + total run time. */
+.pl-step-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.pl-step-time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--drift-fg-muted);
+}
+.pl-total {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--drift-fg-muted);
+  padding: 2px 8px;
+  border: 1px solid var(--drift-border);
+  border-radius: 999px;
+}
+
+/* Result: verdict banner + headline gauge pills. */
+.pl-verdict {
+  border: 1px solid var(--drift-border);
+  border-left-width: 3px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--drift-bg-elev);
+}
+.pl-verdict-label {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.pl-verdict-address {
+  border-left-color: var(--drift-bad);
+}
+.pl-verdict-review {
+  border-left-color: var(--drift-info);
+}
+.pl-verdict-approve {
+  border-left-color: var(--drift-good);
+}
+.pl-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.pl-gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  background: var(--drift-bg-elev);
+}
+.pl-gauge-val {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.pl-gauge-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--drift-fg-muted);
+}
+.pl-tone-good .pl-gauge-val {
+  color: var(--drift-good);
+}
+.pl-tone-warn .pl-gauge-val {
+  color: var(--drift-warn, var(--drift-info));
+}
+.pl-tone-bad .pl-gauge-val {
+  color: var(--drift-bad);
+}
+.pl-tone-info .pl-gauge-val {
+  color: var(--drift-info);
+}
+
+/* Copy-markdown affordance on the PR-comment header. */
+.pl-comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 2px;
+}
+.pl-copy {
+  appearance: none;
+  border: 1px solid var(--drift-border);
+  background: var(--drift-bg-elev);
+  color: var(--drift-fg);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: 600 11px/1 var(--drift-font);
+  cursor: pointer;
+}
+.pl-copy:hover {
+  border-color: var(--drift-fg-muted);
+}
+
+/* Compiled Mermaid diagram — replaces the raw ```mermaid code block. Each
+   diagram sits in its own scrollable card so a wide flowchart never blows out
+   the side panel; the SVG keeps its intrinsic colours (the scanner bakes a
+   theme into the diagram source). */
+.mermaid-rendered {
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  background: var(--drift-bg);
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid-rendered svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Result header: title on the left, close / discuss actions on the right. */
+.pl-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+.pl-result-actions {
+  display: flex;
+  gap: 6px;
+}
+.pl-pill {
+  appearance: none;
+  border: 1px solid var(--drift-border);
+  background: var(--drift-bg-elev);
+  color: var(--drift-fg);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: 600 11.5px/1 var(--drift-font);
+  cursor: pointer;
+}
+.pl-pill:hover {
+  border-color: var(--drift-fg-muted);
+}
+.pl-pill.accent {
+  background: var(--drift-accent, var(--drift-info));
+  border-color: transparent;
+  color: #fff;
+}
+.pl-pill.accent:hover {
+  filter: brightness(1.06);
+}
+
+/* Scan history — replayable past runs for this PR. */
+.pl-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pl-hist-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--drift-border);
+  border-radius: 10px;
+  background: var(--drift-bg-elev);
+  color: var(--drift-fg);
+  cursor: pointer;
+}
+.pl-hist-row:hover {
+  border-color: var(--drift-fg-muted);
+}
+.pl-hist-row.active {
+  border-color: var(--drift-accent, var(--drift-info));
+  box-shadow: 0 0 0 1px var(--drift-accent, var(--drift-info)) inset;
+}
+.pl-hist-row .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pl-hist-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--drift-fg-muted);
+}
+.pl-hist-dot.pl-verdict-address {
+  background: var(--drift-bad);
+}
+.pl-hist-dot.pl-verdict-review {
+  background: var(--drift-info);
+}
+.pl-hist-dot.pl-verdict-approve {
+  background: var(--drift-good);
+}
+.pl-hist-caption {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pl-hist-meta {
+  font-size: 10.5px;
+  color: var(--drift-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pl-hist-del {
+  flex: none;
+  color: var(--drift-fg-muted);
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  line-height: 1;
+}
+.pl-hist-del:hover {
+  color: var(--drift-bad);
+  background: var(--drift-bad-soft, transparent);
+}
+
+/* On-device spoken summary (Web Speech) — lives in the live-scan result. */
+.spoken-card {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--drift-border);
+  border-radius: 12px;
+  background: var(--drift-bg-elev);
+}
+.spoken-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spoken-glyph {
+  font-size: 16px;
+  line-height: 1;
+}
+.spoken-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.spoken-tag {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--drift-fg-muted);
+  border: 1px solid var(--drift-border);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+.spoken-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.spoken-btn {
+  appearance: none;
+  border: 1px solid var(--drift-border);
+  background: var(--drift-bg);
+  color: var(--drift-fg);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: 700 12px/1 var(--drift-font);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.spoken-btn.primary {
+  background: var(--drift-accent);
+  color: #1a1a1a;
+  border-color: transparent;
+}
+.spoken-btn.ghost {
+  background: none;
+}
+.spoken-btn:hover {
+  filter: brightness(1.05);
+}
+.spoken-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--drift-border);
+  overflow: hidden;
+}
+.spoken-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--drift-accent);
+  transition: width 120ms linear;
+}
+.spoken-script {
+  margin-top: 10px;
+}
+.spoken-script p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--drift-fg-muted);
 }

@@ -65,8 +65,8 @@ STEPS.forEach((s, i) => {
 // doesn't false-positive. Keyed by `<step-id>.<output-name>`.
 const KNOWN_FROM_UPSTREAM = new Set([
   'cache.cache-hit',
-  'piper-bin-cache.cache-hit',
-  'piper-voice-cache.cache-hit',
+  'sherpa-bin-cache.cache-hit',
+  'kokoro-model-cache.cache-hit',
   'audio-upload.artifact-url',
 ]);
 

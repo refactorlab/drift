@@ -63,3 +63,16 @@ jobs:
       #     #   - Checks:        Write
       #     #   - Contents:      Read
       #     github-token: ${{ secrets.DRIFT_PR_TOKEN }}
+      #
+      #     # Spoken-summary audio (Kokoro TTS, offline). Default 'true'.
+      #     # Set 'false' to skip the 🔊 Listen link entirely.
+      #     audio-summary: 'true'
+      #
+      #     # Voice for the spoken summary. Default af_heart (American female,
+      #     # A-grade). Pick any Kokoro voice — for example:
+      #     #   af_heart  af_bella  af_sarah  af_nicole  af_sky     (US female)
+      #     #   am_michael am_adam  am_fenrir am_onyx    am_echo    (US male)
+      #     #   bf_emma   bf_isabella                               (UK female)
+      #     #   bm_george bm_lewis                                  (UK male)
+      #     # (per-run override from a PR comment: `/drift tts-voice=am_michael`)
+      #     tts-voice: 'am_michael'

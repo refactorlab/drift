@@ -3,8 +3,10 @@ use clap::{Parser, Subcommand};
 use drift_static_profiler::{
     analyze, analyze_roots_with_progress, analyze_with_progress, compute_language_stats,
     tags::extract_tags, tree::render_ascii, walker::discover_source_files, AnalyzeOptions,
-    CliProgress, DiscoverOpts, LanguageStats, NullProgress, Progress,
+    DiscoverOpts, LanguageStats, NullProgress, Progress,
 };
+#[cfg(feature = "native")]
+use drift_static_profiler::CliProgress;
 use std::path::PathBuf;
 
 /// Install a `tracing` subscriber that prints compact, production-shaped
@@ -50,12 +52,20 @@ fn init_tracing() {
 /// That env var is the escape hatch for "I really want no output at
 /// all even though I'm on a TTY" (rare but useful for clean script
 /// composition).
+#[cfg(feature = "native")]
 fn pick_progress() -> Box<dyn Progress> {
     if std::env::var("DRIFT_PROGRESS").as_deref() == Ok("off") {
         Box::new(NullProgress)
     } else {
         Box::new(CliProgress::new())
     }
+}
+
+// wasm has no terminal/threads, so there is no live progress UI — the scan
+// runs silently with the same logic. (DRIFT_PROGRESS is moot here.)
+#[cfg(not(feature = "native"))]
+fn pick_progress() -> Box<dyn Progress> {
+    Box::new(NullProgress)
 }
 
 /// Parse the user-facing CLI `--sql-dialect <NAME>` value into the

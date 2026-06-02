@@ -4,6 +4,7 @@ use crate::{
     SymbolKind,
 };
 use anyhow::{Context, Result};
+#[cfg(feature = "native")]
 use rayon::prelude::*;
 use std::cell::RefCell;
 use std::fs;
@@ -229,8 +230,13 @@ pub fn extract_tags_for_files(
     progress.parse_start(total);
     let done = AtomicUsize::new(0);
     let errors = AtomicUsize::new(0);
-    let tags: Vec<Option<FileTags>> = files
-        .par_iter()
+    // Native builds parse files in parallel (rayon); wasm has no threads, so it
+    // runs the identical closure sequentially. Same inputs → same output.
+    #[cfg(feature = "native")]
+    let src_iter = files.par_iter();
+    #[cfg(not(feature = "native"))]
+    let src_iter = files.iter();
+    let tags: Vec<Option<FileTags>> = src_iter
         .map(|(path, lang)| {
             // tqdm-style "current file" indicator. Setting BEFORE the
             // parse means the user sees what's being processed right

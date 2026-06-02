@@ -1,6 +1,9 @@
-action/node_modules/
+# Dependencies + tool caches (e.g. Vite/Vitest under node_modules/.vite) —
+# matches node_modules in any subproject, never committed.
+node_modules/
 .DS_Store
 
+action/node_modules/
 # One-shot scratch outputs from `make action-scan-demo` etc. — JSON
 # fixtures regenerated locally; never committed.
 /tmp/

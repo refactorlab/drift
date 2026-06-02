@@ -254,35 +254,51 @@ test('audio.yml structure: awk cap is wired BEFORE the diagnostic + abort', () =
   const idxSanitize = run.indexOf('── Sanitize for TTS ──');
   const idxCap = run.indexOf('── Defensive sentence-length cap ──');
   const idxAbort = run.indexOf('Sentence-length cap missed');
-  const idxPiper = run.indexOf('printf \'%s\' "$text" | ./piper');
+  const idxSynth = run.indexOf('--kokoro-model=');
   assert.ok(idxSanitize >= 0, 'sanitize block is present');
   assert.ok(idxCap > idxSanitize, 'cap follows sanitize');
   assert.ok(idxAbort > idxCap, 'safety-net abort follows cap');
-  assert.ok(idxPiper > idxAbort, 'piper invocation is last');
+  assert.ok(idxSynth > idxAbort, 'sherpa-onnx invocation is last');
 });
 
-test('audio.yml structure: piper invocation includes the stability flags', () => {
+test('audio.yml structure: sherpa-onnx invocation wires the Kokoro flags + sid', () => {
   const run = getAudioStepRun();
-  // All four tuning flags + --debug must be present on the invocation.
-  for (const flag of ['--noise-scale 0.5', '--noise-w 0.5', '--length-scale 1.0', '--sentence-silence 0.3', '--debug']) {
-    assert.ok(
-      run.includes(flag),
-      `piper invocation must include "${flag}" — see SDP-collapse mitigation`,
-    );
+  // The Kokoro invocation must pass model/voices/tokens/data-dir, the
+  // resolved speaker id, num-threads, and the output file. No Piper/VITS
+  // noise/length/SDP knobs (Kokoro has none).
+  for (const flag of [
+    '--kokoro-model=',
+    '--kokoro-voices=',
+    '--kokoro-tokens=',
+    '--kokoro-data-dir=',
+    '--num-threads=2',
+    '--sid=',
+    '--output-filename=',
+  ]) {
+    assert.ok(run.includes(flag), `sherpa-onnx invocation must include "${flag}"`);
+  }
+  // Multi-lang Kokoro (>= v1.0) requires a lexicon; the flag is built
+  // conditionally from existing lexicon files and passed as an array so
+  // the single-lang en-v0_19 model (no lexicon) still works.
+  assert.match(run, /for lf in lexicon-us-en\.txt lexicon-zh\.txt/, 'collects per-locale lexicons');
+  assert.match(run, /lex_flag=\(--kokoro-lexicon="\$lex_files"\)/, 'builds --kokoro-lexicon when present');
+  assert.match(run, /"\$\{lex_flag\[@\]\}"/, 'lexicon flag spread into the invocation');
+  // The binary needs its bundled .so on the loader path.
+  assert.match(run, /LD_LIBRARY_PATH="\$\{SHERPA_DIR\}\/lib/, 'LD_LIBRARY_PATH points at the sherpa lib dir');
+  // None of the removed Piper knobs should linger.
+  for (const gone of ['--noise-scale', '--noise-w', '--length-scale', '--sentence-silence', './piper']) {
+    assert.ok(!run.includes(gone), `Piper-only token "${gone}" must be gone`);
   }
 });
 
-test('audio.yml structure: phoneme-count diagnostic parses --debug output', () => {
+test('audio.yml structure: voice name → sid mapping table is wired with af_heart default', () => {
   const run = getAudioStepRun();
-  // The regex must match piper's debug log line exactly:
-  //   "Synthesizing audio for {} phoneme id(s)"
-  assert.match(
-    run,
-    /Synthesizing audio for \[0-9\]\+ phoneme/,
-    'phoneme-count parser must look for the exact piper debug log shape',
-  );
-  // The 400-id cap warning must be wired (training cap).
-  assert.match(run, /ph_max.*-gt 400/, 'must warn on phoneme count > 400 (training cap)');
+  // The binary takes --sid (integer), so the voice NAME must map to a sid.
+  assert.match(run, /af_heart\) SID=3/, 'af_heart maps to sid 3');
+  assert.match(run, /am_michael\) SID=16/, 'am_michael maps to sid 16');
+  // Unknown / illegal names fall back to af_heart (fail-soft, never skip).
+  assert.match(run, /TTS_VOICE=af_heart; SID=3/, 'unknown name falls back to af_heart sid 3');
+  assert.match(run, /_fire tts_voice_unknown/, 'unknown-voice telemetry tag fires');
 });
 
 // ───────────────────────── EDGE CASES ─────────────────────────
@@ -415,13 +431,19 @@ test('hard-abort safety net: present and references the documented threshold', (
   assert.match(run, /sanitized=""/, 'safety net wipes sanitized so empty-fallback fires');
 });
 
-test('voice config check: validates .onnx.json and reads sample_rate', () => {
+test('kokoro asset check: resolves model + voices + tokens + espeak data, sr is constant', () => {
   const run = getAudioStepRun();
-  assert.match(run, /config="[^"]*\.onnx\.json"/, 'config path is computed');
-  assert.match(run, /\[ ! -f "\$config" \]/, 'config existence check present');
-  assert.match(run, /sample_rate=/, 'sample_rate is read');
-  assert.match(run, /phoneme_type=/, 'phoneme_type is read');
-  assert.match(run, /num_speakers=/, 'num_speakers is read');
+  // int8 preferred, fp32 fallback.
+  assert.match(run, /model="\$\{KOKORO_DIR\}\/model\.int8\.onnx"/, 'int8 model path preferred');
+  assert.match(run, /model="\$\{KOKORO_DIR\}\/model\.onnx"/, 'fp32 model path fallback');
+  assert.match(run, /voices="\$\{KOKORO_DIR\}\/voices\.bin"/, 'voices.bin path computed');
+  assert.match(run, /tokens="\$\{KOKORO_DIR\}\/tokens\.txt"/, 'tokens.txt path computed');
+  assert.match(run, /data_dir="\$\{KOKORO_DIR\}\/espeak-ng-data"/, 'espeak-ng-data path computed');
+  // Existence/skip guard covers all assets + the binary.
+  assert.match(run, /\[ ! -x "\$bin" \]/, 'binary existence check present');
+  assert.match(run, /_fire tts_assets_missing/, 'missing-assets telemetry tag fires');
+  // Kokoro is fixed 24 kHz — no per-voice config to read.
+  assert.match(run, /sample_rate=24000/, 'sample rate is the Kokoro constant 24000');
 });
 
 test('diagnostic: duration ratio sanity check is wired', () => {
@@ -562,52 +584,23 @@ test('diagnostic line shape: 🧹 TTS sanitize emits stable format for log scrap
 
 // ───────────────── STRUCTURE GUARDS FOR NEW WIRING ─────────────────
 
-test('audio.yml structure: phoneme regex tolerates both singular and plural piper output', () => {
+test('audio.yml structure: TTS_LOG uses RUNNER_TEMP, not /tmp directly', () => {
   const run = getAudioStepRun();
-  // piper 2023.11.14-2 logs "phoneme id(s)" (with parens-s) but the
-  // piper1-gpl fallback might use just "phoneme" or "phonemes". The
-  // regex must match both for forward-compat with the GPL fork.
-  assert.match(
-    run,
-    /Synthesizing audio for \[0-9\]\+ phoneme\(s\)\?/,
-    'phoneme regex tolerates singular/plural piper output',
-  );
-});
-
-test('audio.yml structure: PIPER_LOG uses RUNNER_TEMP, not /tmp directly', () => {
-  const run = getAudioStepRun();
-  // Predictable /tmp/piper-synth.log races on self-hosted runners and
+  // Predictable /tmp/tts-synth.log races on self-hosted runners and
   // is a symlink-attack target. RUNNER_TEMP is per-job.
-  assert.match(run, /PIPER_LOG="\$\{RUNNER_TEMP\}\/piper-synth\.log"/, 'PIPER_LOG anchored to RUNNER_TEMP');
-  assert.doesNotMatch(run, /\/tmp\/piper-synth\.log/, 'no remaining hard-coded /tmp/piper-synth.log');
-  assert.match(run, /: > "\$PIPER_LOG"/, 'PIPER_LOG is truncated up-front');
+  assert.match(run, /TTS_LOG="\$\{RUNNER_TEMP\}\/tts-synth\.log"/, 'TTS_LOG anchored to RUNNER_TEMP');
+  assert.doesNotMatch(run, /\/tmp\/tts-synth\.log/, 'no remaining hard-coded /tmp/tts-synth.log');
+  assert.match(run, /: > "\$TTS_LOG"/, 'TTS_LOG is truncated up-front');
 });
 
-test('audio.yml structure: newline-strip belt immediately before piper invocation', () => {
+test('audio.yml structure: newline-strip belt immediately before synthesis', () => {
   const run = getAudioStepRun();
-  // The text fed to piper must have NO newlines — piper's --output_file
-  // branch space-joins multi-line stdin (main.cpp 281-295) and stray
-  // newlines silently change prosody.
+  // The text passed to sherpa-onnx must have NO newlines so it stays a
+  // single clean positional argument.
   assert.match(
     run,
     /text="\$\(printf '%s' "\$text" \| LC_ALL=C tr -d '\\n\\r'\)"/,
-    'final newline-strip is present immediately before the piper pipe',
-  );
-});
-
-test('audio.yml structure: ph_max > 400 emits a warning + telemetry (warn-only)', () => {
-  const run = getAudioStepRun();
-  // Posture: warn but keep shipping the WAV. Earlier we fail-closed on
-  // ph_max > 400 (rm + synthesized=false + exit 0), but in production
-  // we saw the link silently disappear for borderline LLM briefings
-  // even when the audio was perfectly listenable. Now: warn loudly
-  // (still fires the ph_max_over_cap telemetry tag), keep the WAV.
-  assert.match(run, /ph_max.*-gt 400/, '400-id training cap comparator');
-  assert.match(run, /_fire ph_max_over_cap/, 'telemetry tag still fires');
-  assert.match(
-    run,
-    /shipping the WAV anyway so reviewers can listen/,
-    'warn-only stance documented in the user-facing message',
+    'final newline-strip is present immediately before synthesis',
   );
 });
 
@@ -618,43 +611,39 @@ test('audio.yml structure: empty-WAV guard rejects header-only files', () => {
   assert.match(run, /wav_bytes.*-le 1024/, 'empty/tiny WAV guard threshold present');
 });
 
-test('audio.yml structure: voice MD5 integrity check uses HF voices.json registry', () => {
+test('audio.yml structure: Kokoro model is SHA256-verified before extraction', () => {
   const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
-  // The Piper Python downloader uses MD5 from voices.json; without
-  // this, a truncated download poisons the cache forever.
-  assert.match(yamlText, /voices\.json/, 'voices.json registry URL present');
-  assert.match(yamlText, /md5_digest/, 'jq extracts md5_digest from registry');
-  assert.match(yamlText, /md5sum "\$\{VOICE_DIR\}/, 'md5sum invoked on downloaded voice files');
-  assert.match(yamlText, /piper-voice-.*-v2/, 'voice cache key bumped to -v2 to invalidate pre-integrity caches');
+  // The model archive is the weights blob — a truncated/tampered archive
+  // that passed would poison the cache forever, so it's SHA256-pinned and
+  // verified BEFORE the tar extract.
+  assert.match(yamlText, /kokoro-model-sha256:/, 'kokoro-model-sha256 input declared');
+  const shaMatch = yamlText.match(/kokoro-model-sha256:[\s\S]*?default:\s*'([0-9a-f]+)'/);
+  assert.ok(shaMatch, 'kokoro-model-sha256 default present');
+  assert.equal(shaMatch![1].length, 64, 'kokoro model SHA256 is 64 hex chars');
+  assert.match(yamlText, /sha256sum \/tmp\/kokoro\.tar\.bz2/, 'SHA256 verify on the downloaded archive');
+  assert.match(yamlText, /kokoro model SHA256 verified/, 'verify-success log line');
+  assert.match(yamlText, /kokoro model SHA256 mismatch/, 'mismatch warning present');
+  // Ordering: download → sha256 → extract.
+  const dlStep = yamlText.match(/Download Kokoro model[\s\S]+?(?=\n {4}- name:)/);
+  assert.ok(dlStep, 'download step located');
+  const body = dlStep![0];
+  const idxCurl = body.indexOf('curl -fSL --connect-timeout 10 --max-time 300');
+  const idxSha = body.indexOf('sha256sum /tmp/kokoro.tar.bz2');
+  const idxTar = body.indexOf('tar -xjf /tmp/kokoro.tar.bz2');
+  assert.ok(idxCurl >= 0 && idxSha > idxCurl && idxTar > idxSha, 'download ordering: curl → sha256 → tar');
 });
 
-test('audio.yml structure: PIPER_VOICE shape validation is present in both download and synth steps', () => {
+test('audio.yml structure: tts-voice + kokoro-model are charset-validated before URL/path interp', () => {
   const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
-  // Path-traversal + URL-injection guard. Must appear TWICE — once in
-  // the download step and once in the synth step (defense in depth:
-  // synth might run with a cache hit where download never executed).
-  const malformedGuardMatches = yamlText.match(/malformed piper-voice id/g) || [];
-  assert.ok(
-    malformedGuardMatches.length >= 2,
-    `expected ≥2 'malformed piper-voice id' guards (download + synth); got ${malformedGuardMatches.length}`,
-  );
-  // Path-traversal pattern check.
-  assert.match(yamlText, /\*\[!A-Za-z0-9\._-\]\*\|\*\.\.\*/, 'illegal-char + path-traversal guard present');
-  // Regex pin to the rhasspy id convention.
-  assert.match(
-    yamlText,
-    /\^\[a-z\]\{2\}_\[A-Z\]\{2\}-\[a-z0-9_\]\+-\(x_low\|low\|medium\|high\)\$/,
-    'voice-id regex pins rhasspy convention',
-  );
-});
-
-test('audio.yml structure: voice MD5 + size SHAPES are validated before delete decision', () => {
-  const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
-  // Belt-and-braces: prevents a malformed/hostile registry value from
-  // triggering an infinite download/delete loop.
-  assert.match(yamlText, /case "\$want_size" in/, 'want_size shape check (digits only)');
-  assert.match(yamlText, /\^\[0-9a-f\]\{32\}\$/, 'want_md5 shape check (32-hex-char)');
-  assert.match(yamlText, /malformed md5_digest in registry/, 'malformed md5 warning present');
+  // tts-voice flows into a case map; kokoro-model flows into a release URL.
+  // Both are charset-pinned (fail-soft) so a /drift override can't inject
+  // path traversal or URL query params.
+  assert.match(yamlText, /invalid tts-voice/, 'tts-voice charset guard present');
+  assert.match(yamlText, /invalid kokoro-model/, 'kokoro-model charset guard present');
+  assert.match(yamlText, /\*\[!A-Za-z0-9\._-\]\*\|\*\.\.\*/, 'illegal-char + path-traversal guard present (kokoro-model)');
+  // The voice case-map must be exhaustive enough to cover the documented
+  // English voices and fall back rather than emit an empty --sid.
+  assert.match(yamlText, /\*\)\n\s*_fire tts_voice_unknown/, 'voice map has a fail-soft default arm');
 });
 
 test('audio.yml structure: ffmpeg content probe (RMS / DC / flat / silence) is wired with 2-breach fail-closed', () => {
@@ -685,36 +674,31 @@ test('audio.yml structure: ffmpeg content probe (RMS / DC / flat / silence) is w
   assert.match(run, /shipping the WAV so reviewers can judge/, 'warn-only stance documented');
 });
 
-test('audio.yml structure: piper tarball SHA256 is pinned per-arch + verified before tar extraction', () => {
+test('audio.yml structure: sherpa-onnx binary SHA256 is pinned per-arch + verified before extraction', () => {
   const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
-  // Round-5 supply-chain addition: rhasspy/piper publishes no checksums
-  // or signatures, so we pin the SHA256 of the canonical 2023.11.14-2
-  // release asset directly in the action default. Fail-soft on mismatch.
-  assert.match(yamlText, /piper-tarball-sha256-x86_64:/, 'x86_64 SHA256 input declared');
-  assert.match(yamlText, /piper-tarball-sha256-aarch64:/, 'aarch64 SHA256 input declared');
-  // Verified-good defaults (64 hex chars). Match the actual values we
-  // confirmed against the live release artifacts.
-  const x86Match = yamlText.match(/piper-tarball-sha256-x86_64:[\s\S]*?default:\s*'([0-9a-f]+)'/);
-  const armMatch = yamlText.match(/piper-tarball-sha256-aarch64:[\s\S]*?default:\s*'([0-9a-f]+)'/);
+  // sherpa-onnx publishes no checksums, so we pin the SHA256 of the
+  // per-arch shared tarball directly in the action default. Fail-soft.
+  assert.match(yamlText, /sherpa-onnx-sha256-x86_64:/, 'x86_64 SHA256 input declared');
+  assert.match(yamlText, /sherpa-onnx-sha256-aarch64:/, 'aarch64 SHA256 input declared');
+  const x86Match = yamlText.match(/sherpa-onnx-sha256-x86_64:[\s\S]*?default:\s*'([0-9a-f]+)'/);
+  const armMatch = yamlText.match(/sherpa-onnx-sha256-aarch64:[\s\S]*?default:\s*'([0-9a-f]+)'/);
   assert.ok(x86Match, 'x86_64 default present');
   assert.ok(armMatch, 'aarch64 default present');
   assert.equal(x86Match![1].length, 64, 'x86_64 SHA256 is 64 hex chars');
   assert.equal(armMatch![1].length, 64, 'aarch64 SHA256 is 64 hex chars');
-  // The verification runs INSIDE the install loop, AFTER curl succeeds
-  // and BEFORE the canonical tar -xzf — fail-soft branch warns and
-  // falls through.
-  assert.match(yamlText, /sha256sum \/tmp\/piper\.tar\.gz/, 'SHA256 verify on downloaded tarball');
-  assert.match(yamlText, /piper tarball SHA256 verified/, 'verify-success log line');
-  assert.match(yamlText, /piper tarball SHA256 mismatch/, 'mismatch warning present');
-  assert.match(yamlText, /refusing to extract canonical URL/, 'mismatch refuses extraction (fail-soft)');
-  // The install loop must execute in the right order: curl → sha256
-  // check → tar. Search both within the install step run block.
-  const installMatch = yamlText.match(/Install Piper binary[\s\S]+?(?=\n {4}- name:)/);
+  // The verification runs AFTER curl succeeds and BEFORE tar — fail-soft
+  // branch warns and skips extraction.
+  assert.match(yamlText, /sha256sum \/tmp\/sherpa\.tar\.bz2/, 'SHA256 verify on downloaded tarball');
+  assert.match(yamlText, /sherpa-onnx tarball SHA256 verified/, 'verify-success log line');
+  assert.match(yamlText, /sherpa-onnx tarball SHA256 mismatch/, 'mismatch warning present');
+  assert.match(yamlText, /refusing to extract/, 'mismatch refuses extraction (fail-soft)');
+  // Install ordering: curl → sha256 → tar.
+  const installMatch = yamlText.match(/Install sherpa-onnx binary[\s\S]+?(?=\n {4}- name:)/);
   assert.ok(installMatch, 'install step located');
   const installBody = installMatch![0];
   const idxCurl = installBody.indexOf('curl -fSL --connect-timeout 10 --max-time 180');
-  const idxSha = installBody.indexOf('sha256sum /tmp/piper.tar.gz');
-  const idxTar = installBody.indexOf('tar -xzf /tmp/piper.tar.gz');
+  const idxSha = installBody.indexOf('sha256sum /tmp/sherpa.tar.bz2');
+  const idxTar = installBody.indexOf('tar -xjf /tmp/sherpa.tar.bz2');
   assert.ok(idxCurl >= 0 && idxSha > idxCurl && idxTar > idxSha, 'install ordering: curl → sha256 → tar');
 });
 
@@ -733,12 +717,10 @@ test('audio.yml structure: defenses_fired telemetry + GITHUB_STEP_SUMMARY scorec
   // somewhere in the step. If any of these is missing, an entire class
   // of defense has gone silent in the telemetry.
   const expectedTags = [
-    'piper_voice_id_invalid',
-    'voice_config_missing',
+    'tts_voice_unknown',
+    'tts_assets_missing',
     'sanitize_maxsent_overflow',
     'wav_too_small',
-    'ph_max_over_cap',
-    'ph_caution_band',
     'ratio_out_of_band',
     'ffmpeg_unavailable',
     'content_probe_breach',
@@ -872,52 +854,25 @@ test('audio.yml structure: AI briefing has prompt-injection boundary + curl time
   assert.match(yamlText, /--connect-timeout 10 --max-time "\$ai_maxtime".*chat\/completions/s, 'AI curl uses model-aware --max-time');
   assert.match(yamlText, /tokfield='max_completion_tokens'; ai_maxtime=180/, 'reasoning models get 180s budget');
   assert.match(yamlText, /tokfield='max_tokens';\s+ai_maxtime=60/, 'classic chat models get 60s budget');
-  assert.match(yamlText, /--connect-timeout 10 --max-time 120.*\.onnx\?download=true/s, 'voice .onnx download has timeouts');
-  assert.match(yamlText, /--connect-timeout 5 --max-time 15.*registry_url/s, 'voices.json registry fetch has timeouts');
-  assert.match(yamlText, /--connect-timeout 10 --max-time 180 -o \/tmp\/piper\.tar\.gz/, 'piper tarball install has timeouts');
+  assert.match(yamlText, /--connect-timeout 10 --max-time 300 -o \/tmp\/kokoro\.tar\.bz2/, 'kokoro model download has timeouts');
+  assert.match(yamlText, /--connect-timeout 10 --max-time 180 -o \/tmp\/sherpa\.tar\.bz2/, 'sherpa binary install has timeouts');
   // Reply-head echo must strip control chars and defang ::.
   assert.match(yamlText, /tr -d '\\000-\\037'/, 'reply head strips C0 control chars');
   assert.match(yamlText, /sed 's\/::\/:_:\/g'/, 'reply head defangs :: workflow-command sigil');
 });
 
-test('audio.yml structure: voices URL is pinned to a commit SHA, not /resolve/main/', () => {
+test('audio.yml structure: sherpa binary + kokoro model are cached per their pin', () => {
   const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
-  // The voices.json registry + the per-voice download URLs are
-  // constructed from $ref, which defaults to the piper-voices-pin
-  // input. Pinning a SHA (not 'main') is what makes the MD5 check
-  // upgrade from corruption-only to true supply-chain integrity.
-  assert.match(yamlText, /piper-voices-pin:/, 'piper-voices-pin input declared');
-  // Default must be a 40-hex commit SHA (not 'main', not 'v1.0.0').
-  const defaultMatch = yamlText.match(/piper-voices-pin:[\s\S]*?default:\s*'([^']+)'/);
-  assert.ok(defaultMatch, 'piper-voices-pin has a default');
-  assert.match(
-    defaultMatch![1],
-    /^[0-9a-f]{40}$/,
-    `piper-voices-pin default must be a 40-hex commit SHA, got: ${defaultMatch![1]}`,
-  );
-  // The actual base= and registry_url= assignments must interpolate
-  // ${ref}, not a hardcoded /resolve/main/. (A doc comment elsewhere
-  // showing the URL shape is fine — only the executable assignments
-  // are load-bearing.)
-  const baseAssign = yamlText.match(/^\s*base="https:\/\/huggingface\.co\/rhasspy\/piper-voices\/resolve\/([^/"]+)\//m);
-  assert.ok(baseAssign, 'base= URL assignment present');
-  assert.equal(baseAssign![1], '${ref}', `base= must interpolate \${ref}, got: ${baseAssign![1]}`);
-  const registryAssign = yamlText.match(/^\s*registry_url="https:\/\/huggingface\.co\/rhasspy\/piper-voices\/resolve\/([^/"]+)\//m);
-  assert.ok(registryAssign, 'registry_url= assignment present');
-  assert.equal(registryAssign![1], '${ref}', `registry_url= must interpolate \${ref}, got: ${registryAssign![1]}`);
-  // The pin must be threaded into the env: block of the download step.
-  assert.match(yamlText, /PIPER_VOICES_PIN: \$\{\{ inputs\.piper-voices-pin \}\}/, 'pin threaded into env');
-});
-
-test('audio.yml structure: piper1-gpl secondary fallback URL is wired in install loop', () => {
-  const yamlText = readFileSync(join(REPO, 'action.yml'), 'utf8');
-  // rhasspy/piper was archived 2025-10-06; GPL fork is the active
-  // like-for-like replacement.
-  assert.match(yamlText, /OHF-Voice\/piper1-gpl/, 'piper1-gpl URL present');
-  assert.match(yamlText, /for url in "\$primary" "\$gpl_fallback" "\$fallback"/, 'GPL fallback inserted between primary and legacy');
-  // Install cache key bumped to v3 in round 5 (piper tarball SHA256
-  // verification added; any pre-v3 install was unverified).
-  assert.match(yamlText, /piper-\$\{\{ runner\.arch \}\}-\$\{\{ inputs\.piper-version \}\}-v3/, 'install cache key bumped to -v3');
+  // The binary cache is keyed by arch + sherpa version; the model cache by
+  // model name. Both are downloaded to RUNNER_TEMP (never the workspace).
+  assert.match(yamlText, /key: sherpa-onnx-\$\{\{ runner\.arch \}\}-\$\{\{ inputs\.sherpa-onnx-version \}\}-v1/, 'binary cache key wired');
+  assert.match(yamlText, /key: kokoro-model-\$\{\{ inputs\.kokoro-model \}\}-v1/, 'model cache key wired');
+  // The release URLs are the canonical sherpa-onnx ones.
+  assert.match(yamlText, /github\.com\/k2-fsa\/sherpa-onnx\/releases\/download\/\$\{SHERPA_VERSION\}/, 'binary URL points at sherpa-onnx releases');
+  assert.match(yamlText, /github\.com\/k2-fsa\/sherpa-onnx\/releases\/download\/tts-models\/\$\{KOKORO_MODEL\}\.tar\.bz2/, 'model URL points at the tts-models release');
+  // No Piper/HuggingFace voice plumbing should linger.
+  assert.ok(!yamlText.includes('rhasspy/piper'), 'no rhasspy/piper URL remains');
+  assert.ok(!yamlText.includes('piper-voices'), 'no piper-voices plumbing remains');
 });
 
 test('audio.yml structure: awk -v args quoted and read uses -r', () => {
@@ -925,7 +880,6 @@ test('audio.yml structure: awk -v args quoted and read uses -r', () => {
   // shellcheck SC2086 + SC2162 hygiene + portability against empty values.
   assert.match(run, /awk -v b="\$wav_bytes" -v sr="\$sample_rate" -v c="\$after"/, 'awk -v args quoted');
   assert.match(run, /read -r audio_sec/, 'read uses -r to avoid backslash munging');
-  assert.match(run, /sort -n \| tail -n 1/, 'tail uses POSIX -n form');
 });
 
 // ─────────────── 2044-CHAR REGRESSION: strengthened asserts ───────────────
