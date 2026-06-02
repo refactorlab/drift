@@ -874,7 +874,7 @@ llm-docker:                             ## curl-test Docker Model Runner (http:/
 
 ### Drift Chrome extension — side-panel app (drift-chrome-extension/)
 
-.PHONY: extension-dev extension-build extension-test extension-install extension-kill extension-release
+.PHONY: extension-dev extension-build extension-test extension-install extension-kill extension-release extension-cws-exchange
 
 extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — then load drift-chrome-extension/dist unpacked
 	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR)\n"
@@ -895,3 +895,7 @@ extension-install: ## Install the Chrome extension npm deps
 extension-release: ## Build the Chrome Web Store release bundle → drift-chrome-extension/release/ (zip + store images)
 	@printf "$(BLUE)▶$(RESET) Chrome extension Web Store release\n"
 	@$(MAKE) --no-print-directory -C drift-chrome-extension release
+
+extension-cws-exchange: ## Exchange an OAuth CODE → CWS refresh token (writes .env). Usage: make extension-cws-exchange CODE='4/0...' [CWS_REDIRECT_URI=http://localhost]
+	@printf "$(BLUE)▶$(RESET) Chrome Web Store: exchanging OAuth code for a refresh token\n"
+	@CODE='$(CODE)' CWS_REDIRECT_URI='$(CWS_REDIRECT_URI)' bash drift-chrome-extension/scripts/cws-exchange.sh
