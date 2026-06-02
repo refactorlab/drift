@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { AudioRef } from '../core/types';
-import { loadAudio } from '../state/audio';
+import { getStoredAudio, loadAudio } from '../state/audio';
 
 type Phase = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -22,11 +22,25 @@ export function AudioSummary({ audio }: { audio: AudioRef }) {
   const [error, setError] = useState<string | null>(null);
   const playerRef = useRef<HTMLAudioElement>(null);
 
-  // Re-fetch when the PR (and thus the artifact URL) changes.
+  // When the PR (and thus the artifact URL) changes, reset — but if this exact
+  // artifact was already downloaded, reveal the player straight from cache with
+  // no second download and no re-press. The URL carries the unique artifact id,
+  // so a re-run's new URL is a cache miss and falls back to idle (lazy fetch).
   useEffect(() => {
+    let cancelled = false;
     setPhase('idle');
     setSrc(null);
     setError(null);
+    void (async () => {
+      const cached = await getStoredAudio(audio.url);
+      if (cancelled || !cached) return;
+      setSrc(cached.dataUrl);
+      setBytes(cached.bytes);
+      setPhase('ready'); // no autoplay on cache-hydrate — only an explicit press plays
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [audio.url]);
 
   async function load() {
