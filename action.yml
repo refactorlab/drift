@@ -1103,7 +1103,7 @@ runs:
       id: ai-prep
       if: >-
         ((steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' || (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true') &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       shell: bash
       env:
@@ -1129,7 +1129,7 @@ runs:
       id: ai-ep
       if: >-
         ((steps.args.outputs.ai-suggestions || inputs.ai-suggestions) == 'true' || (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true') &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.ai-prep.outcome == 'success' &&
         steps.pr-ctx.outputs.head_sha != ''
       shell: bash
@@ -1288,7 +1288,7 @@ runs:
       id: piper-bin-cache
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
@@ -1303,7 +1303,7 @@ runs:
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != '' &&
         steps.piper-bin-cache.outputs.cache-hit != 'true'
       shell: bash
@@ -1392,7 +1392,7 @@ runs:
       id: piper-voice-cache
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
@@ -1406,7 +1406,7 @@ runs:
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != '' &&
         steps.piper-voice-cache.outputs.cache-hit != 'true'
       shell: bash
@@ -1540,7 +1540,7 @@ runs:
       id: briefing
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.ai-prep.outcome == 'success' &&
         steps.ai-ep.outputs.preflight_status == '200' &&
         steps.pr-ctx.outputs.head_sha != ''
@@ -1742,7 +1742,7 @@ runs:
       id: briefing-fallback
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
@@ -1848,7 +1848,7 @@ runs:
       id: audio
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
-        steps.scan.outputs.scan_ran == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
@@ -2694,8 +2694,16 @@ runs:
     # consume. Always runs (continue-on-error) so a previous step's
     # `continue-on-error: true` swallow doesn't hide the failure mode.
     - name: Audio-link chain diagnostic
+      # Fire whenever the audio pipeline ran — i.e. on a real scan
+      # (scan_ran=true) OR a docs/config-only PR (has_source=false), which
+      # now also gets a commit-based spoken summary. This keeps the
+      # diagnostic in lock-step with the synth step's gate: it must run
+      # exactly when audio was attempted, so it never emits a spurious
+      # "hop 3/3 FAILED" on a path where audio was intentionally absent,
+      # and always reports the real outcome on a path where it was tried.
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
+        (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       continue-on-error: true
       shell: bash
@@ -2746,6 +2754,43 @@ runs:
             echo "    cause: resolver produced an empty URL despite upload outputs being set — inspect 'Resolve audio artifact URL' step."
           fi
         fi
+
+    # ─── 8f-ns. No-source notice (docs/config-only PR) ──────────────
+    # When the PR resolved a head SHA but touched NO supported source file
+    # (has_source=false), the scan + full comment were skipped on purpose —
+    # a docs/config-only PR has no code drift to score, and a negative-money
+    # "Drift ▼" verdict would be misleading. But a silent skip reads as
+    # "Drift is broken / didn't run." This step replaces the silence with
+    # ONE honest, badge-forward sticky comment posted to the SAME surface
+    # (STICKY_MARKER) the full report uses — so a docs-only PR gets a clear
+    # "nothing to analyze, here's why" note, and a PR that dropped from code
+    # to docs-only gets its stale full report REPLACED in place. Mutually
+    # exclusive with the full comment (that path requires scan_ran=true;
+    # this one requires has_source=false), so they never both post.
+    #
+    # Placed AFTER the audio pipeline (not back at step 7) on purpose: the
+    # docs-only PR now ALSO gets a commit-based spoken summary (the audio
+    # gates were relaxed to fire on has_source=false), so by here
+    # DRIFT_AUDIO_URL is resolved and the notice can carry the 🔊 Listen
+    # link + MP4 sibling — exactly like the full report's sticky comment.
+    # Fail-soft like every Drift step — never fails the PR.
+    - name: Post no-source notice (docs/config-only PR)
+      continue-on-error: true   # advisory: never fail the PR on our own error
+      if: >-
+        steps.pr-ctx.outputs.head_sha != '' &&
+        steps.diff.outputs.has_source == 'false'
+      shell: bash
+      env:
+        # The newline-delimited changed-files listing the diff step wrote;
+        # the renderer tags each path docs/config/other in a collapsed table.
+        DRIFT_CHANGED_PATH:  ${{ steps.diff.outputs.changed_path }}
+        # Audio links, resolved by the (now-relaxed) audio pipeline above.
+        # Empty when audio is disabled or synthesis failed → the renderer
+        # omits the 🔊 banner + footer link (fail-soft).
+        DRIFT_AUDIO_URL:     ${{ steps.audio-url.outputs.audio_url }}
+        DRIFT_AUDIO_MP4_URL: ${{ steps.audio-mp4-url.outputs.audio_mp4_url }}
+        GITHUB_TOKEN:        ${{ inputs.github-token }}
+      run: node "${{ github.action_path }}/dist/no-source.js"
 
     # ─── 8g. Stage the machine-readable scan artifacts ──────────────
     # Two JSON files an agent (or a curious reviewer) can pull straight

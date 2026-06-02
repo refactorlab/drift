@@ -19,6 +19,7 @@ import { reviewEffort, type ReviewEffort } from '../lib/effort.ts';
 import { mergeConfidence, type MergeConfidence } from '../lib/confidence.ts';
 import { gaugeTable, type Gauge, type GaugeColor } from '../lib/gauge.ts';
 import { signedPercent, int } from '../lib/format.ts';
+import { flatBadge, centerBadges } from '../lib/badge.ts';
 
 type Verdict = {
   alert: 'WARNING' | 'TIP' | 'NOTE';
@@ -68,7 +69,7 @@ function tldrBadges(verdict: Verdict, confidence: MergeConfidence, effort: Revie
     flatBadge(`Merge confidence ${confidence.score}/5`, confidence.color),
     flatBadge(`${risk} risk · ${mins} review`, effort.color),
   ];
-  return `<p align="center">${badges.join(' ')}</p>`;
+  return centerBadges(badges);
 }
 
 /** The verdict badge text with a leading glyph (⚠ / ✓ / ℹ), title-cased. */
@@ -78,20 +79,6 @@ function verdictMessage(v: Verdict): string {
   return `${glyph} ${text}`;
 }
 
-/**
- * A flat-square shields badge (message + colour) as an HTML `<img>` tag — NOT
- * Markdown `![]()`. The badge row is wrapped in `<p align="center">`, and GitHub
- * does NOT parse Markdown inside a block-level HTML tag (the `![]()` would show
- * as literal text), so the centered badges must be raw HTML `<img>`s — same as
- * the KPI gauge tiles below. Dashes/underscores are doubled per shields' path
- * escaping, then the whole message is URL-encoded so spaces (`%20`), slashes
- * (`%2F`), `+` (`%2B`) and `·` survive; the alt attribute is HTML-escaped.
- */
-function flatBadge(message: string, hex: string): string {
-  const enc = encodeURIComponent(message.replace(/-/g, '--').replace(/_/g, '__'));
-  const alt = message.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<img alt="${alt}" src="https://img.shields.io/badge/${enc}-${hex}?style=flat-square" />`;
-}
 
 // ── verdict ────────────────────────────────────────────────────────────────
 

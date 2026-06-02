@@ -19569,8 +19569,8 @@ var require_dist = __commonJS({
   }
 });
 
-// src/ai-index.ts
-var import_node_fs2 = require("node:fs");
+// src/no-source-comment.ts
+var import_node_fs = require("node:fs");
 
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
@@ -19884,11 +19884,11 @@ var Summary = class {
    */
   addTable(rows) {
     const tableBody = rows.map((row) => {
-      const cells = row.map((cell3) => {
-        if (typeof cell3 === "string") {
-          return this.wrap("td", cell3);
+      const cells = row.map((cell) => {
+        if (typeof cell === "string") {
+          return this.wrap("td", cell);
         }
-        const { header, data, colspan, rowspan } = cell3;
+        const { header, data, colspan, rowspan } = cell;
         const tag = header ? "th" : "td";
         const attrs = Object.assign(Object.assign({}, colspan && { colspan }), rowspan && { rowspan });
         return this.wrap(tag, data, attrs);
@@ -23759,2054 +23759,6 @@ function getOctokit(token, options, ...additionalPlugins) {
   return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 
-// src/report.ts
-var import_node_fs = require("node:fs");
-function loadReport(path) {
-  const raw = (0, import_node_fs.readFileSync)(path, "utf8");
-  const parsed = JSON.parse(raw);
-  validate(parsed);
-  return parsed;
-}
-function validate(r) {
-  if (r.schema_version !== "1.0" && r.schema_version !== "1.1" && r.schema_version !== "1.2") {
-    throw new Error(
-      `Unsupported schema_version: ${JSON.stringify(r.schema_version)} (action understands 1.0, 1.1, 1.2)`
-    );
-  }
-  for (const key of ["mode", "generator", "pr_scope"]) {
-    if (r[key] === void 0) {
-      throw new Error(`scan-pr report missing required field "${key}"`);
-    }
-  }
-  const ps = r.pr_scope;
-  for (const k of ["changed_files", "affected_roots", "unreachable_changes"]) {
-    if (!Array.isArray(ps[k])) {
-      throw new Error(`pr_scope.${k} must be an array`);
-    }
-  }
-}
-var SUGGESTION_CONFIDENCE_THRESHOLD = 0.75;
-function passesQualityBar(s) {
-  const hasRef = Array.isArray(s.references) && s.references.length > 0 && !!s.references[0].url;
-  const validCategory = s.category === "A" || s.category === "B" || s.category === "C";
-  return s.confidence >= SUGGESTION_CONFIDENCE_THRESHOLD && hasRef && validCategory;
-}
-
-// src/ai/schema.ts
-var AI_QUALITY_BAR = {
-  minConfidence: 0.75,
-  validCategories: /* @__PURE__ */ new Set(["A", "B", "C"])
-};
-function passesAIQualityBar(s) {
-  if (!AI_QUALITY_BAR.validCategories.has(s.category)) return false;
-  if (s.confidence < AI_QUALITY_BAR.minConfidence) return false;
-  if (!s.references.length || !s.references[0].url) return false;
-  return true;
-}
-
-// src/ai/parse.ts
-var FENCE_OPEN = /^[\s\S]*?```(?:json|JSON)?\s*\n/;
-var FENCE_CLOSE = /\n```\s*$/;
-function stripFence(raw) {
-  let s = raw.trim();
-  const firstFence = s.indexOf("```");
-  const lastFence = s.lastIndexOf("```");
-  if (firstFence !== -1 && lastFence !== -1 && lastFence > firstFence) {
-    s = s.slice(firstFence, lastFence + 3);
-    s = s.replace(FENCE_OPEN, "").replace(FENCE_CLOSE, "");
-    return s.trim();
-  }
-  return s;
-}
-function normalize(parsed) {
-  if (Array.isArray(parsed)) return { suggestions: parsed };
-  if (parsed && typeof parsed === "object" && Array.isArray(parsed.suggestions)) {
-    return parsed;
-  }
-  return null;
-}
-function validateSuggestion(s, idx) {
-  if (!s || typeof s !== "object") return `suggestions[${idx}] not an object`;
-  const o = s;
-  if (typeof o.file !== "string" || o.file.length === 0)
-    return `suggestions[${idx}].file must be a non-empty string`;
-  if (typeof o.line !== "number" || !Number.isInteger(o.line) || o.line < 1)
-    return `suggestions[${idx}].line must be an integer \u2265 1`;
-  if (o.start_line !== void 0 && (typeof o.start_line !== "number" || !Number.isInteger(o.start_line) || o.start_line < 1))
-    return `suggestions[${idx}].start_line must be an integer \u2265 1`;
-  if (o.category !== "A" && o.category !== "B" && o.category !== "C")
-    return `suggestions[${idx}].category must be 'A' | 'B' | 'C'`;
-  if (typeof o.confidence !== "number" || o.confidence < 0 || o.confidence > 1)
-    return `suggestions[${idx}].confidence must be a number in [0,1]`;
-  if (o.summary !== void 0 && typeof o.summary !== "string")
-    return `suggestions[${idx}].summary must be a string when present`;
-  if (typeof o.why_it_matters !== "string" || o.why_it_matters.length < 10)
-    return `suggestions[${idx}].why_it_matters must be a string of \u2265 10 chars`;
-  if (!Array.isArray(o.references) || o.references.length === 0)
-    return `suggestions[${idx}].references must be a non-empty array`;
-  const r0 = o.references[0];
-  if (!r0 || typeof r0.url !== "string" || r0.url.length === 0)
-    return `suggestions[${idx}].references[0].url must be a non-empty string`;
-  if (typeof o.after_code !== "string" || o.after_code.length === 0)
-    return `suggestions[${idx}].after_code must be a non-empty string`;
-  if (typeof o.start_line === "number" && o.start_line > o.line)
-    return `suggestions[${idx}].start_line must be \u2264 line`;
-  return null;
-}
-function parseAIOutput(raw) {
-  const inner = stripFence(raw);
-  const preview = inner.slice(0, 400);
-  if (inner.length === 0) {
-    return { ok: false, reason: "empty AI output", rawPreview: preview };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(inner);
-  } catch (e) {
-    return {
-      ok: false,
-      reason: `JSON parse failed: ${e.message}`,
-      rawPreview: preview
-    };
-  }
-  const env = normalize(parsed);
-  if (!env) {
-    return {
-      ok: false,
-      reason: "parsed value is neither an array nor an object with `suggestions[]`",
-      rawPreview: preview
-    };
-  }
-  for (let i = 0; i < env.suggestions.length; i += 1) {
-    const err = validateSuggestion(env.suggestions[i], i);
-    if (err) {
-      return { ok: false, reason: err, rawPreview: preview };
-    }
-  }
-  const total = env.suggestions.length;
-  const passing = env.suggestions.filter(passesAIQualityBar);
-  return {
-    ok: true,
-    suggestions: passing,
-    total,
-    passing: passing.length
-  };
-}
-
-// node_modules/diff/libesm/patch/parse.js
-function parsePatch(uniDiff) {
-  const diffstr = uniDiff.split(/\n/), list = [];
-  let i = 0;
-  function isGitDiffHeader(line) {
-    return /^diff --git /.test(line);
-  }
-  function isDiffHeader(line) {
-    return isGitDiffHeader(line) || /^Index:\s/.test(line) || /^diff(?: -r \w+)+\s/.test(line);
-  }
-  function isFileHeader(line) {
-    return /^(---|\+\+\+)\s/.test(line);
-  }
-  function isHunkHeader(line) {
-    return /^@@\s/.test(line);
-  }
-  function parseIndex() {
-    var _a;
-    const index = {};
-    index.hunks = [];
-    list.push(index);
-    let seenDiffHeader = false;
-    while (i < diffstr.length) {
-      const line = diffstr[i];
-      if (isFileHeader(line) || isHunkHeader(line)) {
-        break;
-      }
-      if (isGitDiffHeader(line)) {
-        if (seenDiffHeader) {
-          return;
-        }
-        seenDiffHeader = true;
-        index.isGit = true;
-        const paths = parseGitDiffHeader(line);
-        if (paths) {
-          index.oldFileName = paths.oldFileName;
-          index.newFileName = paths.newFileName;
-        }
-        i++;
-        while (i < diffstr.length) {
-          const extLine = diffstr[i];
-          if (isFileHeader(extLine) || isHunkHeader(extLine) || isDiffHeader(extLine)) {
-            break;
-          }
-          const renameFromMatch = /^rename from (.*)/.exec(extLine);
-          if (renameFromMatch) {
-            index.oldFileName = "a/" + unquoteIfQuoted(renameFromMatch[1]);
-            index.isRename = true;
-          }
-          const renameToMatch = /^rename to (.*)/.exec(extLine);
-          if (renameToMatch) {
-            index.newFileName = "b/" + unquoteIfQuoted(renameToMatch[1]);
-            index.isRename = true;
-          }
-          const copyFromMatch = /^copy from (.*)/.exec(extLine);
-          if (copyFromMatch) {
-            index.oldFileName = "a/" + unquoteIfQuoted(copyFromMatch[1]);
-            index.isCopy = true;
-          }
-          const copyToMatch = /^copy to (.*)/.exec(extLine);
-          if (copyToMatch) {
-            index.newFileName = "b/" + unquoteIfQuoted(copyToMatch[1]);
-            index.isCopy = true;
-          }
-          const newFileModeMatch = /^new file mode (\d+)/.exec(extLine);
-          if (newFileModeMatch) {
-            index.isCreate = true;
-            index.newMode = newFileModeMatch[1];
-          }
-          const deletedFileModeMatch = /^deleted file mode (\d+)/.exec(extLine);
-          if (deletedFileModeMatch) {
-            index.isDelete = true;
-            index.oldMode = deletedFileModeMatch[1];
-          }
-          const oldModeMatch = /^old mode (\d+)/.exec(extLine);
-          if (oldModeMatch) {
-            index.oldMode = oldModeMatch[1];
-          }
-          const newModeMatch = /^new mode (\d+)/.exec(extLine);
-          if (newModeMatch) {
-            index.newMode = newModeMatch[1];
-          }
-          if (/^Binary files /.test(extLine)) {
-            index.isBinary = true;
-          }
-          i++;
-        }
-        continue;
-      } else if (isDiffHeader(line)) {
-        if (seenDiffHeader) {
-          return;
-        }
-        seenDiffHeader = true;
-        const headerMatch = /^(?:Index:|diff(?: -r \w+)+)\s+/.exec(line);
-        if (headerMatch) {
-          index.index = line.substring(headerMatch[0].length).trim();
-        }
-      }
-      i++;
-    }
-    parseFileHeader(index);
-    parseFileHeader(index);
-    if (index.oldFileName === void 0 !== (index.newFileName === void 0)) {
-      throw new Error("Missing " + (index.oldFileName !== void 0 ? '"+++ ..."' : '"--- ..."') + " file header for " + ((_a = index.oldFileName) !== null && _a !== void 0 ? _a : index.newFileName));
-    }
-    while (i < diffstr.length) {
-      const line = diffstr[i];
-      if (isDiffHeader(line) || isFileHeader(line) || /^===================================================================/.test(line)) {
-        break;
-      } else if (isHunkHeader(line)) {
-        index.hunks.push(parseHunk());
-      } else {
-        i++;
-      }
-    }
-  }
-  function parseGitDiffHeader(line) {
-    const rest = line.substring("diff --git ".length);
-    if (rest.startsWith('"')) {
-      const oldPath = parseQuotedFileName(rest);
-      if (oldPath === null) {
-        return null;
-      }
-      const afterOld = rest.substring(oldPath.rawLength + 1);
-      let newFileName;
-      if (afterOld.startsWith('"')) {
-        const newPath = parseQuotedFileName(afterOld);
-        if (newPath === null) {
-          return null;
-        }
-        newFileName = newPath.fileName;
-      } else {
-        newFileName = afterOld;
-      }
-      return {
-        oldFileName: oldPath.fileName,
-        newFileName
-      };
-    }
-    const quoteIdx = rest.indexOf('"');
-    if (quoteIdx > 0) {
-      const oldFileName = rest.substring(0, quoteIdx - 1);
-      const newPath = parseQuotedFileName(rest.substring(quoteIdx));
-      if (newPath === null) {
-        return null;
-      }
-      return {
-        oldFileName,
-        newFileName: newPath.fileName
-      };
-    }
-    if (rest.startsWith("a/")) {
-      const splits = [];
-      let idx = 0;
-      while (true) {
-        idx = rest.indexOf(" b/", idx + 1);
-        if (idx === -1) {
-          break;
-        }
-        splits.push(idx);
-      }
-      if (splits.length > 0) {
-        const mid = splits[Math.floor(splits.length / 2)];
-        return {
-          oldFileName: rest.substring(0, mid),
-          newFileName: rest.substring(mid + 1)
-        };
-      }
-    }
-    return null;
-  }
-  function unquoteIfQuoted(s) {
-    if (s.startsWith('"')) {
-      const parsed = parseQuotedFileName(s);
-      if (parsed) {
-        return parsed.fileName;
-      }
-    }
-    return s;
-  }
-  function parseQuotedFileName(s) {
-    if (!s.startsWith('"')) {
-      return null;
-    }
-    let result = "";
-    let j = 1;
-    while (j < s.length) {
-      if (s[j] === '"') {
-        return { fileName: result, rawLength: j + 1 };
-      }
-      if (s[j] === "\\" && j + 1 < s.length) {
-        j++;
-        switch (s[j]) {
-          case "a":
-            result += "\x07";
-            break;
-          case "b":
-            result += "\b";
-            break;
-          case "f":
-            result += "\f";
-            break;
-          case "n":
-            result += "\n";
-            break;
-          case "r":
-            result += "\r";
-            break;
-          case "t":
-            result += "	";
-            break;
-          case "v":
-            result += "\v";
-            break;
-          case "\\":
-            result += "\\";
-            break;
-          case '"':
-            result += '"';
-            break;
-          case "0":
-          case "1":
-          case "2":
-          case "3":
-          case "4":
-          case "5":
-          case "6":
-          case "7": {
-            if (j + 2 >= s.length || s[j + 1] < "0" || s[j + 1] > "7" || s[j + 2] < "0" || s[j + 2] > "7") {
-              return null;
-            }
-            const bytes = [parseInt(s.substring(j, j + 3), 8)];
-            j += 3;
-            while (s[j] === "\\" && s[j + 1] >= "0" && s[j + 1] <= "7") {
-              if (j + 3 >= s.length || s[j + 2] < "0" || s[j + 2] > "7" || s[j + 3] < "0" || s[j + 3] > "7") {
-                return null;
-              }
-              bytes.push(parseInt(s.substring(j + 1, j + 4), 8));
-              j += 4;
-            }
-            result += new TextDecoder("utf-8").decode(new Uint8Array(bytes));
-            continue;
-          }
-          // Note that in C, there are also three kinds of hex escape sequences:
-          // - \xhh
-          // - \uhhhh
-          // - \Uhhhhhhhh
-          // We do not bother to parse them here because, so far as we know,
-          // they are never emitted by any tools that generate unified diff
-          // format diffs, and so for now jsdiff does not consider them legal.
-          default:
-            return null;
-        }
-      } else {
-        result += s[j];
-      }
-      j++;
-    }
-    return null;
-  }
-  function parseFileHeader(index) {
-    const fileHeaderMatch = /^(---|\+\+\+)\s+/.exec(diffstr[i]);
-    if (fileHeaderMatch) {
-      const prefix = fileHeaderMatch[1], data = diffstr[i].substring(3).trim().split("	", 2), header = (data[1] || "").trim();
-      let fileName = data[0];
-      if (fileName.startsWith('"')) {
-        fileName = unquoteIfQuoted(fileName);
-      } else {
-        fileName = fileName.replace(/\\\\/g, "\\");
-      }
-      if (prefix === "---") {
-        index.oldFileName = fileName;
-        index.oldHeader = header;
-      } else {
-        index.newFileName = fileName;
-        index.newHeader = header;
-      }
-      i++;
-    }
-  }
-  function parseHunk() {
-    var _a;
-    const chunkHeaderIndex = i, chunkHeaderLine = diffstr[i++], chunkHeader = chunkHeaderLine.split(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-    const hunk = {
-      oldStart: +chunkHeader[1],
-      oldLines: typeof chunkHeader[2] === "undefined" ? 1 : +chunkHeader[2],
-      newStart: +chunkHeader[3],
-      newLines: typeof chunkHeader[4] === "undefined" ? 1 : +chunkHeader[4],
-      lines: []
-    };
-    if (hunk.oldLines === 0) {
-      hunk.oldStart += 1;
-    }
-    if (hunk.newLines === 0) {
-      hunk.newStart += 1;
-    }
-    let addCount = 0, removeCount = 0;
-    for (; i < diffstr.length && (removeCount < hunk.oldLines || addCount < hunk.newLines || ((_a = diffstr[i]) === null || _a === void 0 ? void 0 : _a.startsWith("\\"))); i++) {
-      const operation = diffstr[i].length == 0 && i != diffstr.length - 1 ? " " : diffstr[i][0];
-      if (operation === "+" || operation === "-" || operation === " " || operation === "\\") {
-        hunk.lines.push(diffstr[i]);
-        if (operation === "+") {
-          addCount++;
-        } else if (operation === "-") {
-          removeCount++;
-        } else if (operation === " ") {
-          addCount++;
-          removeCount++;
-        }
-      } else {
-        throw new Error(`Hunk at line ${chunkHeaderIndex + 1} contained invalid line ${diffstr[i]}`);
-      }
-    }
-    if (!addCount && hunk.newLines === 1) {
-      hunk.newLines = 0;
-    }
-    if (!removeCount && hunk.oldLines === 1) {
-      hunk.oldLines = 0;
-    }
-    if (addCount !== hunk.newLines) {
-      throw new Error("Added line count did not match for hunk at line " + (chunkHeaderIndex + 1));
-    }
-    if (removeCount !== hunk.oldLines) {
-      throw new Error("Removed line count did not match for hunk at line " + (chunkHeaderIndex + 1));
-    }
-    if (i < diffstr.length && diffstr[i] && /^[+ -]/.test(diffstr[i]) && !isFileHeader(diffstr[i])) {
-      throw new Error("Hunk at line " + (chunkHeaderIndex + 1) + " has more lines than expected (expected " + hunk.oldLines + " old lines and " + hunk.newLines + " new lines)");
-    }
-    return hunk;
-  }
-  while (i < diffstr.length) {
-    parseIndex();
-  }
-  return list;
-}
-
-// src/ai/diff-lines.ts
-function parseCommentableLines(patch) {
-  const lines = /* @__PURE__ */ new Set();
-  let files;
-  try {
-    files = parsePatch(patch);
-  } catch {
-    return lines;
-  }
-  for (const file of files) {
-    for (const hunk of file.hunks) {
-      let newLine = hunk.newStart;
-      for (const row of hunk.lines) {
-        const c = row[0];
-        if (c === "+" || c === " ") {
-          lines.add(newLine);
-          newLine += 1;
-        }
-      }
-    }
-  }
-  return lines;
-}
-function lookupCommentable(map, file) {
-  if (map.has(file)) return map.get(file);
-  let best;
-  for (const k of map.keys()) {
-    if (file.endsWith(k) || k.endsWith(file)) {
-      if (!best || k.length > best.length) best = k;
-    }
-  }
-  return best ? map.get(best) : void 0;
-}
-function filterByDiff(suggestions, commentableByFile) {
-  const kept = [];
-  const dropped = [];
-  const reasons = [];
-  for (const s of suggestions) {
-    const set = lookupCommentable(commentableByFile, s.file);
-    const start = typeof s.start_line === "number" ? s.start_line : s.line;
-    if (set === void 0) {
-      dropped.push(s);
-      const sample = [...commentableByFile.keys()].slice(0, 3).join(", ");
-      const more = commentableByFile.size > 3 ? ` (+${commentableByFile.size - 3} more)` : "";
-      reasons.push(
-        `file not in PR diff (no exact or suffix match; diff has ${commentableByFile.size} file(s): ${sample || "(empty)"}${more})`
-      );
-      continue;
-    }
-    if (start > s.line) {
-      dropped.push(s);
-      reasons.push(`start_line ${start} > line ${s.line} (invalid range)`);
-      continue;
-    }
-    const missing = [];
-    for (let l = start; l <= s.line; l += 1) {
-      if (!set.has(l)) missing.push(l);
-    }
-    if (missing.length === 0) {
-      kept.push(s);
-    } else {
-      dropped.push(s);
-      const preview = missing.slice(0, 4).join(", ");
-      const tail = missing.length > 4 ? ` (+${missing.length - 4} more)` : "";
-      reasons.push(`line(s) ${preview}${tail} not on diff (file has ${set.size} commentable line(s))`);
-    }
-  }
-  return { kept, dropped, reasons };
-}
-
-// src/ai/post.ts
-async function fetchPrFiles(octokit, owner, repo, prNumber) {
-  const { data } = await octokit.rest.pulls.listFiles({
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100
-  });
-  const commentable = /* @__PURE__ */ new Map();
-  const patches = /* @__PURE__ */ new Map();
-  for (const f of data) {
-    if (f.patch) {
-      commentable.set(f.filename, parseCommentableLines(f.patch));
-      patches.set(f.filename, f.patch);
-    }
-  }
-  return { commentable, patches };
-}
-
-// src/ai/to-code-suggestion.ts
-var CATEGORY_LABEL = {
-  A: "Optimization",
-  B: "Product correctness",
-  C: "Framework misuse"
-};
-var CONTEXT_RADIUS = 3;
-function languageOf(file) {
-  const ext = file.slice(file.lastIndexOf(".") + 1).toLowerCase();
-  const map = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    py: "python",
-    rb: "ruby",
-    go: "go",
-    rs: "rust",
-    java: "java",
-    kt: "kotlin",
-    cs: "csharp",
-    php: "php",
-    swift: "swift",
-    scala: "scala",
-    c: "c",
-    h: "c",
-    cpp: "cpp",
-    cc: "cpp",
-    hpp: "cpp",
-    m: "objc",
-    sql: "sql",
-    sh: "bash"
-  };
-  return map[ext];
-}
-function numberPatchRows(patch) {
-  let files;
-  try {
-    files = parsePatch(patch);
-  } catch {
-    return [];
-  }
-  const rows = [];
-  for (const file of files) {
-    for (const hunk of file.hunks) {
-      let n = hunk.newStart;
-      for (const row of hunk.lines) {
-        const c = row[0];
-        const code = row.slice(1);
-        if (c === "+") {
-          rows.push({ newLine: n, code, kind: "add" });
-          n += 1;
-        } else if (c === " ") {
-          rows.push({ newLine: n, code, kind: "ctx" });
-          n += 1;
-        } else if (c === "-") {
-          rows.push({ newLine: null, code, kind: "del" });
-        }
-      }
-    }
-  }
-  return rows;
-}
-function reconstructDiff(patch, start, end, afterCode) {
-  const afterLines = afterCode.split("\n").map((code) => ({ code, kind: "add" }));
-  const afterOnly = () => ({
-    unified: afterLines.map((l) => `+ ${l.code}`).join("\n"),
-    beforeLines: [],
-    afterLines
-  });
-  if (!patch) return afterOnly();
-  const rows = numberPatchRows(patch);
-  if (rows.length === 0) return afterOnly();
-  const inRange = (n, lo, hi) => typeof n === "number" && n >= lo && n <= hi;
-  const replaced = rows.filter((r) => inRange(r.newLine, start, end));
-  if (replaced.length === 0) return afterOnly();
-  const ctxBefore = rows.filter((r) => inRange(r.newLine, start - CONTEXT_RADIUS, start - 1));
-  const ctxAfter = rows.filter((r) => inRange(r.newLine, end + 1, end + CONTEXT_RADIUS));
-  const unified = [
-    ...ctxBefore.map((r) => `  ${r.code}`),
-    ...replaced.map((r) => `- ${r.code}`),
-    ...afterLines.map((l) => `+ ${l.code}`),
-    ...ctxAfter.map((r) => `  ${r.code}`)
-  ].join("\n");
-  const beforeLines = replaced.map((r) => ({
-    code: r.code,
-    kind: "del",
-    line_number: r.newLine ?? void 0
-  }));
-  return { unified, beforeLines, afterLines };
-}
-function aiToCodeSuggestion(ai, patch, model) {
-  const start = typeof ai.start_line === "number" ? ai.start_line : ai.line;
-  const { unified, beforeLines, afterLines } = reconstructDiff(patch, start, ai.line, ai.after_code);
-  const summary2 = ai.summary?.trim() || void 0;
-  return {
-    category: ai.category,
-    category_label: CATEGORY_LABEL[ai.category],
-    file: ai.file,
-    line: ai.line,
-    confidence: ai.confidence,
-    why_it_matters: ai.why_it_matters,
-    references: ai.references,
-    diff: { unified, before_lines: beforeLines, after_lines: afterLines },
-    language: languageOf(ai.file),
-    source: "ai",
-    summary: summary2,
-    model
-  };
-}
-function lookupPatch(patches, file) {
-  if (patches.has(file)) return patches.get(file);
-  let best;
-  for (const k of patches.keys()) {
-    if ((file.endsWith(k) || k.endsWith(file)) && (!best || k.length > best.length)) best = k;
-  }
-  return best ? patches.get(best) : void 0;
-}
-function mergeAiSuggestionsIntoReport(report, aiPostable, patches, model) {
-  const aiCode = aiPostable.map(
-    (s) => aiToCodeSuggestion(s, patches ? lookupPatch(patches, s.file) : void 0, model)
-  );
-  const aiKeys = new Set(aiCode.map((s) => `${s.file}:${s.line}`));
-  const det = (report.pr_review?.code_suggestions ?? []).filter(
-    (s) => !aiKeys.has(`${s.file}:${s.line}`)
-  );
-  return {
-    ...report,
-    pr_review: { ...report.pr_review ?? {}, code_suggestions: [...det, ...aiCode] }
-  };
-}
-
-// src/render/lib/format.ts
-function round(n, decimals = 1) {
-  const f = 10 ** decimals;
-  return Math.round(n * f) / f;
-}
-function signedPercent(n, decimals = 1) {
-  const r = round(n, decimals);
-  const mag = Math.abs(r).toFixed(decimals);
-  if (r > 0) return `+${mag}%`;
-  if (r < 0) return `\u2212${mag}%`;
-  return `${0 .toFixed(decimals)}%`;
-}
-function confidencePercent(conf01) {
-  return `${Math.round(clamp(conf01, 0, 1) * 100)}%`;
-}
-function signedInt(n) {
-  const r = Math.round(n);
-  const mag = Math.abs(r).toLocaleString("en-US");
-  if (r > 0) return `+${mag}`;
-  if (r < 0) return `\u2212${mag}`;
-  return "0";
-}
-function int(n) {
-  return Math.round(n).toLocaleString("en-US");
-}
-function clamp(n, lo, hi) {
-  return Math.min(hi, Math.max(lo, n));
-}
-function plural(n, singular, pluralForm) {
-  return n === 1 ? singular : pluralForm ?? `${singular}s`;
-}
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-function inlineList(items, max, code = true) {
-  const wrap = (s) => code ? `\`${s}\`` : s;
-  const shown = items.slice(0, max).map(wrap);
-  if (items.length > shown.length) shown.push(`*\u2026+${items.length - shown.length} more*`);
-  return shown.join(" \xB7 ");
-}
-function basename(path) {
-  const parts = path.split("/").filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : path;
-}
-function fencedBlock(content, info2 = "") {
-  const longest = (content.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}${info2}
-${content}
-${fence}`;
-}
-
-// src/render/state.ts
-var CONF_HISTORY_CAP = 12;
-function appendConfHistory(prior, score) {
-  const past = Array.isArray(prior?.confHistory) ? prior.confHistory.filter((n) => Number.isFinite(n)) : [];
-  return [...past, score].slice(-CONF_HISTORY_CAP);
-}
-var MARKER_RE = /<!--\s*drift:state\s+(\{[\s\S]*?\})\s*-->/;
-function stateFromReport(report) {
-  const state = { v: 1 };
-  const drift = report.pr_review?.overall_drift?.percent;
-  if (typeof drift === "number") state.overall = round2(drift);
-  const axes = report.pr_review?.value_card?.axes;
-  if (axes?.length) {
-    const map = {};
-    for (const a of axes) map[a.name] = round2(a.delta_percent);
-    state.axes = map;
-  }
-  return state;
-}
-function serializeState(state) {
-  return `<!-- drift:state ${JSON.stringify(state)} -->`;
-}
-function parseState(body) {
-  if (!body) return null;
-  const m = body.match(MARKER_RE);
-  if (!m) return null;
-  try {
-    const parsed = JSON.parse(m[1]);
-    return parsed && parsed.v === 1 ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function round2(n) {
-  return Math.round(n * 10) / 10;
-}
-
-// src/render/lib/facts.ts
-function extractFacts(report) {
-  const ps = report.pr_scope;
-  const review = report.pr_review;
-  const ext = report.pr_review_ext;
-  const axes = review?.value_card?.axes ?? [];
-  const regressedAxes = axes.filter((a) => a.direction === "down");
-  const improvedAxes = axes.filter((a) => a.direction === "up");
-  const topImprovement = improvedAxes.length > 0 ? improvedAxes.reduce((best, a) => a.delta_percent > best.delta_percent ? a : best) : null;
-  const moneyInputs = axes.find((a) => a.name === "money")?.inputs;
-  const locAdded = numInput(moneyInputs, "loc_added");
-  const locDeleted = numInput(moneyInputs, "loc_deleted");
-  const netLoc = locAdded === null && locDeleted === null ? null : (locAdded ?? 0) - (locDeleted ?? 0);
-  const counts = review?.counts;
-  const passing = (review?.code_suggestions ?? []).filter(passesQualityBar);
-  const risks = review?.visual_summary?.risks?.items ?? [];
-  const uncoveredSet = new Set(ext?.tests_in_graph?.uncovered_roots ?? []);
-  const missingByRoot = new Map((ext?.nfr_edge_cases?.per_root ?? []).map((p) => [p.root, p.missing ?? []]));
-  const perRootCoverage = ps.affected_roots.map((root) => ({
-    root,
-    tested: !uncoveredSet.has(root),
-    missing: missingByRoot.get(root) ?? []
-  }));
-  return {
-    changedFiles: ps.changed_files.length,
-    affectedRoots: ps.affected_roots.length,
-    unreachable: ps.unreachable_changes.length,
-    overallPercent: review?.overall_drift?.percent ?? null,
-    overallDirection: review?.overall_drift?.direction ?? null,
-    axes,
-    regressedAxes,
-    improvedAxes,
-    topImprovement,
-    locAdded,
-    locDeleted,
-    netLoc,
-    newTestFiles: counts?.new_test_files ? counts.new_test_files.value : counts ? 0 : null,
-    features: counts?.features?.value ?? 0,
-    bugFixes: counts?.bug_fixes?.value ?? 0,
-    issuesResolved: counts?.issues_resolved?.value ?? 0,
-    passing,
-    correctness: passing.filter((s) => s.category === "B"),
-    deadCode: passing.filter((s) => s.category === "A" && isDeadCode(s)),
-    risksToAddress: risks.filter((r) => r.quadrant === "act_before_merge").length,
-    totalRisks: risks.length,
-    uncoveredRoots: ext?.tests_in_graph?.uncovered_roots ?? [],
-    reliabilityGaps: ext?.nfr_edge_cases?.reliability_gaps ?? [],
-    highComplexity: ext?.tech_debt?.high_complexity?.length ?? 0,
-    longFunctions: ext?.tech_debt?.long_functions?.length ?? 0,
-    duplicationClusters: ext?.duplication?.clusters?.length ?? 0,
-    perRootCoverage
-  };
-}
-function isDeadCode(s) {
-  const hay = `${s.kind ?? ""} ${s.category_label ?? ""}`.toLowerCase();
-  return hay.includes("dead");
-}
-function numInput(inputs, key) {
-  if (!inputs || !(key in inputs)) return null;
-  const v = inputs[key];
-  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
-
-// src/render/lib/severity.ts
-var COLOR = {
-  green: "2ea043",
-  // improvement / ship
-  amber: "d29922",
-  // mixed / monitor
-  red: "d1242f",
-  // regression / act
-  blue: "58a6ff",
-  // neutral-informational
-  grey: "8b949e",
-  // muted / flat
-  brand: "ff6b3d"
-  // Drift / Andy brand orange — brand chips & agent-ready badge
-};
-function compositeStatus(axes) {
-  const ups = (axes ?? []).filter((a) => a.direction === "up").length;
-  const downs = (axes ?? []).filter((a) => a.direction === "down").length;
-  if (ups > 0 && downs > 0) return { emoji: "\u{1F7E1}", label: "mixed", color: COLOR.amber, mixed: true };
-  if (downs > 0) return { emoji: "\u{1F534}", label: "regressed", color: COLOR.red, mixed: false };
-  if (ups > 0) return { emoji: "\u{1F7E2}", label: "improved", color: COLOR.green, mixed: false };
-  return { emoji: "\u26AA", label: "no change", color: COLOR.grey, mixed: false };
-}
-
-// src/render/lib/effort.ts
-var LABEL = {
-  1: "trivial",
-  2: "easy",
-  3: "moderate",
-  4: "involved",
-  5: "demanding"
-};
-var MINUTES = {
-  1: "\u2248 5 min",
-  2: "\u2248 10 min",
-  3: "\u2248 20 min",
-  4: "\u2248 30\u201345 min",
-  5: "\u2248 60 min+"
-};
-var SCORE_COLOR = {
-  1: COLOR.green,
-  2: COLOR.green,
-  3: COLOR.blue,
-  4: COLOR.amber,
-  5: COLOR.red
-};
-function reviewEffort(f) {
-  let pts = 0;
-  const files = f.changedFiles;
-  if (files > 40) pts += 2;
-  else if (files > 15) pts += 1.5;
-  else if (files > 6) pts += 1;
-  else pts += 0.5;
-  const loc = f.locAdded ?? 0;
-  if (loc > 1e3) pts += 2;
-  else if (loc > 400) pts += 1.5;
-  else if (loc > 150) pts += 1;
-  else if (loc > 0) pts += 0.5;
-  if (f.affectedRoots > 30) pts += 1;
-  else if (f.affectedRoots > 12) pts += 0.5;
-  const debt = f.highComplexity + f.longFunctions;
-  pts += Math.min(1.5, debt * 0.25);
-  pts += Math.min(2, f.correctness.length * 0.9);
-  if (f.regressedAxes.length > 0) pts += Math.min(1, f.regressedAxes.length * 0.5);
-  if (f.risksToAddress > 0) pts += Math.min(1, f.risksToAddress * 0.2);
-  if (f.newTestFiles === 0 && loc > 150) pts += 0.5;
-  const score = pts >= 7 ? 5 : pts >= 5 ? 4 : pts >= 3 ? 3 : pts >= 1.5 ? 2 : 1;
-  return {
-    score,
-    label: LABEL[score],
-    minutes: MINUTES[score],
-    drivers: drivers(f),
-    color: SCORE_COLOR[score]
-  };
-}
-function drivers(f) {
-  const out = [];
-  if (f.correctness.length > 0) {
-    out.push(`${f.correctness.length} ${plural(f.correctness.length, "correctness issue")}`);
-  }
-  if (f.regressedAxes.length > 0) {
-    out.push(`${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`);
-  }
-  const debt = f.highComplexity + f.longFunctions;
-  if (debt > 0) out.push(`${debt} complex/long ${plural(debt, "fn")}`);
-  if (f.changedFiles > 6) out.push(`${int(f.changedFiles)} files`);
-  if (f.locAdded !== null && f.locAdded > 0) out.push(`${signedInt(f.locAdded)} LOC`);
-  if (f.affectedRoots > 12) out.push(`${int(f.affectedRoots)} entry points`);
-  if (out.length === 0) {
-    out.push(`${int(f.changedFiles)} ${plural(f.changedFiles, "file")}`);
-  }
-  return out.slice(0, 3);
-}
-
-// src/render/lib/confidence.ts
-var LABEL2 = {
-  5: "ship with confidence",
-  4: "minor polish",
-  3: "review closely",
-  2: "significant concerns",
-  1: "high risk",
-  0: "do not merge"
-};
-function mergeConfidence(f) {
-  let pts = 5;
-  pts -= Math.min(3, f.correctness.length * 1);
-  pts -= Math.min(1.5, f.regressedAxes.length * 0.5);
-  pts -= Math.min(1.5, f.risksToAddress * 0.5);
-  if (f.affectedRoots > 0 && f.uncoveredRoots.length > 0) {
-    const frac = Math.min(1, f.uncoveredRoots.length / f.affectedRoots);
-    pts -= frac;
-  } else if (f.newTestFiles === 0 && f.locAdded !== null && f.locAdded > 150) {
-    pts -= 0.5;
-  }
-  const effort = reviewEffort(f).score;
-  if (effort >= 5) pts -= 0.5;
-  else if (effort === 4) pts -= 0.25;
-  const score = clampScore(Math.round(pts));
-  return { score, label: LABEL2[score], color: scoreColor(score), drivers: drivers2(f) };
-}
-function scoreColor(score) {
-  if (score >= 4) return COLOR.green;
-  if (score === 3) return COLOR.blue;
-  if (score === 2) return COLOR.amber;
-  return COLOR.red;
-}
-function drivers2(f) {
-  const out = [];
-  if (f.correctness.length > 0) out.push(`${f.correctness.length} ${plural(f.correctness.length, "correctness issue")}`);
-  if (f.affectedRoots > 0 && f.uncoveredRoots.length > 0) {
-    out.push(`${int(f.uncoveredRoots.length)}/${int(f.affectedRoots)} reached ${plural(f.affectedRoots, "root")} untested`);
-  } else if (f.newTestFiles === 0 && f.locAdded !== null && f.locAdded > 0) {
-    out.push("no new tests");
-  }
-  if (f.regressedAxes.length > 0) out.push(`${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`);
-  if (f.risksToAddress > 0) out.push(`${f.risksToAddress} gating ${plural(f.risksToAddress, "risk")}`);
-  return out.slice(0, 3);
-}
-function clampScore(n) {
-  return Math.max(0, Math.min(5, n));
-}
-
-// src/render/lib/section.ts
-function splitHeading(md) {
-  const lines = md.split("\n");
-  let i = 0;
-  while (i < lines.length && lines[i].trim() === "") i++;
-  const m = lines[i]?.match(/^#{1,6}\s+(.+?)\s*$/);
-  if (!m) return { title: null, body: md };
-  const body = lines.slice(i + 1).join("\n").replace(/^\n+/, "");
-  return { title: m[1].trim(), body };
-}
-function collapsibleSection(opts) {
-  const openAttr = opts.open ? " open" : "";
-  const tldr = opts.tldr?.trim() ? ` \u2014 ${escapeHtml(opts.tldr.trim())}` : "";
-  const summary2 = `<summary><strong>${escapeHtml(opts.title)}</strong>${tldr}</summary>`;
-  return [`<details${openAttr}>`, summary2, "", opts.body.trim(), "", "</details>"].join("\n");
-}
-function wrapSection(md, opts) {
-  const { title, body } = splitHeading(md);
-  return collapsibleSection({
-    title: title ?? opts.fallbackTitle ?? "Details",
-    tldr: opts.tldr,
-    body: title ? body : md,
-    open: opts.open
-  });
-}
-
-// src/render/lib/branding.ts
-var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
-var BANNER_WIDTH = 120;
-var AUDIO_BANNER_WIDTH = 200;
-var ANDY_WIDTH = 64;
-var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
-var withImage = (file, alt, section) => `${sectionImage(file, alt)}
-
-${section}`;
-var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
-var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
-
-// src/render/lib/gauge.ts
-var ARC = {
-  green: { dark: "#4ae3b0", light: "#0f7a52" },
-  blue: { dark: "#79c0ff", light: "#0860c4" },
-  amber: { dark: "#e3b341", light: "#9a7700" },
-  red: { dark: "#ff7b6b", light: "#b02407" },
-  grey: { dark: "#9aa5b1", light: "#5e6772" }
-};
-var TRACK = { dark: "#2d333b", light: "#e7ecf0" };
-var TITLE = { dark: "#9aa5b1", light: "#5e6772" };
-function centerFont(text) {
-  if (text.includes("%")) return 26;
-  if (text.includes("/")) return 40;
-  if (text.length <= 1) return 46;
-  if (text.length === 2) return 44;
-  return 32;
-}
-function chartUrl(g, arc, track, title) {
-  const config = {
-    type: "radialGauge",
-    data: { datasets: [{ data: [Math.max(0, Math.min(100, g.arc))], backgroundColor: arc }] },
-    options: {
-      domain: [0, 100],
-      trackColor: track,
-      roundedCorners: true,
-      centerPercentage: 82,
-      centerArea: { text: g.center, fontColor: arc, fontSize: centerFont(g.center) },
-      title: { display: true, text: g.title, fontColor: title, fontSize: 13, fontStyle: "bold" }
-    }
-  };
-  return `https://quickchart.io/chart?w=260&h=240&bkg=transparent&c=${encodeURIComponent(JSON.stringify(config))}`;
-}
-function gaugeCell(g) {
-  const c = ARC[g.color];
-  const dark = chartUrl(g, c.dark, TRACK.dark, TITLE.dark);
-  const light = chartUrl(g, c.light, TRACK.light, TITLE.light);
-  const alt = `${g.title} ${g.center}`;
-  return `<picture><source media="(prefers-color-scheme: dark)" srcset="${dark}"><img width="150" alt="${alt}" src="${light}" /></picture>`;
-}
-function gaugeTable(gauges, cols = 4) {
-  if (gauges.length === 0) return "";
-  const width = Math.min(cols, gauges.length);
-  const rows = [];
-  for (let i = 0; i < gauges.length; i += cols) {
-    const cells = gauges.slice(i, i + cols).map((g) => `<td align="center">${gaugeCell(g)}</td>`);
-    while (cells.length < width) cells.push("<td></td>");
-    rows.push(`<tr>
-${cells.join("\n")}
-</tr>`);
-  }
-  return `<table>
-${rows.join("\n")}
-</table>`;
-}
-
-// src/render/lib/badge.ts
-function flatBadge(message, hex) {
-  const enc = encodeURIComponent(message.replace(/-/g, "--").replace(/_/g, "__"));
-  const alt = message.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `<img alt="${alt}" src="https://img.shields.io/badge/${enc}-${hex}?style=flat-square" />`;
-}
-function centerBadges(badges) {
-  return `<p align="center">${badges.join(" ")}</p>`;
-}
-
-// src/render/sections/header.ts
-function renderHeader(report, _ctx, _opts = {}) {
-  const facts = extractFacts(report);
-  const composite = compositeStatus(facts.axes);
-  const verdict = decideVerdict(facts, composite);
-  const effort = reviewEffort(facts);
-  const confidence = mergeConfidence(facts);
-  return [tldrBadges(verdict, confidence, effort), gaugeDashboard(facts, effort, confidence)].filter(Boolean).join("\n\n");
-}
-function tldrBadges(verdict, confidence, effort) {
-  const risk = effort.score >= 4 ? "High" : effort.score === 3 ? "Moderate" : "Low";
-  const mins = effort.minutes.replace(/≈\s*/, "");
-  const badges = [
-    flatBadge(verdictMessage(verdict), verdict.statusColor),
-    flatBadge(`Merge confidence ${confidence.score}/5`, confidence.color),
-    flatBadge(`${risk} risk \xB7 ${mins} review`, effort.color)
-  ];
-  return centerBadges(badges);
-}
-function verdictMessage(v) {
-  const glyph = v.alert === "WARNING" ? "\u26A0" : v.alert === "TIP" ? "\u2713" : "\u2139";
-  const text = v.statusMessage.charAt(0).toUpperCase() + v.statusMessage.slice(1);
-  return `${glyph} ${text}`;
-}
-function decideVerdict(facts, composite) {
-  const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
-  if (needsAttention) {
-    const netRegression = composite.label === "regressed" || facts.overallDirection === "down" && !composite.mixed;
-    return {
-      alert: "WARNING",
-      emoji: netRegression ? "\u{1F534}" : "\u{1F7E1}",
-      tldr: "address before merge",
-      statusMessage: "address before merge",
-      statusColor: netRegression ? COLOR.red : COLOR.amber
-    };
-  }
-  if (facts.overallDirection === "up") {
-    return { alert: "TIP", emoji: "\u{1F7E2}", tldr: "looks good", statusMessage: "looks good", statusColor: COLOR.green };
-  }
-  return { alert: "NOTE", emoji: "\u{1F535}", tldr: "advisory", statusMessage: "advisory", statusColor: COLOR.blue };
-}
-function gaugeDashboard(facts, effort, confidence) {
-  const gauges = [
-    { title: "MERGE CONFIDENCE", center: `${confidence.score}/5`, arc: confidence.score / 5 * 100, color: gaugeColor(confidence.color) },
-    { title: "REVIEW EFFORT", center: `${effort.score}/5`, arc: effort.score / 5 * 100, color: gaugeColor(effort.color) }
-  ];
-  if (facts.totalRisks > 0) {
-    gauges.push({ title: "RISKS", center: int(facts.risksToAddress), arc: 100, color: facts.risksToAddress > 0 ? "red" : "green" });
-  }
-  if (facts.overallPercent !== null) {
-    const color = facts.overallDirection === "up" ? "green" : facts.overallDirection === "down" ? "red" : "grey";
-    gauges.push({ title: "DRIFT", center: signedPercent(facts.overallPercent), arc: 100, color });
-  }
-  gauges.push({ title: "SUGGESTIONS", center: int(facts.passing.length), arc: 100, color: facts.passing.length > 0 ? "blue" : "grey" });
-  if (facts.newTestFiles !== null) {
-    gauges.push({ title: "NEW TESTS", center: int(facts.newTestFiles), arc: 100, color: facts.newTestFiles > 0 ? "green" : "red" });
-  }
-  return gaugeTable(gauges);
-}
-function gaugeColor(shieldsHex) {
-  switch (shieldsHex) {
-    case COLOR.green:
-      return "green";
-    case COLOR.amber:
-      return "amber";
-    case COLOR.red:
-      return "red";
-    case COLOR.blue:
-      return "blue";
-    default:
-      return "grey";
-  }
-}
-
-// src/render/sections/quality_gauges.ts
-var LEVEL_HEX = {
-  low: "22c55e",
-  moderate: "eab308",
-  high: "f97316",
-  critical: "ef4444"
-};
-var LEVEL_LABEL = {
-  low: "LOW",
-  moderate: "MODERATE",
-  high: "HIGH",
-  critical: "CRITICAL"
-};
-var GROUP_INTRO = {
-  "LLM Complexity": "Evaluating AI-driven code-review readiness. High structural entanglement or exceeding model context limits silently degrades automated reviews.",
-  Comprehensibility: "Human readability, cognitive load, and engineering transparency.",
-  Longevity: "Code health, technical-debt impact, and long-term maintainability.",
-  "Correctness Confidence": "Test coverage, isolation of side effects, and edge-case safety.",
-  Operational: "Post-deployment stability, operability, and rollback capability.",
-  "Team & Process": "Organizational dynamics and review safety."
-};
-function shield(label, message, hex) {
-  const p = (s) => encodeURIComponent(s);
-  return `https://img.shields.io/static/v1?label=${p(label)}&message=${p(message)}&color=${hex}&style=for-the-badge`;
-}
-function altText(s) {
-  return s.replace(/[\][\n\r]/g, " ").trim();
-}
-function pill(g) {
-  const hex = LEVEL_HEX[g.level] ?? LEVEL_HEX.moderate;
-  const lvl = LEVEL_LABEL[g.level] ?? "MODERATE";
-  const message = `${g.score}% ${g.arrow}`;
-  return `![${altText(`${lvl} ${g.score}%`)}](${shield(lvl, message, hex)})`;
-}
-var BAR_CELLS = 40;
-var BAR_GREY = "d1d5db";
-function bar(g) {
-  const hex = LEVEL_HEX[g.level] ?? LEVEL_HEX.moderate;
-  const score = Math.max(0, Math.min(100, Math.round(g.score)));
-  const filled = Math.round(score / 100 * BAR_CELLS);
-  const remaining = BAR_CELLS - filled;
-  const cell3 = "\u2588";
-  const lines = [
-    "%%{init: {'flowchart': {'htmlLabels': true, 'padding': 1, 'nodeSpacing': 1, 'rankSpacing': 1}}}%%",
-    "flowchart LR"
-  ];
-  if (filled > 0 && remaining > 0) {
-    lines.push(`    f["${cell3.repeat(filled)}"]:::done ~~~ r["${cell3.repeat(remaining)}"]:::todo`);
-  } else if (remaining === 0) {
-    lines.push(`    f["${cell3.repeat(BAR_CELLS)}"]:::done`);
-  } else {
-    lines.push(`    r["${cell3.repeat(BAR_CELLS)}"]:::todo`);
-  }
-  lines.push(`    classDef done fill:#${hex},stroke:#${hex},stroke-width:0px,color:#${hex};`);
-  lines.push(`    classDef todo fill:#${BAR_GREY},stroke:#${BAR_GREY},stroke-width:0px,color:#${BAR_GREY};`);
-  if (filled > 0 && remaining > 0) lines.push("    linkStyle 0 stroke-width:0px;");
-  return ["```mermaid", ...lines, "```"].join("\n");
-}
-function tokensK(n) {
-  if (!n || n <= 0) return "0";
-  return n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
-}
-function llmContextBadge(s) {
-  const tk = tokensK(s.token_estimate);
-  const limit = tokensK(s.token_limit);
-  if (s.context_fits) {
-    return `![LLM context: FITS ${tk} tokens](${shield("LLM_CONTEXT", `FITS ${tk} tokens`, LEVEL_HEX.low)})`;
-  }
-  return `![LLM context: EXCEEDED ${tk} tokens (${limit} limit)](${shield("LLM_CONTEXT", `EXCEEDED ${tk} tokens (${limit} limit)`, LEVEL_HEX.critical)})`;
-}
-var RADAR_AXES = [
-  { id: "token_footprint", key: "tf", label: "Token footprint" },
-  { id: "context_window_pressure", key: "cwp", label: "Context window pressure" },
-  { id: "agent_reviewability", key: "ar", label: "Agent reviewability" },
-  { id: "semantic_density", key: "sd", label: "Semantic density" },
-  { id: "explainability", key: "ex", label: "Explainability" },
-  { id: "context_dependency", key: "cd", label: "Context dependency" },
-  { id: "maintenance_burden", key: "mb", label: "Maintenance burden" },
-  { id: "fragility_index", key: "fi", label: "Fragility index" },
-  { id: "test_coverage", key: "tc", label: "Test coverage" },
-  { id: "edge_case_surface", key: "ecs", label: "Edge case surface" },
-  { id: "rollback_complexity", key: "rc", label: "Rollback complexity" },
-  { id: "blast_radius", key: "br", label: "Blast radius" },
-  { id: "knowledge_concentration", key: "kc", label: "Knowledge concentration" },
-  { id: "review_fatigue", key: "rfr", label: "Review fatigue risk" }
-];
-function radarTitle(prTitle) {
-  const safe = (prTitle ?? "").replace(/[\r\n]+/g, " ").replace(/["[\]{}|<>]/g, " ").replace(/\s+/g, " ").trim();
-  if (!safe) return "This PR";
-  return safe.length > 60 ? `${safe.slice(0, 59).trimEnd()}\u2026` : safe;
-}
-function radar(byId, prTitle) {
-  const title = radarTitle(prTitle);
-  const axisLines = [];
-  for (let i = 0; i < RADAR_AXES.length; i += 3) {
-    axisLines.push("  axis " + RADAR_AXES.slice(i, i + 3).map((a) => `${a.key}["${a.label}"]`).join(", "));
-  }
-  const data = RADAR_AXES.map((a) => Math.round(byId.get(a.id)?.score ?? 0)).join(", ");
-  return [
-    "```mermaid",
-    "---",
-    "config:",
-    "  theme: dark",
-    "  themeVariables:",
-    '    cScale0: "#5b9bd5"',
-    '    background: "#0a0a0e"',
-    "    radar:",
-    "      curveTension: 1",
-    "      curveOpacity: 0.18",
-    "      curveStrokeWidth: 2",
-    '      axisColor: "#2c2c34"',
-    "      axisLabelFontSize: 12",
-    '      graticuleColor: "#2c2c34"',
-    "      graticuleOpacity: 0.55",
-    "---",
-    "radar-beta",
-    `  title ${title}`,
-    ...axisLines,
-    `  curve pr["${title}"]{${data}}`,
-    "  max 100",
-    "  min 0",
-    "  graticule polygon",
-    "  ticks 4",
-    "```"
-  ].join("\n");
-}
-function renderQualityGauges(ext, prTitle) {
-  const gauges = ext?.pr_quality?.gauges;
-  if (!gauges || gauges.length === 0) return null;
-  const summary2 = ext?.pr_quality?.gauge_summary ?? {};
-  const byId = new Map(gauges.map((g) => [g.id, g]));
-  const out = [];
-  out.push("## Complexity & Risk Report");
-  out.push(`**LLM Context:** ${llmContextBadge(summary2)}`);
-  const groupOrder = [];
-  const grouped = /* @__PURE__ */ new Map();
-  for (const g of gauges) {
-    if (!grouped.has(g.group)) {
-      grouped.set(g.group, []);
-      groupOrder.push(g.group);
-    }
-    grouped.get(g.group).push(g);
-  }
-  groupOrder.forEach((group, idx) => {
-    out.push("---");
-    out.push(`### ${idx + 1}. ${group}`);
-    const isLlm = group === "LLM Complexity";
-    const intro2 = GROUP_INTRO[group];
-    if (intro2 && !isLlm) out.push(intro2);
-    for (const g of grouped.get(group)) {
-      const block = [];
-      block.push(`#### ${g.label} ${pill(g)}`);
-      if (g.higher_is_better) block.push("*Higher is better*");
-      block.push(bar(g));
-      if (!isLlm) {
-        block.push(
-          [
-            "<details>",
-            "<summary>Description &amp; analysis</summary>",
-            "",
-            `<font face="monospace">${escapeHtml(g.description)}</font>`,
-            "</details>"
-          ].join("\n")
-        );
-      }
-      out.push(block.join("\n\n"));
-    }
-  });
-  out.push("---");
-  out.push(radar(byId, prTitle));
-  return out.join("\n\n");
-}
-
-// src/render/sections/value_card.ts
-function renderValueCard(input) {
-  const axes = input.card?.axes ?? [];
-  if (axes.length === 0) return null;
-  return `## \u{1F4CA} Business value
-
-${valueDriftChart(axes, input.overallPercent)}`;
-}
-function valueDriftChart(axes, overallPercent) {
-  const labels = axes.map((a) => cleanLabel(a.label));
-  const data = axes.map((a) => round1(a.delta_percent));
-  const fills = axes.map((a) => barColor(a).fill);
-  const borders = axes.map((a) => barColor(a).border);
-  const composite = typeof overallPercent === "number" ? overallPercent : mean(axes.map((a) => a.delta_percent));
-  const regressed = axes.filter((a) => a.direction === "down" || a.delta_percent < 0).length;
-  const dataMin = Math.min(0, ...data);
-  const dataMax = Math.max(0, ...data);
-  const xMin = Math.min(-5, Math.floor(dataMin * 1.15));
-  const xMax = Math.max(5, Math.ceil(dataMax * 1.15));
-  const config = {
-    type: "horizontalBar",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Change vs base (%)",
-          backgroundColor: fills,
-          borderColor: borders,
-          borderWidth: 1,
-          data
-        }
-      ]
-    },
-    options: {
-      legend: { display: false },
-      title: {
-        display: true,
-        text: [
-          "PR value drift - per-axis (% vs base)",
-          `Composite ${signedPercent(composite)}   |   ${regressed} of ${axes.length} ${axes.length === 1 ? "axis" : "axes"} regressed`
-        ],
-        fontColor: "#e6e6e6",
-        fontSize: 16
-      },
-      scales: {
-        xAxes: [
-          {
-            ticks: { min: xMin, max: xMax, fontColor: "#8a8a8a" },
-            gridLines: { color: "rgba(255,255,255,0.08)", zeroLineColor: "rgba(220,220,220,0.6)", zeroLineWidth: 2 }
-          }
-        ],
-        yAxes: [
-          {
-            ticks: { fontColor: "#cfcfcf", fontSize: 13 },
-            gridLines: { color: "rgba(255,255,255,0.05)" }
-          }
-        ]
-      },
-      plugins: {
-        datalabels: { color: "#ffffff", anchor: "end", align: "end", font: { weight: "bold", size: 13 } }
-      }
-    }
-  };
-  const url = `https://quickchart.io/chart?bkg=%230d0d10&w=900&h=400&c=${encodeURIComponent(JSON.stringify(config))}`;
-  return `![PR value drift](${url})`;
-}
-function cleanLabel(label) {
-  return label.replace(/^[^\p{L}]+/u, "").trim() || label;
-}
-function barColor(a) {
-  if (a.direction === "down" || a.delta_percent < 0) return { fill: "rgba(226,75,74,0.85)", border: "rgb(226,75,74)" };
-  if (a.direction === "up" || a.delta_percent > 0) return { fill: "rgba(63,185,80,0.85)", border: "rgb(63,185,80)" };
-  return { fill: "rgba(136,135,128,0.7)", border: "rgb(136,135,128)" };
-}
-function round1(n) {
-  return Math.round(n * 10) / 10;
-}
-function mean(ns) {
-  return ns.length ? ns.reduce((s, n) => s + n, 0) / ns.length : 0;
-}
-
-// src/render/context.ts
-function canLink(ctx) {
-  return !!(ctx?.owner && ctx?.repo && ctx?.sha);
-}
-function permalinkUrl(ctx, path, line, endLine) {
-  if (!canLink(ctx)) return null;
-  const base = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.sha}/${encodePath(path)}`;
-  if (typeof line === "number" && typeof endLine === "number" && endLine !== line) {
-    return `${base}#L${line}-L${endLine}`;
-  }
-  if (typeof line === "number") return `${base}#L${line}`;
-  return base;
-}
-function fileLink(ctx, path, line, label) {
-  const text = label ?? (typeof line === "number" ? `${basename(path)}:${line}` : path);
-  const url = permalinkUrl(ctx, path, line);
-  return url ? `[\`${text}\`](${url})` : `\`${text}\``;
-}
-function symbolLink(ctx, symbol, path, line) {
-  const url = permalinkUrl(ctx, path, line);
-  return url ? `[\`${symbol}\`](${url})` : `\`${symbol}\``;
-}
-function encodePath(path) {
-  return path.split("/").map(encodeURIComponent).join("/");
-}
-
-// src/render/lib/agent_prompt.ts
-var CONFIDENCE_GUARDRAIL = 0.85;
-function buildFixAllPrompt(sorted, ctx) {
-  if (sorted.length < 2) return null;
-  const items = sorted.map((s, i) => {
-    const tag = labelTag(s);
-    const ask = (s.remediation_hint?.trim() || s.llm_prompt_hint?.trim() || s.why_it_matters.trim()).replace(/\s+/g, " ");
-    const lowConf = s.confidence < CONFIDENCE_GUARDRAIL ? ` (~${confidencePercent(s.confidence)} confident \u2014 verify before changing)` : "";
-    return `${i + 1}. [${tag}] ${locLabel(s)} \u2014 ${truncate(ask, 200)}${lowConf}`;
-  });
-  return [
-    `You are resolving the ${sorted.length} findings from a Drift PR review. Fix them in the order listed, one minimal commit each, then run the build and the test suite.`,
-    "",
-    ...items,
-    "",
-    "GLOBAL CONSTRAINTS:",
-    "- Minimal diffs; do not reformat untouched code. No new dependencies. Do not modify existing tests unless a test encodes the bug.",
-    "- After each fix, re-run the build/linter and the tests before moving on.",
-    "- If you believe any finding is a false positive, STOP and report it rather than changing code you think is correct."
-  ].join("\n");
-}
-function locLabel(s) {
-  const range = lineRange(s.diff?.before_lines ?? s.diff?.after_lines);
-  if (range && range[0] !== range[1]) return `${s.file} (lines ${range[0]}\u2013${range[1]})`;
-  if (typeof s.line === "number") return `${s.file}:${s.line}`;
-  if (range) return `${s.file}:${range[0]}`;
-  return s.file;
-}
-function labelTag(s) {
-  const label = s.category_label?.split("\u2014").pop()?.trim();
-  if (label) return label;
-  return s.category === "B" ? "Product correctness" : s.category === "C" ? "Framework misuse" : "Optimization";
-}
-function lineRange(lines) {
-  const nums = (lines ?? []).map((l) => l.line_number).filter((n) => typeof n === "number");
-  if (nums.length === 0) return null;
-  return [Math.min(...nums), Math.max(...nums)];
-}
-function truncate(s, max) {
-  return s.length > max ? `${s.slice(0, max - 1)}\u2026` : s;
-}
-
-// src/render/sections/suggestions.ts
-var CATEGORY = {
-  A: { badge: "\u{1F150}", name: "Optimization" },
-  B: { badge: "\u{1F151}", name: "Product correctness" },
-  C: { badge: "\u{1F152}", name: "Framework misuse" }
-};
-var DEFAULT_MAX_SUGGESTIONS = 5;
-function resolveMax(max) {
-  if (max === void 0 || !Number.isFinite(max) || max < 1) return DEFAULT_MAX_SUGGESTIONS;
-  return Math.floor(max);
-}
-function dedupeSuggestions(items) {
-  const best = /* @__PURE__ */ new Map();
-  for (const s of items) {
-    const key = `${s.source ?? "scanner"}\0${s.file}\0${s.line ?? 0}\0${s.kind ?? ""}`;
-    const prev = best.get(key);
-    if (!prev || s.confidence > prev.confidence) best.set(key, s);
-  }
-  return [...best.values()];
-}
-function renderSuggestions(suggestions, ctx, opts = {}) {
-  const passing = dedupeSuggestions((suggestions ?? []).filter(passesQualityBar));
-  if (passing.length === 0) return null;
-  const sorted = [...passing].sort((a, b) => priority(a).rank - priority(b).rank || b.confidence - a.confidence);
-  const total = passing.length;
-  const kept = sorted.slice(0, resolveMax(opts.max));
-  const correctness = passing.filter((s) => s.category === "B").length;
-  const lines = [`## \u26A0\uFE0F Code suggestions (${total})`, ""];
-  if (correctness > 0) {
-    lines.push(
-      "> [!CAUTION]",
-      `> **${correctness} product-correctness ${plural(correctness, "issue")}** ${correctness === 1 ? "was" : "were"} flagged \u2014 surfaced as ${plural(correctness, "a warning", "warnings")}, not a gate, but should be resolved before merge.`,
-      ""
-    );
-  }
-  lines.push("| Priority | Finding | Location | Confidence |", "|:--:|---|---|---:|");
-  for (const s of kept) {
-    const p = priority(s);
-    lines.push(`| ${p.emoji} ${p.label} | ${cell(findingLabel(s))} | ${fileLink(ctx, s.file, s.line)} | ${confidencePercent(s.confidence)} |`);
-  }
-  lines.push("");
-  if (total > kept.length) {
-    const more = total - kept.length;
-    lines.push(`_\u2026+${more} more ${plural(more, "suggestion")} not shown \u2014 rendering the top ${kept.length} by priority._`, "");
-  }
-  const fixAll = buildFixAllPrompt(kept, ctx);
-  if (fixAll) {
-    lines.push(
-      "<details>",
-      `<summary>\u{1F916} <strong>Fix-All handoff</strong> \u2014 one prompt that dispatches all ${kept.length} findings</summary>`,
-      "",
-      fencedBlock(fixAll, "text"),
-      "",
-      "</details>"
-    );
-  }
-  return lines.join("\n").trimEnd();
-}
-function priority(s) {
-  const sev = (s.severity ?? "").toLowerCase();
-  if (sev === "critical" || sev === "high") return { emoji: "\u{1F534}", label: "High", rank: 0 };
-  if (s.category === "B" || s.category === "C") return { emoji: "\u{1F7E1}", label: "Medium", rank: 1 };
-  return { emoji: "\u26AA", label: "Low", rank: 2 };
-}
-function findingLabel(s) {
-  const cat = CATEGORY[s.category];
-  const suffix = labelSuffix(s.category_label);
-  return suffix ? `${cat.badge} ${suffix}` : `${cat.badge} ${cat.name}`;
-}
-function labelSuffix(label) {
-  if (!label) return null;
-  const idx = label.indexOf("\u2014");
-  const suffix = (idx >= 0 ? label.slice(idx + 1) : "").trim();
-  return suffix || null;
-}
-function cell(s) {
-  return s.replace(/\|/g, "\\|");
-}
-
-// src/render/sections/risks.ts
-var MAX_RISKS = 3;
-var QUADRANT = {
-  act_before_merge: { emoji: "\u{1F534}", label: "Act before merge", rank: 0 },
-  monitor_closely: { emoji: "\u{1F7E1}", label: "Monitor closely", rank: 1 },
-  document_and_ship: { emoji: "\u{1F535}", label: "Document & ship", rank: 2 },
-  acceptable: { emoji: "\u{1F7E2}", label: "Acceptable", rank: 3 }
-};
-function renderRisks(risks) {
-  const items = risks?.items ?? [];
-  if (items.length === 0 && !risks?.mermaid) return null;
-  const lines = ["## \u{1F6F0} Risks", ""];
-  if (items.length > 0) {
-    const act = items.filter((r) => r.quadrant === "act_before_merge").length;
-    lines.push(intro(act, items.length), "");
-    lines.push("| Risk | Likelihood | Severity | Quadrant |", "|---|---:|---:|---|");
-    const ranked = sortByImpact(items);
-    for (const r of ranked.slice(0, MAX_RISKS)) {
-      lines.push(`| ${cell2(r.label)} | ${prob(r.likelihood)} | ${prob(r.severity)} | ${quadrant(r)} |`);
-    }
-    if (ranked.length > MAX_RISKS) {
-      const more = ranked.length - MAX_RISKS;
-      lines.push(`| *\u2026+${more} lower-impact ${plural(more, "risk")}* | | | *see the quadrant map* |`);
-    }
-    lines.push("");
-  }
-  if (risks?.mermaid) {
-    lines.push(
-      "<details>",
-      "<summary>\u{1F5FA} Risk quadrant map (severity \u2191 \xD7 likelihood \u2192)</summary>",
-      "",
-      "```mermaid",
-      risks.mermaid,
-      "```",
-      "",
-      "</details>"
-    );
-  }
-  return lines.join("\n").trimEnd();
-}
-function intro(act, total) {
-  if (act === 0) {
-    return `**0 of ${total}** ${plural(total, "risk")} land in *Act before merge* \u2014 none gate the merge. Lower-impact ${plural(total, "risk")} below:`;
-  }
-  return `**${act} of ${total}** ${plural(total, "risk")} land in *Act before merge*. Highest-priority first:`;
-}
-function sortByImpact(items) {
-  return [...items].sort(
-    (a, b) => rank(a) - rank(b) || b.severity - a.severity || b.likelihood - a.likelihood || a.label.localeCompare(b.label)
-  );
-}
-function rank(r) {
-  return r.quadrant ? QUADRANT[r.quadrant].rank : 99;
-}
-function quadrant(r) {
-  if (!r.quadrant) return "\u2014";
-  const q = QUADRANT[r.quadrant];
-  return `${q.emoji} ${q.label}`;
-}
-function prob(p) {
-  return p.toFixed(2);
-}
-function cell2(s) {
-  return s.replace(/\|/g, "\\|");
-}
-
-// src/render/sections/architecture.ts
-function renderArchitecture(input) {
-  const { arch: arch2, business, keyFiles } = input;
-  const dataStructures = arch2?.data_structures ?? [];
-  const diagram = primaryDiagram(arch2);
-  const nothing = dataStructures.length === 0 && !diagram && !business?.mermaid && !keyFiles?.mermaid;
-  if (nothing) return null;
-  const lines = ["## \u{1F3D7} Architecture", ""];
-  const details = [];
-  if (diagram) {
-    details.push(
-      detailsBlock("\u{1F9ED} Call graph \u2014 color-coded diff", [
-        "```mermaid",
-        diagram,
-        "```",
-        "",
-        "[Mermaid flowchart reference](https://mermaid.js.org/syntax/flowchart.html)"
-      ])
-    );
-  }
-  if (business?.mermaid) {
-    const inner = [];
-    if (business.summary) inner.push(`> **Summary \u2014** ${business.summary}`, "");
-    inner.push("```mermaid", business.mermaid, "```");
-    details.push(detailsBlock("\u{1F9E0} Business-logic reach diagram", inner));
-  }
-  if (dataStructures.length > 0) {
-    details.push(detailsBlock(`\u{1F4E6} Data structures touched (${dataStructures.length})`, dataStructureTable(dataStructures)));
-  }
-  if (keyFiles?.mermaid) {
-    details.push(detailsBlock("\u{1F5C2} Key files \u2014 hot-touch mindmap", ["```mermaid", keyFiles.mermaid, "```"]));
-  }
-  if (details.length > 0) lines.push(details.join("\n\n"));
-  return lines.join("\n").trimEnd();
-}
-function dataStructureTable(ds) {
-  const lines = ["| Name | Kind | Language | Methods in scope |", "|---|:--:|---|---:|"];
-  for (const d of ds) {
-    const methods = methodCount(d.description);
-    lines.push(`| \`${escapeHtml(d.name)}\` | ${d.kind} | ${d.scope ?? "\u2014"} | ${methods === null ? "\u2014" : int(methods)} |`);
-  }
-  return lines;
-}
-function methodCount(desc) {
-  const m = (desc ?? "").match(/(\d+)/);
-  return m ? Number(m[1]) : null;
-}
-function primaryDiagram(arch2) {
-  return arch2?.diff_merged_mermaid?.trim() || arch2?.combined_mermaid?.trim() || arch2?.after_mermaid?.trim() || arch2?.before_mermaid?.trim() || null;
-}
-function detailsBlock(summary2, inner) {
-  return ["<details>", `<summary>${summary2}</summary>`, "", ...inner, "", "</details>"].join("\n");
-}
-
-// src/render/sections/ext.ts
-var MAX_DUP = 5;
-var MAX_INLINE = 5;
-function renderExt(ext, ctx) {
-  if (!ext) return null;
-  const inner = [];
-  const clusters = ext.duplication?.clusters ?? [];
-  if (clusters.length > 0) {
-    const out = [`### \u{1F9EC} Duplication (${clusters.length} ${plural(clusters.length, "cluster")})`, ""];
-    for (const c of clusters.slice(0, MAX_DUP)) {
-      const members = c.members.map((m) => `\`${m.name}\` in ${fileLink(ctx, m.file, void 0, basename(m.file))}`).join(" \u2194 ");
-      out.push(`- ${members}`);
-    }
-    if (clusters.length > MAX_DUP) out.push(`- _\u2026+${clusters.length - MAX_DUP} more ${plural(clusters.length - MAX_DUP, "cluster")}_`);
-    inner.push(out.join("\n"));
-  }
-  const uncovered = ext.tests_in_graph?.uncovered_roots ?? [];
-  if (uncovered.length > 0) {
-    inner.push(
-      [`### \u{1F9EA} Uncovered entry points (${uncovered.length})`, "", "No test file reaches these in the call graph:", "", inlineList(uncovered, MAX_INLINE)].join("\n")
-    );
-  }
-  const gaps = ext.nfr_edge_cases?.reliability_gaps ?? [];
-  if (gaps.length > 0) {
-    inner.push(
-      [`### \u{1F6E1}\uFE0F Reliability gaps (${gaps.length})`, "", "These entry points lack retry / timeout / circuit / fallback markers:", "", inlineList(gaps, MAX_INLINE)].join("\n")
-    );
-  }
-  const hi = ext.tech_debt?.high_complexity?.length ?? 0;
-  const long = ext.tech_debt?.long_functions?.length ?? 0;
-  if (hi + long > 0) {
-    const out = ["### \u26A0\uFE0F Tech-debt findings", ""];
-    if (hi > 0) out.push(`- **${hi}** high-complexity ${plural(hi, "function")} (threshold ${ext.tech_debt?.thresholds?.complexity ?? 10})`);
-    if (long > 0) out.push(`- **${long}** long ${plural(long, "function")} (threshold ${ext.tech_debt?.thresholds?.loc ?? 80} LOC)`);
-    inner.push(out.join("\n"));
-  }
-  if (inner.length === 0) return null;
-  return [
-    "## \u{1F9EA} Extended findings",
-    "",
-    "<details>",
-    "<summary>Duplication, uncovered entry points, reliability gaps &amp; tech debt</summary>",
-    "",
-    inner.join("\n\n"),
-    "",
-    "</details>"
-  ].join("\n");
-}
-
-// src/render/lib/checklist.ts
-var MAX_DEAD_EXPORTS_LINKED = 5;
-var MAX_CORRECTNESS_LINES = 3;
-function buildChecklist(facts, ctx) {
-  const items = [];
-  for (const s of facts.correctness.slice(0, MAX_CORRECTNESS_LINES)) {
-    const loc = fileLink(ctx, s.file, s.line);
-    const why = correctnessTag(s.category_label);
-    items.push(`Fix the product-correctness issue at ${loc}${why ? ` (${why})` : ""}`);
-  }
-  if (facts.correctness.length > MAX_CORRECTNESS_LINES) {
-    const extra = facts.correctness.length - MAX_CORRECTNESS_LINES;
-    items.push(`Resolve ${extra} more product-correctness ${plural(extra, "issue")} (see Suggestions)`);
-  }
-  if (facts.newTestFiles === 0 && (facts.changedFiles > 0 || (facts.locAdded ?? 0) > 0)) {
-    items.push("Add tests \u2014 this PR shipped **0** new test files");
-  }
-  if (facts.regressedAxes.length > 0) {
-    const list = facts.regressedAxes.map((a) => `**${a.label} ${signedPercent(a.delta_percent)}**`).join(" and ");
-    items.push(`Triage the ${list} ${plural(facts.regressedAxes.length, "regression")}, or confirm they're acceptable`);
-  }
-  if (facts.deadCode.length > 0) {
-    const links = facts.deadCode.slice(0, MAX_DEAD_EXPORTS_LINKED).map((s) => symbolLink(ctx, deadSymbol(s), s.file, s.line)).join(", ");
-    const n = facts.deadCode.length;
-    const more = n > MAX_DEAD_EXPORTS_LINKED ? `, *\u2026+${n - MAX_DEAD_EXPORTS_LINKED} more*` : "";
-    items.push(`Remove or wire up ${n} dead ${plural(n, "export")}: ${links}${more}`);
-  }
-  const gaps = facts.reliabilityGaps.length || facts.uncoveredRoots.length;
-  if (gaps > 0) {
-    items.push(`Decide on retry / timeout / fallback for the ${int(gaps)} uncovered entry ${plural(gaps, "point")}`);
-  }
-  return items;
-}
-function correctnessTag(label) {
-  if (!label) return null;
-  const idx = label.indexOf("\u2014");
-  const suffix = (idx >= 0 ? label.slice(idx + 1) : label).trim();
-  if (!suffix || /product correctness/i.test(suffix)) return null;
-  return suffix.charAt(0).toLowerCase() + suffix.slice(1);
-}
-function deadSymbol(s) {
-  const fn = s.function;
-  return fn && fn !== "<module>" && !fn.startsWith("<") ? fn : basename(s.file);
-}
-
-// src/render/lib/bars.ts
-var FULL = "\u2588";
-var EMPTY = "\u2591";
-function progressBar(done, total, cells = 10) {
-  if (total <= 0) return EMPTY.repeat(cells);
-  const filled = clamp(Math.round(done / total * cells), 0, cells);
-  return FULL.repeat(filled) + EMPTY.repeat(cells - filled);
-}
-
-// src/render/sections/before_merge.ts
-function renderBeforeMerge(facts, ctx) {
-  const items = buildChecklist(facts, ctx);
-  if (items.length === 0) {
-    return ["## \u2705 Before you merge", "", "_Nothing blocking \u2014 Drift found no gating issues. Advisory review only._"].join("\n");
-  }
-  const boxes = items.map((t) => `- [ ] ${t}`);
-  const readiness = `> **Merge readiness** &nbsp; \`${progressBar(0, items.length)}\` &nbsp; **0 / ${items.length}** \u2014 GitHub tallies the boxes above as you check them off.`;
-  return ["## \u2705 Before you merge", "", ...boxes, "", readiness].join("\n");
-}
-
-// src/render/sections/footer.ts
-function escapeAttr(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function escapeText(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function renderFooter(gen, audioUrl, audioMp4Url) {
-  const url = audioUrl?.trim();
-  const mp4 = audioMp4Url?.trim();
-  let audio = "";
-  if (url) {
-    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
-    if (mp4) {
-      audio += ` \xB7 <a href="${escapeAttr(mp4)}">MP4</a>`;
-    }
-    audio += " <sup>(sign in to GitHub to download";
-    if (mp4) {
-      audio += "; drop the MP4 into a reply for an inline player";
-    }
-    audio += ")</sup>";
-  }
-  return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
-}
-
-// src/render/sections/artifacts.ts
-function renderScanArtifacts(opts) {
-  const json = opts.scanJsonUrl?.trim();
-  const context3 = opts.scanContextUrl?.trim();
-  if (!json && !context3) return "";
-  const links = [];
-  if (json) links.push(`<a href="${escapeHtml(json)}">pr-scan.json</a>`);
-  if (context3) links.push(`<a href="${escapeHtml(context3)}">pr-scan-context.json</a>`);
-  return `<details>
-<summary><sub>\u{1F4CE} Scan artifacts (JSON)</sub></summary>
-
-<sub>${links.join(" \xB7 ")} \u2014 machine-readable scanner report + scan context. Sign in to GitHub to download.</sub>
-
-</details>`;
-}
-
-// src/render/overview.ts
-var STICKY_MARKER = "<!-- drift:sticky-comment -->";
-var ARCH_GUARD_OPEN = "<!-- drift:arch:nocollapse -->";
-var ARCH_GUARD_CLOSE = "<!-- /drift:arch:nocollapse -->";
-var protectArchitecture = (block) => `${ARCH_GUARD_OPEN}
-${block}
-${ARCH_GUARD_CLOSE}`;
-var BODY_SIZE_BUDGET = 6e4;
-var HARD_CAP = 65e3;
-function renderOverview(report, opts = {}) {
-  const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
-  const review = report.pr_review;
-  const facts = extractFacts(report);
-  const currentState = stateFromReport(report);
-  const confidence = mergeConfidence(facts);
-  const confTrend = appendConfHistory(priorState, confidence.score);
-  currentState.confHistory = confTrend;
-  const header = renderHeader(report, ctx, { confTrend });
-  const qualityGauges = renderQualityGauges(report.pr_review_ext, ctx?.prTitle);
-  const valueCard = renderValueCard({
-    counts: review?.counts,
-    card: review?.value_card,
-    overallPercent: review?.overall_drift?.percent,
-    currentState,
-    priorState
-  });
-  const suggestions = renderSuggestions(review?.code_suggestions, ctx, { max: maxSuggestions });
-  const risks = renderRisks(review?.visual_summary?.risks);
-  const architecture = renderArchitecture({
-    prScope: report.pr_scope,
-    arch: review?.architecture_flow,
-    business: review?.business_logic,
-    keyFiles: review?.visual_summary?.key_files,
-    ctx
-  });
-  const ext = renderExt(report.pr_review_ext, ctx);
-  const beforeMerge = renderBeforeMerge(facts, ctx);
-  const sections = [withImage("drift-review.png", "Drift review", header)];
-  if (qualityGauges)
-    sections.push(withImage("complexity-risk-report.png", "Complexity & Risk Report", wrapSection(qualityGauges, { tldr: tldrGauges(report.pr_review_ext) })));
-  if (architecture)
-    sections.push(protectArchitecture(withImage("architecture.png", "Architecture", wrapSection(architecture, { tldr: tldrArchitecture(facts) }))));
-  if (valueCard) sections.push(withImage("business-value.png", "Business value", wrapSection(valueCard, { tldr: tldrValue(facts) })));
-  if (suggestions) sections.push(withImage("code-suggestions.png", "Code suggestions", wrapSection(suggestions, { tldr: tldrSuggestions(facts) })));
-  if (risks) sections.push(wrapSection(risks, { tldr: tldrRisks(facts) }));
-  if (ext) sections.push(wrapSection(ext, { tldr: tldrExt(facts) }));
-  sections.push(beforeMerge);
-  const footer = [
-    audioUrl?.trim() ? audioBanner(audioUrl.trim()) : "",
-    renderFooter(report.generator, audioUrl, audioMp4Url),
-    renderScanArtifacts({ scanJsonUrl, scanContextUrl }),
-    andySignoff()
-  ].filter(Boolean).join("\n\n");
-  let body = `${STICKY_MARKER}
-${sections.join("\n\n---\n\n")}`;
-  body += `
-
----
-
-${footer}`;
-  body += `
-${statusMarker(facts, confidence.score, reviewEffort(facts).score)}`;
-  body += `
-
-${serializeState(currentState)}`;
-  return guardSize(body);
-}
-function statusMarker(facts, confidence, effort) {
-  const drift = facts.overallPercent === null ? "na" : facts.overallPercent.toFixed(1);
-  return `<!-- drift:status v=1 confidence=${confidence} effort=${effort} correctness=${facts.correctness.length} gatingRisks=${facts.risksToAddress} drift=${drift} -->`;
-}
-function tldrValue(f) {
-  if (f.overallPercent === null) return "Per-axis value dashboard";
-  const arrow = f.overallDirection === "up" ? "\u25B2" : f.overallDirection === "down" ? "\u25BC" : "\u2014";
-  let s = `Overall drift ${signedPercent(f.overallPercent)} ${arrow}`;
-  if (f.regressedAxes.length > 0) {
-    s += ` \xB7 ${f.regressedAxes.length} ${plural(f.regressedAxes.length, "axis", "axes")} regressed`;
-  } else if (f.topImprovement) {
-    s += ` \xB7 ${f.topImprovement.label} leads`;
-  }
-  return s;
-}
-function tldrSuggestions(f) {
-  const n = f.passing.length;
-  const parts = [`${int(n)} ${plural(n, "suggestion")}`];
-  if (f.correctness.length > 0) {
-    parts.push(`${f.correctness.length} product-correctness`);
-  }
-  return parts.join(" \xB7 ");
-}
-function tldrRisks(f) {
-  if (f.totalRisks === 0) return "Risk quadrant map";
-  if (f.risksToAddress > 0) return `${f.risksToAddress} to address \xB7 ${f.totalRisks} total`;
-  return `${f.totalRisks} ${plural(f.totalRisks, "risk")} \xB7 none gating`;
-}
-function tldrArchitecture(f) {
-  const dead = f.unreachable > 0 ? ` \xB7 ${int(f.unreachable)} unreachable` : "";
-  return `Color-coded diff graph${dead}`;
-}
-function tldrExt(f) {
-  const bits = [];
-  if (f.duplicationClusters > 0) bits.push(`${f.duplicationClusters} dup ${plural(f.duplicationClusters, "cluster")}`);
-  if (f.uncoveredRoots.length > 0) bits.push(`${f.uncoveredRoots.length} uncovered`);
-  if (f.reliabilityGaps.length > 0) bits.push(`${f.reliabilityGaps.length} reliability ${plural(f.reliabilityGaps.length, "gap")}`);
-  const debt = f.highComplexity + f.longFunctions;
-  if (debt > 0) bits.push(`${debt} tech-debt`);
-  return bits.length > 0 ? bits.join(" \xB7 ") : "Duplication \xB7 uncovered roots \xB7 reliability gaps \xB7 tech debt";
-}
-function tldrGauges(ext) {
-  const pq = ext?.pr_quality;
-  const gauges = pq?.gauges ?? [];
-  if (gauges.length === 0) return "Complexity & risk gauges";
-  const crit = gauges.filter((g) => g.level === "critical").length;
-  const high = gauges.filter((g) => g.level === "high").length;
-  const bits = [];
-  const top = pq?.gauge_summary?.highest?.[0];
-  if (top) bits.push(`${top.label} ${top.score}`);
-  if (crit > 0) bits.push(`${crit} critical`);
-  else if (high > 0) bits.push(`${high} high`);
-  if (pq?.gauge_summary?.context_fits === false) bits.push("LLM context exceeded");
-  bits.push(`${gauges.length} metrics`);
-  return bits.join(" \xB7 ");
-}
-function guardSize(body) {
-  if (body.length <= BODY_SIZE_BUDGET) return body;
-  const innermost = /<details(?: open)?>\s*<summary>((?:(?!<\/summary>)[\s\S])*?)<\/summary>(?:(?!<details(?: open)?>)[\s\S])*?<\/details>/g;
-  let out = body;
-  for (let i = 0; i < 1e3 && out.length > BODY_SIZE_BUDGET; i++) {
-    const arch2 = archSpan(out);
-    innermost.lastIndex = 0;
-    let target = null;
-    let m;
-    while ((m = innermost.exec(out)) !== null) {
-      const start = m.index;
-      const end = start + m[0].length;
-      if (arch2 && start < arch2.end && end > arch2.start) continue;
-      target = { start, end, summary: m[1].trim() };
-    }
-    if (!target) break;
-    out = `${out.slice(0, target.start)}<sub>${target.summary} \u2014 _collapsed (size guard)_</sub>${out.slice(target.end)}`;
-  }
-  if (out.length > HARD_CAP) {
-    const arch2 = archSpan(out);
-    const cut = arch2 ? Math.max(HARD_CAP - 80, arch2.end) : HARD_CAP - 80;
-    out = `${out.slice(0, cut)}
-
-<sub>\u2026report truncated (size guard).</sub>`;
-  }
-  return out;
-}
-function archSpan(body) {
-  const start = body.indexOf(ARCH_GUARD_OPEN);
-  if (start === -1) return null;
-  const closeIdx = body.indexOf(ARCH_GUARD_CLOSE, start);
-  if (closeIdx === -1) return null;
-  return { start, end: closeIdx + ARCH_GUARD_CLOSE.length };
-}
-
-// src/github/comment.ts
-async function upsertStickyComment(args) {
-  const { octokit, owner, repo, prNumber, body } = args;
-  const id = args.existingId !== void 0 ? args.existingId : (await findSticky(octokit, owner, repo, prNumber))?.id ?? null;
-  if (id) {
-    await octokit.rest.issues.updateComment({ owner, repo, comment_id: id, body });
-    info(`Updated sticky comment ${id}`);
-  } else {
-    const { data } = await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
-    info(`Created sticky comment ${data.id}`);
-  }
-}
-async function findSticky(octokit, owner, repo, prNumber) {
-  const { data } = await octokit.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
-  const found = data.find((c) => c.body?.includes(STICKY_MARKER));
-  return found ? { id: found.id, body: found.body ?? "" } : null;
-}
-
-// src/github/sticky-post.ts
-async function buildAndUpsertSticky(args) {
-  const { octokit, owner, repo, prNumber, report, ctx } = args;
-  let priorState = null;
-  let existingId = null;
-  try {
-    const prior = await findSticky(octokit, owner, repo, prNumber);
-    existingId = prior?.id ?? null;
-    priorState = parseState(prior?.body);
-  } catch (err) {
-    warning(`could not read prior sticky comment: ${describe(err)}`);
-  }
-  const body = renderOverview(report, {
-    ctx,
-    priorState,
-    audioUrl: args.audioUrl,
-    audioMp4Url: args.audioMp4Url,
-    scanJsonUrl: args.scanJsonUrl,
-    scanContextUrl: args.scanContextUrl,
-    maxSuggestions: args.maxSuggestions
-  });
-  if (args.dryRun) {
-    info(
-      `[dry-run] would upsert sticky comment (${body.length} bytes)${existingId ? ` to comment ${existingId}` : " (new)"}.`
-    );
-    return;
-  }
-  await upsertStickyComment({ octokit, owner, repo, prNumber, body, existingId });
-}
-function describe(err) {
-  return err instanceof Error ? err.message : String(err);
-}
-
 // src/pr-context.ts
 function resolvePrContext() {
   const pr = context2.payload.pull_request;
@@ -25845,72 +23797,270 @@ function optEnv(name) {
   return v && v.length > 0 ? v : void 0;
 }
 
-// src/ai-index.ts
-async function aiMain() {
-  const model = process.env.DRIFT_AI_MODEL || "openai/gpt-4o";
-  const dryRun = process.env.DRIFT_DRY_RUN === "true";
-  const maxAi = parseMax(process.env.DRIFT_MAX_AI_SUGGESTIONS, 1);
-  const deferSticky = process.env.DRIFT_DEFER_STICKY_COMMENT === "true";
-  const report = loadReportSafe();
-  const { suggestions: aiSuggestions, funnel: aiFunnel } = readAISuggestions();
-  if (!deferSticky) {
-    info(
-      "DRIFT_DEFER_STICKY_COMMENT not set \u2014 main.ts owns the sticky comment; this step has nothing to post."
-    );
-    return;
+// src/render/lib/format.ts
+function int(n) {
+  return Math.round(n).toLocaleString("en-US");
+}
+function plural(n, singular, pluralForm) {
+  return n === 1 ? singular : pluralForm ?? `${singular}s`;
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function basename(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+
+// src/render/context.ts
+function canLink(ctx) {
+  return !!(ctx?.owner && ctx?.repo && ctx?.sha);
+}
+function permalinkUrl(ctx, path, line, endLine) {
+  if (!canLink(ctx)) return null;
+  const base = `https://github.com/${ctx.owner}/${ctx.repo}/blob/${ctx.sha}/${encodePath(path)}`;
+  if (typeof line === "number" && typeof endLine === "number" && endLine !== line) {
+    return `${base}#L${line}-L${endLine}`;
   }
-  if (!report) {
-    warning("Scan report unreadable \u2014 cannot refresh the sticky comment.");
-    return;
+  if (typeof line === "number") return `${base}#L${line}`;
+  return base;
+}
+function fileLink(ctx, path, line, label) {
+  const text = label ?? (typeof line === "number" ? `${basename(path)}:${line}` : path);
+  const url = permalinkUrl(ctx, path, line);
+  return url ? `[\`${text}\`](${url})` : `\`${text}\``;
+}
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+// src/render/lib/severity.ts
+var COLOR = {
+  green: "2ea043",
+  // improvement / ship
+  amber: "d29922",
+  // mixed / monitor
+  red: "d1242f",
+  // regression / act
+  blue: "58a6ff",
+  // neutral-informational
+  grey: "8b949e",
+  // muted / flat
+  brand: "ff6b3d"
+  // Drift / Andy brand orange — brand chips & agent-ready badge
+};
+
+// src/render/lib/effort.ts
+var SCORE_COLOR = {
+  1: COLOR.green,
+  2: COLOR.green,
+  3: COLOR.blue,
+  4: COLOR.amber,
+  5: COLOR.red
+};
+
+// src/render/lib/branding.ts
+var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
+var BANNER_WIDTH = 120;
+var AUDIO_BANNER_WIDTH = 200;
+var ANDY_WIDTH = 64;
+var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
+var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
+
+// src/render/lib/badge.ts
+function flatBadge(message, hex) {
+  const enc = encodeURIComponent(message.replace(/-/g, "--").replace(/_/g, "__"));
+  const alt = message.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<img alt="${alt}" src="https://img.shields.io/badge/${enc}-${hex}?style=flat-square" />`;
+}
+function centerBadges(badges2) {
+  return `<p align="center">${badges2.join(" ")}</p>`;
+}
+
+// src/render/sections/footer.ts
+function escapeAttr(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function escapeText(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderFooter(gen, audioUrl, audioMp4Url) {
+  const url = audioUrl?.trim();
+  const mp4 = audioMp4Url?.trim();
+  let audio = "";
+  if (url) {
+    audio = ` \xB7 \u{1F50A} <a href="${escapeAttr(url)}">Listen (WAV)</a>`;
+    if (mp4) {
+      audio += ` \xB7 <a href="${escapeAttr(mp4)}">MP4</a>`;
+    }
+    audio += " <sup>(sign in to GitHub to download";
+    if (mp4) {
+      audio += "; drop the MP4 into a reply for an inline player";
+    }
+    audio += ")</sup>";
   }
-  const pr = resolvePrContext();
-  if (!pr) {
-    info("No PR context (pull_request payload or DRIFT_PR_* env vars) \u2014 skipping sticky comment.");
-    return;
-  }
-  const token = process.env.GITHUB_TOKEN ?? "";
-  if (!token && !dryRun) {
-    warning("No GITHUB_TOKEN \u2014 skipping sticky comment.");
-    return;
-  }
-  const octokit = getOctokit(token || "dry-run-stub-token");
-  const { owner, repo } = context2.repo;
-  let commentable = null;
-  let patches = null;
-  try {
-    const f = await fetchPrFiles(octokit, owner, repo, pr.number);
-    commentable = f.commentable;
-    patches = f.patches;
-  } catch (e) {
-    warning(`Could not fetch PR diff (${describe2(e)}); AI suggestion diffs will be after-only.`);
-  }
-  const aiOnDiff = filterAIByDiff(aiSuggestions, commentable);
-  const aiPostable = aiOnDiff.slice(0, maxAi);
-  if (aiFunnel.total > 0) {
-    info(
-      `\u{1F916} ${model}: ${aiFunnel.total} candidate(s) \u2192 ${aiFunnel.passing} pass quality bar \u2192 ${aiOnDiff.length} on-diff \u2192 ${aiPostable.length} AI-refined (cap=${maxAi}).`
-    );
-  }
-  const detCount = (report.pr_review?.code_suggestions ?? []).filter(passesQualityBar).length;
-  info(
-    `\u{1F7E3} Drift sticky comment: ${detCount} deterministic + ${aiPostable.length} AI-refined code suggestion(s) in ONE comment.`
-  );
-  try {
-    await postDeferredSticky({ octokit, owner, repo, report, pr, aiPostable, patches, model, dryRun });
-  } catch (e) {
-    warning(`Sticky comment refresh failed (non-fatal): ${describe2(e)}`);
+  return `<sub>Posted by <a href="https://drift.dev">Drift</a> \xB7 static-analysis report from <code>${escapeText(gen.tool)}</code> v${escapeText(gen.version)}${audio}</sub>`;
+}
+
+// src/render/overview.ts
+var STICKY_MARKER = "<!-- drift:sticky-comment -->";
+
+// src/render/no_source.ts
+var ANALYZED_LANGUAGES = "Python \xB7 TypeScript / JavaScript \xB7 Go \xB7 Rust \xB7 Java \xB7 Kotlin \xB7 Scala";
+var DEFAULT_MAX_FILES = 50;
+function renderNoSource(opts = {}) {
+  const { ctx } = opts;
+  const files = (opts.changedFiles ?? []).filter((f) => f.trim().length > 0);
+  const gen = opts.generator ?? { tool: "drift-static-profiler", version: "\u2014" };
+  const audioUrl = opts.audioUrl?.trim() || void 0;
+  const audioMp4Url = opts.audioMp4Url?.trim() || void 0;
+  const banner = sectionImage("drift-review.png", "Drift review");
+  const sections = [
+    banner,
+    badges(files),
+    callout(),
+    changedFilesTable(files, ctx, opts.maxFiles ?? DEFAULT_MAX_FILES),
+    nextStepHint()
+  ].filter(Boolean);
+  const footer = [
+    audioUrl ? audioBanner(audioUrl) : "",
+    renderFooter(gen, audioUrl, audioMp4Url),
+    andySignoff()
+  ].filter(Boolean).join("\n\n");
+  let body = `${STICKY_MARKER}
+${sections.join("\n\n")}`;
+  body += `
+
+---
+
+${footer}`;
+  body += `
+${statusMarker(files.length)}`;
+  return body;
+}
+function badges(files) {
+  const count = `${int(files.length)} ${plural(files.length, "file")} changed`;
+  return centerBadges([
+    flatBadge("\u2713 No code to analyze", COLOR.blue),
+    flatBadge(categoryBadgeLabel(files), COLOR.grey),
+    flatBadge(count, COLOR.grey)
+  ]);
+}
+function categoryBadgeLabel(files) {
+  if (files.length === 0) return "No source files";
+  const cats = new Set(files.map(categoryOf));
+  if (cats.has("other")) return "Non-code changes";
+  const parts = [];
+  if (cats.has("docs")) parts.push("docs");
+  if (cats.has("config")) parts.push("config");
+  const joined = parts.join(" & ");
+  return `${joined.charAt(0).toUpperCase()}${joined.slice(1)} only`;
+}
+function callout() {
+  return [
+    "> [!NOTE]",
+    "> **This PR changes only documentation and configuration** \u2014 no source files in a",
+    `> language Drift analyzes (${ANALYZED_LANGUAGES}).`,
+    "> There is no code drift, complexity shift, or business-value change to report, so the",
+    "> usual value & risk dashboard is intentionally skipped. Drift ran and found nothing to flag."
+  ].join("\n");
+}
+function changedFilesTable(files, ctx, maxFiles) {
+  if (files.length === 0) return "";
+  const shown = files.slice(0, maxFiles);
+  const overflow = files.length - shown.length;
+  const rows = shown.map((f) => `| ${fileLink(ctx, f)} | ${categoryOf(f)} |`).join("\n");
+  const overflowNote = overflow > 0 ? `
+
+<sub>\u2026 and ${int(overflow)} more ${plural(overflow, "file")} not shown.</sub>` : "";
+  const summary2 = `\u{1F4C4} Files changed (${int(files.length)}) \u2014 all docs / config / non-code`;
+  return [
+    "<details>",
+    `<summary>${summary2}</summary>`,
+    "",
+    "| File | Type |",
+    "| --- | --- |",
+    rows,
+    overflowNote,
+    "",
+    "</details>"
+  ].join("\n");
+}
+function categoryOf(path) {
+  const lower = path.toLowerCase();
+  const base = lower.split("/").pop() ?? lower;
+  const ext = base.includes(".") ? base.slice(base.lastIndexOf(".") + 1) : "";
+  if (DOCS_EXT.has(ext)) return "docs";
+  if (CONFIG_EXT.has(ext) || CONFIG_NAMES.has(base) || base.startsWith(".")) return "config";
+  return "other";
+}
+var DOCS_EXT = /* @__PURE__ */ new Set(["md", "mdx", "markdown", "rst", "adoc", "txt"]);
+var CONFIG_EXT = /* @__PURE__ */ new Set([
+  "yml",
+  "yaml",
+  "json",
+  "jsonc",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "env",
+  "lock",
+  "properties",
+  "xml",
+  "editorconfig"
+]);
+var CONFIG_NAMES = /* @__PURE__ */ new Set([
+  "dockerfile",
+  "makefile",
+  "license",
+  ".gitignore",
+  ".dockerignore",
+  ".gitattributes"
+]);
+function nextStepHint() {
+  return `<sub>\u{1F4A1} Push a change to a source file (${ANALYZED_LANGUAGES}) and Drift will post its full value, complexity, and risk report here.</sub>`;
+}
+function statusMarker(fileCount) {
+  return `<!-- drift:status v=1 state=no-source confidence=na effort=0 changed=${fileCount} -->`;
+}
+
+// src/github/comment.ts
+async function upsertStickyComment(args) {
+  const { octokit, owner, repo, prNumber, body } = args;
+  const id = args.existingId !== void 0 ? args.existingId : (await findSticky(octokit, owner, repo, prNumber))?.id ?? null;
+  if (id) {
+    await octokit.rest.issues.updateComment({ owner, repo, comment_id: id, body });
+    info(`Updated sticky comment ${id}`);
+  } else {
+    const { data } = await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+    info(`Created sticky comment ${data.id}`);
   }
 }
-async function postDeferredSticky(args) {
-  const { report, pr } = args;
-  if (!report) {
-    warning("Sticky comment deferred but the scan report is unreadable \u2014 cannot render the overview.");
+async function findSticky(octokit, owner, repo, prNumber) {
+  const { data } = await octokit.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+  const found = data.find((c) => c.body?.includes(STICKY_MARKER));
+  return found ? { id: found.id, body: found.body ?? "" } : null;
+}
+
+// src/no-source-comment.ts
+async function run() {
+  const pr = resolvePrContext();
+  if (!pr) {
+    info("No PR context (DRIFT_PR_* env vars) \u2014 nothing to post.");
     return;
   }
-  const mergedReport = mergeAiSuggestionsIntoReport(report, args.aiPostable, args.patches, args.model);
-  const ctx = {
-    owner: args.owner,
-    repo: args.repo,
+  const githubToken = process.env.GITHUB_TOKEN ?? "";
+  if (!githubToken) {
+    warning("No GITHUB_TOKEN \u2014 skipping the no-source notice comment.");
+    return;
+  }
+  const octokit = getOctokit(githubToken);
+  const { owner, repo } = context2.repo;
+  const prCtx = {
+    owner,
+    repo,
     sha: pr.headSha,
     prNumber: pr.number,
     prTitle: pr.title,
@@ -25918,110 +24068,35 @@ async function postDeferredSticky(args) {
     baseRef: pr.baseRef,
     author: pr.author
   };
-  await buildAndUpsertSticky({
-    octokit: args.octokit,
-    owner: args.owner,
-    repo: args.repo,
-    prNumber: pr.number,
-    report: mergedReport,
-    ctx,
-    audioUrl: optEnv2("DRIFT_AUDIO_URL"),
-    audioMp4Url: optEnv2("DRIFT_AUDIO_MP4_URL"),
-    scanJsonUrl: optEnv2("DRIFT_SCAN_JSON_URL"),
-    scanContextUrl: optEnv2("DRIFT_SCAN_CONTEXT_URL"),
-    dryRun: args.dryRun
-  });
-  info(`Sticky comment refreshed with ${args.aiPostable.length} AI-refined suggestion(s) merged in.`);
-}
-function optEnv2(name) {
-  const v = process.env[name];
-  return v && v.trim().length > 0 ? v.trim() : void 0;
-}
-function filterAIByDiff(suggestions, commentable) {
-  if (suggestions.length === 0) return [];
-  if (!commentable) return suggestions;
-  const { kept, dropped, reasons } = filterByDiff(suggestions, commentable);
-  if (dropped.length) {
-    info(`\u{1F916} dropped ${dropped.length} suggestion(s) \u2014 per-finding reasons:`);
-    for (let i = 0; i < dropped.length; i += 1) {
-      const s = dropped[i];
-      info(`  \u2022 ${s.file}:${s.line} \u2014 ${reasons[i] ?? "unknown"}`);
-    }
-  }
-  return kept;
-}
-function loadReportSafe() {
-  const path = process.env.DRIFT_REPORT_PATH;
-  if (!path) {
-    info("DRIFT_REPORT_PATH not set \u2014 combined review will skip deterministic suggestions.");
-    return null;
-  }
+  const changedFiles = readChangedFiles(process.env.DRIFT_CHANGED_PATH);
+  const audioUrl = process.env.DRIFT_AUDIO_URL?.trim() || void 0;
+  const audioMp4Url = process.env.DRIFT_AUDIO_MP4_URL?.trim() || void 0;
+  const body = renderNoSource({ ctx: prCtx, changedFiles, audioUrl, audioMp4Url });
+  let existingId = null;
   try {
-    return loadReport(path);
-  } catch (e) {
-    info(`Drift report unreadable at ${path}: ${describe2(e)} \u2014 combined review will skip deterministic`);
-    return null;
+    existingId = (await findSticky(octokit, owner, repo, pr.number))?.id ?? null;
+  } catch (err) {
+    warning(`could not read prior sticky comment: ${describe(err)}`);
   }
+  await upsertStickyComment({ octokit, owner, repo, prNumber: pr.number, body, existingId });
+  info(`Posted no-source notice (${changedFiles.length} changed file(s), ${body.length} bytes).`);
 }
-function readAISuggestions() {
-  const empty = { total: 0, passing: 0 };
-  const path = process.env.AI_SUGGESTIONS_PATH;
-  if (!path) {
-    info("AI_SUGGESTIONS_PATH not set \u2014 combined review will skip AI.");
-    return { suggestions: [], funnel: empty };
-  }
-  let raw;
+function readChangedFiles(path) {
+  if (!path) return [];
   try {
-    raw = (0, import_node_fs2.readFileSync)(path, "utf8");
-  } catch (e) {
-    if (isNotFound(e)) {
-      info(
-        `AI envelope not produced at ${path} (the AI inference step was skipped or failed) \u2014 posting deterministic suggestions only.`
-      );
-    } else {
-      info(`AI envelope unreadable at ${path}: ${describe2(e)} \u2014 combined review will skip AI`);
-    }
-    return { suggestions: [], funnel: empty };
+    return (0, import_node_fs.readFileSync)(path, "utf8").split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  } catch (err) {
+    warning(`could not read changed-files list (${path}): ${describe(err)}`);
+    return [];
   }
-  if (raw.trim().length === 0) {
-    info("AI suggestions file is empty \u2014 skipping AI half of combined review.");
-    return { suggestions: [], funnel: empty };
-  }
-  const parsed = parseAIOutput(raw);
-  if (!parsed.ok) {
-    warning(`AI output rejected: ${parsed.reason}`);
-    info(`first 400 chars:
-${parsed.rawPreview}`);
-    return { suggestions: [], funnel: empty };
-  }
-  if (parsed.suggestions.length === 0) {
-    info(
-      `\u{1F916} ${parsed.total} candidate(s) \u2192 0 cleared the quality bar \u2014 silence > noise.`
-    );
-    return {
-      suggestions: [],
-      funnel: { total: parsed.total, passing: parsed.passing }
-    };
-  }
-  return {
-    suggestions: parsed.suggestions,
-    funnel: { total: parsed.total, passing: parsed.passing }
-  };
 }
-function parseMax(v, fallback) {
-  if (!v) return fallback;
-  const n = Number.parseInt(v, 10);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return n;
+function describe(err) {
+  return err instanceof Error ? err.message : String(err);
 }
-function describe2(e) {
-  return e instanceof Error ? e.message : String(e);
-}
-function isNotFound(e) {
-  return typeof e === "object" && e !== null && e.code === "ENOENT";
-}
-aiMain().catch((err) => {
-  warning(`Unhandled combined-review error: ${describe2(err)}`);
+run().catch((err) => {
+  warning(
+    `Drift could not post the no-source notice: ${describe(err)}. This does not fail the PR.`
+  );
 });
 /*! Bundled license information:
 

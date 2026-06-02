@@ -24154,6 +24154,18 @@ function wrapSection(md, opts) {
   });
 }
 
+// src/render/lib/branding.ts
+var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
+var BANNER_WIDTH = 120;
+var AUDIO_BANNER_WIDTH = 200;
+var ANDY_WIDTH = 64;
+var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
+var withImage = (file, alt, section) => `${sectionImage(file, alt)}
+
+${section}`;
+var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
+var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
+
 // src/render/lib/gauge.ts
 var ARC = {
   green: { dark: "#4ae3b0", light: "#0f7a52" },
@@ -24209,6 +24221,16 @@ ${rows.join("\n")}
 </table>`;
 }
 
+// src/render/lib/badge.ts
+function flatBadge(message, hex) {
+  const enc = encodeURIComponent(message.replace(/-/g, "--").replace(/_/g, "__"));
+  const alt = message.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<img alt="${alt}" src="https://img.shields.io/badge/${enc}-${hex}?style=flat-square" />`;
+}
+function centerBadges(badges) {
+  return `<p align="center">${badges.join(" ")}</p>`;
+}
+
 // src/render/sections/header.ts
 function renderHeader(report, _ctx, _opts = {}) {
   const facts = extractFacts(report);
@@ -24226,17 +24248,12 @@ function tldrBadges(verdict, confidence, effort) {
     flatBadge(`Merge confidence ${confidence.score}/5`, confidence.color),
     flatBadge(`${risk} risk \xB7 ${mins} review`, effort.color)
   ];
-  return `<p align="center">${badges.join(" ")}</p>`;
+  return centerBadges(badges);
 }
 function verdictMessage(v) {
   const glyph = v.alert === "WARNING" ? "\u26A0" : v.alert === "TIP" ? "\u2713" : "\u2139";
   const text = v.statusMessage.charAt(0).toUpperCase() + v.statusMessage.slice(1);
   return `${glyph} ${text}`;
-}
-function flatBadge(message, hex) {
-  const enc = encodeURIComponent(message.replace(/-/g, "--").replace(/_/g, "__"));
-  const alt = message.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `<img alt="${alt}" src="https://img.shields.io/badge/${enc}-${hex}?style=flat-square" />`;
 }
 function decideVerdict(facts, composite) {
   const needsAttention = facts.correctness.length > 0 || facts.regressedAxes.length > 0 || composite.mixed;
@@ -24973,16 +24990,6 @@ ${block}
 ${ARCH_GUARD_CLOSE}`;
 var BODY_SIZE_BUDGET = 6e4;
 var HARD_CAP = 65e3;
-var SCREENSHOTS = "https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots";
-var BANNER_WIDTH = 120;
-var AUDIO_BANNER_WIDTH = 200;
-var ANDY_WIDTH = 64;
-var sectionImage = (file, alt) => `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
-var withImage = (file, alt, section) => `${sectionImage(file, alt)}
-
-${section}`;
-var audioBanner = (url) => `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="\u{1F50A} Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
-var andySignoff = () => `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy \u2014 your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
 function renderOverview(report, opts = {}) {
   const { ctx, priorState, audioUrl, audioMp4Url, scanJsonUrl, scanContextUrl, maxSuggestions } = opts;
   const review = report.pr_review;

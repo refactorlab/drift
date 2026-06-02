@@ -24,7 +24,8 @@ import { extractFacts, type PrFacts } from './lib/facts.ts';
 import { mergeConfidence } from './lib/confidence.ts';
 import { reviewEffort } from './lib/effort.ts';
 import { wrapSection } from './lib/section.ts';
-import { signedPercent, plural, int, escapeHtml } from './lib/format.ts';
+import { signedPercent, plural, int } from './lib/format.ts';
+import { withImage, audioBanner, andySignoff } from './lib/branding.ts';
 
 import { renderHeader } from './sections/header.ts';
 import { renderQualityGauges } from './sections/quality_gauges.ts';
@@ -58,43 +59,10 @@ const protectArchitecture = (block: string): string => `${ARCH_GUARD_OPEN}\n${bl
 const BODY_SIZE_BUDGET = 60_000;
 const HARD_CAP = 65_000;
 
-// Official Drift section-header screenshots (refactorlab/andy/docs/screenshots).
-// Fail-soft: GitHub's Camo proxy degrades a missing/404 asset to its `alt` text
-// without breaking the comment, so these can ship before the PNGs are committed.
-const SCREENSHOTS = 'https://raw.githubusercontent.com/refactorlab/andy/main/docs/screenshots';
-// Banner sizing. These brand PNGs are wide hero images; at full width they
-// dominate the comment, so every banner is pinned to a small FIXED width
-// (height auto-scales, preserving aspect ratio). Deliberately kept compact so a
-// banner reads as a section marker, not a hero that pushes the content below
-// the fold. Section banners share BANNER_WIDTH; the audio button is the one
-// call-to-action banner so it's pinned WIDER (AUDIO_BANNER_WIDTH) to draw the
-// eye; the Andy sign-off is smaller still.
-const BANNER_WIDTH = 120;
-const AUDIO_BANNER_WIDTH = 200;
-const ANDY_WIDTH = 64;
-const sectionImage = (file: string, alt: string): string =>
-  `<p><img src="${SCREENSHOTS}/${file}" alt="${alt}" width="${BANNER_WIDTH}" /></p>`;
-/** Prepend a section-header screenshot to a section's markdown (own line, above it). */
-const withImage = (file: string, alt: string, section: string): string => `${sectionImage(file, alt)}\n\n${section}`;
-
-/**
- * Clickable "🔊 audio summary" button banner — the `summary-audio.png` screenshot
- * wrapped in a link to the spoken-summary artifact. `escapeHtml` closes the
- * `href` attribute safely (the URL is env-influenced). Only rendered when an
- * audio URL exists; same artifact caveat as the footer's text link.
- */
-const audioBanner = (url: string): string =>
-  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
-
-/**
- * Andy sign-off — a small mascot banner pinned to the VERY END of the comment,
- * after the audio button and the attribution line. It is the last visible
- * element, so the comment always closes on the Andy handoff whether or not a
- * spoken summary is present. Kept small (ANDY_WIDTH) so it reads as a sign-off,
- * not a hero banner. Fail-soft to alt text like every other screenshot.
- */
-const andySignoff = (): string =>
-  `<p><img src="${SCREENSHOTS}/andy.png" alt="Andy — your PR handoff assistant" width="${ANDY_WIDTH}" /></p>`;
+// Brand chrome (banners, audio button, Andy sign-off) is shared with the
+// docs-only notice via lib/branding.ts so both surfaces render the identical
+// header/footer. `sectionImage`/`withImage`/`audioBanner`/`andySignoff` and the
+// SCREENSHOTS host + banner widths all live there now.
 
 export type RenderOptions = {
   ctx?: PrContext;
