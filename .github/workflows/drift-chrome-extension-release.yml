@@ -88,6 +88,63 @@ jobs:
       - name: Build + zip
         run: npm run zip
 
+      # Preflight — turn the upload action's OPAQUE 400 into a precise, actionable
+      # failure. `mnao305/chrome-extension-upload@v6` logs only `HTTPError: 400`
+      # and swallows the response body, so a dead refresh token and a bad package
+      # look identical. Here we (1) validate the package and (2) exercise the
+      # OAuth token refresh DIRECTLY, printing Google's `error`/`error_description`
+      # (the failure body carries NO secret) and failing fast with the fix. After
+      # this step, any 400 from the upload itself is provably package/listing-side,
+      # not auth.
+      - name: Preflight — package + Chrome Web Store auth
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          zip="release/drift-lens.zip"
+          # 1) Package sanity — wrong path / empty zip / missing manifest would
+          #    otherwise masquerade as a server error.
+          test -s "$zip" || { echo "::error::package missing or empty: $zip"; exit 1; }
+          echo "📦 $zip ($(du -h "$zip" | cut -f1))"
+          unzip -l "$zip" | grep -q ' manifest.json' || { echo "::error::no manifest.json in $zip"; exit 1; }
+          unzip -p "$zip" manifest.json \
+            | node -e 'const m=JSON.parse(require("fs").readFileSync(0,"utf8")); console.log(`   manifest_version=${m.manifest_version} name=${JSON.stringify(m.name)} version=${m.version}`)'
+          # 2) OAuth token-refresh preflight — the failure the action hides.
+          for v in CWS_CLIENT_ID CWS_CLIENT_SECRET CWS_REFRESH_TOKEN; do
+            [ -n "${!v:-}" ] || { echo "::error::secret $v is empty/unset"; exit 1; }
+          done
+          code=$(curl -sS -o /tmp/cws_tok.json -w '%{http_code}' \
+            --data-urlencode "client_id=${CWS_CLIENT_ID}" \
+            --data-urlencode "client_secret=${CWS_CLIENT_SECRET}" \
+            --data-urlencode "refresh_token=${CWS_REFRESH_TOKEN}" \
+            --data-urlencode "grant_type=refresh_token" \
+            https://oauth2.googleapis.com/token)
+          if [ "$code" != "200" ]; then
+            echo "::error::Chrome Web Store OAuth token refresh failed (HTTP $code)."
+            echo "Google response (no secrets in a token-error body):"
+            cat /tmp/cws_tok.json; echo
+            echo ""
+            echo "Most likely 'invalid_grant' → CWS_REFRESH_TOKEN is expired or revoked. Fix:"
+            echo "  1. Google Cloud Console → APIs & Services → OAuth consent screen →"
+            echo "     set Publishing status to 'In production' (Testing-mode refresh"
+            echo "     tokens expire after 7 days — this is the usual cause)."
+            echo "  2. Re-mint the refresh token (scope https://www.googleapis.com/auth/chromewebstore)"
+            echo "     and update the CWS_REFRESH_TOKEN repo secret."
+            echo "  'invalid_client' → CWS_CLIENT_ID/SECRET wrong or the OAuth client was deleted."
+            rm -f /tmp/cws_tok.json
+            exit 1
+          fi
+          rm -f /tmp/cws_tok.json
+          echo "✓ OAuth token refresh OK (HTTP 200) — auth is valid."
+          echo "  If the upload still 400s, it is package/store-listing side. Top causes:"
+          echo "   • Version not greater than the published one. CI stamps"
+          echo "     0.<minor>.\${run_number}; if a higher version was ever uploaded"
+          echo "     (e.g. a manual 1.x), bump major.minor in package.json above it."
+          echo "   • A prior submission still 'pending review' (can't re-upload until"
+          echo "     it clears), or an incomplete store listing blocking publish."
+
       # Uploads release/drift-lens.zip to the Chrome Web Store via the API
       # (refreshes its own access token from the refresh token) and publishes.
       # publish: true → goes live after Google's review. The action is pinned

@@ -107,8 +107,18 @@ create an **OAuth client (Desktop app)** for the `CLIENT_ID`/`CLIENT_SECRET`,
 then do the one-time OAuth consent to obtain the `REFRESH_TOKEN` (scope
 `https://www.googleapis.com/auth/chromewebstore`). See Google's
 [“Using the Chrome Web Store Publish API”](https://developer.chrome.com/docs/webstore/using-api)
-guide. ⚠️ A refresh token unused for ~6 months expires — regular merges to
-`main` keep it alive.
+guide.
+
+⚠️ **Keep the OAuth consent screen in "In production", not "Testing".** In
+Testing status Google **expires refresh tokens after 7 days**, so the publish
+job starts failing with `HTTPError: 400` (`invalid_grant`) about a week after
+the token is minted — even with frequent merges. (A token *unused* for ~6 months
+also expires, but the 7-day testing expiry is the common trap.) The release
+workflow runs a **preflight** that refreshes the token directly and prints
+Google's exact error, so a dead token fails fast with the remediation instead
+of the action's opaque 400. To fix `invalid_grant`: set the consent screen to
+*In production*, re-mint the token (scope `…/auth/chromewebstore`), and update
+the `CWS_REFRESH_TOKEN` secret.
 
 ## Bonus: GitHub PR-health overlay
 
