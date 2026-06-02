@@ -263,6 +263,16 @@ const REFERENCE_TABLE: &[(&'static str, &'static str, &'static [RefRow])] = &[
         ("https://blog.sentry.io/ai-agent-observability-developers-guide-to-agent-monitoring/",
          "Sentry — AI agent observability guide", "blog"),
     ]),
+    ("react_antipattern", "*", &[
+        ("https://react.dev/reference/rules/rules-of-hooks",
+         "React — Rules of Hooks", "official"),
+        ("https://react.dev/learn/synchronizing-with-effects#fetching-data",
+         "React — Effects: fetching data & cleanup", "official"),
+        ("https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html",
+         "React — dangerouslySetInnerHTML", "official"),
+        ("https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key",
+         "React — Keys for list items", "official"),
+    ]),
     // ─── Synthetic kinds we emit ourselves (not in drift's FindingKind) ──
     //
     // `dead_code_in_changed_file` is produced by [`dead_code_suggestions`]
