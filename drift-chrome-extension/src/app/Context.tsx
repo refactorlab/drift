@@ -2,13 +2,22 @@ import { useState } from 'react';
 import { usePrContext } from '../state/prContext';
 import { ReportView } from '../ui/ReportView';
 import { ArtifactFile } from './ArtifactFile';
+import { loadArtifact } from '../state/artifacts';
+import { scanToReport } from '../core/scanReport';
+import type { DriftReport } from '../core/types';
+
+type ScanState = 'idle' | 'loading' | 'error';
 
 // Full-screen view of the context saved for this PR: the downloaded source
-// files and the loaded report. Everything here is scoped to the PR's URL.
+// files and the dashboard — rendered from the PR comment (instant) or from the
+// REAL downloaded scan file (pr-scan.json), in the same UI.
 export function Context({ onBack }: { onBack: () => void }) {
   const { ctx, clear } = usePrContext();
-  // Bumped after a clear to remount the file cards (drop their in-memory state).
   const [nonce, setNonce] = useState(0);
+  const [source, setSource] = useState<'comment' | 'scan'>('comment');
+  const [scanReport, setScanReport] = useState<DriftReport | null>(null);
+  const [scanState, setScanState] = useState<ScanState>('idle');
+  const [scanError, setScanError] = useState<string | null>(null);
 
   if (!ctx) {
     return (
@@ -28,6 +37,44 @@ export function Context({ onBack }: { onBack: () => void }) {
   }
 
   const { pr, report, artifacts } = ctx;
+  const scanArtifact = artifacts.find((a) => a.kind === 'scan-report' && a.url);
+
+  // Download the real pr-scan.json and map it into the dashboard model.
+  async function loadFromScan() {
+    if (!scanArtifact) {
+      setScanError('No pr-scan.json linked on this PR');
+      setScanState('error');
+      return;
+    }
+    setScanState('loading');
+    setScanError(null);
+    const res = await loadArtifact(scanArtifact);
+    if (!res.ok) {
+      setScanError(res.error);
+      setScanState('error');
+      return;
+    }
+    try {
+      const mapped = scanToReport(JSON.parse(res.rec.content), pr.url);
+      if (!mapped) {
+        setScanError('Not a recognised scan file');
+        setScanState('error');
+        return;
+      }
+      setScanReport(mapped);
+      setScanState('idle');
+    } catch {
+      setScanError('Downloaded file is not valid JSON');
+      setScanState('error');
+    }
+  }
+
+  function chooseScan() {
+    setSource('scan');
+    if (!scanReport && scanState !== 'loading') void loadFromScan();
+  }
+
+  const shown = source === 'scan' && scanReport ? scanReport : report;
 
   return (
     <div className="drift-app drift-root">
@@ -42,6 +89,8 @@ export function Context({ onBack }: { onBack: () => void }) {
           title="Delete the downloaded files + saved report for this PR"
           onClick={() => {
             void clear();
+            setScanReport(null);
+            setSource('comment');
             setNonce((n) => n + 1);
           }}
         >
@@ -72,14 +121,45 @@ export function Context({ onBack }: { onBack: () => void }) {
           </div>
         )}
         {artifacts.map((a) => (
-          <ArtifactFile key={`${a.name}:${nonce}`} artifact={a} />
+          <ArtifactFile key={`${a.url ?? a.name}:${nonce}`} artifact={a} />
         ))}
 
-        <div className="section-title">Loaded report</div>
-        <div className="hint" style={{ marginBottom: 10 }}>
-          Parsed from the PR comment and attached to the chat as grounding.
+        <div className="section-title">Dashboard</div>
+        <div className="source-toggle">
+          <button data-on={source === 'comment'} onClick={() => setSource('comment')}>
+            From comment
+          </button>
+          <button
+            data-on={source === 'scan'}
+            onClick={chooseScan}
+            disabled={!scanArtifact}
+            title={scanArtifact ? 'Load from the real pr-scan.json' : 'No pr-scan.json linked'}
+          >
+            {scanState === 'loading' ? 'Loading…' : 'From scan file'}
+          </button>
         </div>
-        <ReportView report={report} />
+
+        {source === 'scan' && scanState === 'loading' && (
+          <div className="downloading">
+            <span className="spinner" />
+            <span>Downloading pr-scan.json and reading the real scan…</span>
+          </div>
+        )}
+        {source === 'scan' && scanState === 'error' && (
+          <div className="dl-strip warn">
+            ⚠ Couldn’t load the scan ({scanError}).{' '}
+            <button className="dl-saveas" onClick={() => void loadFromScan()}>
+              Try again
+            </button>
+          </div>
+        )}
+        <div className="hint" style={{ margin: '4px 0 10px' }}>
+          {source === 'scan' && scanReport
+            ? 'Real values from the downloaded pr-scan.json.'
+            : 'Parsed from the PR comment (quick view).'}
+        </div>
+
+        <ReportView report={shown} />
       </div>
     </div>
   );

@@ -73,6 +73,18 @@ export interface ArtifactRef {
   kind: 'scan-report' | 'scan-context' | 'other';
 }
 
+/**
+ * The spoken-summary audio the action attaches to the comment (a GitHub Actions
+ * artifact, zipped, containing one audio file — Piper TTS output). Kept separate
+ * from `artifacts` because it's played, not downloaded as a JSON file.
+ */
+export interface AudioRef {
+  /** GitHub Actions artifact URL (zip; download-gated by GitHub auth). */
+  url: string;
+  /** The link's accessible label, e.g. "🔊 Listen to the spoken summary (Piper TTS)". */
+  label: string;
+}
+
 /** Identity of the pull request the side panel is looking at. */
 export interface PrIdentity {
   owner: string;
@@ -91,6 +103,8 @@ export interface PrContext {
   pr: PrIdentity;
   report: DriftReport;
   artifacts: ArtifactRef[];
+  /** Spoken-summary audio, when the comment linked one. */
+  audio?: AudioRef;
   detectedAt: number;
 }
 

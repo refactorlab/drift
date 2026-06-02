@@ -860,7 +860,7 @@ llm-docker:                             ## curl-test Docker Model Runner (http:/
 
 ### Drift Chrome extension — side-panel app (drift-chrome-extension/)
 
-.PHONY: extension-dev extension-build extension-test extension-install extension-kill
+.PHONY: extension-dev extension-build extension-test extension-install extension-kill extension-release
 
 extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — then load drift-chrome-extension/dist unpacked
 	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR)\n"
@@ -877,3 +877,7 @@ extension-test: ## Run the Chrome extension test suite (vitest)
 
 extension-install: ## Install the Chrome extension npm deps
 	@$(MAKE) --no-print-directory -C drift-chrome-extension install
+
+extension-release: ## Build the Chrome Web Store release bundle → drift-chrome-extension/release/ (zip + store images)
+	@printf "$(BLUE)▶$(RESET) Chrome extension Web Store release\n"
+	@$(MAKE) --no-print-directory -C drift-chrome-extension release

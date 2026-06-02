@@ -26,7 +26,7 @@ export async function getSavedPrContext(url: string): Promise<PrContext | null> 
  * artifact's cached content + its disk-download record.
  */
 export async function clearPrData(ctx: PrContext): Promise<void> {
-  const keys = [prKey(ctx.pr.url)];
+  const keys = [prKey(ctx.pr.url), `drift:chat:${ctx.pr.url}`];
   for (const a of ctx.artifacts) {
     if (a.url) keys.push(`drift:artifact:${a.url}`, `drift:download:${a.url}`);
   }
@@ -98,30 +98,54 @@ export function usePrContext() {
 
     void refresh();
 
+    // 1. Content script wrote a new context (storage).
     const offStorage = onPrContextChange(schedule);
+
+    // 2. Tab switched / finished loading.
     const onActivated = () => schedule();
-    const onUpdated = (
-      _id: number,
-      info: chrome.tabs.TabChangeInfo,
-    ) => {
-      // Re-evaluate when a tab finishes loading or its URL changes.
+    const onUpdated = (_id: number, info: chrome.tabs.TabChangeInfo) => {
       if (info.status === 'complete' || info.url) schedule();
     };
     chrome.tabs?.onActivated.addListener(onActivated);
     chrome.tabs?.onUpdated.addListener(onUpdated);
 
+    // 3. GitHub Turbo SPA navigation (pushState) — the reliable signal for
+    //    PR→PR switches that tabs.onUpdated can miss.
+    const navFilter = { url: [{ hostEquals: 'github.com' }] };
+    const onNav = () => schedule();
+    chrome.webNavigation?.onHistoryStateUpdated.addListener(onNav, navFilter);
+    chrome.webNavigation?.onCompleted.addListener(onNav, navFilter);
+
+    // 4. Panel regained focus / became visible.
+    const onFocus = () => schedule();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+
+    // 5. Safety net: a low-frequency poll so we converge even if every event
+    //    above is missed. The signature dedupe makes this render-free.
+    const poll = window.setInterval(() => void refresh(), 3000);
+
     return () => {
       active = false;
       window.clearTimeout(timer);
+      window.clearInterval(poll);
       offStorage();
       chrome.tabs?.onActivated.removeListener(onActivated);
       chrome.tabs?.onUpdated.removeListener(onUpdated);
+      chrome.webNavigation?.onHistoryStateUpdated.removeListener(onNav);
+      chrome.webNavigation?.onCompleted.removeListener(onNav);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
     };
   }, []);
+
+  // Manual rescan — force a fresh query of the active tab (bypasses the
+  // signature dedupe). Used by the header "rescan" button.
+  const refresh = async () => setCtx(await liveContextFromTab());
 
   // Clear all saved data for the current PR (report + downloaded files).
   const clear = async () => {
     if (ctx) await clearPrData(ctx);
   };
-  return { ctx, clear };
+  return { ctx, clear, refresh };
 }

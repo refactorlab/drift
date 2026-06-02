@@ -9,6 +9,7 @@
 import {
   emptyReport,
   type ArtifactRef,
+  type AudioRef,
   type DriftReport,
   type Direction,
   type Gauge,
@@ -316,6 +317,26 @@ export function parseScanArtifacts(root: ParentNode): ArtifactRef[] {
   return out;
 }
 
+// The action renders the audio link as `<a href=…artifacts/N><img alt="🔊
+// Listen to the spoken summary (Piper TTS)"></a>`. Match on the alt text (the
+// speaker glyph / "spoken summary" / "Piper TTS") so we don't depend on the
+// exact wording, and only accept a GitHub Actions artifact href.
+const AUDIO_ALT = /spoken summary|listen to the spoken|piper tts|🔊/i;
+const ARTIFACT_HREF = /\/actions\/runs\/\d+\/artifacts\/\d+/i;
+
+/** Find the spoken-summary audio artifact link inside the Drift comment. */
+export function parseAudioSummary(root: ParentNode): AudioRef | null {
+  for (const a of Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href]'))) {
+    const url = a.getAttribute('href') ?? '';
+    if (!ARTIFACT_HREF.test(url)) continue;
+    const img = a.querySelector<HTMLImageElement>('img[alt]');
+    const label = (img?.alt ?? a.textContent ?? '').trim();
+    if (!AUDIO_ALT.test(label)) continue;
+    return { url, label: label || '🔊 Listen to the spoken summary' };
+  }
+  return null;
+}
+
 /** Derive owner/repo/number/title from the PR page. */
 export function parsePrIdentity(doc: Document = document): PrIdentity | null {
   const loc = doc.defaultView?.location;
@@ -345,10 +366,12 @@ export function parsePrContext(doc: Document = document): PrContext | null {
   const root = findReportRoot(doc);
   const pr = parsePrIdentity(doc);
   if (!root || !pr) return null;
+  const audio = parseAudioSummary(root);
   return {
     pr,
     report: parseReport(doc),
     artifacts: contextFiles(parseScanArtifacts(root)),
+    ...(audio ? { audio } : {}),
     detectedAt: epochMs(),
   };
 }

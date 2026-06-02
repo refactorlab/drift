@@ -4,29 +4,16 @@ import { patchSettings, type Settings } from '../state/settings';
 import { usePrContext } from '../state/prContext';
 import { FileModal } from './FileModal';
 import { FileIcon } from './FileIcon';
+import { AudioSummary } from './AudioSummary';
 import { buildReasoning, reasoningTitle, type ReasoningStep } from './reasoning';
-import type { ArtifactRef } from '../core/types';
-
-interface ChatMessage {
-  id: number;
-  role: 'user' | 'assistant';
-  text?: string;
-  /** Present on the auto-generated reasoning turn. */
-  title?: string;
-  steps?: ReasoningStep[];
-  thinking?: boolean;
-}
-
-// PRs we've already auto-reasoned about this session. Module-level so it
-// survives Chat remounts (e.g. flipping to Settings and back) — we don't want
-// to replay the assessment every time the panel re-renders.
-const reasonedPrs = new Set<string>();
+import { getChat, saveChat, clearChat, type ChatMessage } from '../state/chatHistory';
+import type { ArtifactRef, PrContext } from '../core/types';
 
 const STEP_INTERVAL_MS = 450;
 
-// The chat surface. No model backend is wired yet, so sending echoes a
-// placeholder. But the moment a PR is recognised we stream a grounded,
-// step-by-step assessment built from the parsed Drift report.
+// The chat surface. Conversations are persisted per PR url (chat history), so
+// revisiting a PR restores its conversation instantly — the reasoning streams
+// once, then loads from storage with no re-animation.
 export function Chat({
   settings,
   onOpenSettings,
@@ -36,12 +23,21 @@ export function Chat({
   onOpenSettings: () => void;
   onOpenContext: () => void;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // The conversation is bound to a PR url so persistence is always atomic.
+  const [chat, setChat] = useState<{ url: string | null; messages: ChatMessage[] }>({
+    url: null,
+    messages: [],
+  });
+  const messages = chat.messages;
   const [draft, setDraft] = useState('');
   const [modalFile, setModalFile] = useState<ArtifactRef | null>(null);
   const nextId = useRef(1);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { ctx } = usePrContext();
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+  const targetUrl = useRef<string | null>(null);
+  const streamIv = useRef<number | null>(null);
+  const { ctx, refresh } = usePrContext();
 
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
@@ -49,50 +45,98 @@ export function Chat({
     });
   };
 
-  // When a PR is recognised, stream a step-by-step reasoning turn AND attach the
-  // two context files into the chat (each loads step-by-step). Once per PR.
-  useEffect(() => {
-    if (!ctx || reasonedPrs.has(ctx.pr.url)) return;
-    reasonedPrs.add(ctx.pr.url);
+  const stopStream = () => {
+    if (streamIv.current != null) {
+      window.clearInterval(streamIv.current);
+      streamIv.current = null;
+    }
+  };
 
-    const allSteps = buildReasoning(ctx);
+  // Stream the step-by-step reasoning turn for a freshly-detected PR.
+  function startReasoning(c: PrContext) {
+    const allSteps = buildReasoning(c);
     const id = nextId.current++;
-    setMessages((m) => [
-      ...m,
-      { id, role: 'assistant', title: reasoningTitle(ctx), steps: [], thinking: true },
-    ]);
-
+    setChat((prev) =>
+      prev.messages.some((x) => x.steps && x.prUrl === c.pr.url)
+        ? prev
+        : {
+            ...prev,
+            messages: [
+              ...prev.messages,
+              { id, role: 'assistant', title: reasoningTitle(c), steps: [], thinking: true, prUrl: c.pr.url },
+            ],
+          },
+    );
     let shown = 0;
-    const iv = window.setInterval(() => {
+    stopStream();
+    streamIv.current = window.setInterval(() => {
       shown += 1;
-      setMessages((m) =>
-        m.map((x) =>
-          x.id === id
-            ? { ...x, steps: allSteps.slice(0, shown), thinking: shown < allSteps.length }
-            : x,
+      setChat((prev) => ({
+        ...prev,
+        messages: prev.messages.map((x) =>
+          x.id === id ? { ...x, steps: allSteps.slice(0, shown), thinking: shown < allSteps.length } : x,
         ),
-      );
+      }));
       scrollToBottom();
-      if (shown >= allSteps.length) window.clearInterval(iv);
+      if (shown >= allSteps.length) stopStream();
     }, STEP_INTERVAL_MS);
+  }
 
-    return () => window.clearInterval(iv);
-    // Key on the stable PR url ONLY — ctx is a fresh object on every refresh
-    // (tab/storage events), and depending on it would clear the stream mid-way.
+  // Switch conversation when the active PR changes: persist the outgoing one,
+  // restore the incoming one from storage (instant), or stream it fresh.
+  useEffect(() => {
+    const url = ctx?.pr.url ?? null;
+    if (url === chatRef.current.url) return;
+    targetUrl.current = url;
+
+    const prev = chatRef.current;
+    if (prev.url && prev.messages.length) void saveChat(prev.url, prev.messages);
+    stopStream();
+
+    if (!url || !ctx) {
+      setChat({ url, messages: [] });
+      return;
+    }
+    const pr = ctx;
+    void getChat(url).then((saved) => {
+      if (targetUrl.current !== url) return; // navigated again — drop stale load
+      if (saved.length) {
+        nextId.current = Math.max(0, ...saved.map((m) => m.id)) + 1;
+        setChat({ url, messages: saved }); // instant restore — no re-stream
+      } else {
+        setChat({ url, messages: [] });
+        startReasoning(pr);
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx?.pr.url]);
+
+  // Persist the conversation (debounced) under its PR url.
+  useEffect(() => {
+    if (!chat.url) return;
+    const t = window.setTimeout(() => void saveChat(chat.url!, chat.messages), 500);
+    return () => window.clearTimeout(t);
+  }, [chat]);
+
+  // Stop any running stream when the panel unmounts.
+  useEffect(() => stopStream, []);
 
   function send() {
     const text = draft.trim();
     if (!text) return;
-    const user: ChatMessage = { id: nextId.current++, role: 'user', text };
     const grounded = ctx ? `Using context from ${ctx.pr.repo}#${ctx.pr.number}. ` : '';
-    const reply: ChatMessage = {
-      id: nextId.current++,
-      role: 'assistant',
-      text: `${grounded}No model is connected yet — wire a backend in the chat handler to get real replies.`,
-    };
-    setMessages((m) => [...m, user, reply]);
+    setChat((prev) => ({
+      ...prev,
+      messages: [
+        ...prev.messages,
+        { id: nextId.current++, role: 'user', text },
+        {
+          id: nextId.current++,
+          role: 'assistant',
+          text: `${grounded}No model is connected yet — wire a backend in the chat handler to get real replies.`,
+        },
+      ],
+    }));
     setDraft('');
     scrollToBottom();
   }
@@ -105,8 +149,11 @@ export function Chat({
   }
 
   function newChat() {
-    setMessages([]);
-    if (ctx) reasonedPrs.delete(ctx.pr.url); // allow re-running the assessment
+    stopStream();
+    const url = chatRef.current.url;
+    setChat({ url, messages: [] });
+    if (url) void clearChat(url);
+    if (ctx) startReasoning(ctx);
   }
 
   return (
@@ -115,6 +162,9 @@ export function Chat({
         <span className="drift-logo" />
         <h1>{APP_NAME}</h1>
         <span className="spacer" />
+        <button className="iconbtn" title="Rescan this page" onClick={() => void refresh()}>
+          ↻
+        </button>
         {ctx && (
           <button className="iconbtn ctx-btn" title="Loaded context" onClick={onOpenContext}>
             📎<span className="ctx-btn-count">{ctx.artifacts.length}</span>
@@ -158,6 +208,8 @@ export function Chat({
             ),
           )
         )}
+        {/* Spoken summary, when the PR's comment linked one — playable inline. */}
+        {ctx?.audio && messages.length > 0 && <AudioSummary audio={ctx.audio} />}
       </div>
 
       <div className="composer">
@@ -166,7 +218,7 @@ export function Chat({
             <div className="attach-row">
               {ctx.artifacts.map((a) => (
                 <button
-                  key={a.name}
+                  key={a.url ?? a.name}
                   className="attach-chip"
                   onClick={() => setModalFile(a)}
                   title={`Open ${a.name}`}
@@ -243,7 +295,7 @@ function ReasoningTurn({
         <div className="reasoning-files">
           <span className="rfiles-label">Download:</span>
           {files.map((f) => (
-            <button key={f.name} className="rfile-btn" onClick={() => onOpenFile?.(f)}>
+            <button key={f.url ?? f.name} className="rfile-btn" onClick={() => onOpenFile?.(f)}>
               <FileIcon size={14} />
               <span>{f.name}</span>
               <span className="rfile-dl">⬇</span>

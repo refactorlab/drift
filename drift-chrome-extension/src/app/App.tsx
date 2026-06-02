@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../state/useStore';
 import { patchSettings } from '../state/settings';
 import { purgeDerivedCache } from '../state/artifacts';
+import { signInAsGuest } from '../auth/google';
 import { Onboarding } from './Onboarding';
 import { Chat } from './Chat';
 import { Settings } from './Settings';
@@ -12,8 +13,14 @@ import './app.css';
 type View = 'chat' | 'settings' | 'context';
 
 export function App() {
-  const { ready, settings } = useStore();
+  const { ready, auth, settings } = useStore();
   const [view, setView] = useState<View>('chat');
+
+  // Default to a local guest account so the user is always "connected" (shown
+  // in Settings) — no forced sign-in. Google is an optional upgrade.
+  useEffect(() => {
+    if (ready && !auth) void signInAsGuest();
+  }, [ready, auth]);
 
   // One-time: clear any legacy derived/scraped artifact cache from old builds.
   useEffect(() => {
@@ -45,10 +52,8 @@ export function App() {
     );
   }
 
-  // No sign-in — the app opens straight into the chat and uses the browser's
-  // existing GitHub session for downloads.
   if (view === 'settings') {
-    return <Settings settings={settings} onBack={() => setView('chat')} />;
+    return <Settings auth={auth} settings={settings} onBack={() => setView('chat')} />;
   }
   if (view === 'context') {
     return <Context onBack={() => setView('chat')} />;

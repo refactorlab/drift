@@ -11,6 +11,7 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { StrictMode } from 'react';
 import { isPrPage, parseReport, parsePrContext } from '../core/parse';
+import type { PrContext } from '../core/types';
 import { cacheReport, type Message, type Response } from '../core/messaging';
 import { setPrContext } from '../state/prContext';
 import { InPagePanel } from './InPagePanel';
@@ -55,8 +56,11 @@ function render() {
     return;
   }
   const report = parseReport(document);
-  // Signature gates re-renders so timeline mutations don't thrash React.
+  // Signature gates re-renders so timeline mutations don't thrash React. It
+  // MUST include the PR path so navigating PR→PR (SPA) always re-detects and
+  // re-publishes the new PR's context (even if the metrics look similar).
   const signature = JSON.stringify([
+    location.pathname,
     report.found,
     report.verdictLabel,
     report.gauges.map((g) => g.display),
@@ -65,17 +69,19 @@ function render() {
   if (signature === lastSignature && root) return;
   lastSignature = signature;
 
+  let ctx: PrContext | null = null;
   if (report.found) {
     void cacheReport(report);
-    // Publish the full PR context (report + scan-artifact links) for the side
-    // panel's chat to attach as grounding.
-    const ctx = parsePrContext(document);
+    // Publish the full PR context (report + scan-artifact links + audio) for the
+    // side panel's chat to attach as grounding.
+    ctx = parsePrContext(document);
     if (ctx) {
       console.log(
         '[drift] detected',
         ctx.pr.repo + '#' + ctx.pr.number,
         '· artifacts:',
         ctx.artifacts.map((a) => `${a.name}${a.url ? '(linked)' : '(derived)'}`).join(', '),
+        ctx.audio ? '· audio(linked)' : '',
       );
       void setPrContext(ctx);
     }
@@ -84,30 +90,40 @@ function render() {
   ensureHost();
   root?.render(
     <StrictMode>
-      <InPagePanel report={report} />
+      <InPagePanel report={report} artifacts={ctx?.artifacts ?? []} hasAudio={!!ctx?.audio} />
     </StrictMode>,
   );
 }
 
 // --- SPA navigation + late-arriving comment handling -----------------------
 
+// render() must never throw — an error here used to prevent watch() from ever
+// running, so a deferred comment would never be detected.
+function safeRender() {
+  try {
+    render();
+  } catch (e) {
+    console.warn('[drift] render error', e);
+  }
+}
+
+let scheduleTimer: number | undefined;
+function scheduleRender() {
+  window.clearTimeout(scheduleTimer);
+  scheduleTimer = window.setTimeout(safeRender, 300);
+}
+
 function watch() {
-  // GitHub fires these on pjax/Turbo navigations.
-  for (const ev of ['turbo:load', 'pjax:end', 'pageshow']) {
+  // GitHub fires these on pjax/Turbo navigations + back/forward.
+  for (const ev of ['turbo:load', 'turbo:render', 'pjax:end', 'pageshow']) {
     document.addEventListener(ev, () => scheduleRender());
   }
-  // History API patches (back/forward + pushState navigations).
   window.addEventListener('popstate', () => scheduleRender());
 
-  // Debounced observer for the comment timeline mutating after load.
-  let timer: number | undefined;
+  // The comment timeline is lazy-loaded (<include-fragment>) and can arrive
+  // seconds after document_idle — observe the body so we catch it.
   const obs = new MutationObserver(() => scheduleRender());
-  obs.observe(document.body, { childList: true, subtree: true });
-
-  function scheduleRender() {
-    window.clearTimeout(timer);
-    timer = window.setTimeout(render, 400);
-  }
+  obs.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 chrome.runtime.onMessage.addListener(
@@ -128,5 +144,9 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-render();
+// Set up observers/listeners FIRST so a deferred comment is always caught,
+// then attempt detection, then retry on a schedule for GitHub's lazy timeline.
+console.log('[drift] content script loaded ·', location.pathname);
 watch();
+safeRender();
+for (const ms of [600, 1500, 3000, 6000, 10000]) window.setTimeout(safeRender, ms);
