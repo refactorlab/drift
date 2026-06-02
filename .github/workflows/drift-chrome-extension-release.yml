@@ -108,7 +108,9 @@ jobs:
           #    otherwise masquerade as a server error.
           test -s "$zip" || { echo "::error::package missing or empty: $zip"; exit 1; }
           echo "📦 $zip ($(du -h "$zip" | cut -f1))"
-          unzip -l "$zip" | grep -q ' manifest.json' || { echo "::error::no manifest.json in $zip"; exit 1; }
+          unzip -l "$zip" | grep -q ' manifest.json' || { echo "::error::no manifest.json at the zip root in $zip"; exit 1; }
+          # The `${...}` below are JS template-literals, not shell expansions.
+          # shellcheck disable=SC2016
           unzip -p "$zip" manifest.json \
             | node -e 'const m=JSON.parse(require("fs").readFileSync(0,"utf8")); console.log(`   manifest_version=${m.manifest_version} name=${JSON.stringify(m.name)} version=${m.version}`)'
           # 2) OAuth token-refresh preflight — the failure the action hides.
