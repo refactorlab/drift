@@ -49,6 +49,8 @@ RESET  := \033[0m
         action-scan-demo action-scan-demo-kotlin-exposed action-scan-demo-self \
         action-scan-demo-self-current-branch \
         action-test action-build \
+        audio-deps audio-tts audio-verify audio-voices \
+        audio-local audio-local-300 audio-local-500 audio-local-clean \
         action-render-comment action-render-comment-kotlin action-render-comments \
         action-render-comment-self action-render-card-self \
         hello-test hello-test-clean
@@ -851,6 +853,63 @@ action-test: ## Run the Drift Action test suite (contract + render + e2e — use
 	@printf "$(BLUE)▶$(RESET) npm test (Drift Action)\n"
 	@cd action && npm test 2>&1 | grep -E "^(✔|✖|ℹ tests|ℹ pass|ℹ fail) "
 
+### Audio (local Kokoro TTS preview)
+
+# Let `make audio-tts "hello there"` work: capture the trailing goal words as
+# the text and swallow them with a match-anything rule so Make doesn't try to
+# build them (handles both `make audio-tts hello there` → multiple word-goals
+# AND `make audio-tts "hello there"` → one spaced goal). SCOPED with ifneq so
+# the catch-all only exists when audio-tts is a goal — it never masks typos
+# for any other target. (For text with ':' or other Make-meta chars, use the
+# robust TEXT="..." form, which doesn't go through goal parsing at all.)
+ifneq (,$(filter audio-tts,$(MAKECMDGOALS)))
+AUDIO_TTS_WORDS := $(filter-out audio-tts,$(MAKECMDGOALS))
+%:
+	@:
+endif
+
+audio-deps: ## Install/pre-fetch everything needed to preview TTS locally (sherpa-onnx binary + Kokoro model, SHA256-verified + cached). Idempotent.
+	@printf "$(BLUE)▶$(RESET) checking host tools (curl, tar, node)\n"
+	@for t in curl tar node; do command -v $$t >/dev/null 2>&1 || { printf "$(RED)✗$(RESET) missing required tool: %s\n" "$$t"; exit 1; }; done
+	@command -v ffmpeg >/dev/null 2>&1 || printf "$(YELLOW)ℹ$(RESET) ffmpeg not found — optional (the action's wav content-probe is skipped without it; synthesis is unaffected)\n"
+	@FETCH_ONLY=1 bash action/scripts/tts-local.sh
+	@printf "$(GREEN)✓$(RESET) audio deps installed + cached\n"
+
+audio-tts: audio-deps ## Speak arbitrary text locally + open a browser player. Usage: make audio-tts "your text here" [VOICE=am_michael]
+	@printf "$(BLUE)▶$(RESET) local Kokoro TTS (VOICE=$(or $(VOICE),af_heart))\n"
+	@TEXT="$(if $(AUDIO_TTS_WORDS),$(AUDIO_TTS_WORDS),$(TEXT))" VOICE="$(VOICE)" OUT_DIR="$(or $(OUT_DIR),tmp/tts)" bash action/scripts/tts-local.sh
+
+audio-local: audio-deps ## Synthesize a spoken-summary WAV locally (same Kokoro/sherpa-onnx engine as the action) + open a browser player. TEXT="..." | TEXT_FILE=path | WORDS=N ; VOICE=af_heart
+	@printf "$(BLUE)▶$(RESET) local Kokoro TTS preview (VOICE=$(or $(VOICE),af_heart))\n"
+	@TEXT="$(TEXT)" TEXT_FILE="$(TEXT_FILE)" WORDS="$(WORDS)" VOICE="$(VOICE)" OUT_DIR="$(or $(OUT_DIR),tmp/tts)" bash action/scripts/tts-local.sh
+
+audio-verify: audio-deps ## Verify the audio flow end-to-end: action.yml cache/synth logic tests + a real one-sentence synthesis smoke
+	@printf "$(BLUE)▶$(RESET) action.yml audio logic tests (sanitize + cache + synth contract + integration)\n"
+	@cd action && node --test --experimental-strip-types --no-warnings \
+	  'src/__tests__/audio-sanitize.test.ts' \
+	  'src/__tests__/audio-piper-integration.test.ts' \
+	  'src/__tests__/action-bash-shellcheck.test.ts' 2>&1 | grep -E "^(✖|ℹ (tests|pass|fail)) "
+	@printf "$(BLUE)▶$(RESET) real synthesis smoke (sherpa-onnx + Kokoro → WAV)\n"
+	@NO_OPEN=1 TEXT="Audio verify smoke test. The drift summary speaks." OUT_DIR=tmp/tts bash action/scripts/tts-local.sh >/dev/null
+	@test -s tmp/tts/drift-summary-af_heart.wav && printf "$(GREEN)✓$(RESET) end-to-end verified: tests pass + real WAV produced (tmp/tts/drift-summary-af_heart.wav)\n" || { printf "$(RED)✗$(RESET) smoke WAV missing\n"; exit 1; }
+
+audio-local-300: ## Generate a ~300-word briefing, synthesize it, and play in the browser (≈80s synth on a 2-core box)
+	@$(MAKE) audio-local WORDS=300 VOICE=$(or $(VOICE),af_heart)
+
+audio-local-500: ## Generate a ~500-word briefing, synthesize it, and play in the browser (≈140s synth on a 2-core box)
+	@$(MAKE) audio-local WORDS=500 VOICE=$(or $(VOICE),af_heart)
+
+audio-voices: ## List the Kokoro voices you can pass as VOICE=… (audio-tts) or tts-voice: (action). Parsed from action.yml so it never drifts.
+	@printf "$(BLUE)▶$(RESET) Kokoro voices — default $(GREEN)af_heart$(RESET). Use $(CYAN)VOICE=<name>$(RESET) locally or $(CYAN)tts-voice:$(RESET) in the action.\n"
+	@grep -oE '[a-z]{2}_[a-z]+\) SID=[0-9]+' action.yml \
+	  | sed -E 's/\) SID=/ /' | sort -t' ' -k2 -n \
+	  | awk '{printf "  %-14s sid %s\n", $$1, $$2}'
+	@printf "  $(YELLOW)try one:$(RESET) make audio-tts \"your text\" VOICE=am_michael\n"
+
+audio-local-clean: ## Remove the local TTS output (tmp/tts) and the cached binary+model ($$TMPDIR/drift-tts-cache)
+	@rm -rf tmp/tts "$${TMPDIR:-/tmp}/drift-tts-cache"
+	@printf "$(GREEN)✓$(RESET) cleared tmp/tts + drift-tts-cache\n"
+
 ### LLM smoke tests
 
 .PHONY: llm-ollama
@@ -874,14 +933,23 @@ llm-docker:                             ## curl-test Docker Model Runner (http:/
 
 ### Drift Chrome extension — side-panel app (drift-chrome-extension/)
 
-.PHONY: extension-dev extension-build extension-test extension-install extension-kill extension-release extension-cws-exchange
+.PHONY: extension-dev extension-build extension-test extension-install extension-kill extension-release extension-cws-exchange extension-wasm extension-tts extension-doctor
 
-extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — then load drift-chrome-extension/dist unpacked
+extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — stages the scanner wasm first, then load drift-chrome-extension/dist unpacked
 	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR)\n"
 	@$(MAKE) --no-print-directory -C drift-chrome-extension dev
 
 extension-kill: ## Stop any running Chrome-extension dev servers (frees Vite ports 5181+)
 	@$(MAKE) --no-print-directory -C drift-chrome-extension kill
+
+extension-doctor: ## Diagnose live-scan prerequisites (node, rust wasm target, wasi-sdk, staged engines)
+	@$(MAKE) --no-print-directory -C drift-chrome-extension doctor
+
+extension-wasm: ## Force-rebuild the scanner WASM → drift-chrome-extension/public/
+	@$(MAKE) --no-print-directory -C drift-chrome-extension wasm
+
+extension-tts: ## Stage the Kokoro voice engine (set SHERPA_WASM_TARBALL + KOKORO_MODEL_TARBALL)
+	@$(MAKE) --no-print-directory -C drift-chrome-extension tts
 
 extension-build: ## Production build of the Chrome extension → drift-chrome-extension/dist
 	@$(MAKE) --no-print-directory -C drift-chrome-extension build

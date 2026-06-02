@@ -32,6 +32,7 @@
 #     /drift debug=true
 #     /drift ai-suggestions=false audio-summary=false
 #     /drift ai-model=openai/gpt-5
+#     /drift tts-voice=am_michael        # spoken-summary voice (default af_heart)
 #
 # Use `/drift issue` to ALSO open (or refresh) a GitHub Issue tracking
 # this PR's findings — one issue per PR, deduplicated by a hidden marker.

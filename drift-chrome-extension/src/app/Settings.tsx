@@ -2,7 +2,131 @@ import { useState } from 'react';
 import { signInWithGoogle, signOut, type AuthState } from '../auth/google';
 import { HAS_GOOGLE_OAUTH } from '../config';
 import { patchSettings, type Settings as SettingsT, type ThemePref } from '../state/settings';
+import { ensureScanner } from '../core/scannerStore';
+import { downloadTts } from '../core/ttsStore';
+import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
+
+// The live-scan engine dependency: shows the acquired wasm version and lets the
+// user re-check / update it (uses the bundled build, or settings.scannerUrl).
+function ScannerRow({ settings }: { settings: SettingsT }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const s = settings.scanner;
+
+  async function recheck() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await ensureScanner((p) => setNote(p.phase));
+      setNote(r.status === 'ready' ? `Up to date · v${r.meta.version}` : `${r.status} · v${r.meta.version}`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="section-title">Scan engine</div>
+      <div className="row" style={{ borderBottom: 'none' }}>
+        <div className="grow">
+          <div className="label">Static drift profiler (WASM)</div>
+          <div className="hint">
+            {note ??
+              (s
+                ? `v${s.version} · ${(s.bytes / 1024 / 1024).toFixed(1)} MB · ${s.source}`
+                : 'Not acquired yet')}
+          </div>
+        </div>
+        <button className="btn ghost" onClick={() => void recheck()} disabled={busy}>
+          {busy ? 'Checking…' : 'Check for update'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// The live-scan voice engine: the Kokoro WASM synthesizer that speaks the
+// spoken summary (the same engine the action uses). Shows the acquired version,
+// lets the user toggle audio, pick a voice, and re-check / update the engine.
+// When the engine isn't staged, the live scan fails soft to the system voice.
+function VoiceEngineRow({ settings }: { settings: SettingsT }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
+  const s = settings.tts;
+  const enabled = settings.ttsEnabled !== false; // default on
+  const voice = settings.ttsVoice ?? DEFAULT_VOICE;
+  const downloaded = s?.source === 'remote';
+
+  // Explicitly download the ~92 MB Kokoro model (a one-time action). Once it's
+  // recorded, every live scan synthesises with Kokoro by default.
+  async function download() {
+    setBusy(true);
+    setNote(null);
+    setPct(0);
+    try {
+      const r = await downloadTts((p) => {
+        setNote(p.phase);
+        setPct(p.fraction != null ? Math.round(p.fraction * 100) : null);
+      });
+      setNote(r.status === 'ready' ? `Up to date · ${r.meta.version}` : `Downloaded · ${r.meta.version}`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setPct(null);
+    }
+  }
+
+  return (
+    <>
+      <div className="section-title">Voice engine</div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Spoken summary</div>
+          <div className="hint">Narrate the live scan with the on-device Kokoro voice (no AI, no API).</div>
+        </div>
+        <Switch on={enabled} onChange={(v) => void patchSettings({ ttsEnabled: v })} />
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Voice</div>
+          <div className="hint">Kokoro multi-lang voice catalog — matches the action's tts-voice.</div>
+        </div>
+        <select
+          className="model-select"
+          value={voice}
+          disabled={!enabled}
+          onChange={(e) => void patchSettings({ ttsVoice: e.target.value })}
+        >
+          {Object.keys(KOKORO_VOICE_SID).map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row" style={{ borderBottom: 'none' }}>
+        <div className="grow">
+          <div className="label">Kokoro voice model</div>
+          <div className="hint">
+            {note ??
+              (downloaded
+                ? `${s!.version} · ${(s!.bytes / 1024 / 1024).toFixed(0)} MB · downloaded`
+                : 'Not downloaded — fetch the on-device voice (~92 MB, one time). Until then the spoken summary uses your system voice.')}
+            {busy && pct != null && ` · ${pct}%`}
+          </div>
+        </div>
+        <button className="btn ghost" onClick={() => void download()} disabled={busy}>
+          {busy ? (pct != null ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download model'}
+        </button>
+      </div>
+    </>
+  );
+}
 
 function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -121,6 +245,10 @@ export function Settings({
             <option value="light">Light</option>
           </select>
         </div>
+
+        <ScannerRow settings={settings} />
+
+        <VoiceEngineRow settings={settings} />
 
         <div className="section-title">Data</div>
         <div className="row" style={{ borderBottom: 'none' }}>

@@ -1,5 +1,5 @@
 // A chat card that plays the PR's spoken summary. Mirrors the banner the action
-// posts in the comment ("🔊 Listen to the spoken summary (Piper TTS)") — press
+// posts in the comment ("🔊 Listen to the spoken summary (Kokoro TTS)") — press
 // once to download the artifact via the GitHub session, then it reveals a
 // native <audio> player. Lazy on purpose: we don't fetch audio until asked.
 

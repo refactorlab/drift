@@ -34,6 +34,13 @@ export default defineManifest({
   side_panel: {
     default_path: 'src/sidepanel/index.html',
   },
+  // The live scanner runs drift-static-profiler compiled to WebAssembly inside
+  // the side panel. MV3's default CSP (`script-src 'self'`) forbids Wasm
+  // compilation ("Wasm code generation disallowed by embedder"), so we must opt
+  // in with 'wasm-unsafe-eval'. No remote code — the .wasm is packaged.
+  content_security_policy: {
+    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+  },
   content_scripts: [
     {
       matches: ['https://github.com/*'],

@@ -807,7 +807,7 @@ test('end-to-end: every overridable key, comment override → resolved value mat
     'fail-threshold': '0',
     'ai-max-suggestions': '7',
     'profiler-release-tag': 'drift-static-profiler-v0.9.9',
-    'piper-voice': 'en_GB-alba-medium',
+    'tts-voice': 'am_michael',
     'open-issue': 'true',
   };
   // Synthesize a /drift one-liner from the overrides.
@@ -844,7 +844,7 @@ test('end-to-end: every overridable key, comment override → resolved value mat
     'fail-threshold': '',
     'ai-max-suggestions': '3',
     'profiler-release-tag': '',
-    'piper-voice': 'en_US-ryan-medium',
+    'tts-voice': 'af_heart',
     'open-issue': 'false',
   };
 

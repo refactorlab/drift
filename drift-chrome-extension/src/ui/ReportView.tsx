@@ -66,7 +66,7 @@ export function ReportView({ report }: { report: DriftReport }) {
         <div className="big">🔍</div>
         <div>No Drift report on this page.</div>
         <div style={{ marginTop: 6, fontSize: 12 }}>
-          Open a pull request that has an Andy / Drift comment, or view the demo report.
+          Open a pull request that has an Andy / Drift comment.
         </div>
       </div>
     );

@@ -6,16 +6,25 @@
   "description": "Andy — an AI PR-review assistant that opens in a Chrome side panel on any GitHub pull request, with the PR's scan context attached, so you can chat about the change.",
   "scripts": {
     "icons": "node scripts/generate-icons.mjs",
-    "dev": "npm run icons && vite",
-    "build": "npm run icons && tsc --noEmit && vite build",
+    "stage:ort": "node scripts/stage-ort.mjs",
+    "dev": "npm run icons && npm run stage:ort && vite",
+    "build": "npm run icons && npm run stage:ort && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
-    "zip": "npm run build && node scripts/zip.mjs",
-    "store-assets": "node scripts/generate-store-assets.mjs"
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "zip": "npm run build && npm run verify:assets && node scripts/zip.mjs",
+    "store-assets": "node scripts/generate-store-assets.mjs",
+    "prepare:assets": "npm run build:wasm && npm run build:tts",
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "build:tts": "node scripts/stage-ort.mjs"
   },
   "dependencies": {
+    "@bjorn3/browser_wasi_shim": "^0.4.2",
     "fflate": "^0.8.3",
+    "kokoro-js": "^1.2.1",
+    "marked": "^14.1.4",
+    "mermaid": "^11.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -28,7 +37,6 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^25.0.1",
-    "marked": "^14.1.4",
     "typescript": "^5.6.3",
     "vite": "^6.4.2",
     "vitest": "^2.1.9"

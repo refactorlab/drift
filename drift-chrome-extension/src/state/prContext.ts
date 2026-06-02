@@ -6,6 +6,8 @@
 import { useEffect, useState } from 'react';
 import type { PrContext } from '../core/types';
 import { activeTab, sendToTab } from '../core/messaging';
+import { parsePrUrl } from '../core/prRefs';
+import { getLiveContext, isLiveContextChange } from './liveContext';
 
 // Everything is scoped to a specific PR URL.
 const PR_PREFIX = 'drift:pr:';
@@ -58,7 +60,15 @@ async function liveContextFromTab(): Promise<PrContext | null> {
     const tab = await activeTab();
     if (!tab?.id || !tab.url?.includes('github.com')) return null;
     const res = await sendToTab(tab.id, { type: 'GET_CONTEXT' });
-    if (res.ok && 'context' in res) return res.context;
+    const scraped = res.ok && 'context' in res ? res.context : null;
+    if (scraped) return scraped;
+    // No Drift comment on the page — fall back to a live-scan context if the
+    // user has run the in-extension scanner on this PR.
+    const id = tab.url ? parsePrUrl(tab.url) : null;
+    if (id) {
+      const url = `https://github.com/${id.owner}/${id.repo}/pull/${id.number}`;
+      return await getLiveContext(url);
+    }
   } catch {
     /* content script not present on this tab */
   }
@@ -98,8 +108,12 @@ export function usePrContext() {
 
     void refresh();
 
-    // 1. Content script wrote a new context (storage).
+    // 1. Content script wrote a new context, or a live scan wrote its grounding.
     const offStorage = onPrContextChange(schedule);
+    const onStorage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && isLiveContextChange(changes)) schedule();
+    };
+    chrome.storage?.onChanged.addListener(onStorage);
 
     // 2. Tab switched / finished loading.
     const onActivated = () => schedule();
@@ -130,6 +144,7 @@ export function usePrContext() {
       window.clearTimeout(timer);
       window.clearInterval(poll);
       offStorage();
+      chrome.storage?.onChanged.removeListener(onStorage);
       chrome.tabs?.onActivated.removeListener(onActivated);
       chrome.tabs?.onUpdated.removeListener(onUpdated);
       chrome.webNavigation?.onHistoryStateUpdated.removeListener(onNav);

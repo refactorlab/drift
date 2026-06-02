@@ -1,12 +1,11 @@
-// A realistic demo report, transcribed from a real Andy comment
-// (tmp/pr-comment-self.md). Used by the popup / side panel when opened off a
-// GitHub PR so the UI always has something to render, and for screenshots.
+// A realistic sample report, transcribed from a real Andy comment, used as a
+// fixture by the reasoning unit tests. Test-only — never imported by runtime
+// code (it lives under __fixtures__ for exactly that reason).
 
-import type { DriftReport } from './types';
+import type { DriftReport } from '../../core/types';
 
-export const DEMO_REPORT: DriftReport = {
+export const SAMPLE_REPORT: DriftReport = {
   found: true,
-  demo: true,
   verdict: 'address',
   verdictLabel: 'Address before merge',
   effortLabel: 'High risk · 60 min+ review',

@@ -172,7 +172,6 @@ export function scanToReport(scan: unknown, prUrl: string | null): DriftReport |
 
   return {
     found: true,
-    demo: false,
     verdict,
     verdictLabel,
     effortLabel: composite.band ? `PR health ${composite.band}` : null,

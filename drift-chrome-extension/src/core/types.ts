@@ -42,8 +42,6 @@ export interface MetricSection {
 export interface DriftReport {
   /** Whether a Drift comment was actually located on the page. */
   found: boolean;
-  /** True when this is the bundled demo report, not scraped from a live PR. */
-  demo: boolean;
   verdict: Verdict;
   verdictLabel: string; // "Address before merge"
   /** e.g. "High risk · 60 min+ review" */
@@ -75,13 +73,13 @@ export interface ArtifactRef {
 
 /**
  * The spoken-summary audio the action attaches to the comment (a GitHub Actions
- * artifact, zipped, containing one audio file — Piper TTS output). Kept separate
+ * artifact, zipped, containing one audio file — Kokoro TTS output). Kept separate
  * from `artifacts` because it's played, not downloaded as a JSON file.
  */
 export interface AudioRef {
   /** GitHub Actions artifact URL (zip; download-gated by GitHub auth). */
   url: string;
-  /** The link's accessible label, e.g. "🔊 Listen to the spoken summary (Piper TTS)". */
+  /** The link's accessible label, e.g. "🔊 Listen to the spoken summary (Kokoro TTS)". */
   label: string;
 }
 
@@ -111,7 +109,6 @@ export interface PrContext {
 export function emptyReport(): DriftReport {
   return {
     found: false,
-    demo: false,
     verdict: 'unknown',
     verdictLabel: '',
     effortLabel: null,

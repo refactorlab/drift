@@ -144,7 +144,7 @@ pub async fn run(args: Args) -> Result<Output> {
 
 fn pick_runner(root: &Path) -> Result<TestRunner> {
     // JS/TS: read package.json scripts/devDependencies for the strongest
-    // signal. Bun's `bun test` is our base case for cf-mono.
+    // signal. Bun's `bun test`
     let pj = root.join("package.json");
     if pj.is_file() {
         let raw = std::fs::read_to_string(&pj).with_context(|| format!("read {}", pj.display()))?;

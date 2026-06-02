@@ -312,7 +312,7 @@ If you'd rather keep the comment trigger isolated (e.g. to grant `issues:write` 
 | `ai-max-suggestions` | `1` | `/drift ai-max-suggestions=5` |
 | `fail-threshold` | _(empty)_ | `/drift fail-threshold=0` |
 | `profiler-release-tag` | _(latest)_ | `/drift profiler-release-tag=drift-static-profiler-v0.6.0` |
-| `piper-voice` | `en_US-ryan-medium` | `/drift piper-voice=en_GB-alba-medium` |
+| `tts-voice` | `af_heart` | `/drift tts-voice=am_michael` |
 | `open-issue` | `false` | `/drift issue` _(also `/drift open-issue=true`)_ |
 
 Unknown keys log a `::warning::` and are dropped — forward-compatible against future inputs.

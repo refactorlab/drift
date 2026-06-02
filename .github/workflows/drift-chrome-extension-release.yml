@@ -53,6 +53,10 @@ jobs:
   publish:
     name: build + publish to Chrome Web Store
     runs-on: ubuntu-latest
+    # Single-sourced wasi-sdk version: feeds BOTH the cache key below and
+    # build-wasm.sh (inherited by the build step), so they can never drift.
+    env:
+      WASI_SDK_VERSION: '24'
     defaults:
       run:
         working-directory: drift-chrome-extension
@@ -83,8 +87,33 @@ jobs:
           echo "version=$new" >> "$GITHUB_OUTPUT"
           echo "📦 building Drift Lens v$new (base $base, patch = run #$GITHUB_RUN_NUMBER)"
 
-      # `npm run zip` = build (icons → tsc --noEmit → vite build) then package
+      # Build the bundled scanner wasm BEFORE packaging. It's gitignored +
+      # built out-of-band, so a fresh CI checkout has none — without this the
+      # store package would ship with NO scanner and the live scan would be dead
+      # on arrival.
+      #
+      # `scripts/build-wasm.sh` is the single source of truth for the build: it
+      # adds the rustup wasm target (runners ship rustup) AND self-installs
+      # wasi-sdk on a cold cache. The two cache steps are the only thing a shell
+      # script can't own — they restore the cargo target/ and the ~100MB
+      # wasi-sdk so the build is fast on a warm cache (shared with CI via the
+      # same keys).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-static-profiler
+      - uses: actions/cache@v4
+        with:
+          path: ~/wasi-sdk
+          key: wasi-sdk-${{ env.WASI_SDK_VERSION }}-${{ runner.os }}
+      - name: Build scanner wasm
+        run: npm run build:wasm
+
+      # `npm run zip` = build (icons → tsc --noEmit → vite build) → verify:assets
+      # (HARD-fails if the scanner wasm/meta is missing or invalid) → package
       # dist/ into release/drift-lens.zip (see scripts/zip.mjs).
+      # NOTE: the Kokoro TTS engine is intentionally NOT bundled (it's large; the
+      # spoken summary fails soft to the browser's system voice). To ship it,
+      # add a `build:tts` step here with a hosted model + glue.
       - name: Build + zip
         run: npm run zip
 
@@ -109,6 +138,9 @@ jobs:
           test -s "$zip" || { echo "::error::package missing or empty: $zip"; exit 1; }
           echo "📦 $zip ($(du -h "$zip" | cut -f1))"
           unzip -l "$zip" | grep -q ' manifest.json' || { echo "::error::no manifest.json at the zip root in $zip"; exit 1; }
+          # The scanner wasm MUST be in the package — its absence is the exact
+          # "ships but the live scan is dead" failure this whole step guards.
+          unzip -l "$zip" | grep -q ' drift-static-profiler.wasm' || { echo "::error::no drift-static-profiler.wasm in $zip — the live scan would be broken; the wasm build step must run before packaging"; exit 1; }
           # The `${...}` below are JS template-literals, not shell expansions.
           # shellcheck disable=SC2016
           unzip -p "$zip" manifest.json \

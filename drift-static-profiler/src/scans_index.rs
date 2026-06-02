@@ -10,6 +10,7 @@
 //! because the viewer's TypeScript types treat the wire shape as
 //! ordered; serde emits fields in declaration order.
 
+#[cfg(feature = "native")]
 use rayon::prelude::*;
 use serde::Serialize;
 use std::fs::{self, File};
@@ -44,10 +45,11 @@ pub fn regen(scans_dir: &Path) -> io::Result<usize> {
     // string parse, so per-task cost is microseconds. Rayon's overhead
     // is paid back even for a handful of files; for large dirs it
     // scales linearly with cores.
-    let mut items: Vec<IndexItem> = files
-        .par_iter()
-        .map(|p| build_item(p))
-        .collect();
+    #[cfg(feature = "native")]
+    let src_iter = files.par_iter();
+    #[cfg(not(feature = "native"))]
+    let src_iter = files.iter();
+    let mut items: Vec<IndexItem> = src_iter.map(|p| build_item(p)).collect();
 
     // Deterministic ordering — matches the Python `sorted(os.listdir)`
     // contract so committers see no spurious diff.

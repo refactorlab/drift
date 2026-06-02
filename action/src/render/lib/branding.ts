@@ -39,7 +39,7 @@ export const withImage = (file: string, alt: string, section: string): string =>
  * logged-in session even on public repos).
  */
 export const audioBanner = (url: string): string =>
-  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Piper TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
+  `<p align="center"><a href="${escapeHtml(url)}"><img src="${SCREENSHOTS}/summary-audio.png" alt="🔊 Listen to the spoken summary (Kokoro TTS)" width="${AUDIO_BANNER_WIDTH}" /></a></p>`;
 
 /**
  * Andy sign-off — a small mascot banner pinned to the VERY END of the comment.

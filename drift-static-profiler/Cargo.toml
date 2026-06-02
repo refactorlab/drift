@@ -13,6 +13,17 @@ path = "src/main.rs"
 name = "drift_static_profiler"
 path = "src/lib.rs"
 
+# Build-target feature split. `native` (default) is the full CLI exactly as
+# before — nothing about a native build changes. Building with
+# `--no-default-features` drops the deps that can't cross-compile to
+# wasm32-wasip1: the Postgres C parser (pg_query — currently UNUSED), the
+# rayon thread pool (wasm has no threads), POSIX getrusage (libc), and the
+# terminal progress UI (indicatif → console/libc). The analysis logic is
+# identical; only parallelism and the RSS-sampling/progress side-signals differ.
+[features]
+default = ["native"]
+native = ["dep:pg_query", "dep:libc", "dep:rayon", "dep:indicatif"]
+
 [dependencies]
 tree-sitter = "0.25"
 tree-sitter-python = "0.23"
@@ -45,14 +56,14 @@ petgraph = "0.8"
 # thread owns its own Parser and pre-compiled Query (one per language),
 # so the per-file query-compile cost in `tags::extract_tags_from_source`
 # is amortized down to once-per-thread-per-language.
-rayon = "1"
+rayon = { version = "1", optional = true }
 # Terminal progress bars (the modern tqdm/Bun/HuggingFace style:
 # overall + per-phase bars, ETA, rate, current-file). Used by
 # `progress::CliProgress` — library callers that pass `NullProgress`
 # don't pull any of this in at runtime. indicatif gracefully
 # degrades to silent on non-TTY without us needing IsTerminal checks
 # in the CLI, while still letting completion lines flow to scrollback.
-indicatif = "0.18"
+indicatif = { version = "0.18", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -61,7 +72,7 @@ clap = { version = "4", features = ["derive"] }
 # memory soft-limit guard + per-phase RSS logging depend on it so an
 # OOM is logged *before* the kernel SIGKILLs us. Tiny, ubiquitous, no
 # system deps; only the `rusage` / `getrusage` surface is used.
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 # Optional gzip for `--gzip` on `analyze-root` / `scan`. Uses
 # `rust_backend` to avoid the C zlib dep so the binary stays
 # self-contained + cross-compiles cleanly.
@@ -80,7 +91,7 @@ sqlparser = "0.62"
 # the actual Postgres parse tree plus `normalize()` (replaces literals
 # with $1..$N) and `fingerprint()` (stable identity for dedup across
 # call sites). Falling back to `sqlparser` when the dialect is unknown.
-pg_query = "6"
+pg_query = { version = "6", optional = true }
 # Structured logging facade. The library only depends on the facade —
 # no concrete sink is wired in here (Clean Architecture: the binary
 # decides where logs go). When this crate is used as a library

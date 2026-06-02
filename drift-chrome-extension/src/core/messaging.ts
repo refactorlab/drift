@@ -2,6 +2,7 @@
 // background service worker. One discriminated union keeps both ends honest.
 
 import type { DriftReport, PrContext } from './types';
+import type { PrRefs } from './prRefs';
 
 /** Result of a background-worker attempt to download an artifact from GitHub. */
 export interface FetchedArtifact {
@@ -27,6 +28,7 @@ export interface FetchedArtifact {
 export type Message =
   | { type: 'GET_REPORT' } // popup/sidepanel → content: scrape & return
   | { type: 'GET_CONTEXT' } // sidepanel → content: scrape full PR context
+  | { type: 'GET_PR_REFS' } // sidepanel → content: read base/head refs off the live DOM
   | { type: 'REPORT'; report: DriftReport } // content → background cache
   | { type: 'OPEN_SIDE_PANEL'; tabId?: number } // any → background
   | { type: 'FETCH_ARTIFACT'; url: string; binary?: boolean } // sidepanel → background: credentialed download (binary → audio data URL)
@@ -35,6 +37,7 @@ export type Message =
 export type Response =
   | { ok: true; report: DriftReport }
   | { ok: true; context: PrContext | null }
+  | { ok: true; refs: PrRefs | null }
   | { ok: true; fetched: FetchedArtifact }
   | { ok: true }
   | { ok: false; error: string };

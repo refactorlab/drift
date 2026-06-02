@@ -7,3 +7,13 @@ public/icons/
 # Local-only CWS publish credentials — these belong in GitHub repo secrets, never in git.
 .env
 .env.*
+# WASM scanner build product (regenerate via scripts/build-wasm.sh)
+public/drift-static-profiler.wasm
+public/drift-scanner.meta.json
+# Kokoro TTS engine assets (large; stage via scripts/build-tts.sh)
+public/kokoro/
+# onnxruntime-web WASM engine (large; staged from node_modules via scripts/stage-ort.mjs)
+public/ort/
+# Bundled Kokoro model + meta (large; staged from HF via scripts/stage-kokoro.mjs)
+public/models/
+public/kokoro.meta.json

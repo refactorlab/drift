@@ -169,7 +169,8 @@ inputs:
   audio-summary:
     description: |
       When true (default), synthesize a spoken WAV summary of the PR with
-      Piper (offline neural TTS), upload it as a NON-ZIPPED workflow artifact
+      Kokoro (offline neural TTS, run via the self-contained sherpa-onnx
+      `sherpa-onnx-offline-tts` binary), upload it as a NON-ZIPPED workflow artifact
       (actions/upload-artifact@v7 with `archive: false`), and link that raw
       .wav at the END of the Drift sticky comment (posted via Octokit in
       dist/index.js). The link is the .wav file itself — NOT a zip; on a
@@ -187,60 +188,80 @@ inputs:
       action FALLS BACK to a deterministic, spoken-style briefing built from
       the PR's commit messages + changed-file churn, so a throttled run still
       ships audio. Both texts pass through the same TTS sanitiser + sentence
-      cap, so Piper's limits hold regardless of source. If even the commit
-      history is empty, audio is skipped (no title-only substitute).
+      cap, so the synthesizer's limits hold regardless of source. If even the
+      commit history is empty, audio is skipped (no title-only substitute).
 
       Fully fail-soft: any briefing / TTS / download / upload error is a
-      ::warning:: and never breaks the review. The Piper binary AND the voice
-      model are cached across runs, so a warm run adds only the synthesis time.
+      ::warning:: and never breaks the review. The sherpa-onnx binary AND the
+      Kokoro model are cached across runs, so a warm run adds only synthesis time.
     required: false
     default: 'true'
-  piper-voice:
+  tts-voice:
     description: |
-      Piper voice id from the HF `rhasspy/piper-voices` catalog, formatted
-      `<lang>-<name>-<quality>` (e.g. en_US-ryan-medium, en_GB-alba-medium).
-      The download path is derived from the id.
+      Kokoro voice NAME to speak the summary in, from the
+      kokoro-multi-lang-v1_0 catalog. Naming is `<lang><sex>_<name>` where
+      lang a=American / b=British, sex f=female / m=male. The name is mapped
+      to the model's integer speaker id at synth time (see the voice→sid
+      table in the synthesis step). Defaults to af_heart, the only A-grade
+      (highest training-quality) Kokoro voice. An unknown name is fail-soft:
+      the synth step falls back to af_heart with a ::warning::.
+
+      Available voices (English):
+        American female: af_heart (default, A-grade), af_bella, af_nicole,
+          af_sarah, af_sky, af_alloy, af_aoede, af_jessica, af_kore, af_nova,
+          af_river
+        American male:   am_michael (warm, narration), am_adam, am_echo,
+          am_eric, am_fenrir, am_liam, am_onyx, am_puck, am_santa
+        British female:  bf_emma, bf_alice, bf_isabella, bf_lily
+        British male:    bm_george, bm_daniel, bm_fable, bm_lewis
+
+      Override per-repo via the `with:` block (see examples/drift.yml) or
+      per-run via a comment: `/drift tts-voice=am_michael`.
     required: false
-    default: 'en_US-ryan-high'
-  piper-version:
+    default: 'af_heart'
+  sherpa-onnx-version:
     description: |
-      rhasspy/piper release TAG for the prebuilt Linux TTS binary (default
-      2023.11.14-2, the last classic release; assets piper_linux_x86_64 /
-      piper_linux_aarch64). If this tag/asset can't be fetched the install
-      falls back to the older v1.2.0 piper_amd64 / piper_arm64 tarball.
+      k2-fsa/sherpa-onnx release TAG for the prebuilt offline-TTS binary
+      (`sherpa-onnx-offline-tts`). On Linux runners we fetch the CPU
+      `shared` assets: `sherpa-onnx-<tag>-linux-x64-shared.tar.bz2` (X64) or
+      `sherpa-onnx-<tag>-linux-aarch64-shared-cpu.tar.bz2` (ARM64). Each
+      expands to a top-level dir with `bin/sherpa-onnx-offline-tts` plus a
+      `lib/` of shared objects (libonnxruntime.so, libsherpa-onnx-*.so).
+      Pinned + SHA256-verified below.
     required: false
-    default: '2023.11.14-2'
-  piper-voices-pin:
+    default: 'v1.13.2'
+  sherpa-onnx-sha256-x86_64:
     description: |
-      Commit SHA of rhasspy/piper-voices to pin voice + voices.json
-      downloads against. Default is a vetted SHA from main as of action
-      review. Pinning a SHA turns the MD5 integrity check from
-      "corruption-only" into true supply-chain integrity: even if the HF
-      repo is compromised at HEAD, this action stays on a known-good
-      tree. To pick up new voices, bump this SHA in a reviewed PR.
-      Use 'main' explicitly (or any branch/tag) to opt out — fail-soft.
+      SHA256 of `sherpa-onnx-<version>-linux-x64-shared.tar.bz2`. sherpa-onnx
+      publishes no per-asset checksums, so this pin is the only supply-chain
+      control on the binary itself. On mismatch the action emits ::warning::
+      and skips extraction — fail-soft (the PR review still ships, just
+      without audio). Set to empty string to opt out of the check.
     required: false
-    # b710b0ba0740da88dc36e1ab8fa6b310d43a3a48 was the head of main as of
-    # 2026-05-15; covers every voice in the current catalog including
-    # en_US-ryan-medium / en_US-ryan-high.
-    default: 'b710b0ba0740da88dc36e1ab8fa6b310d43a3a48'
-  piper-tarball-sha256-x86_64:
+    default: '1ef6741535f7af4d69e394fd440a807108036d26ed4f542660191019da5c0daa'
+  sherpa-onnx-sha256-aarch64:
     description: |
-      SHA256 of the canonical 2023.11.14-2 piper_linux_x86_64.tar.gz
-      release asset. rhasspy/piper publishes NO checksums or signatures,
-      so this is the only available supply-chain control for the binary
-      itself (compare to piper-voices-pin which covers the voice files).
-      On mismatch the action emits ::warning:: and skips extraction —
-      fail-soft, the PR review still ships, just without audio. Set to
-      empty string to opt out of the check entirely.
+      SHA256 of `sherpa-onnx-<version>-linux-aarch64-shared-cpu.tar.bz2`.
+      Same fail-soft semantics as the x86_64 variant.
     required: false
-    default: 'a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992'
-  piper-tarball-sha256-aarch64:
+    default: 'b54178420e9e6ff6c7f308b5f1cde827215b38393356ee0bd2b7595c648b330b'
+  kokoro-model:
     description: |
-      SHA256 of the canonical 2023.11.14-2 piper_linux_aarch64.tar.gz
-      release asset. Same fail-soft semantics as the x86_64 variant.
+      Kokoro model archive name from the sherpa-onnx `tts-models` release.
+      Default `kokoro-int8-multi-lang-v1_0` is int8-quantized (~126 MB,
+      `model.int8.onnx` ~109 MB) with 53 voices including af_heart. The
+      archive bundles `voices.bin`, `tokens.txt` and `espeak-ng-data`, so no
+      system espeak-ng install is needed. Downloaded from
+      `github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/<name>.tar.bz2`.
     required: false
-    default: 'fea0fd2d87c54dbc7078d0f878289f404bd4d6eea6e7444a77835d1537ab88eb'
+    default: 'kokoro-int8-multi-lang-v1_0'
+  kokoro-model-sha256:
+    description: |
+      SHA256 of the `<kokoro-model>.tar.bz2` archive. Verified before
+      extraction; on mismatch the action warns and skips audio (fail-soft).
+      Set to empty string to opt out. Bump in lockstep with `kokoro-model`.
+    required: false
+    default: '75654a84864be26f345f020f4070c2c019e96dd1b7f9bf6e2ffd59efac6aa5a3'
   # ─── PR context overrides (event-agnostic invocation) ──────────────
   # These are empty by default. On `pull_request` events the derivation
   # step (see `Resolve PR context`) fills them from github.event.pull_request.
@@ -1279,257 +1300,171 @@ runs:
         esac
         rm -f "$body" "$hdr"
 
-    # ─── 8b. Audio summary — cache + install Piper binary ────────────
-    # Offline neural TTS. We cache the binary (keyed by version + arch) so
-    # only the first run on a given key pays the download. Installed under
-    # RUNNER_TEMP (never the consumer's workspace) like the profiler.
-    - name: Cache Piper binary
+    # ─── 8b. Audio summary — cache + install sherpa-onnx binary ──────
+    # Offline neural TTS. sherpa-onnx ships a self-contained
+    # `sherpa-onnx-offline-tts` binary (C++ + bundled onnxruntime .so) that
+    # runs the Kokoro ONNX model — no Python, no system espeak (the model
+    # archive in 8c bundles espeak-ng-data). We cache the binary (keyed by
+    # version + arch) so only the first run on a given key pays the
+    # download. Installed under RUNNER_TEMP (never the consumer's workspace).
+    - name: Cache sherpa-onnx binary
       continue-on-error: true   # advisory: never fail the PR on our own error
-      id: piper-bin-cache
+      id: sherpa-bin-cache
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
-        path: ${{ runner.temp }}/piper
-        # cache key v3: piper tarball SHA256 verification added — any
-        # pre-v3 install was unverified. Bumping invalidates older
-        # caches so the new sha256-checked install runs at least once
-        # per (arch, version) tuple on rollout.
-        key: piper-${{ runner.arch }}-${{ inputs.piper-version }}-v3
+        path: ${{ runner.temp }}/sherpa
+        # cache key v1: first key for the sherpa-onnx/Kokoro install (the
+        # prior piper-* keys are abandoned and will GC out on their own).
+        key: sherpa-onnx-${{ runner.arch }}-${{ inputs.sherpa-onnx-version }}-v1
 
-    - name: Install Piper binary
+    - name: Install sherpa-onnx binary
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != '' &&
-        steps.piper-bin-cache.outputs.cache-hit != 'true'
+        steps.sherpa-bin-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        PIPER_VERSION: ${{ inputs.piper-version }}
-        PIPER_PARENT:  ${{ runner.temp }}
-        PIPER_SHA_X86_64: ${{ inputs.piper-tarball-sha256-x86_64 }}
-        PIPER_SHA_AARCH64: ${{ inputs.piper-tarball-sha256-aarch64 }}
+        SHERPA_VERSION: ${{ inputs.sherpa-onnx-version }}
+        SHERPA_DIR:     ${{ runner.temp }}/sherpa
+        SHERPA_SHA_X86_64:  ${{ inputs.sherpa-onnx-sha256-x86_64 }}
+        SHERPA_SHA_AARCH64: ${{ inputs.sherpa-onnx-sha256-aarch64 }}
       run: |
-        # rhasspy/piper ships exactly two Linux arch tarballs, each expanding
-        # to a top-level `piper/` dir (binary + bundled libs + espeak-ng-data).
-        # We extract into RUNNER_TEMP → ${RUNNER_TEMP}/piper/piper.
+        # sherpa-onnx publishes per-arch Linux CPU `shared` tarballs that
+        # each expand to a top-level `sherpa-onnx-<ver>-linux-<arch>-shared[-cpu]/`
+        # dir containing `bin/sherpa-onnx-offline-tts` + a `lib/` of shared
+        # objects. We extract with --strip-components=1 into ${SHERPA_DIR} so
+        # the synth step finds a stable ${SHERPA_DIR}/bin/sherpa-onnx-offline-tts
+        # and sets LD_LIBRARY_PATH=${SHERPA_DIR}/lib regardless of version.
         #
-        # The original rhasspy/piper repo was ARCHIVED on 2025-10-06;
-        # development moved to OHF-Voice/piper1-gpl. GitHub does not
-        # guarantee archived-repo release assets remain downloadable
-        # indefinitely — when (not if) the primary URL 404s, we fall
-        # back via the active GPL fork (which ships the same CLI flags
-        # including --debug and --sentence-silence that our diagnostics
-        # depend on) and only THEN to the 2-year-old v1.2.0 binary as a
-        # last resort. The v1.2.0 build lacks --debug, so the phoneme-
-        # stats parser in the synth step will gracefully degrade to
-        # "could not parse phoneme counts" — visible but non-fatal.
-        #
-        # PRIMARY:   canonical 2023.11.14-2: piper_linux_<x86_64|aarch64>.tar.gz
-        # FALLBACK1: piper1-gpl latest release: same asset name layout
-        # FALLBACK2: v1.2.0 (no --debug): piper_<amd64|arm64>.tar.gz
+        #   X64   → sherpa-onnx-<ver>-linux-x64-shared.tar.bz2
+        #   ARM64 → sherpa-onnx-<ver>-linux-aarch64-shared-cpu.tar.bz2
         case "${RUNNER_ARCH}" in
-          ARM64) new=aarch64 ; old=arm64 ;;
-          *)     new=x86_64  ; old=amd64 ;;   # X64 (GitHub-hosted) + default
+          ARM64) asset="linux-aarch64-shared-cpu" ; expected_sha="$SHERPA_SHA_AARCH64" ;;
+          *)     asset="linux-x64-shared"         ; expected_sha="$SHERPA_SHA_X86_64"  ;;  # X64 (GitHub-hosted) + default
         esac
-        primary="https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/piper_linux_${new}.tar.gz"
-        gpl_fallback="https://github.com/OHF-Voice/piper1-gpl/releases/latest/download/piper_linux_${new}.tar.gz"
-        fallback="https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${old}.tar.gz"
-        # SHA256 pin for the CANONICAL primary URL. rhasspy/piper does
-        # not publish checksums or signatures, so this is the only
-        # available supply-chain control on the binary itself. The pin
-        # only applies to the canonical primary URL; fallbacks are
-        # installed unchecked (with a loud warning) because they
-        # legitimately drift (piper1-gpl/latest, piper v1.2.0).
-        case "$new" in
-          x86_64)  expected_sha="$PIPER_SHA_X86_64"  ;;
-          aarch64) expected_sha="$PIPER_SHA_AARCH64" ;;
-          *)       expected_sha="" ;;
-        esac
+        url="https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_VERSION}/sherpa-onnx-${SHERPA_VERSION}-${asset}.tar.bz2"
+        echo "⬇️  ${url}"
+        mkdir -p "$SHERPA_DIR"
         installed=false
-        for url in "$primary" "$gpl_fallback" "$fallback"; do
-          echo "⬇️  ${url}"
-          # --connect-timeout 10 + --max-time 180 — the piper tarball is
-          # ~30 MB; without these libcurl could stall indefinitely on a
-          # bad CDN edge. 3-minute total is generous for the tarball.
-          if curl -fSL --connect-timeout 10 --max-time 180 -o /tmp/piper.tar.gz "$url"; then
-            # SHA256 verify ONLY the primary URL — fallbacks are
-            # unverified by design (they drift). Fail-soft on mismatch:
-            # warn and skip extraction so a tampered canonical binary
-            # never runs, but the PR review continues. An empty
-            # expected_sha (set via input) disables the check entirely.
-            verify_ok=1
-            if [ "$url" = "$primary" ] && [ -n "$expected_sha" ] && command -v sha256sum >/dev/null 2>&1; then
-              actual_sha=$(sha256sum /tmp/piper.tar.gz | awk '{print $1}')
-              if [ "$actual_sha" = "$expected_sha" ]; then
-                echo "🔒 piper tarball SHA256 verified (${actual_sha})"
-              else
-                echo "::warning::piper tarball SHA256 mismatch (got ${actual_sha}, want ${expected_sha}) — refusing to extract canonical URL; falling through to fallbacks."
-                verify_ok=0
-              fi
-            elif [ "$url" != "$primary" ]; then
-              echo "ℹ️  fallback URL: skipping SHA256 verify (no pinned value)."
+        # --connect-timeout 10 + --max-time 180 — the tarball is ~26 MB;
+        # without these libcurl could stall indefinitely on a bad CDN edge.
+        if curl -fSL --connect-timeout 10 --max-time 180 -o /tmp/sherpa.tar.bz2 "$url"; then
+          # SHA256 pin — sherpa-onnx publishes no checksums, so this is the
+          # only supply-chain control on the binary. Fail-soft on mismatch:
+          # warn and skip extraction so a tampered binary never runs, but the
+          # PR review continues. An empty expected_sha (input) disables it.
+          verify_ok=1
+          if [ -n "$expected_sha" ] && command -v sha256sum >/dev/null 2>&1; then
+            actual_sha=$(sha256sum /tmp/sherpa.tar.bz2 | awk '{print $1}')
+            if [ "$actual_sha" = "$expected_sha" ]; then
+              echo "🔒 sherpa-onnx tarball SHA256 verified (${actual_sha})"
+            else
+              echo "::warning::sherpa-onnx tarball SHA256 mismatch (got ${actual_sha}, want ${expected_sha}) — refusing to extract."
+              verify_ok=0
             fi
-            if [ "$verify_ok" = "1" ] && tar -xzf /tmp/piper.tar.gz -C "$PIPER_PARENT"; then
-              rm -f /tmp/piper.tar.gz
-              echo "✅ installed to ${PIPER_PARENT}/piper"
-              installed=true
-              break
-            fi
-            rm -f /tmp/piper.tar.gz
+          else
+            echo "ℹ️  SHA256 verify skipped (no pinned value or no sha256sum)."
           fi
-          echo "   ↳ failed; trying next URL…"
-        done
+          if [ "$verify_ok" = "1" ] && tar -xjf /tmp/sherpa.tar.bz2 -C "$SHERPA_DIR" --strip-components=1; then
+            echo "✅ installed to ${SHERPA_DIR}/bin/sherpa-onnx-offline-tts"
+            installed=true
+          fi
+          rm -f /tmp/sherpa.tar.bz2
+        fi
         [ "$installed" = "true" ] || \
-          echo "⚠️  Piper download failed (primary + GPL fork + legacy fallback) — audio summary will be skipped (fail-soft)."
+          echo "⚠️  sherpa-onnx download/verify failed — audio summary will be skipped (fail-soft)."
 
-    # ─── 8c. Audio summary — cache + download the voice model ────────
-    - name: Cache Piper voice
+    # ─── 8c. Audio summary — cache + download the Kokoro model ───────
+    - name: Cache Kokoro model
       continue-on-error: true   # advisory: never fail the PR on our own error
-      id: piper-voice-cache
+      id: kokoro-model-cache
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != ''
       uses: actions/cache@v4
       with:
-        path: ${{ runner.temp }}/piper-voices
-        # cache key v2: invalidates pre-existing partial/truncated voice
-        # downloads (the v1 path had no integrity check, so a single bad
-        # download could pin gibberish into the cache forever).
-        key: piper-voice-${{ (steps.args.outputs.piper-voice || inputs.piper-voice) }}-v2
+        path: ${{ runner.temp }}/kokoro
+        # cache key v1: keyed on the model archive name. SHA256 verification
+        # at download time means a corrupt/truncated archive is never
+        # persisted (the extract is gated on the pin), so no integrity
+        # bump is needed across re-downloads of the same model.
+        key: kokoro-model-${{ inputs.kokoro-model }}-v1
 
-    - name: Download Piper voice
+    - name: Download Kokoro model
       continue-on-error: true   # advisory: never fail the PR on our own error
       if: >-
         (steps.args.outputs.audio-summary || inputs.audio-summary) == 'true' &&
         (steps.scan.outputs.scan_ran == 'true' || steps.diff.outputs.has_source == 'false') &&
         steps.pr-ctx.outputs.head_sha != '' &&
-        steps.piper-voice-cache.outputs.cache-hit != 'true'
+        steps.kokoro-model-cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        PIPER_VOICE: ${{ (steps.args.outputs.piper-voice || inputs.piper-voice) }}
-        VOICE_DIR:   ${{ runner.temp }}/piper-voices
-        PIPER_VOICES_PIN: ${{ inputs.piper-voices-pin }}
+        KOKORO_MODEL:        ${{ inputs.kokoro-model }}
+        KOKORO_MODEL_SHA256: ${{ inputs.kokoro-model-sha256 }}
+        KOKORO_DIR:          ${{ runner.temp }}/kokoro
       run: |
-        # Validate PIPER_VOICE shape BEFORE we interpolate it into a URL
-        # or a filesystem path. The id flows into:
-        #   • https://huggingface.co/rhasspy/piper-voices/resolve/main/${top}/${lang}/${name}/${quality}/${PIPER_VOICE}.onnx
-        #   • ${VOICE_DIR}/${PIPER_VOICE}.onnx (and .onnx.json)
-        #   • later ${VOICE_DIR}/${PIPER_VOICE}.onnx in the synth step
-        # Without validation, a consumer workflow (or a /drift comment-
-        # driven override) could pass `../etc/passwd` or `foo?x` and (a)
-        # escape VOICE_DIR, (b) inject URL query params, or (c) just
-        # request a malformed file that downloads as a 404 HTML page and
-        # cascades into gibberish at synth time. The regex below pins
-        # the rhasspy/piper-voices id convention (lang_REGION-name-quality)
-        # — covers every voice currently in voices.json. Fail-soft: skip
-        # audio summary rather than fail the PR.
-        case "$PIPER_VOICE" in
+        # Validate KOKORO_MODEL shape BEFORE interpolating it into a URL.
+        # It flows into:
+        #   github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${KOKORO_MODEL}.tar.bz2
+        # A consumer override could otherwise inject path segments or query
+        # params. The sherpa-onnx tts-models archives are all named
+        # `kokoro-...`; pin to a conservative charset. Fail-soft: skip audio
+        # rather than fail the PR.
+        case "$KOKORO_MODEL" in
           *[!A-Za-z0-9._-]*|*..*|'')
-            echo "::warning::invalid piper-voice id '${PIPER_VOICE}' (illegal chars or path traversal) — skipping audio summary."
+            echo "::warning::invalid kokoro-model '${KOKORO_MODEL}' (illegal chars or path traversal) — skipping audio summary."
             exit 0 ;;
         esac
-        if ! printf '%s' "$PIPER_VOICE" | LC_ALL=C grep -qE '^[a-z]{2}_[A-Z]{2}-[a-z0-9_]+-(x_low|low|medium|high)$'; then
-          echo "::warning::malformed piper-voice id '${PIPER_VOICE}' — must match <lang>_<REGION>-<name>-<quality>; skipping audio summary."
+        url="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${KOKORO_MODEL}.tar.bz2"
+        mkdir -p "$KOKORO_DIR"
+        echo "⬇️  kokoro model ${KOKORO_MODEL} ← ${url}"
+        # --connect-timeout 10 + --max-time 300 — the int8 archive is ~126 MB
+        # (fp32 ~330 MB), larger than the old Piper voice, so allow 5 minutes.
+        if ! curl -fSL --connect-timeout 10 --max-time 300 -o /tmp/kokoro.tar.bz2 "$url"; then
+          echo "⚠️  kokoro model download failed — audio summary will be skipped (fail-soft)."
           exit 0
         fi
-        # Derive the HF path from the voice id `<lang>-<name>-<quality>`:
-        #   en_US-ryan-medium → top=en lang=en_US name=ryan quality=medium
-        lang="${PIPER_VOICE%%-*}"          # en_US
-        rest="${PIPER_VOICE#*-}"           # ryan-medium
-        name="${rest%%-*}"                 # ryan
-        quality="${rest#*-}"               # medium
-        top="${lang%%_*}"                  # en
-        # Pin to a vetted commit SHA from rhasspy/piper-voices instead of
-        # following `main`. The MD5 integrity check below catches
-        # corruption-in-transit, but a same-origin check provides ZERO
-        # defense against an adversary who controls the origin (e.g.
-        # repo compromise, 2FA bypass, hostile maintainer). Pinning the
-        # SHA — combined with the MD5 check — converts the verification
-        # from "corruption-only" to true supply-chain integrity. To
-        # consume new voices a reviewed PR must bump the SHA in the
-        # piper-voices-pin input default. Allow basic shape validation
-        # (40-hex commit SHA or a branch/tag name) so attackers can't
-        # inject path segments via the pin input.
-        ref="${PIPER_VOICES_PIN:-main}"
-        case "$ref" in
-          *[!A-Za-z0-9._/-]*|*..*|'')
-            echo "::warning::invalid piper-voices-pin '${ref}' — falling back to 'main'."
-            ref="main" ;;
-        esac
-        base="https://huggingface.co/rhasspy/piper-voices/resolve/${ref}/${top}/${lang}/${name}/${quality}"
-        mkdir -p "$VOICE_DIR"
-        echo "⬇️  voice ${PIPER_VOICE} ← ${base}"
-        # --connect-timeout 10 + --max-time 120 bounds the voice download
-        # at 2 minutes — the .onnx is 60–120 MB so we need more than the
-        # 60s budget used for the AI call. Without these flags libcurl
-        # uses ~300s default and could stall the workflow indefinitely.
-        curl -fSL --connect-timeout 10 --max-time 120 -o "${VOICE_DIR}/${PIPER_VOICE}.onnx"      "${base}/${PIPER_VOICE}.onnx?download=true"      || echo "⚠️  voice .onnx download failed"
-        curl -fSL --connect-timeout 10 --max-time 30  -o "${VOICE_DIR}/${PIPER_VOICE}.onnx.json" "${base}/${PIPER_VOICE}.onnx.json?download=true" || echo "⚠️  voice config download failed"
-        # Integrity verification: Piper's own Python downloader uses MD5
-        # from the HuggingFace voices.json registry to guard against
-        # truncated downloads. Without this, a TCP reset / CDN hiccup /
-        # disk-full produces a non-empty-but-truncated .onnx that the
-        # file-exists guard happily accepts and the cache step then
-        # enshrines under the voice-id key — every subsequent run on
-        # that cache key produces gibberish forever. The check is
-        # fail-soft: on registry-fetch failure we warn and continue; on
-        # md5 mismatch we delete the bad file so the cache step does
-        # NOT persist a poisoned blob. Voices registered with size_bytes
-        # only (no md5) gracefully skip md5 and verify by size only.
-        if command -v jq >/dev/null 2>&1 && command -v md5sum >/dev/null 2>&1; then
-          registry_url="https://huggingface.co/rhasspy/piper-voices/resolve/${ref}/voices.json"
-          registry="$(curl -fsSL --connect-timeout 5 --max-time 15 "$registry_url" 2>/dev/null || true)"
-          if [ -n "$registry" ]; then
-            for ext in onnx onnx.json; do
-              f="${PIPER_VOICE}.${ext}"
-              relpath="${top}/${lang}/${name}/${quality}/${f}"
-              want_md5=$(printf '%s' "$registry" | jq -r --arg p "$relpath" '.[].files[$p].md5_digest // empty' 2>/dev/null | head -n 1)
-              want_size=$(printf '%s' "$registry" | jq -r --arg p "$relpath" '.[].files[$p].size_bytes // empty' 2>/dev/null | head -n 1)
-              # Belt-and-braces: validate the SHAPE of registry values
-              # before trusting them in a delete decision. If HF publishes
-              # a malformed entry (e.g. size as "12345 bytes" or md5 with
-              # a stray newline), the literal string compare below would
-              # mis-fire and delete a perfectly-good freshly-downloaded
-              # file on every run — silent download/delete loop that
-              # ships no audio. We accept ONLY pure-digit sizes and
-              # 32-hex-char md5 digests; everything else falls through
-              # to skip the corresponding check.
-              case "$want_size" in ''|*[!0-9]*) want_size='' ;; esac
-              if [ -n "$want_md5" ] && ! printf '%s' "$want_md5" | LC_ALL=C grep -qE '^[0-9a-f]{32}$'; then
-                echo "::warning::voice ${f}: malformed md5_digest in registry — skipping md5 verify."
-                want_md5=''
-              fi
-              got_size=$(wc -c < "${VOICE_DIR}/${f}" 2>/dev/null | tr -d ' ' || echo 0)
-              if [ -n "$want_size" ] && [ "$got_size" != "$want_size" ]; then
-                echo "::warning::voice ${f}: size mismatch (got ${got_size}, want ${want_size}) — deleting corrupted file."
-                rm -f "${VOICE_DIR}/${f}"
-                continue
-              fi
-              if [ -n "$want_md5" ]; then
-                got_md5=$(md5sum "${VOICE_DIR}/${f}" 2>/dev/null | awk '{print $1}')
-                if [ "$got_md5" != "$want_md5" ]; then
-                  echo "::warning::voice ${f}: md5 mismatch (got ${got_md5}, want ${want_md5}) — deleting corrupted file."
-                  rm -f "${VOICE_DIR}/${f}"
-                else
-                  echo "🔐 voice ${f}: md5 ok (${got_md5})"
-                fi
-              fi
-            done
+        # SHA256 verify the archive BEFORE extraction. sherpa-onnx publishes
+        # no checksums, so this pin is the only supply-chain control on the
+        # model weights. A truncated/tampered archive that passed would
+        # cache forever and produce gibberish on every run. Fail-soft: on
+        # mismatch warn and skip extraction (cache persists nothing usable).
+        # Empty pin (input) opts out of the check.
+        if [ -n "$KOKORO_MODEL_SHA256" ] && command -v sha256sum >/dev/null 2>&1; then
+          actual_sha=$(sha256sum /tmp/kokoro.tar.bz2 | awk '{print $1}')
+          if [ "$actual_sha" = "$KOKORO_MODEL_SHA256" ]; then
+            echo "🔒 kokoro model SHA256 verified (${actual_sha})"
           else
-            echo "ℹ️  voices.json registry fetch failed — skipping md5 verification (fail-soft)."
+            echo "::warning::kokoro model SHA256 mismatch (got ${actual_sha}, want ${KOKORO_MODEL_SHA256}) — refusing to extract."
+            rm -f /tmp/kokoro.tar.bz2
+            exit 0
           fi
+        else
+          echo "ℹ️  kokoro model SHA256 verify skipped (no pinned value or no sha256sum)."
         fi
+        # Extract with --strip-components=1 so files land directly under
+        # ${KOKORO_DIR} (model.int8.onnx / model.onnx, voices.bin, tokens.txt,
+        # espeak-ng-data/, lexicon-*.txt) regardless of the archive's
+        # top-level dir name — the synth step reads stable paths from there.
+        if tar -xjf /tmp/kokoro.tar.bz2 -C "$KOKORO_DIR" --strip-components=1; then
+          echo "✅ kokoro model extracted to ${KOKORO_DIR}"
+        else
+          echo "⚠️  kokoro model extract failed — audio summary will be skipped (fail-soft)."
+        fi
+        rm -f /tmp/kokoro.tar.bz2
 
     # ─── 8d-pre. Generate the spoken-briefing SCRIPT (GitHub Models) ─
     # One inline model call (curl) over the PR title / description / commits /
     # the real changed-file diff (status + churn) / business-logic graph
     # → a < 300-word, read-aloud handover script, to BRIEFING_PATH
-    # for the synth step below to feed to Piper. No bundle / no TypeScript: jq
+    # for the synth step below to feed to the TTS engine. No bundle / no TypeScript: jq
     # builds the request body (handling ALL JSON escaping) and parses the
     # reply. Gated on a GREEN preflight (ai-ep); continue-on-error + writing
     # ONLY on a non-empty reply mean any failure just leaves no file, and synth
@@ -1732,10 +1667,10 @@ runs:
     # changed-file churn (the same diff artifacts 8d-pre reads) and writes
     # it to FALLBACK_BRIEFING_PATH. The synth step (8d) prefers the AI
     # briefing, falls back to this file, and feeds whichever wins through
-    # the SAME TTS sanitiser + sentence cap + phoneme/duration/content
-    # guards — so Piper's limits (ASCII-only, ≤120-char sentences, ≤400
-    # phoneme ids) hold for the commit-based text exactly as for the AI
-    # text. No model call here, so it runs even when the 8a preflight was
+    # the SAME TTS sanitiser + sentence cap + duration/content guards — so
+    # the synthesizer's limits (ASCII-friendly, ≤120-char sentences within
+    # Kokoro's context window) hold for the commit-based text exactly as for
+    # the AI text. No model call here, so it runs even when the 8a preflight was
     # red. Fully fail-soft (continue-on-error): any error just leaves no
     # fallback file and the synth step skips audio.
     - name: Generate spoken PR briefing (commit-based fallback)
@@ -1856,9 +1791,9 @@ runs:
         DRIFT_REPORT_PATH: ${{ runner.temp }}/drift-report.json
         BRIEFING_PATH: ${{ runner.temp }}/drift-pr-briefing.txt
         FALLBACK_BRIEFING_PATH: ${{ runner.temp }}/drift-pr-briefing-fallback.txt
-        PIPER_DIR:   ${{ runner.temp }}/piper
-        VOICE_DIR:   ${{ runner.temp }}/piper-voices
-        PIPER_VOICE: ${{ (steps.args.outputs.piper-voice || inputs.piper-voice) }}
+        SHERPA_DIR:  ${{ runner.temp }}/sherpa
+        KOKORO_DIR:  ${{ runner.temp }}/kokoro
+        TTS_VOICE:   ${{ (steps.args.outputs.tts-voice || inputs.tts-voice) }}
         WAV_DIR:     ${{ runner.temp }}
         REPO_NAME:   ${{ github.event.repository.name }}
         PR_BRANCH:   ${{ steps.pr-ctx.outputs.head_ref }}
@@ -1872,12 +1807,10 @@ runs:
         # to GITHUB_STEP_SUMMARY (renders at the top of the run page).
         # Closed vocabulary — keep stable so operators can grep across
         # historical runs:
-        #   piper_voice_id_invalid, voice_config_missing,
-        #   voice_md5_mismatch, voice_size_mismatch, briefing_empty,
+        #   tts_voice_unknown, tts_assets_missing, briefing_empty,
         #   commit_fallback, sanitize_maxsent_overflow, wav_too_small,
-        #   ph_max_over_cap, ph_caution_band, ratio_out_of_band,
-        #   content_probe_breach, content_probe_single_breach,
-        #   ffmpeg_unavailable, ai_call_timeout
+        #   ratio_out_of_band, content_probe_breach,
+        #   content_probe_single_breach, ffmpeg_unavailable, ai_call_timeout
         defenses_fired=""
         _fire() { defenses_fired="${defenses_fired:+$defenses_fired,}$1"; }
         _emit_telemetry() {
@@ -1885,33 +1818,41 @@ runs:
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             {
               printf '## 🔊 Drift audio scorecard\n\n'
-              printf '| status | chars (raw → san → cap) | sentences | longest | ph_max | ratio | defenses_fired |\n'
-              printf '|--------|-------------------------|-----------|---------|--------|-------|----------------|\n'
+              printf '| status | chars (raw → san → cap) | sentences | longest | voice | ratio | defenses_fired |\n'
+              printf '|--------|-------------------------|-----------|---------|-------|-------|----------------|\n'
               printf '| %s | %s → %s → %s | %s | %s | %s | %s | %s |\n' \
                 "${1:-?}" "${before:-?}" "${after:-?}" "${capped:-?}" \
-                "${terminators:-?}" "${maxsent:-?}" "${ph_max:-?}" \
+                "${terminators:-?}" "${maxsent:-?}" "${TTS_VOICE:-?}" \
                 "${ratio:-?}" "${defenses_fired:-(none)}"
             } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           fi
         }
-        # Defense-in-depth: validate PIPER_VOICE here too, so even if the
-        # voice was restored from cache (the download step that also
-        # validates wouldn't have run), we still gate path/URL interp.
-        case "$PIPER_VOICE" in
-          *[!A-Za-z0-9._-]*|*..*|'')
-            _fire piper_voice_id_invalid
-            echo "::warning::invalid piper-voice id '${PIPER_VOICE}' (illegal chars or path traversal) — skipping audio summary."
-            echo "synthesized=false" >> "$GITHUB_OUTPUT"
-            _emit_telemetry skipped
-            exit 0 ;;
+        # Map the requested Kokoro voice NAME → the model's integer speaker
+        # id (sid). This table is the kokoro-multi-lang-v1_0 catalog (53
+        # voices); the synth binary takes --sid, not a name. An unknown name
+        # is fail-soft: warn and fall back to af_heart (sid 3, the default
+        # A-grade voice) rather than skip audio. The name is validated
+        # against a strict charset first so it can never escape the case.
+        case "$TTS_VOICE" in
+          *[!A-Za-z0-9_]*|'')
+            _fire tts_voice_unknown
+            echo "::warning::invalid tts-voice '${TTS_VOICE}' (illegal chars) — falling back to af_heart."
+            TTS_VOICE=af_heart ;;
         esac
-        if ! printf '%s' "$PIPER_VOICE" | LC_ALL=C grep -qE '^[a-z]{2}_[A-Z]{2}-[a-z0-9_]+-(x_low|low|medium|high)$'; then
-          _fire piper_voice_id_invalid
-          echo "::warning::malformed piper-voice id '${PIPER_VOICE}' — must match <lang>_<REGION>-<name>-<quality>; skipping audio summary."
-          echo "synthesized=false" >> "$GITHUB_OUTPUT"
-          _emit_telemetry skipped
-          exit 0
-        fi
+        case "$TTS_VOICE" in
+          af_alloy) SID=0 ;;  af_aoede) SID=1 ;;  af_bella) SID=2 ;;   af_heart) SID=3 ;;
+          af_jessica) SID=4 ;; af_kore) SID=5 ;;  af_nicole) SID=6 ;;  af_nova) SID=7 ;;
+          af_river) SID=8 ;;  af_sarah) SID=9 ;;  af_sky) SID=10 ;;    am_adam) SID=11 ;;
+          am_echo) SID=12 ;;  am_eric) SID=13 ;;  am_fenrir) SID=14 ;; am_liam) SID=15 ;;
+          am_michael) SID=16 ;; am_onyx) SID=17 ;; am_puck) SID=18 ;;  am_santa) SID=19 ;;
+          bf_alice) SID=20 ;; bf_emma) SID=21 ;;  bf_isabella) SID=22 ;; bf_lily) SID=23 ;;
+          bm_daniel) SID=24 ;; bm_fable) SID=25 ;; bm_george) SID=26 ;; bm_lewis) SID=27 ;;
+          *)
+            _fire tts_voice_unknown
+            echo "::warning::unknown tts-voice '${TTS_VOICE}' (not in kokoro-multi-lang-v1_0 English catalog) — falling back to af_heart (sid 3)."
+            TTS_VOICE=af_heart; SID=3 ;;
+        esac
+        echo "🎙️  voice ${TTS_VOICE} → sid ${SID}"
         # Artifact filename = "{repo}-{branch}.wav". upload-artifact@v7 with
         # archive:false promotes the FILE BASENAME to the artifact NAME
         # (action.yml: "The name of the file will be used as the artifact
@@ -1937,42 +1878,57 @@ runs:
         # multi-byte sequence.
         branch_safe="$(printf '%s' "${PR_BRANCH:-pr}" | tr '/' '-' | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | head -c 120)"
         WAV_PATH="${WAV_DIR}/${REPO_NAME}-${branch_safe}.wav"
-        bin="${PIPER_DIR}/piper"
-        model="${VOICE_DIR}/${PIPER_VOICE}.onnx"
-        config="${VOICE_DIR}/${PIPER_VOICE}.onnx.json"
-        if [ ! -x "$bin" ] || [ ! -f "$model" ] || [ ! -f "$config" ]; then
-          _fire voice_config_missing
-          echo "⚠️  Piper binary / voice model / voice config missing — skipping audio summary."
-          [ ! -x "$bin" ]    && echo "    missing exec: $bin"
-          [ ! -f "$model" ]  && echo "    missing model: $model"
-          [ ! -f "$config" ] && echo "    missing config: $config"
+        bin="${SHERPA_DIR}/bin/sherpa-onnx-offline-tts"
+        # int8 archives ship model.int8.onnx; fp32 archives ship model.onnx.
+        # Prefer int8, fall back to fp32 so either kokoro-model input works.
+        if [ -f "${KOKORO_DIR}/model.int8.onnx" ]; then
+          model="${KOKORO_DIR}/model.int8.onnx"
+        else
+          model="${KOKORO_DIR}/model.onnx"
+        fi
+        voices="${KOKORO_DIR}/voices.bin"
+        tokens="${KOKORO_DIR}/tokens.txt"
+        data_dir="${KOKORO_DIR}/espeak-ng-data"
+        # Multi-lingual Kokoro (>= v1.0, our default) REQUIRES a lexicon —
+        # sherpa-onnx exits non-zero ("please pass --kokoro-lexicon or
+        # --kokoro-lang") without it. The archive ships per-locale lexicons;
+        # we pass the US-English one plus the Chinese one (the multi-lang
+        # model loads both). The older single-lang kokoro-en-v0_19 has NO
+        # lexicon and does not need one, so the flag is built conditionally:
+        # only existing files are added, and an empty list omits the flag
+        # entirely. Built as a bash array so the comma-joined paths survive
+        # quoting and an empty list expands to nothing.
+        lex_files=""
+        for lf in lexicon-us-en.txt lexicon-zh.txt; do
+          [ -f "${KOKORO_DIR}/${lf}" ] && lex_files="${lex_files:+$lex_files,}${KOKORO_DIR}/${lf}"
+        done
+        lex_flag=()
+        [ -n "$lex_files" ] && lex_flag=(--kokoro-lexicon="$lex_files")
+        if [ ! -x "$bin" ] || [ ! -f "$model" ] || [ ! -f "$voices" ] || [ ! -f "$tokens" ] || [ ! -d "$data_dir" ]; then
+          _fire tts_assets_missing
+          echo "⚠️  sherpa-onnx binary / Kokoro model assets missing — skipping audio summary."
+          [ ! -x "$bin" ]      && echo "    missing exec: $bin"
+          [ ! -f "$model" ]    && echo "    missing model: ${KOKORO_DIR}/model.int8.onnx (or model.onnx)"
+          [ ! -f "$voices" ]   && echo "    missing voices: $voices"
+          [ ! -f "$tokens" ]   && echo "    missing tokens: $tokens"
+          [ ! -d "$data_dir" ] && echo "    missing espeak-ng-data: $data_dir"
           echo "synthesized=false" >> "$GITHUB_OUTPUT"
           _emit_telemetry skipped
           exit 0
         fi
-        # Voice config sanity: the .onnx and .onnx.json must be paired —
-        # phoneme_type, num_speakers and sample_rate all come from the
-        # config and a malformed one silently produces gibberish (wrong
-        # phoneme→id map = phoneme-jumbled audio for the full duration,
-        # not a crash). Surface mismatches loudly so future "audio
-        # sounded wrong" reports have a one-line diagnostic.
-        if command -v jq >/dev/null 2>&1; then
-          phoneme_type=$(jq -r '.phoneme_type // "espeak"' "$config" 2>/dev/null || echo "espeak")
-          num_speakers=$(jq -r '.num_speakers // 1' "$config" 2>/dev/null || echo "1")
-          sample_rate=$(jq -r '.audio.sample_rate // 22050' "$config" 2>/dev/null || echo "22050")
-          espeak_lang=$(jq -r '.espeak.voice // "en-us"' "$config" 2>/dev/null || echo "en-us")
-          echo "🎚️  voice config: ${PIPER_VOICE} (phoneme_type=${phoneme_type}, speakers=${num_speakers}, sr=${sample_rate}Hz, espeak=${espeak_lang})"
-        else
-          sample_rate=22050   # default for Piper medium voices
-        fi
+        # Kokoro outputs a fixed 24 kHz mono PCM WAV regardless of voice, so
+        # the sample rate is a known constant (unlike Piper, where it came
+        # from the per-voice .onnx.json). Used by the duration-ratio check.
+        sample_rate=24000
+        echo "🎚️  kokoro model: $(basename "$model"), voice ${TTS_VOICE} (sid ${SID}), sr=${sample_rate}Hz"
         # Per-step diagnostic log under RUNNER_TEMP. Using /tmp directly
         # races on self-hosted runners (concurrent jobs clobber each
         # other's log) and is a textbook symlink-attack target on shared
         # hosts. RUNNER_TEMP is per-job and already used by every other
         # path in this step. Truncate up-front to defeat stale-reuse on
         # step re-entry.
-        PIPER_LOG="${RUNNER_TEMP}/piper-synth.log"
-        : > "$PIPER_LOG"
+        TTS_LOG="${RUNNER_TEMP}/tts-synth.log"
+        : > "$TTS_LOG"
         # Text source — AI briefing PREFERRED, commit-based fallback SECOND:
         #   1) The AI handover briefing (BRIEFING_PATH, step 8d-pre) — a
         #      self-contained, spoken-style summarization of what the PR
@@ -1987,9 +1943,9 @@ runs:
         #      reads like the commit log) but it keeps the 🔊 link alive
         #      instead of silently losing audio on every throttled run.
         #   3) If BOTH are absent/empty, SKIP audio entirely — we never speak
-        #      a title-only substitute and never feed Piper empty stdin.
+        #      a title-only substitute and never feed the synthesizer empty input.
         #   Whichever source wins flows through the SAME sanitiser + sentence
-        #   cap + phoneme/duration/content guards below, so Piper's limits hold
+        #   cap + duration/content guards below, so the synthesizer's limits hold
         #   regardless of source. The rest of the review is unaffected either
         #   way (this step is continue-on-error).
         if [ -s "$BRIEFING_PATH" ]; then
@@ -2010,16 +1966,16 @@ runs:
           exit 0
         fi
         # ── Sanitize for TTS ───────────────────────────────────────────
-        # Piper feeds a single line of stdin to eSpeak-NG, which splits
-        # into sentences using `.!?;:` as terminators. Each sentence is
-        # synthesised independently by the VITS model. If the sanitiser
-        # strips terminators, eSpeak sees one giant "sentence", phoneme
-        # count blows past the model's training cap (~200 phonemes →
-        # 400 IDs with the BOS/PAD/EOS interleave) and the stochastic
-        # duration predictor collapses — producing whole-file gibberish
-        # for long briefings. So the keep-set MUST preserve `.!?,;:'` and
-        # newlines must collapse to spaces so the binary's single-line
-        # contract holds. We then fold `?!;:` to `.` because eSpeak treats
+        # Kokoro phonemizes English through eSpeak-NG (the espeak-ng-data
+        # bundled in the model archive), which splits text into sentences
+        # using `.!?;:` as terminators; each sentence is synthesised as one
+        # chunk. Kokoro has a ~510-token context window per chunk, so if the
+        # sanitiser strips terminators eSpeak sees one giant "sentence" that
+        # can overrun the window and degrade prosody on long briefings.
+        # Keeping shorter, terminated sentences also simply reads better. So
+        # the keep-set MUST preserve `.!?,;:'`, and newlines collapse to
+        # spaces so the text stays a single clean argument. We then fold
+        # `?!;:` to `.` because eSpeak treats
         # `.` as the most reliable strong terminator across locales, and
         # we keep `,` and `'` for natural prosody (comma pause; "don't"
         # stays one token). Anything outside the keep-set becomes a
@@ -2050,7 +2006,7 @@ runs:
         # numbers (12345 → "twelve thousand three hundred forty five"
         # via eSpeak's _0M1/_0M2/_0M3 expansion) into a sentence whose
         # CHAR length stays under our 120-char cap but whose PHONEME
-        # count blows past Piper's 400-id training limit. Confirmed
+        # count balloons (a poor proxy for chunk size). Confirmed
         # from espeak-ng/dictsource/en_list: acronyms are flagged
         # `$abbrev` → spelled letter-by-letter at ~3 phonemes/letter,
         # and digit runs ≥1000 magnitude-expand to many phoneme tokens.
@@ -2072,8 +2028,7 @@ runs:
         #      which phonemizes it identical to "numb" (/nʌm/) —
         #      reviewers literally hear "build numb failed". "number"
         #      is a vocabulary-stable real word that signals "long
-        #      identifier" cleanly. +3 phonemes per match is trivial
-        #      vs the 400-id training cap.
+        #      identifier" cleanly.
         # Run BEFORE the existing letter-dot-letter file-ext normaliser
         # so digit/letter context is the original input's.
         # awk's default RS="\n" would consume newlines from the input
@@ -2098,24 +2053,17 @@ runs:
         before=$(printf '%s' "$text"      | wc -c | tr -d ' ')
         after=$(printf '%s'  "$sanitized" | wc -c | tr -d ' ')
         # ── Defensive sentence-length cap ──────────────────────────────
-        # Even with terminators preserved, eSpeak emits one "sentence"
-        # per `.` and feeds it to the VITS model as a single phoneme
-        # stream. Piper voices are trained with `--max-phoneme-ids 400`,
-        # and with the BOS/PAD/EOS interleave that corresponds to only
-        # ~200 phonemes (≈ 150–200 chars in English) per sentence. Any
-        # single sentence over that cap hits the stochastic duration
-        # predictor's out-of-distribution regime and produces gibberish
-        # for the WHOLE sentence (often the whole WAV when one bad
-        # sentence destabilises the buffer). Sentences from LLM
-        # briefings can blow this when they enumerate files, IDs, or
-        # versions without using a terminator. So: walk every "."-split
-        # sentence; if it exceeds 150 chars (well below the ~200 safe
-        # ceiling — gives extra headroom for phoneme-expansion of names,
-        # acronyms, and numbers), re-split it on commas, then if still
-        # too long, hard-cut at the last space before the cap. Re-join
-        # with ". " so eSpeak sees more, shorter sentences. Net effect:
-        # impossible for any sentence to exceed the SDP-safe budget,
-        # regardless of input pathology.
+        # eSpeak emits one "sentence" per `.` and Kokoro synthesises it as
+        # one chunk bounded by a ~510-token context window. A single very
+        # long sentence (LLM briefings can produce these when they enumerate
+        # files, IDs, or versions without a terminator) can approach or
+        # overrun that window and degrade prosody for the whole chunk. So:
+        # walk every "."-split sentence; if it exceeds the cap, re-split it
+        # on commas, then if still too long, hard-cut at the last space
+        # before the cap. Re-join with ". " so the synthesizer sees more,
+        # shorter sentences. Net effect: every chunk stays comfortably
+        # inside the context window and reads naturally, regardless of
+        # input pathology.
         # The awk cap below splits on `.` to walk sentences. That would
         # corrupt decimal numbers (`3.14`) and version strings (`2.0.1`)
         # — both legitimate spoken content. So we briefly mark
@@ -2123,15 +2071,13 @@ runs:
         # them after. Run twice because sed `g` is non-overlapping and
         # `1.2.3` has two adjacent matches. `@` was chosen because it's
         # already excluded from the post-sanitise keep-set (so it
-        # survives only inside this awk-cap window and is gone by piper
+        # survives only inside this awk-cap window and is gone by synth
         # input time, even if a stray one slips through).
-        # MAXLEN tightened from 150 to 120 after the acronym/digit
-        # pre-pass made char-length a tighter phoneme-count proxy: at
-        # the worst-case ~3.3 phonemes/char (e.g. all numbers / mixed
-        # alphanumerics) a 120-char sentence is ~400 phoneme IDs — at
-        # the training cap exactly. With the lowercase + NUM rules above
-        # the real ratio is closer to 1.5, putting 120 well inside the
-        # safe zone.
+        # MAXLEN of 120 chars keeps each eSpeak-split sentence far inside
+        # Kokoro's ~510-token context window (worst-case ~3.3 phonemes/char
+        # on all-numeric/alphanumeric text → ~400 tokens; with the lowercase
+        # + NUM rules above the real ratio is closer to 1.5), and reads
+        # naturally besides.
         sanitized_marked="$(printf '%s' "$sanitized" \
           | LC_ALL=C sed -E 's/([0-9])\.([0-9])/\1@\2/g; s/([0-9])\.([0-9])/\1@\2/g' \
           | awk -v MAXLEN=120 '
@@ -2182,16 +2128,16 @@ runs:
         capped=$(printf '%s' "$sanitized" | wc -c | tr -d ' ')
         # Count sentence terminators to surface the eSpeak-split risk
         # before synthesis runs. Zero terminators on a long input means
-        # one chunk → likely SDP collapse → gibberish. A loud warning
-        # here turns the symptom into a one-line diagnostic. After the
-        # cap, max-sentence-length is also surfaced — if it ever exceeds
-        # MAXLEN, the cap regressed and we want to know loudly.
+        # one chunk → may overrun Kokoro's context window → degraded
+        # prosody. A loud warning here turns the symptom into a one-line
+        # diagnostic. After the cap, max-sentence-length is also surfaced —
+        # if it ever exceeds MAXLEN, the cap regressed and we want to know.
         terminators=$(printf '%s' "$sanitized" | tr -cd '.' | wc -c | tr -d ' ')
         echo "🧹 TTS sanitize: ${before} → ${after} → ${capped} chars, ${terminators} sentences (longest=${maxsent} chars)"
         # Hard safety net: if the cap somehow missed and any single
-        # sentence is over 150 chars (= MAXLEN + 25% slack), the SDP
-        # will likely collapse and we'd produce silent gibberish —
-        # measurably worse UX than no audio at all (the PR comment
+        # sentence is over 150 chars (= MAXLEN + 25% slack), the chunk may
+        # overrun the context window and degrade — measurably worse UX
+        # than no audio at all (the PR comment
         # loses the 🔊 link, but the rest of the review is unaffected
         # because step 8d is continue-on-error). SKIP audio rather than
         # synthesize gibberish — and rather than substitute a title-only
@@ -2207,7 +2153,7 @@ runs:
         # Empty after sanitisation (the chosen briefing — AI or commit-based
         # fallback — reduced to nothing: all-symbol content, or the maxsent
         # net above cleared it). We never substitute a title-only string and
-        # never feed Piper empty stdin → SKIP audio entirely.
+        # never feed the synthesizer empty input → SKIP audio entirely.
         if [ -z "$sanitized" ]; then
           _fire briefing_empty
           echo "⏭️  ${audio_source:-briefing} text was empty after sanitisation (or tripped the sentence-length safety net) — skipping audio summary."
@@ -2216,7 +2162,7 @@ runs:
           exit 0
         fi
         text="$sanitized"
-        # ── Log the exact text Piper will speak ────────────────────────
+        # ── Log the exact text the synthesizer will speak ──────────────
         # Diagnostic for "the audio sounded wrong" — without this you'd
         # have to re-run with debug to see what was fed to TTS. We log
         # POST-sanitisation only, because the PRE-sanitised string could
@@ -2231,115 +2177,73 @@ runs:
         # ::group:: so long briefings don't dominate the step view.
         preview="$(printf '%s' "$text" | tr '\n' ' ' | LC_ALL=C tr -s ' ' | head -c 120)"
         [ "${after}" -gt 120 ] && preview="${preview}..."
-        echo "🎙️  Piper input (${after} chars): ${preview}"
-        echo "::group::🎙️  Piper input — full text"
+        echo "🎙️  TTS input (${after} chars): ${preview}"
+        echo "::group::🎙️  TTS input — full text"
         printf '%s\n' "$text"
         echo "::endgroup::"
         echo "🗣️  synthesizing ${after} chars → ${WAV_PATH}"
-        # Final belt-and-braces: under NO circumstance may a newline
-        # reach piper's stdin. Piper's --output_file branch joins all
-        # stdin lines with single spaces inside main.cpp (confirmed at
-        # src/cpp/main.cpp:281-295 of rhasspy/piper@2023.11.14-2), AND
-        # there is an upstream multi-line stdin alignment bug
-        # (home-assistant/addons#3028). The sanitizer already strips
-        # `\n\r\t` at its `tr` stage AND the awk cap re-emits with
-        # `printf "%s. "` which is newline-free, but a future refactor
-        # could regress that — one explicit strip immediately before
-        # the pipe makes the contract bulletproof.
+        # Belt-and-braces: strip any stray newline before passing the text
+        # as a single CLI argument. The sanitizer already strips `\n\r\t` at
+        # its `tr` stage AND the awk cap re-emits with `printf "%s. "` which
+        # is newline-free, but a future refactor could regress that — one
+        # explicit strip here keeps the single-argument contract bulletproof.
         text="$(printf '%s' "$text" | LC_ALL=C tr -d '\n\r')"
-        # Run from the Piper dir so it resolves its bundled espeak-ng-data
-        # + shared libs ($ORIGIN rpath). Model + output use absolute paths.
-        # Explicit synthesis params (override the voice config defaults of
-        # noise_scale=0.667, length_scale=1.0, noise_w=0.8):
-        #   --noise-scale 0.5     — lower decoder noise; reduces "drunk"
-        #                           prosody on longer chunks.
-        #   --noise-w 0.5         — tames the stochastic duration predictor.
-        #                           High noise_w + long input is the textbook
-        #                           VITS phoneme-skip / gibberish trigger.
-        #   --length-scale 1.0    — keep default rate; lower values pack more
-        #                           phonemes per frame and amplify drift.
-        #   --sentence-silence 0.3 — clean 300 ms gap between eSpeak-split
-        #                            sentences; also helps the listener
-        #                            recover if one sentence does degrade.
-        #   --debug              — emits per-sentence phoneme-id counts and
-        #                           real-time-factor to stderr (parsed below).
-        #                           Without this, we only have char-based
-        #                           estimates of phoneme count; with this,
-        #                           we have piper's own ground truth and can
-        #                           detect the 400-id training-cap breach
-        #                           that causes SDP-collapse gibberish.
-        if ( cd "$PIPER_DIR" && printf '%s' "$text" | ./piper \
-              --model "$model" \
-              --output_file "$WAV_PATH" \
-              --debug \
-              --noise-scale 0.5 \
-              --noise-w 0.5 \
-              --length-scale 1.0 \
-              --sentence-silence 0.3 ) >>"$PIPER_LOG" 2>&1; then
+        # sherpa-onnx-offline-tts (Kokoro): the binary takes the text as a
+        # positional argument and all model assets by flag. It needs its
+        # bundled shared objects (libonnxruntime.so etc.) on the loader path,
+        # so we export LD_LIBRARY_PATH=${SHERPA_DIR}/lib. Kokoro has no
+        # noise/length/SDP knobs (those were Piper/VITS-specific) and does
+        # its own sentence chunking internally, so the invocation is just
+        # model + voices + tokens + espeak-ng-data + (multi-lang) lexicon +
+        # --sid + output file.
+        #   --num-threads 2  — GitHub-hosted runners are 2-core; matches the
+        #                       local-test RTF (~0.78) for a ~300-word brief.
+        if ( LD_LIBRARY_PATH="${SHERPA_DIR}/lib:${LD_LIBRARY_PATH:-}" "$bin" \
+              --kokoro-model="$model" \
+              --kokoro-voices="$voices" \
+              --kokoro-tokens="$tokens" \
+              --kokoro-data-dir="$data_dir" \
+              "${lex_flag[@]}" \
+              --num-threads=2 \
+              --sid="$SID" \
+              --output-filename="$WAV_PATH" \
+              "$text" ) >>"$TTS_LOG" 2>&1; then
           wav_bytes=$(wc -c < "$WAV_PATH" | tr -d ' ')
-          # Empty-WAV guard: piper's success exit + a 44-byte (header-
-          # only) or near-empty file means synthesis produced nothing
-          # audible — uploading the artifact would surface a 0-second
-          # 🔊 link to PR reviewers. Treat this as a failure: drop the
-          # WAV and skip the upload. The continue-on-error wrapper
-          # ensures the rest of the review is unaffected.
+          # Empty-WAV guard: a success exit + a 44-byte (header-only) or
+          # near-empty file means synthesis produced nothing audible —
+          # uploading the artifact would surface a 0-second 🔊 link to PR
+          # reviewers. Treat this as a failure: drop the WAV and skip the
+          # upload. The continue-on-error wrapper ensures the rest of the
+          # review is unaffected.
           if [ "$wav_bytes" -le 1024 ]; then
             _fire wav_too_small
-            echo "⚠️  piper exited 0 but WAV is only ${wav_bytes} bytes (≤ header+min-PCM); skipping audio summary."
+            echo "⚠️  synth exited 0 but WAV is only ${wav_bytes} bytes (≤ header+min-PCM); skipping audio summary."
             rm -f "$WAV_PATH"
             echo "synthesized=false" >> "$GITHUB_OUTPUT"
             _emit_telemetry skipped
             exit 0
           fi
-          # ── Parse piper's own debug log for ground-truth diagnostics ──
-          # Per-sentence phoneme-id count is THE definitive signal for
-          # SDP-collapse risk. Anything > 400 is over the training cap
-          # and likely produced gibberish for that sentence (and may
-          # have destabilised following ones). 300–400 is at the edge.
-          # < 300 is safe. Real-time-factor + audio seconds let us
-          # compare expected vs actual duration as a sanity check.
-          # The regex tolerates both "phoneme" (rhasspy/piper 2023.11)
-          # and "phonemes" (piper1-gpl, used as fallback) wording.
-          ph_counts=$(grep -oE 'Synthesizing audio for [0-9]+ phoneme(s)?' "$PIPER_LOG" 2>/dev/null | grep -oE '[0-9]+' || true)
-          if [ -n "$ph_counts" ]; then
-            ph_sentences=$(printf '%s\n' "$ph_counts" | wc -l | tr -d ' ')
-            ph_max=$(printf '%s\n' "$ph_counts" | sort -n | tail -n 1)
-            [ -z "$ph_max" ] && ph_max=0   # defensive: keep `-gt` from exiting under errexit on empty
-            ph_sum=$(printf '%s\n' "$ph_counts" | awk '{s+=$1} END {print s+0}')
-            ph_over=$(printf '%s\n' "$ph_counts" | awk '$1>400 {c++} END {print c+0}')
-            echo "🎯 piper phoneme stats: ${ph_sentences} sentences, max=${ph_max} ids, total=${ph_sum} ids, over_cap=${ph_over}"
-            # Fail closed when piper's own ground truth says we busted
-            # the 400-id training cap. Silent gibberish at the 🔊 link
-            # is strictly worse UX than a missing link — and the
-            # ph_max signal is unambiguous (it's piper's own internal
-            # count of phoneme IDs handed to the VITS encoder). The
-            # rest of the review path is unaffected (continue-on-error).
-            if [ "$ph_max" -gt 400 ]; then
-              _fire ph_max_over_cap
-              echo "⚠️  ${ph_over} sentence(s) exceeded the 400-id training cap (max=${ph_max}) — some audio segments may sound garbled, but shipping the WAV anyway so reviewers can listen."
-            elif [ "$ph_max" -gt 300 ]; then
-              _fire ph_caution_band
-              echo "ℹ️  max phoneme count ${ph_max} is in the 300–400 caution band; quality may degrade — consider tightening sanitize-step MAXLEN."
-            fi
-          else
-            echo "⚠️  could not parse phoneme counts from piper debug log (binary may not support --debug, or log format changed)."
-          fi
+          # sherpa-onnx logs "Audio duration: N s" / "Real-time factor (RTF)"
+          # to stderr. Surface them as a one-line ground-truth diagnostic
+          # (the duration-ratio check below is the actual quality gate).
+          rtf_line=$(grep -E 'Real-time factor|Audio duration|Elapsed seconds' "$TTS_LOG" 2>/dev/null | tr '\n' ' ' || true)
+          [ -n "$rtf_line" ] && echo "🎯 sherpa-onnx: ${rtf_line}"
           # Compute actual audio duration from WAV size (header=44 bytes,
-          # then 16-bit mono PCM at sample_rate). Compare against the
-          # char count using Ryan-voice's ~18 chars/sec speech rate as
-          # the reference. Wildly off ratios (<60% or >150%) suggest
-          # truncation, padding, or that the model dragged a chunk into
-          # the SDP-collapse regime. Awk does the float math in one
-          # shot — no python dep needed for the diagnostic. Quoting the
-          # -v args is shellcheck-clean (SC2086) and protects against
-          # an empty value silently changing awk's parse semantics
-          # across BSD/gawk implementations. `read -r` prevents future
-          # awk format-string edits that emit backslash from being
-          # silently consumed by the shell (SC2162).
+          # then 16-bit mono PCM at sample_rate=24000). Compare against the
+          # char count using Kokoro af_heart's measured ~22 chars/sec speech
+          # rate as the reference (local test: 370 chars → 16.8 s). Wildly
+          # off ratios (<60% or >150%) suggest truncation, padding, or a
+          # decoder stall. Awk does the float math in one shot — no python
+          # dep needed for the diagnostic. Quoting the -v args is SC2086-
+          # clean and protects against an empty value silently changing
+          # awk's parse semantics across BSD/gawk implementations, and
+          # `read -r` prevents future awk format-string
+          # edits that emit backslash from being silently consumed by the
+          # shell (SC2162).
           read -r audio_sec expected_sec ratio <<<"$(awk -v b="$wav_bytes" -v sr="$sample_rate" -v c="$after" '
             BEGIN {
               a = (b - 44) / (sr * 2)
-              e = c / 18.0
+              e = c / 22.0
               r = (e > 0) ? (a / e) : 0
               printf "%.1f %.1f %.2f\n", a, e, r
             }')"
@@ -2350,10 +2254,9 @@ runs:
             echo "⚠️  audio duration ratio ${ratio} outside [0.6, 1.5] band — synthesis may have truncated, padded, or stalled."
           fi
           # ── Content probe: orthogonal "is this actual speech?" gate ──
-          # Existing layers detect symbol-level (ph_max>400) and
-          # duration-level (ratio outside band) gibberish. This catches
-          # the residual class: well-formed PCM that PASSES both gates
-          # but contains white-noise / DC-rail / decoder-stall content.
+          # The duration-ratio layer detects coarse truncation/stall. This
+          # catches the residual class: well-formed PCM that PASSES the ratio
+          # gate but contains white-noise / DC-rail / decoder-stall content.
           # Causes: model bit-rot that survives MD5, eSpeak-NG version
           # skew producing valid-but-wrong phonemes, ONNX session RNG
           # drawing a noise basin, or a supply-chain compromise that
@@ -2369,11 +2272,11 @@ runs:
           # always has it; macOS dev environments (used by some local
           # contributors via the test harness) may not. The probe is a
           # detection layer — its absence does not reintroduce gibberish
-          # risk because the upstream phoneme cap + duration ratio are
-          # still enforced. Log skip-reason so triage is easy.
+          # risk because the upstream duration ratio is still enforced.
+          # Log skip-reason so triage is easy.
           if ! command -v ffmpeg >/dev/null 2>&1; then
             _fire ffmpeg_unavailable
-            echo "ℹ️  ffmpeg not on PATH — skipping wav content probe (phoneme cap + duration ratio still active)."
+            echo "ℹ️  ffmpeg not on PATH — skipping wav content probe (duration ratio still active)."
             echo "✅ wrote ${wav_bytes} bytes"
             echo "synthesized=true" >> "$GITHUB_OUTPUT"
             echo "wav_path=${WAV_PATH}" >> "$GITHUB_OUTPUT"
@@ -2460,11 +2363,11 @@ runs:
           # or render (look at the comment-render step).
           echo "🔊 hop 1/3 OK: synthesized=true wav_path=${WAV_PATH} ($(wc -c < "$WAV_PATH" | tr -d ' ') bytes) — upload step is next."
         else
-          echo "⚠️  Piper synthesis failed (audio summary skipped):"
-          sed 's/^/    /' "$PIPER_LOG" 2>/dev/null || true
+          echo "⚠️  sherpa-onnx synthesis failed (audio summary skipped):"
+          sed 's/^/    /' "$TTS_LOG" 2>/dev/null || true
           echo "synthesized=false" >> "$GITHUB_OUTPUT"
           _emit_telemetry skipped
-          echo "🔊 hop 1/3 FAILED: synthesized=false — 🔊 Listen link will be ABSENT from the PR comment. Reason: piper exited non-zero (see log above)."
+          echo "🔊 hop 1/3 FAILED: synthesized=false — 🔊 Listen link will be ABSENT from the PR comment. Reason: sherpa-onnx exited non-zero (see log above)."
         fi
 
     # ─── 8e. Upload the WAV as a NON-ZIPPED artifact (host for the link) ─

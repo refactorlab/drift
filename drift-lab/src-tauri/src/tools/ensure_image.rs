@@ -544,10 +544,17 @@ mod tests {
         // docker-build`; this test exercises the user-reported regression
         // where find_image's synthetic tag missed that image entirely.
         let synthetic = "drift-lab/automation-enrichements-api:does-not-exist";
+        // Only the basename matters here — `project_dir_name` derives the
+        // image-search key from the final path component. Build a portable
+        // path so this isn't pinned to one developer's machine.
+        let project_path = std::env::temp_dir()
+            .join("automation-enrichements")
+            .display()
+            .to_string();
         let out = run(Args {
             image: synthetic.to_string(),
             build_context: Some(".".into()),
-            project_path: Some("/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements".into()),
+            project_path: Some(project_path),
             manifest_path: None,
             compose_service: Some("api".into()),
         })

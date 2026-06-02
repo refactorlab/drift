@@ -1,11 +1,17 @@
 //! Agent-driven scan integration tests.
 //!
-//! Two tiers:
+//! Three tiers:
 //!
 //! 1. **Real-fixture, no LLM** — runs the existing tools against the actual
 //!    `cf-copilot` checkout that ships next to drift in this monorepo. Proves
 //!    `find_image` can scan a real Docker project. Skipped if cf-copilot isn't
 //!    on disk.
+//!
+//! 1b. **Hermetic fixture, no LLM** — builds a self-contained bun-driven
+//!    TypeScript workspace in a temp dir (the shape of a real monorepo
+//!    service: Dockerfile + `bun test` + opentelemetry/ioredis/zod deps +
+//!    `src/<svc>/__tests__/*.test.ts`) and runs the discovery tools against
+//!    it. Fully portable — runs anywhere, no machine-specific paths.
 //!
 //! 2. **Real local LLM, gated** — drives the full `agent::workflow::run` loop
 //!    through a live OpenAI-compatible endpoint. Reuses the same env knobs
@@ -32,8 +38,72 @@ use drift_lab_lib::tools::{discover_project, find_image, find_test_runner_for_pr
 use tokio_util::sync::CancellationToken;
 
 const CF_COPILOT_PATH: &str = "/Users/ilyas/Projects/cf-copilot";
-const CF_MONO_AUTO_ENRICH_PATH: &str = "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements";
-const CF_MONO_TARGET_TEST: &str = "/Users/ilyas/Projects/cf-mono/workspaces/automation-enrichements/src/invoice-enrichement-service/__tests__/process-invoice-enrichment-logic.test.ts";
+
+/// The designated target test file name inside the hermetic workspace fixture.
+const TARGET_TEST_NAME: &str = "process-invoice-enrichment-logic.test.ts";
+
+/// Build a hermetic, bun-driven TypeScript workspace fixture that mirrors the
+/// shape of a real monorepo service: a Dockerfile, a `bun test` script,
+/// opentelemetry/ioredis/rabbitmq/zod deps, and a `src/<svc>/__tests__`
+/// directory holding several `*.test.ts` files (one of them the designated
+/// target). Returns the canonicalised (`realpath`-resolved) project root and
+/// the absolute path of the target test.
+///
+/// This replaces an old machine-specific absolute-path dependency so these
+/// tests run anywhere — CI included — with no skips.
+fn bun_ts_workspace_fixture(name: &str) -> (PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "drift-agent-workflow-{name}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+
+    std::fs::write(
+        root.join("package.json"),
+        r#"{
+  "name": "automation-enrichements",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "dev": "bun --hot src/index.ts"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1",
+    "ioredis": "^5",
+    "rabbitmq-client": "^4",
+    "zod": "^3"
+  }
+}"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("bun.lock"), "{}").unwrap();
+    std::fs::write(root.join("tsconfig.json"), "{}").unwrap();
+    std::fs::write(root.join("Dockerfile"), "FROM oven/bun:1\n").unwrap();
+
+    let tests_dir = root.join("src/invoice-enrichement-service/__tests__");
+    std::fs::create_dir_all(&tests_dir).unwrap();
+    for file in [
+        TARGET_TEST_NAME,
+        "enrich-line-items.test.ts",
+        "normalize-vendor.test.ts",
+    ] {
+        std::fs::write(
+            tests_dir.join(file),
+            "import { test, expect } from \"bun:test\";\n",
+        )
+        .unwrap();
+    }
+
+    // Canonicalise so assertions compare against the real on-disk path rather
+    // than a possibly symlinked temp dir (e.g. macOS `/var` -> `/private/var`).
+    let root = std::fs::canonicalize(&root).unwrap();
+    let target = root
+        .join("src/invoice-enrichement-service/__tests__")
+        .join(TARGET_TEST_NAME);
+    (root, target)
+}
 
 // ---------------------------------------------------------------------------
 // Tier 1: real fixture, no LLM.
@@ -88,25 +158,22 @@ async fn find_image_resolves_cf_copilot_compose() {
 }
 
 // ---------------------------------------------------------------------------
-// Tier 1b: cf-mono — discovery tools against the actual workspace.
+// Tier 1b: hermetic bun-TS workspace — discovery tools against a self-contained
+// fixture. No machine-specific paths, no skips.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn discover_project_resolves_cf_mono_automation_enrichements() {
-    let path = PathBuf::from(CF_MONO_AUTO_ENRICH_PATH);
-    if !path.is_dir() {
-        eprintln!("agent_workflow: {CF_MONO_AUTO_ENRICH_PATH} not present — skipping");
-        return;
-    }
+async fn discover_project_resolves_bun_ts_workspace() {
+    let (root, _target) = bun_ts_workspace_fixture("discover");
 
     let out = discover_project::run(discover_project::Args {
-        path: path.display().to_string(),
+        path: root.display().to_string(),
     })
     .await
-    .expect("discover_project should succeed against cf-mono");
+    .expect("discover_project should succeed against the workspace fixture");
 
-    // cf-mono workspace is bun-driven TypeScript; assert the exact stack so
-    // a regression in our heuristics fails loudly.
+    // The workspace is bun-driven TypeScript; assert the exact stack so a
+    // regression in our heuristics fails loudly.
     assert_eq!(out.language, discover_project::Language::TypeScript);
     assert_eq!(out.package_manager, discover_project::PackageManager::Bun);
     assert!(out.has_dockerfile, "automation-enrichements has a Dockerfile");
@@ -124,31 +191,21 @@ async fn discover_project_resolves_cf_mono_automation_enrichements() {
         test_script.command
     );
 
-    // Frameworks: cf-mono uses opentelemetry, ioredis, rabbitmq-client, zod.
+    // Frameworks: the workspace uses opentelemetry, ioredis, rabbitmq, zod.
     assert!(out.frameworks.contains(&"opentelemetry".to_string()));
     assert!(out.frameworks.contains(&"ioredis".to_string()));
     assert!(out.frameworks.contains(&"zod".to_string()));
 }
 
 #[tokio::test]
-async fn find_test_runner_locks_to_target_test_in_cf_mono() {
-    let path = PathBuf::from(CF_MONO_AUTO_ENRICH_PATH);
-    if !path.is_dir() {
-        eprintln!("agent_workflow: cf-mono missing — skipping");
-        return;
-    }
-    if !PathBuf::from(CF_MONO_TARGET_TEST).is_file() {
-        eprintln!(
-            "agent_workflow: target test {CF_MONO_TARGET_TEST} not present — skipping"
-        );
-        return;
-    }
+async fn find_test_runner_locks_to_target_test() {
+    let (root, target) = bun_ts_workspace_fixture("lock-target");
 
     // With an explicit target the result should be deterministic: bun test +
     // the relative target path, exactly one candidate.
     let out = find_test_runner_for_profiling::run(find_test_runner_for_profiling::Args {
-        path: path.display().to_string(),
-        target_file: Some(CF_MONO_TARGET_TEST.into()),
+        path: root.display().to_string(),
+        target_file: Some(target.display().to_string()),
         name_filter: None,
         max_candidates: None,
     })
@@ -161,21 +218,18 @@ async fn find_test_runner_locks_to_target_test_in_cf_mono() {
     );
     assert!(!out.target_not_found);
     assert_eq!(out.candidate_tests.len(), 1);
-    assert!(out.candidate_tests[0].ends_with("process-invoice-enrichment-logic.test.ts"));
+    assert!(out.candidate_tests[0].ends_with(TARGET_TEST_NAME));
     assert_eq!(out.command[0], "bun");
     assert_eq!(out.command[1], "test");
-    assert!(out.command.last().unwrap().ends_with("process-invoice-enrichment-logic.test.ts"));
+    assert!(out.command.last().unwrap().ends_with(TARGET_TEST_NAME));
 }
 
 #[tokio::test]
 async fn find_test_runner_lists_candidates_when_target_omitted() {
-    let path = PathBuf::from(CF_MONO_AUTO_ENRICH_PATH);
-    if !path.is_dir() {
-        eprintln!("agent_workflow: cf-mono missing — skipping");
-        return;
-    }
+    let (root, _target) = bun_ts_workspace_fixture("list-candidates");
+
     let out = find_test_runner_for_profiling::run(find_test_runner_for_profiling::Args {
-        path: path.display().to_string(),
+        path: root.display().to_string(),
         target_file: None,
         name_filter: None,
         max_candidates: Some(50),
@@ -186,7 +240,7 @@ async fn find_test_runner_lists_candidates_when_target_omitted() {
     // Multiple .test.ts files live under src/invoice-enrichement-service/__tests__/.
     assert!(
         out.candidate_tests.len() >= 3,
-        "expected at least 3 candidate tests in cf-mono, got {}",
+        "expected at least 3 candidate tests in the workspace, got {}",
         out.candidate_tests.len()
     );
     assert!(out.candidate_tests.iter().any(|t| t.ends_with(".test.ts")));
@@ -316,18 +370,14 @@ async fn local_llm_drives_find_image_first() {
     );
 }
 
-/// Drives the new discovery toolchain against cf-mono with a real local LLM.
-/// Asserts the model picks at least one of the **new** discovery tools
-/// (`discover_project`, `find_test_runner_for_profiling`) — proves the agent
-/// integrates them when investigating a project on disk.
+/// Drives the new discovery toolchain against the hermetic workspace fixture
+/// with a real local LLM. Asserts the model picks at least one of the **new**
+/// discovery tools (`discover_project`, `find_test_runner_for_profiling`) —
+/// proves the agent integrates them when investigating a project on disk.
 #[tokio::test(flavor = "multi_thread")]
-async fn local_llm_discovers_cf_mono_test_runner() {
+async fn local_llm_discovers_workspace_test_runner() {
     if std::env::var("DRIFT_LAB_SKIP_NET").is_ok() {
         eprintln!("agent_workflow: DRIFT_LAB_SKIP_NET set — skipping");
-        return;
-    }
-    if !PathBuf::from(CF_MONO_AUTO_ENRICH_PATH).is_dir() {
-        eprintln!("agent_workflow: cf-mono missing — skipping local-LLM discovery test");
         return;
     }
     let base_url = env("DRIFT_LAB_OPENAI_TEST_URL").unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
@@ -343,25 +393,29 @@ async fn local_llm_discovers_cf_mono_test_runner() {
     };
     eprintln!("agent_workflow (discovery): base_url={base_url} model={model}");
 
+    let (root, target) = bun_ts_workspace_fixture("llm-discover");
+    let root_str = root.display().to_string();
+    let target_str = target.display().to_string();
+
     let provider = std::sync::Arc::new(OpenAiProvider::new(base_url, api_key, model));
     let sink = CaptureSink::default();
 
     // Tight, deterministic prompt — gives small local models the best chance
     // of completing within the 120 s timeout. We force step 1 then step 4.
     let prompt = format!(
-        "Your job: investigate the project at \"{CF_MONO_AUTO_ENRICH_PATH}\" and report \
+        "Your job: investigate the project at \"{root_str}\" and report \
          which test command should be used to profile its slowest path.\n\n\
          Take exactly two tool actions, in order:\n\
-         1. Call `discover_project` with `path` = \"{CF_MONO_AUTO_ENRICH_PATH}\".\n\
+         1. Call `discover_project` with `path` = \"{root_str}\".\n\
          2. Call `find_test_runner_for_profiling` with the same path and \
-         `target_file` = \"{CF_MONO_TARGET_TEST}\".\n\n\
+         `target_file` = \"{target_str}\".\n\n\
          Then reply with ONE sentence stating the test runner and the command argv. \
          Do not call any other tool."
     );
 
     let req = RunRequest {
         run_id: "local-llm-discover".into(),
-        project_path: CF_MONO_AUTO_ENRICH_PATH.into(),
+        project_path: root_str.clone(),
         provider,
         mode: Mode::Auto,
         goal_prompt: Some(prompt),

@@ -22,9 +22,15 @@
 //! parse worker pool calls `parse_progress` on every file completion,
 //! and we don't want that path to acquire any locks.
 
+// The terminal progress UI (indicatif → console/libc) and its supporting
+// atomics/Mutex/Instant are native-only. wasm builds use NullProgress.
+#[cfg(feature = "native")]
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+#[cfg(feature = "native")]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "native")]
 use std::sync::Mutex;
+#[cfg(feature = "native")]
 use std::time::{Duration, Instant};
 
 /// Sink for analysis-pipeline progress events.
@@ -144,6 +150,7 @@ impl Progress for NullProgress {}
 /// only hold a Mutex for the `active` slot pointer because phase
 /// transitions need to atomically retire the previous bar and add a
 /// new one.
+#[cfg(feature = "native")]
 pub struct CliProgress {
     /// Coordinator that draws all child bars in the right Z-order.
     /// Owns its draw target (stderr, auto-hidden if not a TTY).
@@ -166,6 +173,7 @@ pub struct CliProgress {
 
 /// Bookkeeping for the live phase bar — the indicatif handle plus
 /// when we started it, so `step_end` can compute per-step elapsed.
+#[cfg(feature = "native")]
 struct ActivePhase {
     bar: ProgressBar,
     label: String,
@@ -184,14 +192,17 @@ struct ActivePhase {
 /// overall bar's percentage display; indicatif tolerates `pos > len`
 /// (the bar caps at 100% visually). We pad slightly so future
 /// additions don't immediately overflow the visual fill.
+#[cfg(feature = "native")]
 const PIPELINE_PHASES_HINT: u64 = 28;
 
+#[cfg(feature = "native")]
 impl Default for CliProgress {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "native")]
 impl CliProgress {
     pub fn new() -> Self {
         let mp = MultiProgress::new();
@@ -316,6 +327,7 @@ impl CliProgress {
     }
 }
 
+#[cfg(feature = "native")]
 impl Progress for CliProgress {
     fn walk_start(&self) {
         // No total known yet — use a spinner that ticks per
