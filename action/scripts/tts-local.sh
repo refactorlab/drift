@@ -22,8 +22,11 @@ set -euo pipefail
 
 # ─── pins (kept in lockstep with action.yml) ──────────────────────────────
 SHERPA_VERSION="v1.13.2"
-KOKORO_MODEL="kokoro-int8-multi-lang-v1_0"
-KOKORO_MODEL_SHA256="75654a84864be26f345f020f4070c2c019e96dd1b7f9bf6e2ffd59efac6aa5a3"
+# fp32 v1.0 — matches action.yml's kokoro-model default (full precision, ~333 MB).
+# For the smaller int8 build use kokoro-int8-multi-lang-v1_0 +
+# 75654a84864be26f345f020f4070c2c019e96dd1b7f9bf6e2ffd59efac6aa5a3.
+KOKORO_MODEL="kokoro-multi-lang-v1_0"
+KOKORO_MODEL_SHA256="c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046"
 SHA_LINUX_X64="1ef6741535f7af4d69e394fd440a807108036d26ed4f542660191019da5c0daa"
 SHA_LINUX_AARCH64="b54178420e9e6ff6c7f308b5f1cde827215b38393356ee0bd2b7595c648b330b"
 
