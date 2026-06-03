@@ -933,7 +933,7 @@ llm-docker:                             ## curl-test Docker Model Runner (http:/
 
 ### Drift Chrome extension — side-panel app (drift-chrome-extension/)
 
-.PHONY: extension-dev extension-build extension-test extension-install extension-kill extension-release extension-cws-exchange extension-wasm extension-tts extension-doctor
+.PHONY: extension-dev extension-build extension-prod extension-test extension-install extension-kill extension-release extension-cws-exchange extension-wasm extension-tts extension-doctor
 
 extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — stages the scanner wasm first, then load drift-chrome-extension/dist unpacked
 	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR)\n"
@@ -953,6 +953,10 @@ extension-tts: ## Stage the Kokoro voice engine (set SHERPA_WASM_TARBALL + KOKOR
 
 extension-build: ## Production build of the Chrome extension → drift-chrome-extension/dist
 	@$(MAKE) --no-print-directory -C drift-chrome-extension build
+
+extension-prod: ## Standalone PRODUCTION deploy of the Chrome extension (no dev server, verified dev-free) → drift-chrome-extension/dist
+	@printf "$(BLUE)▶$(RESET) Chrome extension production deploy (no HMR / no dev server)\n"
+	@$(MAKE) --no-print-directory -C drift-chrome-extension prod
 
 extension-test: ## Run the Chrome extension test suite (vitest)
 	@$(MAKE) --no-print-directory -C drift-chrome-extension test

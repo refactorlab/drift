@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useActivePr } from '../state/activePr';
 import type { PrInput } from '../core/scanProvider';
-import { fetchPrHead, fetchPrChangedFiles } from '../core/prDiff';
+import { fetchPrHead, fetchPrChangedFiles, type ChangedFileStatus } from '../core/prDiff';
 import { downloadArchive, type DownloadProgress } from '../core/githubZip';
 import { scanInWorker } from '../core/scanWorkerClient';
 import { loadScannerModule } from '../core/scannerStore';
@@ -120,6 +120,9 @@ type Display = {
   narration: string;
   /** Raw scan-pr.json (ScanPrOutput) — the native React report renders from this. */
   scan: unknown;
+  /** Per-file git status (the literal diff), reconstructed client-side from the
+   *  unified .diff — drives the always-visible "Changed files" section. */
+  changedStatus: ChangedFileStatus[];
   ts: number;
   durationMs: number | null;
   // Audio synthesized eagerly during the run → SpokenSummary plays it instantly.
@@ -128,12 +131,25 @@ type Display = {
   audio: PreparedAudio | null;
 };
 
+// Stable, self-describing filename for an exported scan-pr.json. Sanitises the
+// repo coordinates so the result is filesystem-safe on every OS (no slashes,
+// spaces or punctuation), e.g. `drift-scan-acme-web-pr1423.json`. Pure so it
+// can be unit-tested without a DOM.
+export function scanExportFilename(meta: LiveScanMeta): string {
+  const slug = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  const owner = slug(meta.owner ?? '');
+  const repo = slug(meta.repo);
+  const repoPart = [owner, repo].filter(Boolean).join('-') || 'scan';
+  return `drift-scan-${repoPart}-pr${meta.number}.json`;
+}
+
 function recordToDisplay(r: ScanRecord): Display {
   return {
     report: r.report,
     meta: { owner: r.owner, repo: r.repo, number: r.number, title: r.title, changedFiles: r.changedFiles },
     narration: r.narration,
     scan: r.scan,
+    changedStatus: r.changedStatus ?? [],
     ts: r.ts,
     durationMs: r.durationMs,
     audio: null,
@@ -311,7 +327,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
         owner, repo, number, title: title ?? undefined,
         baseRef: '', headRef: '',
         baseSha: '', headSha: head.headSha,
-        changedFiles: diff.changedPaths, diffStats: diff.diffStats,
+        changedFiles: diff.changedPaths, diffStats: diff.diffStats, diffStatus: diff.diffStatus,
       };
 
       // 4. Unzip + execute the scanner in a Web Worker (no AI). Both are single
@@ -326,6 +342,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           changedFiles: pr.changedFiles,
           commits: pr.commits,
           diffStats: pr.diffStats,
+          diffStatus: pr.diffStatus,
           prTitle: pr.title,
           prBody: pr.body,
         },
@@ -353,7 +370,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           : (patch('audio', { state: 'done', note: 'no narration' }), null);
 
         const durationMs = Date.now() - runStartRef.current;
-        const next: Display = { report: driftReport, meta, narration, scan, ts: Date.now(), durationMs, audio };
+        const next: Display = { report: driftReport, meta, narration, scan, changedStatus: diff.entries, ts: Date.now(), durationMs, audio };
         setResult(next);
 
         const record: ScanRecord = {
@@ -369,6 +386,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           scan,
           narration,
           changedFiles: diff.changedPaths.length,
+          changedStatus: diff.entries,
         };
         const hist = await addScan(record);
         setHistory(hist.filter((r) => r.url === url));
@@ -383,6 +401,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           meta: { owner, repo, number, title, changedFiles: diff.changedPaths.length },
           narration: '',
           scan,
+          changedStatus: diff.entries,
           ts: Date.now(),
           durationMs,
           audio: null,
@@ -412,6 +431,27 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     await setLiveContext(toLiveContext(display));
     onBack();
   }, [display, onBack]);
+
+  // "Export JSON" — save the raw scan-pr.json (ScanPrOutput — the exact artifact
+  // the GitHub Action produces) to disk. Works for both a live run and a replayed
+  // history record, since both carry `scan`. Uses the same blob-URL +
+  // chrome.downloads path as ArtifactFile so it behaves identically under MV3.
+  const exportBlobRef = useRef<string | null>(null);
+  const exportScan = useCallback(() => {
+    if (!display) return;
+    const json = JSON.stringify(display.scan, null, 2);
+    if (exportBlobRef.current) URL.revokeObjectURL(exportBlobRef.current);
+    exportBlobRef.current = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    chrome.downloads.download(
+      { url: exportBlobRef.current, filename: scanExportFilename(display.meta), saveAs: true },
+      () => void chrome.runtime.lastError, // swallow "user cancelled"; nothing else to do
+    );
+  }, [display]);
+
+  // Release the last export's object URL when the panel unmounts.
+  useEffect(() => () => {
+    if (exportBlobRef.current) URL.revokeObjectURL(exportBlobRef.current);
+  }, []);
 
   const openRecord = useCallback((r: ScanRecord) => {
     setViewing(recordToDisplay(r));
@@ -509,6 +549,13 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
                     ✕ Close
                   </button>
                 )}
+                <button
+                  className="pl-pill"
+                  onClick={exportScan}
+                  title="Download the raw scan-pr.json for this scan"
+                >
+                  ⬇ Export JSON
+                </button>
                 <button className="pl-pill accent" onClick={() => void discuss()}>
                   💬 Discuss in chat
                 </button>
@@ -519,7 +566,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
               <SpokenSummary text={display.narration} prepared={display.audio} />
             )}
 
-            <ScanReportView scan={display.scan} />
+            <ScanReportView scan={display.scan} changedFiles={display.changedStatus} />
           </>
         )}
 

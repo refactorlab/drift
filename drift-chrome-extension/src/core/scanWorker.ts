@@ -19,6 +19,7 @@ export type ScanWorkerRequest = {
     changedFiles: string[];
     commits?: string[];
     diffStats?: string;
+    diffStatus?: string;
     prTitle?: string;
     prBody?: string;
   };
@@ -29,11 +30,16 @@ export type ScanWorkerMessage =
   | { type: 'done'; out: ArrayBuffer }
   | { type: 'error'; message: string };
 
-const post = (msg: ScanWorkerMessage, transfer?: Transferable[]) =>
-  (self as unknown as Worker).postMessage(msg, transfer ?? []);
+type PostFn = (msg: ScanWorkerMessage, transfer?: Transferable[]) => void;
 
-self.onmessage = async (e: MessageEvent<ScanWorkerRequest>) => {
-  const { zip, wasm, inputs } = e.data;
+/**
+ * The worker's whole job: unzip the transferred archive, run the scanner over
+ * it (forwarding ALL inputs — including `diffStatus`), and post the result back.
+ * Extracted from the `onmessage` handler so it can be unit-tested in Node
+ * without a real Worker (the handler below is just the thin event shim).
+ */
+export async function runScanJob(req: ScanWorkerRequest, post: PostFn): Promise<void> {
+  const { zip, wasm, inputs } = req;
   try {
     post({ type: 'progress', phase: 'unzip', message: 'unzipping archive…' });
     const tree = unzipRepoArchive(new Uint8Array(zip));
@@ -51,4 +57,12 @@ self.onmessage = async (e: MessageEvent<ScanWorkerRequest>) => {
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
   }
-};
+}
+
+// Wire the handler only inside an actual Worker (guarded so importing this
+// module in Node — e.g. vitest — doesn't touch the undefined `self`).
+if (typeof self !== 'undefined' && 'postMessage' in self) {
+  const post: PostFn = (msg, transfer) =>
+    (self as unknown as Worker).postMessage(msg, transfer ?? []);
+  self.onmessage = (e: MessageEvent<ScanWorkerRequest>) => void runScanJob(e.data, post);
+}

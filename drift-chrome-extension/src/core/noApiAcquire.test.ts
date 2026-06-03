@@ -190,10 +190,14 @@ describe('prDiff — .patch head sha + .diff changed files (the robust path)', (
       '-bye',
     ].join('\n');
     const d = parseUnifiedDiff(diff);
-    expect(d.changedPaths.sort()).toEqual(['gone.py', 'new.py', 'src/app.py']);
+    // changed-files = files present at HEAD (git --diff-filter=ACMRT). The
+    // deleted file is EXCLUDED here (it can't be walked) but kept in diffStatus.
+    expect(d.changedPaths.sort()).toEqual(['new.py', 'src/app.py']);
     expect(d.diffStats).toMatch(/^2\t1\tsrc\/app\.py$/m); // 2 adds, 1 del
     expect(d.diffStats).toMatch(/^1\t0\tnew\.py$/m);
-    expect(d.diffStats).toMatch(/^0\t1\tgone\.py$/m);
+    expect(d.diffStats).toMatch(/^0\t1\tgone\.py$/m); // delete kept in numstat (removed-card LOC)
+    // diff-status carries the full git --name-status set, deletions included.
+    expect(d.diffStatus.split('\n').sort()).toEqual(['A\tnew.py', 'D\tgone.py', 'M\tsrc/app.py']);
   });
 });
 
