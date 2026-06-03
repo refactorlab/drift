@@ -7,7 +7,9 @@ import { useMemo } from 'react';
 import { asScanOutput } from '../../core/scanOutput';
 import { ArcGauge, Badge, type Tone } from './primitives';
 import { ComplexityReport } from './sections/ComplexityReport';
+import { ChangedFilesSection } from './sections/ChangedFilesSection';
 import { ArchitectureSection } from './sections/ArchitectureSection';
+import type { ChangedFileStatus } from '../../core/prDiff';
 import { ValueSection } from './sections/ValueSection';
 import { SuggestionsSection } from './sections/SuggestionsSection';
 import { RisksSection } from './sections/RisksSection';
@@ -34,7 +36,13 @@ function signedPct(pct: number): string {
   return `${r < 0 ? '−' : r > 0 ? '+' : ''}${Math.abs(r)}%`;
 }
 
-export function ScanReportView({ scan }: { scan: unknown }) {
+export function ScanReportView({
+  scan,
+  changedFiles,
+}: {
+  scan: unknown;
+  changedFiles?: ChangedFileStatus[];
+}) {
   const report = useMemo(() => asScanOutput(scan), [scan]);
   if (!report) {
     return <div className="rp-empty">No structured scan data to display.</div>;
@@ -106,6 +114,7 @@ export function ScanReportView({ scan }: { scan: unknown }) {
       </div>
 
       {/* Sections — each renders only when it has data */}
+      <ChangedFilesSection files={changedFiles} />
       <ComplexityReport quality={quality} />
       <ArchitectureSection
         arch={review.architecture_flow}

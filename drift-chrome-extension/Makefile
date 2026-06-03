@@ -3,6 +3,7 @@
 #
 #   make dev     # hot-reload dev server — load dist/ unpacked, then just save
 #   make build   # production build → dist/
+#   make prod    # standalone production deploy → dist/ (no dev server, verified dev-free)
 #   make test    # vitest (parser unit + real-comment integration)
 #
 # Help is auto-generated: add `## doc` after a target ':'.
@@ -21,7 +22,7 @@ CYAN   := \033[1;36m
 RESET  := \033[0m
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev build test typecheck zip store-assets release clean kill ensure-wasm wasm tts doctor logs
+.PHONY: help install dev build prod test typecheck zip store-assets release clean kill ensure-wasm wasm tts doctor logs
 
 help: ## Show this help
 	@printf "\n$(BLUE)drift-chrome-extension — make targets$(RESET)\n\n"
@@ -74,6 +75,34 @@ build: node_modules ensure-wasm ## Production build → dist/
 	@printf "$(BLUE)▶$(RESET) vite build\n"
 	@$(NPM) run build
 	@printf "$(GREEN)✓$(RESET) built → $(CYAN)dist/$(RESET)\n"
+
+# Standalone production deploy. Unlike `dev`, the result has NO Vite/CRXJS HMR
+# client and no dependency on a running server: load dist/ unpacked once and it
+# runs entirely inside Chrome (the bundled WASM scanner + UI), with this terminal
+# closed. Behaviourally identical to the shipped store build — `release` just
+# zips this same dist/ for Web Store upload.
+prod: node_modules ## Standalone production deploy → dist/ (no dev server, verified dev-free)
+	@printf "$(BLUE)▶$(RESET) Production deploy build — no HMR, no dev server\n"
+	@$(MAKE) --no-print-directory kill          # 1. ensure nothing is watching/overwriting dist/
+	@rm -rf dist                                # 2. drop any dev-contaminated build
+	@$(MAKE) --no-print-directory ensure-wasm   # 3. stage the bundled scanner WASM
+	@$(NPM) run build                           # 4. icons → ort → tsc --noEmit → vite build
+	@$(NPM) run verify:assets                   # 5. sanity-check the bundle
+	@# 6. Guard: a real production dist must carry NO dev-server references.
+	@#    -I skips binaries (the 22 MB scanner wasm can match these bytes by chance).
+	@if grep -rIq -e "@vite/client" -e "localhost:518" dist 2>/dev/null; then \
+	  printf "$(YELLOW)⚠ dist/ still references the Vite dev server — NOT a clean production build:$(RESET)\n"; \
+	  grep -rIl -e "@vite/client" -e "localhost:518" dist 2>/dev/null | sed 's/^/    /'; \
+	  exit 1; \
+	fi
+	@printf "$(GREEN)✓$(RESET) dist/ is dev-free — fully self-contained, runs with no server\n"
+	@printf "\n$(BLUE)Load it as production:$(RESET)\n"
+	@printf "  1. Open $(CYAN)chrome://extensions$(RESET) → enable $(CYAN)Developer mode$(RESET)\n"
+	@printf "  2. $(YELLOW)Remove$(RESET) any previously dev-loaded Drift (it points at a now-dead dev server)\n"
+	@printf "  3. $(CYAN)Load unpacked$(RESET) → select $(CYAN)$(CURDIR)/dist$(RESET)\n"
+	@printf "  4. Close this terminal if you like — the extension runs entirely in Chrome.\n\n"
+	@printf "$(CYAN)i$(RESET) For the on-device voice that ships in the store build: $(CYAN)make tts && make prod$(RESET)\n"
+	@printf "$(CYAN)i$(RESET) For the literal Web Store upload artifact (same bits, zipped): $(CYAN)make release$(RESET)\n"
 
 test: node_modules ## Run the test suite (vitest: parser unit + integration)
 	@$(NPM) run test

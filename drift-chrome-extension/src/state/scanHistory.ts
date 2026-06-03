@@ -4,6 +4,7 @@
 // chrome.storage.local, capped per-PR and overall to stay well inside quota.
 
 import type { DriftReport } from '../core/types';
+import type { ChangedFileStatus } from '../core/prDiff';
 
 const STORAGE_KEY = 'drift:scan-history';
 /** Keep at most this many scans for any single PR (newest win). */
@@ -36,6 +37,9 @@ export interface ScanRecord {
   /** Spoken-summary script for the past run. */
   narration: string;
   changedFiles: number;
+  /** Per-file git status (the literal diff) so a replayed report shows the
+   *  Changed-files section without re-fetching. Optional for older records. */
+  changedStatus?: ChangedFileStatus[];
 }
 
 /** Newest-first, then trimmed to MAX_PER_PR per PR and MAX_TOTAL overall. */

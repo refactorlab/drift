@@ -22,6 +22,9 @@ export type PrInput = {
   changedFiles: string[];
   /** `adds\tdels\tpath` lines (git numstat shape). */
   diffStats?: string;
+  /** `git diff --name-status` shape (`A/M/D/T\tpath`, `R<sim>\told\tnew`),
+   *  reconstructed git-free from the unified diff. */
+  diffStatus?: string;
   /** Commit subjects/bodies between base..head (empty without the API). */
   commits?: string[];
 };
@@ -88,6 +91,7 @@ export class WasmScanProvider implements ScanProvider {
       changedFiles: req.pr.changedFiles,
       commits: req.pr.commits,
       diffStats: req.pr.diffStats,
+      diffStatus: req.pr.diffStatus,
       prTitle: req.pr.title,
       prBody: req.pr.body,
       onLog: (line) => req.onProgress?.({ fraction: null, message: line.slice(0, 120) }),

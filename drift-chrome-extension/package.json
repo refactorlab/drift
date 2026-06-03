@@ -11,6 +11,7 @@
     "build": "npm run icons && npm run stage:ort && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
+    "scan": "vite-node src/cli/run.ts --",
     "test": "vitest run",
     "verify:assets": "node scripts/verify-assets.mjs",
     "zip": "npm run build && npm run verify:assets && node scripts/zip.mjs",
