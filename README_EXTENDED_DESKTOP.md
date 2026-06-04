@@ -66,7 +66,6 @@ drift/
 │   ├── observability-server/    Go ingest + SSE fan-out
 │   └── deploy/                  Helm chart (2 Deployments, 2 Services)
 ├── drift-lab/               Tauri 2 · macOS/Linux desktop app
-├── web-app/                 Hono + React + Postgres · the cloud portal
 ├── action/  action.yml      GitHub Action — per-PR verdict
 └── app/     manifest.yml    GitHub App — zero-touch alternative
 ```
@@ -77,7 +76,6 @@ drift/
 | **`drift-profiler-python`** | You're running Python in containers and want sampled wall / CPU flame graphs streamed to a log, file, or Supabase channel. |
 | **`drift-observability` server** | You want a small, self-hostable Go service that tails JSONL events and fans out over SSE. |
 | **`drift-lab`** | You're an engineer and want a local UI to profile your dev container and browse flame graphs. |
-| **`web-app`** | You want the multi-tenant cloud portal — scan history, PR reports, dashboards. |
 | **GitHub Action / App** | You want PR-time verdicts and annotations on every change. |
 
 ---
@@ -252,8 +250,8 @@ hit the **Generate fix PR** button.
 |---|---|
 | Solo / small repo | `drift-lab` desktop app + run `drift-static-profiler` in pre-commit. |
 | Single team | Add the GitHub Action; gate merges on `fail-on: regression`. |
-| Multi-team org | Install the GitHub App org-wide; deploy `drift-observability` next to your services for production traces; self-host `web-app` for dashboards. |
-| Regulated / air-gapped | Run everything locally: static profiler in CI, Python profiler with `JsonlFileSink`, web-app + Postgres on internal infra. Nothing leaves your VPC. |
+| Multi-team org | Install the GitHub App org-wide; deploy `drift-observability` next to your services for production traces. |
+| Regulated / air-gapped | Run everything locally: static profiler in CI, Python profiler with `JsonlFileSink`. Nothing leaves your VPC. |
 
 Every package is **MIT-licensed open source** (the Python profiler is
 Apache-2.0 to match upstream). There is no "community vs. enterprise"
@@ -267,7 +265,6 @@ edition — the cloud product is convenience, not capability.
 | `drift-profiler-python` | <2% CPU at default `period_ms=10` | none | optional JSONL volume |
 | `drift-observability` server | small Go pod, ~20 MB RSS | none | 1 Deployment + 1 Service |
 | `drift-lab` | local only | none | none |
-| `web-app` | optional (only for cloud portal) | none | Postgres + Bun runtime |
 
 ---
 
@@ -279,23 +276,17 @@ The fastest way to see all pieces talking to each other:
 git clone https://github.com/refactorlab/drift.git
 cd drift
 
-# 1. Spin up the cloud portal locally (web-app + Postgres + pgAdmin)
-docker compose up --build
-# → http://localhost:5000        web app  (login admin@drift.local / 1234)
-# → http://localhost:5000/docs   API docs
-# → http://localhost:5050        pgAdmin
-
-# 2. Run the static profiler against your own repo
+# 1. Run the static profiler against your own repo
 cd drift-static-profiler
 cargo run --release -- analyze ~/code/your-repo --entry main
 
-# 3. (Optional) Boot the runtime stack on minikube
+# 2. (Optional) Boot the runtime stack on minikube
 cd ../drift-observability
 make install && make up
 # → http://localhost:8000/docs   FastAPI demo app
 # → http://localhost:8080/live   live SSE flame-event viewer
 
-# 4. (Optional) Launch the desktop app
+# 3. (Optional) Launch the desktop app
 cd ../drift-lab && make setup && make
 ```
 
@@ -311,7 +302,6 @@ drift/
 ├── README.md                  ← you are here
 ├── LICENSE                    MIT
 ├── Makefile                   top-level convenience targets
-├── docker-compose.yml         web-app + Postgres + pgAdmin
 │
 ├── drift-static-profiler/     Rust analyzer + Vite/React viewer
 │   ├── src/                   tags · graph · roots · tree · insights · report
@@ -332,12 +322,6 @@ drift/
 │   ├── src-tauri/             Rust shell, workflow, docker, db
 │   ├── scripts/install-macos.sh  one-line installer for unsigned macOS
 │   └── README.md              full dev / build / release guide
-│
-├── web-app/                   Hono + React + Postgres + Drizzle
-│   ├── src/                   Hono API (auth, scans, reports)
-│   ├── web/                   React SPA
-│   ├── drizzle/               migrations
-│   └── api/                   serverless entry (Vercel-compatible)
 │
 ├── action/                    GitHub Action source (composite + Node 20)
 ├── action.yml                 marketplace manifest

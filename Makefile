@@ -4,7 +4,6 @@
 # === The handful you'll actually use ===
 #   make help                # this menu (auto-generated)
 #   make install             # bootstrap Docker Model Runner + pull MODEL
-#   make run                 # boot the full stack via docker compose
 #   make drift-lab-export    # one-shot production build → dist/drift-lab/<v>/
 #
 # Sub-projects keep their own Makefiles with deeper targets:
@@ -38,7 +37,7 @@ RESET  := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help \
-        install check run run-llm db \
+        install check run-llm \
         kill-port kill-port-test kill-bun-sock kill-dev \
         dev setup \
         test test-fast test-all test-profiler test-lab test-clean test-clean-target \
@@ -126,35 +125,27 @@ help: ## Show this help (auto-generated from inline doc strings)
 #   2. drift-static-profiler/setup → npm deps for viewer/ (rust is a no-op after #1)
 #   3. drift-lab-viewer-bundle    → vite build, so cargo doesn't embed the build.rs stub
 #   4. action/ npm ci            → GitHub Action source (best-effort)
-#   5. web-app/ bun install      → web app (best-effort; only run when bun is installed)
 #
 # Idempotent — re-running after a `git pull` is the recommended way to re-sync deps.
-setup: ## Install everything across all subprojects (rust + tauri-cli + npm deps + viewer dist + action + web-app). Idempotent — run after fresh clone or git pull
+setup: ## Install everything across all subprojects (rust + tauri-cli + npm deps + viewer dist + action). Idempotent — run after fresh clone or git pull
 	@printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"
 	@printf "$(BLUE)drift / setup$(RESET) — bootstrapping the entire repo\n"
 	@printf "$(BLUE)═══════════════════════════════════════════════════════════════$(RESET)\n"
 
-	@printf "\n$(CYAN)[1/5] drift-lab — rust + tauri-cli + icons + desktop-ui npm deps$(RESET)\n"
+	@printf "\n$(CYAN)[1/4] drift-lab — rust + tauri-cli + icons + desktop-ui npm deps$(RESET)\n"
 	@$(MAKE) --no-print-directory -C drift-lab setup
 
-	@printf "\n$(CYAN)[2/5] drift-static-profiler — viewer npm deps$(RESET)\n"
+	@printf "\n$(CYAN)[2/4] drift-static-profiler — viewer npm deps$(RESET)\n"
 	@$(MAKE) --no-print-directory -C drift-static-profiler setup
 
-	@printf "\n$(CYAN)[3/5] viewer dist (so cargo embeds the real viewer, not the build.rs stub)$(RESET)\n"
+	@printf "\n$(CYAN)[3/4] viewer dist (so cargo embeds the real viewer, not the build.rs stub)$(RESET)\n"
 	@$(MAKE) --no-print-directory drift-lab-viewer-bundle
 
-	@printf "\n$(CYAN)[4/5] action — npm ci$(RESET)\n"
+	@printf "\n$(CYAN)[4/4] action — npm ci$(RESET)\n"
 	@if command -v npm >/dev/null 2>&1; then \
 	  cd action && npm ci && printf "$(GREEN)✓$(RESET) action deps installed\n"; \
 	else \
 	  printf "$(YELLOW)!$(RESET) npm not on PATH — skipping action/ (install Node 22+ and re-run if you need it)\n"; \
-	fi
-
-	@printf "\n$(CYAN)[5/5] web-app — bun install$(RESET)\n"
-	@if command -v bun >/dev/null 2>&1; then \
-	  cd web-app && bun install --frozen-lockfile && printf "$(GREEN)✓$(RESET) web-app deps installed\n"; \
-	else \
-	  printf "$(YELLOW)!$(RESET) bun not on PATH — skipping web-app/ (https://bun.sh/install — only needed if you work on web-app/)\n"; \
 	fi
 
 	@printf "\n$(GREEN)═══════════════════════════════════════════════════════════════$(RESET)\n"
@@ -185,16 +176,8 @@ check: ## Show runner status, loaded models, and current config
 	@printf "\n$(CYAN)── docker model inspect $(MODEL) ──$(RESET)\n"
 	@docker model inspect $(MODEL)
 
-run: ## Start the full stack (docker compose up --build)
-	@printf "$(BLUE)▶$(RESET) docker compose up --build\n"
-	@docker compose up --build
-
 run-llm: ## Reconfigure context-size on a secondary model (ai/gemma4:E4B)
 	@docker model configure --context-size 40960 ai/gemma4:E4B
-
-db: ## Start just the postgres database
-	@printf "$(BLUE)▶$(RESET) starting postgres\n"
-	@docker compose up -d db
 
 ### Dev hygiene
 

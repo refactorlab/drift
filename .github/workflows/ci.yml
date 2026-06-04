@@ -205,21 +205,3 @@ jobs:
             exit 1
           fi
           echo "✅ dist bundles are tracked and in sync: $bundles"
-
-  web-app:
-    name: web-app / test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install
-        working-directory: web-app
-        run: bun install --frozen-lockfile
-
-      - name: Test
-        working-directory: web-app
-        run: bun test src/__tests__
