@@ -280,7 +280,7 @@ push to main (drift-lab/** touched)
 
 Only commits that actually touched `drift-lab/` count toward the bump or the
 release notes — drift-lab releases are independent of the surrounding
-`action/` and `web-app/` work in this repo.
+`action/` work in this repo.
 
 **To force a release** without a code change, use the workflow's **Run
 workflow** button (workflow_dispatch). The bump job will skip if there are no
