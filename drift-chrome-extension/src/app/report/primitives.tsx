@@ -2,7 +2,13 @@
 // (zero chart dependencies, fully theme-aware). Tone maps a semantic level to a
 // theme colour so every gauge, badge and meter reads consistently.
 
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, type CSSProperties, type ReactNode } from 'react';
+
+// When true, every <Collapsible> renders open with its body mounted, regardless
+// of local toggle state. The HTML export turns this on for an off-screen copy of
+// the report so the exported document is COMPLETE — collapsed sections (and the
+// mermaid diagrams inside them) are otherwise never in the DOM to be snapshotted.
+export const ForceExpandContext = createContext(false);
 import type { GaugeLevel } from '../../core/scanOutput';
 
 export type Tone = 'good' | 'warn' | 'bad' | 'critical' | 'info' | 'muted';
@@ -116,6 +122,35 @@ export function Badge({
   );
 }
 
+// ── StatTile — a compact headline metric: big value, label, tone accent bar,
+// and an optional thin meter for fractional metrics (confidence, drift). Reads
+// far better than an empty donut ring for plain counts. ──────────────────────
+export function StatTile({
+  value,
+  label,
+  tone = 'info',
+  fraction,
+}: {
+  value: string;
+  label: string;
+  tone?: Tone;
+  fraction?: number | null;
+}) {
+  const style = { '--rp-tone': toneVar(tone) } as CSSProperties;
+  const pct = fraction == null ? null : Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+  return (
+    <div className="rp-stat" style={style}>
+      <span className="rp-stat-val">{value}</span>
+      <span className="rp-stat-label">{label}</span>
+      {pct != null && (
+        <span className="rp-stat-meter" aria-hidden>
+          <span className="rp-stat-meter-fill" style={{ width: `${pct}%` }} />
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Collapsible — a modern disclosure card ───────────────────────────────────
 export function Collapsible({
   title,
@@ -131,16 +166,19 @@ export function Collapsible({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // Force-expand (export copy) wins over local state so the body is always mounted.
+  const forceExpand = useContext(ForceExpandContext);
+  const isOpen = open || forceExpand;
   return (
-    <div className={`rp-collapse${open ? ' open' : ''}`} style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}>
-      <button className="rp-collapse-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className={`rp-chevron${open ? ' open' : ''}`} aria-hidden>
+    <div className={`rp-collapse${isOpen ? ' open' : ''}`} style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}>
+      <button className="rp-collapse-head" onClick={() => setOpen((v) => !v)} aria-expanded={isOpen}>
+        <span className={`rp-chevron${isOpen ? ' open' : ''}`} aria-hidden>
           ›
         </span>
         <span className="rp-collapse-title">{title}</span>
         {subtitle != null && <span className="rp-collapse-sub">{subtitle}</span>}
       </button>
-      {open && <div className="rp-collapse-body">{children}</div>}
+      {isOpen && <div className="rp-collapse-body">{children}</div>}
     </div>
   );
 }

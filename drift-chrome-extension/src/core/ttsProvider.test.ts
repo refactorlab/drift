@@ -67,6 +67,25 @@ describe('KokoroWasmTtsProvider', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it('self-heals after a transient load failure — retries instead of caching the rejection', async () => {
+    // The provider is now an app-wide singleton (ttsEngine). A failed first load
+    // must NOT wedge it forever: the cached rejected promise has to be dropped so
+    // the next synth retries the load. (Pre-fix, `this.runtime ??= load()` kept the
+    // rejection and every later synth threw the same stale error.)
+    let attempt = 0;
+    const load = vi.fn(async () => {
+      if (++attempt === 1) throw new Error('transient: engine still warming');
+      return fakeRuntime();
+    });
+    const provider = createTtsProvider(load);
+
+    await expect(provider.synthesize({ text: 'hello.' })).rejects.toThrow(/transient/);
+    // Second attempt retries the load and succeeds.
+    const res = await provider.synthesize({ text: 'hello.' });
+    expect(res.wav.length).toBeGreaterThan(0);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it('throws (caller skips audio) when nothing survives sanitising', async () => {
     const provider = createTtsProvider(async () => fakeRuntime());
     await expect(provider.synthesize({ text: '🎉🚀' })).rejects.toThrow(/nothing to speak/i);

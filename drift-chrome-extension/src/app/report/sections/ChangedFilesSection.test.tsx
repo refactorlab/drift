@@ -14,19 +14,21 @@ const FILES: ChangedFileStatus[] = [
 ];
 
 describe('ChangedFilesSection', () => {
-  it('lists every changed file with its status — the literal diff', () => {
+  it('summarises scope in one line with per-status badges — not a full table', () => {
     const { container } = render(<ChangedFilesSection files={FILES} />);
     expect(screen.getByText('Changed files')).toBeTruthy();
-    // status labels present (row badges)
-    for (const label of ['added', 'modified', 'removed', 'renamed']) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    }
     const text = container.textContent ?? '';
-    // every path shown, incl. the DELETED one (which the call-graph omits)
-    expect(text).toContain('src/old.ts');
-    // rename shows old → new (split across nodes, so assert on text content)
-    expect(text).toContain('src/moved.ts');
-    expect(text).toContain('pkg/moved.ts');
+    // status count badges present (added / modified / removed / renamed)
+    for (const label of ['1 added', '1 modified', '1 removed', '1 renamed']) {
+      expect(text).toContain(label);
+    }
+    // one-line summary: file count + total LOC (13 added, 8 deleted)
+    expect(text).toContain('4 files changed');
+    expect(text).toContain('+13');
+    expect(text).toContain('−8');
+    // the per-file paths are NOT enumerated — that's the PR's own diff view
+    expect(text).not.toContain('src/old.ts');
+    expect(container.querySelector('table')).toBeNull();
   });
 
   it('renders nothing when there is no diff data', () => {

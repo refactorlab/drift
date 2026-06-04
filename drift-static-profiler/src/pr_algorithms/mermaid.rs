@@ -445,6 +445,7 @@ const DEFAULT_XYCHART_PALETTE: &str = "#22c55e,#ef4444";
 ///     parser FAILS on `(` / `)`.
 ///   - `\n` / `\r` would terminate the classDef line early and could inject.
 ///   - `,` would add an extra key=value pair (silently changes styling).
+///
 /// Strip those; keep everything else verbatim so hex colors / named colors /
 /// dasharray digits-and-spaces all survive. Reachable through JSON re-render.
 fn safe_class_value(s: &str) -> String {
@@ -951,7 +952,7 @@ mod tests {
         assert_eq!(out.chars().count(), LABEL_MAX_CHARS, "char-count cap not honoured");
         assert!(out.ends_with('…'), "missing ellipsis: {out:?}");
         // Multi-byte glyphs (emoji) must NEVER be split mid-codepoint.
-        let emoji_long: String = std::iter::repeat("🚀").take(LABEL_MAX_CHARS + 50).collect();
+        let emoji_long: String = std::iter::repeat_n("🚀", LABEL_MAX_CHARS + 50).collect();
         let truncated = safe_label(&emoji_long);
         assert_eq!(truncated.chars().count(), LABEL_MAX_CHARS);
         assert!(truncated.chars().filter(|c| *c == '🚀').count() >= LABEL_MAX_CHARS - 1);

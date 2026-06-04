@@ -50,7 +50,7 @@ fn language_of(path: &str) -> &'static str {
     }
 }
 
-fn walk<'a>(entries: &'a [CallTreeNode]) -> Vec<&'a CallTreeNode> {
+fn walk(entries: &[CallTreeNode]) -> Vec<&CallTreeNode> {
     let mut out: Vec<&CallTreeNode> = Vec::new();
     let mut stack: Vec<&CallTreeNode> = entries.iter().collect();
     while let Some(n) = stack.pop() {

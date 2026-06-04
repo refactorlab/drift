@@ -33,7 +33,7 @@ fn should_compare(name: &str) -> bool {
     if is_synthetic_module_name(name) || is_anonymous_symbol_name(name) {
         return false;
     }
-    if GENERIC_NAMES.iter().any(|g| *g == name) {
+    if GENERIC_NAMES.contains(&name) {
         return false;
     }
     if EXCLUDE_PREFIX.iter().any(|p| name.starts_with(p)) {
@@ -166,7 +166,7 @@ fn ratio_with_threshold(
     // Use ceiling so threshold-boundary cases (e.g. 96%) don't
     // get rejected by integer floor.
     let max_dist =
-        ((100usize.saturating_sub(threshold as usize)) * sum + 99) / 100;
+        ((100usize.saturating_sub(threshold as usize)) * sum).div_ceil(100);
     let dist = levenshtein_bounded(a_chars, b_chars, max_dist);
     if dist > sum {
         // Bound exceeded; can't reach threshold.
@@ -179,6 +179,7 @@ fn ratio_with_threshold(
 /// Inputs to [`compute`]. Backwards-compatible: callers that don't
 /// have a `repo_root` get the same behavior as the old API (no
 /// body-similarity, name-only clustering).
+#[derive(Default)]
 pub struct Inputs<'a> {
     pub entries: &'a [CallTreeNode],
     /// D1: when provided, after name-based clusters are built we
@@ -206,17 +207,6 @@ pub struct Inputs<'a> {
     pub signals: Option<&'a PrSignals>,
 }
 
-impl<'a> Default for Inputs<'a> {
-    fn default() -> Self {
-        Self {
-            entries: &[],
-            repo_root: None,
-            line_spans: None,
-            changed_files: &[],
-            signals: None,
-        }
-    }
-}
 
 /// D1: token-shingle Jaccard. Tokenizes by splitting on non-alnum
 /// (keeps identifiers + numbers intact), shingles size 3.
@@ -319,8 +309,7 @@ pub fn compute_with(inputs: Inputs<'_>) -> DuplicationReport {
 
     for i in 0..n {
         let ai = &char_vecs[i];
-        for j in (i + 1)..n {
-            let bj = &char_vecs[j];
+        for (j, bj) in char_vecs.iter().enumerate().take(n).skip(i + 1) {
             // Bounded Levenshtein already short-circuits when
             // |len_a − len_b| exceeds max_dist, so no extra
             // pre-filter needed here. The early exit on max_dist

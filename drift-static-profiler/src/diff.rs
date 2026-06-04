@@ -241,12 +241,6 @@ pub fn render(diff: &DiffReport) -> String {
         writeln!(&mut s, "  no matching entries between reports").ok();
     } else {
         for ed in &diff.entry_diffs {
-            let parent = if ed.entry_id.contains("::") {
-                ""
-            } else {
-                ""
-            };
-            let _ = parent;
             writeln!(&mut s, "ENTRY: {}", ed.entry_name).ok();
             if !ed.category_deltas.is_empty() {
                 let parts: Vec<String> = ed

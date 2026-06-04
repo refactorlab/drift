@@ -164,7 +164,7 @@ fn matches_llm_cache_004(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
     let mut out = Vec::new();
     for chain in &ctx.chains {
         let methods: Vec<&str> = chain.steps.iter().map(|s| s.method.as_str()).collect();
-        let is_anthropic = methods.iter().any(|m| *m == "messages")
+        let is_anthropic = methods.contains(&"messages")
             && methods.last() == Some(&"create");
         if !is_anthropic {
             continue;
@@ -238,7 +238,9 @@ mod tests {
         p.set_language(&tree_sitter_python::LANGUAGE.into())
             .unwrap();
         let tree = p.parse(src, None).unwrap();
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

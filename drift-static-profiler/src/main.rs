@@ -96,6 +96,10 @@ struct Cli {
     command: Cmd,
 }
 
+// Constructed exactly once from argv at startup; the size spread between
+// the arg-heavy `Analyze`/`ScanPr` variants and the tiny `Tags` variant is
+// irrelevant, and boxing clap-derived variant fields fights the derive.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Cmd {
     /// Analyze a project root and emit a call tree rooted at one or more symbols.
@@ -657,7 +661,7 @@ fn drop_generated_paths(changed: Vec<PathBuf>) -> Vec<PathBuf> {
 /// Wires the CLI flags into [`drift_static_profiler::analyze_pr_with_progress`],
 /// then serializes the standard compact report envelope with a
 /// top-level `pr_scope` block appended via `#[serde(flatten)]`.
-#[allow(clippy::too_many_arguments)]
+///
 /// One-shot scan-pr pipeline:
 ///   1. read changed-files list
 ///   2. read commit messages (optional)
@@ -1691,11 +1695,11 @@ fn write_report_with_progress(
 /// | minified + gzip      | 0.78 MB   | 53× smaller |
 ///
 /// The compact 1.1 wire form (`string_table` + `frames` interning) is
-/// emitted in all three cases; only the JSON serializer's whitespace
-/// + optional gzip layer change. Every existing reader (`compact::
-/// read_report`, viewer, diff) auto-handles both whitespace variants;
-/// the gzip path is detected by the `.json.gz` filename extension at
-/// load time.
+/// emitted in all three cases; only the JSON serializer's whitespace and
+/// optional gzip layer change. Every existing reader
+/// (`compact::read_report`, viewer, diff) auto-handles both whitespace
+/// variants; the gzip path is detected by the `.json.gz` filename
+/// extension at load time.
 fn write_report_with_options(
     outcome: &drift_static_profiler::AnalyzeOutcome,
     name: &str,
@@ -1903,7 +1907,7 @@ fn run_scan_prompt(
         &discover,
         &opts,
         progress.as_ref(),
-        |rows| pick_root_via_stdin(rows),
+        pick_root_via_stdin,
     )?;
     progress.finish();
 

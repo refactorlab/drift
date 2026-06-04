@@ -1,6 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { parseUnifiedDiff, parsePatchHead, fetchPrHead, fetchPrChangedFiles } from './prDiff';
+import {
+  parseUnifiedDiff,
+  parsePatchHead,
+  parsePatchCommits,
+  fetchPrHead,
+  fetchPrChangedFiles,
+  fetchPrBody,
+} from './prDiff';
 
 // A unified diff exercising every status the scanner cares about: a plain
 // modify, an add (`new file mode`), a delete (`deleted file mode`), and a
@@ -71,6 +78,20 @@ describe('parseUnifiedDiff — git-free changed-files / numstat / diff-status', 
     expect(lines).toContain('R95\told/name.py\tpkg/name.py');
   });
 
+  it('collects the literal +/- hunks per file (fileDiffs)', () => {
+    const byPath = Object.fromEntries(r.fileDiffs.map((f) => [f.path, f]));
+    const app = byPath['src/app.py'];
+    expect(app.status).toBe('M');
+    const adds = app.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'add').map((l) => l.text));
+    const dels = app.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'del').map((l) => l.text));
+    expect(adds).toEqual(['    return 2', '    # extra']);
+    expect(dels).toEqual(['    return 1']);
+    // context line carried for surrounding code
+    expect(app.hunks[0].lines.some((l) => l.type === 'context' && l.text === 'def f():')).toBe(true);
+    // hunk header preserved
+    expect(app.hunks[0].header).toMatch(/^@@ /);
+  });
+
   it('exposes structured entries for the Changed-files UI (status + LOC + rename old→new)', () => {
     const byPath = Object.fromEntries(r.entries.map((e) => [e.path, e]));
     expect(byPath['src/app.py']).toMatchObject({ code: 'M', additions: 2, deletions: 1 });
@@ -127,6 +148,41 @@ describe('issue-redirect / HTML responses are rejected (not silently empty)', ()
   });
 });
 
+describe('parseUnifiedDiff — hunk collection edge cases', () => {
+  it('does not mistake an added line whose content starts with `++` for a `+++` header', () => {
+    const diff = `diff --git a/x.c b/x.c
+index 1..2 100644
+--- a/x.c
++++ b/x.c
+@@ -1 +1,2 @@
+ int x;
++++count;
+`;
+    const f = parseUnifiedDiff(diff).fileDiffs[0];
+    expect(f.additions).toBe(1);
+    const adds = f.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'add').map((l) => l.text));
+    expect(adds).toEqual(['++count;']);
+  });
+
+  it('caps stored hunk lines by the per-file budget but keeps +/- counts EXACT', () => {
+    const body = Array.from({ length: 1600 }, (_, i) => `+line ${i}`).join('\n');
+    const diff = `diff --git a/big.txt b/big.txt
+new file mode 100644
+--- /dev/null
++++ b/big.txt
+@@ -0,0 +1,1600 @@
+${body}
+`;
+    const r = parseUnifiedDiff(diff);
+    const f = r.fileDiffs[0];
+    expect(f.additions).toBe(1600); // count stays exact …
+    const stored = f.hunks.flatMap((h) => h.lines).length;
+    expect(stored).toBeLessThanOrEqual(1500); // … storage capped (per-file budget)
+    expect(f.truncated).toBe(true);
+    expect(r.diffTruncated).toBe(true);
+  });
+});
+
 describe('parsePatchHead', () => {
   it('takes the LAST `From <sha>` as the head commit and uses its subject', () => {
     const patch = `From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
@@ -139,5 +195,73 @@ Subject: [PATCH 2/2] second and final
     const head = parsePatchHead(patch);
     expect(head.headSha).toBe('2222222222222222222222222222222222222222');
     expect(head.title).toBe('second and final');
+    expect(head.commits).toEqual(['first', 'second and final']);
+  });
+});
+
+// The .patch carries every commit (subject + body + the `---` diff separator) —
+// the same data the action feeds via `git log --format=%B%x00`.
+describe('parsePatchCommits', () => {
+  it('extracts subject + body per commit, strips the [PATCH] prefix, stops at ---', () => {
+    const patch = `From aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Mon Sep 17 00:00:00 2001
+From: Dev <dev@example.com>
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+Subject: [PATCH 1/2] feat: add enrichment loop
+
+Wires the order-enrichment pass into the handler.
+Closes #42.
+---
+ src/app.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/app.py b/src/app.py
+index 1..2 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1 +1,2 @@
++loop
+From bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb Mon Sep 17 00:00:00 2001
+Subject: [PATCH 2/2] fix: handle empty rows
+
+---
+ src/app.py | 1 +
+`;
+    const commits = parsePatchCommits(patch);
+    expect(commits).toHaveLength(2);
+    expect(commits[0]).toBe(
+      'feat: add enrichment loop\n\nWires the order-enrichment pass into the handler.\nCloses #42.',
+    );
+    expect(commits[1]).toBe('fix: handle empty rows');
+    // body never bleeds in the diff
+    expect(commits[0]).not.toContain('diff --git');
+  });
+
+  it('returns [] when there are no commits', () => {
+    expect(parsePatchCommits('not a patch')).toEqual([]);
+  });
+});
+
+describe('fetchPrBody — best-effort PR description', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns the trimmed body from the REST API', async () => {
+    const res = { ok: true, json: async () => ({ body: '  Fixes a bug.\n' }) };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res));
+    expect(await fetchPrBody('o', 'r', 7)).toBe('Fixes a bug.');
+  });
+
+  it('fail-softs to undefined on a non-OK response (e.g. private repo 404)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }));
+    expect(await fetchPrBody('o', 'r', 7)).toBeUndefined();
+  });
+
+  it('fail-softs to undefined when the request throws', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+    expect(await fetchPrBody('o', 'r', 7)).toBeUndefined();
+  });
+
+  it('returns undefined for an empty body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ body: '' }) }));
+    expect(await fetchPrBody('o', 'r', 7)).toBeUndefined();
   });
 });

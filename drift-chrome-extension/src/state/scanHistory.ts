@@ -40,6 +40,8 @@ export interface ScanRecord {
   /** Per-file git status (the literal diff) so a replayed report shows the
    *  Changed-files section without re-fetching. Optional for older records. */
   changedStatus?: ChangedFileStatus[];
+  /** Commit messages (subject + body) so a replay shows the Commits section. */
+  commits?: string[];
 }
 
 /** Newest-first, then trimmed to MAX_PER_PR per PR and MAX_TOTAL overall. */

@@ -324,12 +324,7 @@ fn pick_self_category(externals: &[ExternalCall]) -> Option<Category> {
         Category::Queue,
         Category::Log,
     ];
-    for p in priority {
-        if externals.iter().any(|e| e.category == p) {
-            return Some(p);
-        }
-    }
-    None
+    priority.into_iter().find(|&p| externals.iter().any(|e| e.category == p))
 }
 
 pub fn render_ascii(node: &CallTreeNode) -> String {

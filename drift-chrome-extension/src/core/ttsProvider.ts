@@ -94,16 +94,27 @@ export class KokoroWasmTtsProvider implements TtsProvider {
 
   constructor(private readonly loadRuntime: () => Promise<KokoroRuntime>) {}
 
-  private get(): Promise<KokoroRuntime> {
-    return (this.runtime ??= this.loadRuntime());
+  private async get(): Promise<KokoroRuntime> {
+    // Cache the loaded runtime so the ~92 MB model loads ONCE. But if the load
+    // REJECTS, drop the cached (rejected) promise so the next call retries —
+    // otherwise one transient failure would poison every later synth with the
+    // same stale rejection. This matters now that a SINGLE provider is shared
+    // app-wide (ttsEngine.getSharedTtsProvider): without self-heal, a flaky first
+    // load would wedge the engine for the whole session.
+    if (!this.runtime) this.runtime = this.loadRuntime();
+    try {
+      return await this.runtime;
+    } catch (e) {
+      this.runtime = null; // allow a later retry after the assets are staged
+      throw e;
+    }
   }
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.get();
+      await this.get(); // get() self-heals (drops a failed load) so a retry can succeed
       return true;
     } catch {
-      this.runtime = null; // allow a later retry after the assets are staged
       return false;
     }
   }

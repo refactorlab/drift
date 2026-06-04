@@ -152,7 +152,9 @@ mod tests {
         p.set_language(&tree_sitter_python::LANGUAGE.into())
             .unwrap();
         let tree = p.parse(src, None).unwrap();
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

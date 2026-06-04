@@ -125,7 +125,7 @@ fn risks_from_ext_signals(
         // Likelihood scales with cluster count (more dups = more
         // confidence the duplication is real). Severity is moderate
         // — duplicates aren't bugs, but they're maintenance burden.
-        let lik = (duplication_count as f64 / 10.0).min(1.0).max(0.4);
+        let lik = (duplication_count as f64 / 10.0).clamp(0.4, 1.0);
         out.push(RiskItem {
             label: format!("Code duplication · {duplication_count} cluster(s)"),
             likelihood: (lik * 100.0).round() / 100.0,
@@ -142,7 +142,7 @@ fn risks_from_ext_signals(
         // Untested affected roots are a real correctness risk —
         // higher severity than duplication.
         let n = uncovered_roots.len();
-        let lik = (n as f64 / 5.0).min(1.0).max(0.4);
+        let lik = (n as f64 / 5.0).clamp(0.4, 1.0);
         let sev = (0.55 + n as f64 / 20.0).min(0.85);
         let preview: Vec<&str> = uncovered_roots
             .iter()
@@ -170,7 +170,7 @@ fn risks_from_ext_signals(
         // NFR gaps (no retry/timeout/circuit-breaker markers in a
         // root's subtree) — failure-mode risk.
         let n = reliability_gaps.len();
-        let lik = (n as f64 / 4.0).min(1.0).max(0.5);
+        let lik = (n as f64 / 4.0).clamp(0.5, 1.0);
         let sev = (0.6 + n as f64 / 10.0).min(0.9);
         out.push(RiskItem {
             label: format!("Reliability gaps · {n} root(s) lack retry/timeout/fallback"),
@@ -186,7 +186,7 @@ fn risks_from_ext_signals(
 
     if high_complexity_count > 0 {
         // High cyclomatic complexity in changed code — moderate risk.
-        let lik = (high_complexity_count as f64 / 5.0).min(1.0).max(0.5);
+        let lik = (high_complexity_count as f64 / 5.0).clamp(0.5, 1.0);
         out.push(RiskItem {
             label: format!("High-complexity functions · {high_complexity_count}"),
             likelihood: (lik * 100.0).round() / 100.0,
@@ -429,6 +429,7 @@ fn build_key_files_mindmap(groups: &[KeyFileGroup]) -> Mindmap {
     }
 }
 
+#[derive(Default)]
 pub struct Inputs<'a> {
     pub entries: &'a [CallTreeNode],
     pub changed_files: &'a [ChangedFile],
@@ -447,21 +448,6 @@ pub struct Inputs<'a> {
     pub signals: Option<&'a PrSignals>,
 }
 
-impl<'a> Default for Inputs<'a> {
-    fn default() -> Self {
-        Self {
-            entries: &[],
-            changed_files: &[],
-            commit_messages: &[],
-            affected_roots_count: 0,
-            duplication_count: 0,
-            uncovered_roots: &[],
-            reliability_gaps: &[],
-            high_complexity_count: 0,
-            signals: None,
-        }
-    }
-}
 
 pub fn compute(inputs: Inputs<'_>) -> VisualSummary {
     let mut risks_items: Vec<RiskItem> = Vec::new();

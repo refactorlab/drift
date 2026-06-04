@@ -326,7 +326,7 @@ fn fan_in_fan_out_counts_are_consistent() {
         let graph = analyze(&root);
         // For every node, callers_count + callees_count should match the
         // graph's actual edge counts.
-        for (id, _sym) in &graph.symbols {
+        for id in graph.symbols.keys() {
             let actual_callees = graph.callees(id).len();
             let actual_callers = graph.callers_of(id).len();
             // Sanity: callees of A include B iff callers of B include A.
@@ -582,7 +582,7 @@ def helper():             # called by main_handler → NOT dead
     return 1
 ";
     let tags = extract_tags_from_source(Path::new("dead.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     // Build with main_handler pinned as the entry
     let entry_id = graph
@@ -631,7 +631,7 @@ def bulk_save(items, session: Session):
         session.commit()
 ";
     let tags = extract_tags_from_source(Path::new("nplus1.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -668,7 +668,7 @@ def save_one(items, session):
     session.commit()
 ";
     let tags = extract_tags_from_source(Path::new("safe.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("save_one").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -753,7 +753,7 @@ fn call_site_count_geq_callers_count() {
     for fix in ["python-fastapi", "java-spring", "typescript-nestjs", "javascript-express"] {
         let root = fixture(fix);
         let graph = analyze(&root);
-        for (id, _) in &graph.symbols {
+        for id in graph.symbols.keys() {
             let csc = graph.call_site_count.get(id).copied().unwrap_or(0);
             let cc = graph.callers_of(id).len();
             assert!(
@@ -1163,7 +1163,7 @@ fn go_method_calls_resolve_through_call_graph() {
                  s.Greet(\"world\")\n\
                }\n";
     let tags = extract_tags_from_source(Path::new("svc.go"), Language::Go, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     // Both Greet and main extracted as symbols.
     assert!(tags.symbols.iter().any(|s| s.name == "Greet"));
@@ -1203,7 +1203,7 @@ fn rust_impl_method_calls_resolve() {
                  r.save()\n\
                }\n";
     let tags = extract_tags_from_source(Path::new("lib.rs"), Language::Rust, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     // save is inside impl Repo, so its parent must be Repo via containment.
     let save = tags.symbols.iter().find(|s| s.name == "save").expect("save");
@@ -1285,7 +1285,7 @@ fn scala_method_call_resolves() {
     let src = "object Repo {\n  def save(): Int = 1\n}\n\
                object Handler {\n  def run(): Int = Repo.save()\n}\n";
     let tags = extract_tags_from_source(Path::new("App.scala"), Language::Scala, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     // save defined; run defined.
     assert!(tags.symbols.iter().any(|s| s.name == "save"));
@@ -1317,7 +1317,7 @@ fn kotlin_method_call_resolves() {
     let src = "class Repo {\n    fun save(): Int = 1\n}\n\
                class Handler(val repo: Repo) {\n    fun run(): Int = repo.save()\n}\n";
     let tags = extract_tags_from_source(Path::new("App.kt"), Language::Kotlin, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     assert!(tags.symbols.iter().any(|s| s.name == "save"));
     assert!(tags.symbols.iter().any(|s| s.name == "run"));
@@ -1559,7 +1559,7 @@ def is_odd(n):
     return is_even(n - 1)
 ";
     let tags = extract_tags_from_source(Path::new("rec.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("is_even").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -1943,7 +1943,7 @@ if __name__ == '__main__':
     reachable_only_from_main()
 ";
     let tags = extract_tags_from_source(Path::new("script.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     // 1. The synthetic <module> symbol exists.
     let module_id = graph
@@ -2203,7 +2203,7 @@ fn synthetic_module_does_not_get_false_positive_findings() {
     }
     src.push_str("helper()\n");
     let tags = extract_tags_from_source(Path::new("big.py"), Language::Python, &src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
 
     let module_id = graph
         .symbols
@@ -2353,7 +2353,7 @@ def driver(xs):
     return [a(v) + b(v) + c(v) + d(v) + e(v) + f(v) for v in xs]
 ";
     let tags = extract_tags_from_source(Path::new("memo.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("driver").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2419,7 +2419,7 @@ def driver(events):
     return [a(x)+b(x)+c(x)+d(x)+e(x)+f(x)+g(x)+h(x)+i(x)+j(x) for x in events]
 ";
     let tags = extract_tags_from_source(Path::new("logamp.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("driver").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2465,7 +2465,7 @@ async def fetch_user_blocking(uid):
     return requests.get(f'https://api.example.com/{uid}')
 ";
     let tags = extract_tags_from_source(Path::new("block.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("fetch_user_blocking").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2514,7 +2514,7 @@ def bulk_save(items, session: Session):
         session.commit()
 ";
     let tags = extract_tags_from_source(Path::new("cluster.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2555,7 +2555,7 @@ def wipe_users(cursor):
     cursor.execute(\"DELETE FROM users\")
 ";
     let tags = extract_tags_from_source(Path::new("wipe.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("wipe_users").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2605,7 +2605,7 @@ def list_users(cursor):
     return cursor.fetchall()
 ";
     let tags = extract_tags_from_source(Path::new("ls.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("list_users").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2659,7 +2659,7 @@ def weird(cursor):
     cursor.execute(\"!!THIS IS NOT SQL AT ALL %%\")
 ";
     let tags = extract_tags_from_source(Path::new("w.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("weird").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2888,7 +2888,7 @@ def bulk_save(items, session: Session):
         session.commit()
 ";
     let tags = extract_tags_from_source(Path::new("nplus1.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();
@@ -2930,7 +2930,7 @@ def bulk_save(items, session: Session):
         session.commit()
 ";
     let tags = extract_tags_from_source(Path::new("nplus1.py"), Language::Python, src).unwrap();
-    let graph = CallGraph::build(&[tags.clone()]);
+    let graph = CallGraph::build(std::slice::from_ref(&tags));
     let id = graph.find_entry_points("bulk_save").first().cloned().unwrap();
     let tb = TreeBuilder::new(&graph, Path::new(""));
     let node = tb.build(&id).unwrap();

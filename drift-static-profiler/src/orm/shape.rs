@@ -117,7 +117,7 @@ pub fn matches_by_shape(chains: &[CallChain], spec: &ShapeSpec) -> bool {
     for chain in chains {
         // Tier 1 — anchor scan
         for step in &chain.steps {
-            if spec.anchors.iter().any(|a| *a == step.method.as_str()) {
+            if spec.anchors.contains(&step.method.as_str()) {
                 return true;
             }
         }
@@ -144,7 +144,7 @@ pub fn matches_by_shape(chains: &[CallChain], spec: &ShapeSpec) -> bool {
                 let any = chain
                     .steps
                     .iter()
-                    .any(|s| combo.continuation_any.iter().any(|m| *m == s.method.as_str()));
+                    .any(|s| combo.continuation_any.contains(&s.method.as_str()));
                 if !any {
                     continue;
                 }

@@ -157,10 +157,10 @@ fn count_new_test_files(files: &[ChangedFile]) -> (usize, Vec<String>) {
 ///
 /// Heuristics (deliberately conservative; this is a fallback):
 ///   - feat:  ≥1 added file under `*/handlers/*`, `*/routes/*`,
-///            `*/controllers/*`, or with `*service*` / `*endpoint*`
-///            in its basename → infer 1 feature signal.
+///     `*/controllers/*`, or with `*service*` / `*endpoint*`
+///     in its basename → infer 1 feature signal.
 ///   - fix:   ≥1 file in `*/errors/*` / `*/exceptions/*` / containing
-///            `error` or `fix` in path → infer 1 fix signal.
+///     `error` or `fix` in path → infer 1 fix signal.
 fn heuristic_feat_fix(changed_files: &[ChangedFile]) -> (usize, usize) {
     let mut feat = 0;
     let mut fix = 0;

@@ -285,7 +285,7 @@ mod tests {
         let g = build_containment_graph(std::slice::from_ref(&tags), |_| &LEXICAL_EXTRACTOR);
         let class_id = SymbolId::for_symbol(&tags.symbols[0]);
         let method_id = SymbolId::for_symbol(&tags.symbols[1]);
-        assert_eq!(g.children_of(&class_id), &[method_id.clone()]);
+        assert_eq!(g.children_of(&class_id), std::slice::from_ref(&method_id));
         assert_eq!(g.parent_of(&method_id), Some(&class_id));
     }
 }

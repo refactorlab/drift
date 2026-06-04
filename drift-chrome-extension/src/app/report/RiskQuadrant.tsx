@@ -27,29 +27,48 @@ export function RiskQuadrant({ items, size = 280 }: { items: RiskItem[]; size?: 
   const x = (likelihood: number) => pad + Math.max(0, Math.min(1, likelihood)) * plot;
   const y = (severity: number) => pad + (1 - Math.max(0, Math.min(1, severity))) * plot;
 
+  const half = plot / 2;
+  // Spread coincident points so a cluster (e.g. everything "act before merge")
+  // reads as many risks, not one dot. Deterministic golden-angle scatter.
+  const jitter = (i: number, n: number) => {
+    if (n <= 1) return { dx: 0, dy: 0 };
+    const a = i * 2.399963229728653; // golden angle (rad)
+    const rr = 5 + 4 * Math.sqrt(i);
+    return { dx: Math.cos(a) * rr, dy: Math.sin(a) * rr };
+  };
+
   return (
     <div className="rp-risk">
       <svg width="100%" viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Risk quadrant">
         {/* quadrant tints */}
-        <rect x={pad} y={pad} width={plot / 2} height={plot / 2} className="rp-q rp-q-warn" />
-        <rect x={pad + plot / 2} y={pad} width={plot / 2} height={plot / 2} className="rp-q rp-q-bad" />
-        <rect x={pad} y={pad + plot / 2} width={plot / 2} height={plot / 2} className="rp-q rp-q-good" />
-        <rect x={pad + plot / 2} y={pad + plot / 2} width={plot / 2} height={plot / 2} className="rp-q rp-q-info" />
-        {/* axes */}
-        <line x1={pad} y1={pad + plot / 2} x2={pad + plot} y2={pad + plot / 2} className="rp-risk-axis" />
-        <line x1={pad + plot / 2} y1={pad} x2={pad + plot / 2} y2={pad + plot} className="rp-risk-axis" />
-        {/* points */}
-        {items.map((r, i) => (
-          <circle
-            key={i}
-            cx={x(r.likelihood)}
-            cy={y(r.severity)}
-            r={6}
-            className={`rp-risk-dot rp-tone-${QUADRANT_TONE[r.quadrant ?? 'acceptable']}`}
-          >
-            <title>{`${r.label} — likelihood ${(r.likelihood * 100).toFixed(0)}% · severity ${(r.severity * 100).toFixed(0)}%`}</title>
-          </circle>
-        ))}
+        <rect x={pad} y={pad} width={half} height={half} className="rp-q rp-q-warn" />
+        <rect x={pad + half} y={pad} width={half} height={half} className="rp-q rp-q-bad" />
+        <rect x={pad} y={pad + half} width={half} height={half} className="rp-q rp-q-good" />
+        <rect x={pad + half} y={pad + half} width={half} height={half} className="rp-q rp-q-info" />
+        {/* frame + axes — give the plot a clear box so empty quadrants still read */}
+        <rect x={pad} y={pad} width={plot} height={plot} className="rp-q-frame" />
+        <line x1={pad} y1={pad + half} x2={pad + plot} y2={pad + half} className="rp-risk-axis" />
+        <line x1={pad + half} y1={pad} x2={pad + half} y2={pad + plot} className="rp-risk-axis" />
+        {/* per-cell labels so the four verdict zones are self-explanatory */}
+        <text x={pad + half - 4} y={pad + 11} textAnchor="end" className="rp-q-celllabel">Monitor</text>
+        <text x={pad + plot - 4} y={pad + 11} textAnchor="end" className="rp-q-celllabel">Act now</text>
+        <text x={pad + 4} y={pad + plot - 5} className="rp-q-celllabel">Acceptable</text>
+        <text x={pad + half + 4} y={pad + plot - 5} className="rp-q-celllabel">Document</text>
+        {/* points (jittered so clusters stay legible) */}
+        {items.map((r, i) => {
+          const j = jitter(i, items.length);
+          return (
+            <circle
+              key={i}
+              cx={x(r.likelihood) + j.dx}
+              cy={y(r.severity) + j.dy}
+              r={5}
+              className={`rp-risk-dot rp-tone-${QUADRANT_TONE[r.quadrant ?? 'acceptable']}`}
+            >
+              <title>{`${r.label} — likelihood ${(r.likelihood * 100).toFixed(0)}% · severity ${(r.severity * 100).toFixed(0)}%`}</title>
+            </circle>
+          );
+        })}
         <text x={pad} y={size - 6} className="rp-risk-axislabel">likelihood →</text>
         <text x={6} y={pad - 8} className="rp-risk-axislabel">severity ↑</text>
       </svg>

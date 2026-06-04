@@ -17,6 +17,13 @@ import { getSettings, patchSettings, type ScannerMeta } from '../state/settings'
 export const WASM_FILE = 'drift-static-profiler.wasm';
 export const META_FILE = 'drift-scanner.meta.json';
 
+// CacheStorage where an explicitly-downloaded (remote) scanner is persisted, so
+// it survives reloads and never re-downloads (the data-not-code counterpart of
+// how the Kokoro model is cached). The key is a synthetic, stable request URL —
+// CacheStorage keys by request URL; the value is the wasm Response.
+export const SCANNER_CACHE = 'drift-scanner-cache-v1';
+export const CACHED_WASM_KEY = 'https://drift-scanner.local/drift-static-profiler.wasm';
+
 export type AcquireProgress = { phase: string; fraction: number | null };
 export type AcquireStatus = 'ready' | 'acquired' | 'updated';
 export type AcquireResult = { status: AcquireStatus; meta: ScannerMeta };
@@ -61,6 +68,15 @@ export async function ensureScanner(onProgress?: (p: AcquireProgress) => void): 
 
   const settings = await getSettings();
   const have = settings.scanner ?? null;
+
+  // A downloaded (remote, cached) scanner is authoritative: the bundled launch
+  // check must NOT silently downgrade it. Re-acquiring the remote build is the
+  // explicit "Download latest" Settings action (downloadScanner), not this probe.
+  if (have?.source === 'remote') {
+    log({ phase: `Scanner ready · v${have.version}`, fraction: 1 });
+    return { status: 'ready', meta: have };
+  }
+
   const src = await resolveSource(settings.scannerUrl);
 
   if (have && have.version === src.version && have.source === src.source) {
@@ -73,9 +89,22 @@ export async function ensureScanner(onProgress?: (p: AcquireProgress) => void): 
   // SUPER-FAST onboarding: verify the wasm exists + has the wasm magic header
   // WITHOUT downloading the whole 22MB or compiling it. The expensive compile
   // is deferred to the first scan (loadScannerModule, memoized + pre-warmable).
-  const res = await fetch(src.wasmUrl, src.source === 'remote' ? { credentials: 'omit' } : undefined);
-  if (!res.ok) throw new Error(`scanner download failed: HTTP ${res.status}`);
-  if (!(await hasWasmMagic(res))) throw new Error('scanner file is not a valid wasm module');
+  //
+  // Retry up to 3× for bundled source: on a fresh Chrome install the CRX is
+  // extracted asynchronously, and the side panel can open before the 22 MB wasm
+  // is fully written to disk. The fetch returns 200 but the body is empty/
+  // truncated. Remote URLs don't benefit from retrying — a server returning
+  // non-WASM content won't fix itself on the next request.
+  const fetchOpts = src.source === 'remote' ? { credentials: 'omit' as const } : undefined;
+  const maxAttempts = src.source === 'bundled' ? 3 : 1;
+  let valid = false;
+  for (let attempt = 0; attempt < maxAttempts && !valid; attempt++) {
+    if (attempt > 0) await new Promise<void>((r) => setTimeout(r, 300 * attempt));
+    const res = await fetch(src.wasmUrl, fetchOpts);
+    if (!res.ok) throw new Error(`scanner download failed: HTTP ${res.status}`);
+    valid = await hasWasmMagic(res);
+  }
+  if (!valid) throw new Error('scanner file is not a valid wasm module');
 
   const meta: ScannerMeta = {
     version: src.version,
@@ -98,13 +127,61 @@ async function hasWasmMagic(res: Response): Promise<boolean> {
   return !!head && head.length >= 4 && head[0] === 0x00 && head[1] === 0x61 && head[2] === 0x73 && head[3] === 0x6d;
 }
 
+// ── Cached scanner read (shared with the dev/sideload download module) ───────
+//
+// The bytes are PUT into this cache only by scannerDownload.ts (the dev/sideload
+// override, excluded from the store build). The store build never populates the
+// cache, so loadScannerModule's cache branch is inert there and it always
+// compiles the bundled wasm. Reading CacheStorage is not remote code — only the
+// fetch+commit in scannerDownload.ts is, which is why that lives elsewhere.
+
+export async function openScannerCache(): Promise<Cache | null> {
+  if (typeof caches === 'undefined') return null; // no CacheStorage in this context
+  return caches.open(SCANNER_CACHE);
+}
+
+/** Read the cached downloaded wasm, if one was previously stored. */
+export async function loadCachedWasm(): Promise<Response | undefined> {
+  const cache = await openScannerCache();
+  return cache ? cache.match(CACHED_WASM_KEY) : undefined;
+}
+
 // Compiled-module cache so a pre-warm carries through to the scan provider and
-// re-runs never recompile. Keyed by source URL.
+// re-runs never recompile. Keyed by source ('cache:remote' or the bundled URL).
 const moduleCache = new Map<string, Promise<WebAssembly.Module>>();
 
-/** Compile the scanner module for execution (streaming when possible), memoized. */
-export async function loadScannerModule(scannerUrl?: string): Promise<WebAssembly.Module> {
-  const url = scannerUrl ? `${scannerUrl.replace(/\/$/, '')}/${WASM_FILE}` : chrome.runtime.getURL(WASM_FILE);
+/** Drop the memoized compiled module for a downloaded scanner so the next load
+ *  recompiles from freshly-cached bytes. Called by scannerDownload after a
+ *  successful download. */
+export function invalidateRemoteModule(): void {
+  moduleCache.delete('cache:remote');
+}
+
+/**
+ * Compile the scanner module for execution, memoized. Prefers an explicitly
+ * downloaded (cached, source:'remote') scanner; otherwise compiles the bundled
+ * build (streaming when possible). The store build always takes the bundled
+ * branch since nothing records a remote download.
+ */
+export async function loadScannerModule(): Promise<WebAssembly.Module> {
+  const settings = await getSettings();
+
+  if (settings.scanner?.source === 'remote') {
+    const cached = await loadCachedWasm();
+    if (cached) {
+      let p = moduleCache.get('cache:remote');
+      if (!p) {
+        p = cached.arrayBuffer().then((buf) => WebAssembly.compile(buf));
+        p.catch(() => moduleCache.delete('cache:remote'));
+        moduleCache.set('cache:remote', p);
+      }
+      return p;
+    }
+    // Recorded as remote but the cache is gone (cleared) → fall through to the
+    // bundled build so a scan still works.
+  }
+
+  const url = chrome.runtime.getURL(WASM_FILE);
   let p = moduleCache.get(url);
   if (!p) {
     p = (async () => {
@@ -122,6 +199,6 @@ export async function loadScannerModule(scannerUrl?: string): Promise<WebAssembl
 
 /** Kick off the compile in the background (non-blocking) so the first scan is
  *  instant. Failures are swallowed — the scan will surface them if it matters. */
-export function prewarmScanner(scannerUrl?: string): void {
-  void loadScannerModule(scannerUrl).catch(() => {});
+export function prewarmScanner(): void {
+  void loadScannerModule().catch(() => {});
 }

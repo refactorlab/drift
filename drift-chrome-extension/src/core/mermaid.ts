@@ -30,6 +30,21 @@ function ensureInitialized(theme: MermaidTheme): void {
     securityLevel: 'strict',
     fontFamily: 'inherit',
     suppressErrorRendering: true,
+    // Render node labels as native SVG <text>, NOT foreignObject HTML. SVG text
+    // stays crisp at any pan/zoom scale (foreignObject rasterises and blurs), and
+    // it gives the viewport a reliable getBBox to fit against.
+    htmlLabels: false,
+    flowchart: {
+      htmlLabels: false,
+      // Tighten the layout: scanner call-graphs are sparse DAGs, and Mermaid's
+      // default 50px node/rank spacing leaves big dead gaps. Pack them closer and
+      // trim the outer diagram padding so the graph reads dense, not scattered.
+      nodeSpacing: 26,
+      rankSpacing: 44,
+      padding: 6,
+      diagramPadding: 4,
+      curve: 'basis',
+    },
   });
   initializedFor = theme;
 }

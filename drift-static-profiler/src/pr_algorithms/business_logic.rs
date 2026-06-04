@@ -251,9 +251,8 @@ fn build_flowchart(
     // Take the top-N most-reached categories (B3: cap ~8 nodes total).
     let mut cats: Vec<(&&str, &(&str, usize))> = category_totals
         .iter()
-        .map(|(k, v)| (k, v))
         .collect();
-    cats.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    cats.sort_by_key(|b| std::cmp::Reverse(b.1 .1));
     let remaining_slots = NODE_CAP.saturating_sub(nodes.len());
     for (cat_id, (display, _count)) in cats.into_iter().take(remaining_slots) {
         let id = format!("cat_{cat_id}");

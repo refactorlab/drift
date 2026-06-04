@@ -793,13 +793,13 @@ fn analyze_with_tree(
 
     match lang {
         FileLang::Python => {
-            let mut ctx = python::build_context(source, &tree);
+            let mut ctx = python::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
 
             let django = python::django::DjangoDialect;
             if django.matches(&ctx) {
                 run_rules(
-                    &python::django::DJANGO_RULES,
+                    python::django::DJANGO_RULES,
                     &ctx,
                     Framework::Django,
                     &mut orm_findings,
@@ -811,7 +811,7 @@ fn analyze_with_tree(
             let sa = python::sqlalchemy::SqlalchemyDialect;
             if sa.matches(&ctx) {
                 run_rules(
-                    &python::sqlalchemy::SQLALCHEMY_RULES,
+                    python::sqlalchemy::SQLALCHEMY_RULES,
                     &ctx,
                     Framework::SqlAlchemy,
                     &mut orm_findings,
@@ -822,26 +822,26 @@ fn analyze_with_tree(
 
             // Parallel tracks (LLM, auth/crypto) run on every Python file.
             run_rules_with_kind(
-                &parallel::llm::LLM_RULES,
+                parallel::llm::LLM_RULES,
                 &ctx,
                 crate::insights::FindingKind::LlmAntipattern,
                 &mut orm_findings,
             );
             run_rules_with_kind(
-                &parallel::auth_crypto::AUTH_CRYPTO_RULES,
+                parallel::auth_crypto::AUTH_CRYPTO_RULES,
                 &ctx,
                 crate::insights::FindingKind::AuthCryptoAntipattern,
                 &mut orm_findings,
             );
         }
         FileLang::TypeScript | FileLang::JavaScript => {
-            let mut ctx = ts::build_context(source, &tree);
+            let mut ctx = ts::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
 
             let prisma = ts::prisma::PrismaDialect;
             if prisma.matches(&ctx) {
                 run_rules_with_kind(
-                    &ts::prisma::PRISMA_RULES,
+                    ts::prisma::PRISMA_RULES,
                     &ctx,
                     crate::insights::FindingKind::PrismaAntipattern,
                     &mut orm_findings,
@@ -853,7 +853,7 @@ fn analyze_with_tree(
             let drizzle = ts::drizzle::DrizzleDialect;
             if drizzle.matches(&ctx) {
                 run_rules_with_kind(
-                    &ts::drizzle::DRIZZLE_RULES,
+                    ts::drizzle::DRIZZLE_RULES,
                     &ctx,
                     crate::insights::FindingKind::DrizzleAntipattern,
                     &mut orm_findings,
@@ -865,7 +865,7 @@ fn analyze_with_tree(
             let typeorm = ts::typeorm::TypeormDialect;
             if typeorm.matches(&ctx) {
                 run_rules_with_kind(
-                    &ts::typeorm::TYPEORM_RULES,
+                    ts::typeorm::TYPEORM_RULES,
                     &ctx,
                     crate::insights::FindingKind::TypeormAntipattern,
                     &mut orm_findings,
@@ -877,7 +877,7 @@ fn analyze_with_tree(
             let seq = ts::sequelize::SequelizeDialect;
             if seq.matches(&ctx) {
                 run_rules_with_kind(
-                    &ts::sequelize::SEQUELIZE_RULES,
+                    ts::sequelize::SEQUELIZE_RULES,
                     &ctx,
                     crate::insights::FindingKind::SequelizeAntipattern,
                     &mut orm_findings,
@@ -893,7 +893,7 @@ fn analyze_with_tree(
             // triggers the rule matchers.
             if ts::mongoose::matches_mongoose(&ctx) {
                 run_rules_with_kind(
-                    &ts::mongoose::MONGOOSE_RULES,
+                    ts::mongoose::MONGOOSE_RULES,
                     &ctx,
                     crate::insights::FindingKind::MongooseAntipattern,
                     &mut orm_findings,
@@ -905,7 +905,7 @@ fn analyze_with_tree(
             // so it never fires on plain TS/JS.
             if parallel::react::matches_react(&ctx) {
                 run_rules_with_kind(
-                    &parallel::react::REACT_RULES,
+                    parallel::react::REACT_RULES,
                     &ctx,
                     crate::insights::FindingKind::ReactAntipattern,
                     &mut orm_findings,
@@ -913,12 +913,12 @@ fn analyze_with_tree(
             }
         }
         FileLang::Java => {
-            let mut ctx = jvm::build_context(source, &tree);
+            let mut ctx = jvm::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
             let jpa = jvm::jpa::JpaDialect;
             if jpa.matches(&ctx) {
                 run_rules_with_kind(
-                    &jvm::jpa::JPA_RULES,
+                    jvm::jpa::JPA_RULES,
                     &ctx,
                     crate::insights::FindingKind::JpaAntipattern,
                     &mut orm_findings,
@@ -928,12 +928,12 @@ fn analyze_with_tree(
             }
         }
         FileLang::Go => {
-            let mut ctx = go::build_context(source, &tree);
+            let mut ctx = go::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
             let gorm = go::gorm::GormDialect;
             if gorm.matches(&ctx) {
                 run_rules_with_kind(
-                    &go::gorm::GORM_RULES,
+                    go::gorm::GORM_RULES,
                     &ctx,
                     crate::insights::FindingKind::GormAntipattern,
                     &mut orm_findings,
@@ -943,12 +943,12 @@ fn analyze_with_tree(
             }
         }
         FileLang::Rust => {
-            let mut ctx = rust_lang::build_context(source, &tree);
+            let mut ctx = rust_lang::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
             let sqlx = rust_lang::sqlx::SqlxDialect;
             if sqlx.matches(&ctx) {
                 run_rules_with_kind(
-                    &rust_lang::sqlx::SQLX_RULES,
+                    rust_lang::sqlx::SQLX_RULES,
                     &ctx,
                     crate::insights::FindingKind::SqlxAntipattern,
                     &mut orm_findings,
@@ -958,12 +958,12 @@ fn analyze_with_tree(
             }
         }
         FileLang::Scala => {
-            let mut ctx = jvm_scala::build_context(source, &tree);
+            let mut ctx = jvm_scala::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
             let slick = jvm_scala::slick::SlickDialect;
             if slick.matches(&ctx) {
                 run_rules_with_kind(
-                    &jvm_scala::slick::SLICK_RULES,
+                    jvm_scala::slick::SLICK_RULES,
                     &ctx,
                     crate::insights::FindingKind::SlickAntipattern,
                     &mut orm_findings,
@@ -974,7 +974,7 @@ fn analyze_with_tree(
             let quill = jvm_scala::quill::QuillDialect;
             if quill.matches(&ctx) {
                 run_rules_with_kind(
-                    &jvm_scala::quill::QUILL_RULES,
+                    jvm_scala::quill::QUILL_RULES,
                     &ctx,
                     crate::insights::FindingKind::QuillAntipattern,
                     &mut orm_findings,
@@ -984,12 +984,12 @@ fn analyze_with_tree(
             }
         }
         FileLang::Kotlin => {
-            let mut ctx = jvm_kotlin::build_context(source, &tree);
+            let mut ctx = jvm_kotlin::build_context(source, tree);
             ctx.model_graph = Some(model_graph);
             let exposed = jvm_kotlin::exposed::ExposedDialect;
             if exposed.matches(&ctx) {
                 run_rules_with_kind(
-                    &jvm_kotlin::exposed::EXPOSED_RULES,
+                    jvm_kotlin::exposed::EXPOSED_RULES,
                     &ctx,
                     crate::insights::FindingKind::ExposedAntipattern,
                     &mut orm_findings,
@@ -1000,7 +1000,7 @@ fn analyze_with_tree(
             let ktorm = jvm_kotlin::ktorm::KtormDialect;
             if ktorm.matches(&ctx) {
                 run_rules_with_kind(
-                    &jvm_kotlin::ktorm::KTORM_RULES,
+                    jvm_kotlin::ktorm::KTORM_RULES,
                     &ctx,
                     crate::insights::FindingKind::KtormAntipattern,
                     &mut orm_findings,
@@ -1087,6 +1087,59 @@ fn run_rules_with_kind(
                 predicted_sql: None,
                 originating_orm: None,
             });
+        }
+    }
+}
+
+/// `origin` is the ORM family name in stable snake_case (e.g. `"sqlalchemy"`,
+/// `"prisma"`). Stored on each finding's `originating_orm` so the
+/// cross-ORM `SqlIrAntipattern` kind retains provenance through the
+/// rollup pipeline.
+fn run_sql_ir(preds: &[sql_ir::PredictedSql], origin: &str, out: &mut Vec<Finding>) {
+    use crate::insights::{Evidence, FindingKind};
+    use sql_ir_rules::BUILTIN_SQL_IR_RULES;
+    for pred in preds {
+        let fidelity = pred.primary_fidelity();
+        for rule in BUILTIN_SQL_IR_RULES {
+            // Per-rule catch_unwind: a panic in one SQL-IR rule's
+            // matcher must not crash the analysis (mirrors the policy
+            // for ORM-level rules in `run_rules_with_kind`).
+            let rule_hits = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                (rule.matches)(pred)
+            }));
+            let hits = match rule_hits {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!(
+                        "drift-orm: panic in SQL-IR rule {} — rule skipped for this prediction",
+                        rule.id
+                    );
+                    continue;
+                }
+            };
+            for hit in hits {
+                let mut evidence = vec![Evidence {
+                    call: rule.id.to_string(),
+                    line: hit.line,
+                    category: None,
+                }];
+                evidence.extend(hit.extra_evidence);
+                out.push(Finding {
+                    kind: FindingKind::SqlIrAntipattern,
+                    severity: rule.severity,
+                    effort: rule.effort,
+                    confidence: rule.effective_confidence(fidelity),
+                    line: hit.line,
+                    message: rule.message.to_string(),
+                    evidence,
+                    remediation: Some(rule.remediation.to_string()),
+                    byte_range: Some(hit.byte_range),
+                    fidelity: Some(fidelity),
+                    fusion_paths: vec![rule.id.to_string()],
+                    predicted_sql: pred.primary_render(),
+                    originating_orm: Some(origin.to_string()),
+                });
+            }
         }
     }
 }
@@ -1230,58 +1283,5 @@ mod end_to_end_tests {
         run_rules_with_kind(rules, &ctx, FindingKind::DjangoAntipattern, &mut out);
         assert_eq!(out.len(), 1, "panicking rule was skipped; working rule ran");
         assert_eq!(out[0].evidence[0].call, "TEST-OK");
-    }
-}
-
-/// `origin` is the ORM family name in stable snake_case (e.g. `"sqlalchemy"`,
-/// `"prisma"`). Stored on each finding's `originating_orm` so the
-/// cross-ORM `SqlIrAntipattern` kind retains provenance through the
-/// rollup pipeline.
-fn run_sql_ir(preds: &[sql_ir::PredictedSql], origin: &str, out: &mut Vec<Finding>) {
-    use crate::insights::{Evidence, FindingKind};
-    use sql_ir_rules::BUILTIN_SQL_IR_RULES;
-    for pred in preds {
-        let fidelity = pred.primary_fidelity();
-        for rule in BUILTIN_SQL_IR_RULES {
-            // Per-rule catch_unwind: a panic in one SQL-IR rule's
-            // matcher must not crash the analysis (mirrors the policy
-            // for ORM-level rules in `run_rules_with_kind`).
-            let rule_hits = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (rule.matches)(pred)
-            }));
-            let hits = match rule_hits {
-                Ok(v) => v,
-                Err(_) => {
-                    eprintln!(
-                        "drift-orm: panic in SQL-IR rule {} — rule skipped for this prediction",
-                        rule.id
-                    );
-                    continue;
-                }
-            };
-            for hit in hits {
-                let mut evidence = vec![Evidence {
-                    call: rule.id.to_string(),
-                    line: hit.line,
-                    category: None,
-                }];
-                evidence.extend(hit.extra_evidence);
-                out.push(Finding {
-                    kind: FindingKind::SqlIrAntipattern,
-                    severity: rule.severity,
-                    effort: rule.effort,
-                    confidence: rule.effective_confidence(fidelity),
-                    line: hit.line,
-                    message: rule.message.to_string(),
-                    evidence,
-                    remediation: Some(rule.remediation.to_string()),
-                    byte_range: Some(hit.byte_range),
-                    fidelity: Some(fidelity),
-                    fusion_paths: vec![rule.id.to_string()],
-                    predicted_sql: pred.primary_render(),
-                    originating_orm: Some(origin.to_string()),
-                });
-            }
-        }
     }
 }

@@ -207,9 +207,11 @@ pub fn max_subquery_depth_in_query(q: &Query, depth: usize) -> usize {
 /// Length of the OR chain rooted at `e`. Returns 1 for non-OR.
 pub fn or_chain_length(e: &Expr) -> usize {
     match e {
-        Expr::BinaryOp { left, op, right } if matches!(op, BinaryOperator::Or) => {
-            or_chain_length(left) + or_chain_length(right)
-        }
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Or,
+            right,
+        } => or_chain_length(left) + or_chain_length(right),
         _ => 1,
     }
 }

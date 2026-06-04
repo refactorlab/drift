@@ -317,7 +317,9 @@ mod tests {
         let mut p = Parser::new();
         p.set_language(&crate::languages::java::language()).unwrap();
         let tree = p.parse(src, None).unwrap();
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

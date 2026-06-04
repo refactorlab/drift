@@ -91,7 +91,7 @@ pub fn classify(
             let direct = imp.local_name == r;
             let root_segment = imp
                 .module_path
-                .split(|c: char| c == '.' || c == '/' || c == ':')
+                .split(['.', '/', ':'])
                 .find(|s| !s.is_empty());
             let root_match = root_segment == Some(r);
             if direct || root_match {
@@ -208,7 +208,7 @@ fn module_catalog() -> &'static [(String, Category)] {
         }
         // Longest prefix wins: ensures `org.springframework.data` is checked
         // before `org.springframework`, and `django.db` before `django`.
-        out.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        out.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
         out
     })
 }

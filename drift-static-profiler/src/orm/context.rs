@@ -212,6 +212,7 @@ pub enum IterKind {
 
 /// Per-file ORM context — the input to every dialect's `predict_all`
 /// and every `OrmRule::matches`.
+#[derive(Default)]
 pub struct PyOrmContext<'a> {
     pub file: &'a str,
     /// The full file source. Most detectors work off the structured `chains`
@@ -236,23 +237,6 @@ pub struct PyOrmContext<'a> {
     pub model_graph: Option<&'a crate::orm::model_graph::ModelGraph>,
 }
 
-impl<'a> Default for PyOrmContext<'a> {
-    fn default() -> Self {
-        Self {
-            file: "",
-            source: "",
-            imports: ImportMap::default(),
-            bindings: BindingMap::new(),
-            for_loops: Vec::new(),
-            class_defs: Vec::new(),
-            chains: Vec::new(),
-            iteration_markers: Vec::new(),
-            decorators: Vec::new(),
-            functions: Vec::new(),
-            model_graph: None,
-        }
-    }
-}
 
 impl<'a> PyOrmContext<'a> {
     /// Is the byte offset inside any tracked for-loop body? Used by

@@ -3,6 +3,9 @@
 // names exactly so the extension reads the SAME payload the GitHub Action does.
 // Everything is optional/defensive: a partial scan renders only what it has.
 
+import type { FileDiff } from './prDiff';
+export type { FileDiff } from './prDiff';
+
 export type GaugeLevel = 'low' | 'moderate' | 'high' | 'critical';
 export type DriftDirection = 'up' | 'down' | 'neutral';
 
@@ -73,11 +76,30 @@ export interface DataStructureEntry {
   direction?: 'in' | 'out' | 'internal';
 }
 
+/** One node of the scanner's structured call graph — the data the mermaid is
+ *  built from. `label` is the humanized symbol (`anon <file:line>`, a function
+ *  or class name, or a file basename); `class` is its diff status. */
+export interface MermaidNode {
+  id: string;
+  label: string;
+  shape?: string;
+  /** Diff status: 'added' | 'changed' | 'removed' | 'muted' | … */
+  class?: string;
+}
+export interface MermaidStructured {
+  direction?: string;
+  nodes?: MermaidNode[];
+}
+
 export interface ArchitectureFlow {
   diff_merged_mermaid?: string;
   before_mermaid?: string;
   after_mermaid?: string;
   combined_mermaid?: string;
+  diff_merged_structured?: MermaidStructured;
+  before_structured?: MermaidStructured;
+  after_structured?: MermaidStructured;
+  combined_structured?: MermaidStructured;
   data_structures?: DataStructureEntry[];
 }
 
@@ -183,6 +205,12 @@ export interface TechDebtFinding {
   line?: number;
   value?: number;
   severity?: string;
+  /** Fully-qualified graph node id ("/repo/<file>::<Class>::<method>"). The
+   *  `summary_findings_top` findings carry only this + `kind`/`line` — no
+   *  `symbol`/`file` — so the UI derives the display label from it. */
+  node_id?: string;
+  /** What kind of debt this is (e.g. "recursive", "long", "complex"). */
+  kind?: string;
 }
 export interface TechDebt {
   high_complexity?: TechDebtFinding[];
@@ -216,12 +244,25 @@ export interface PrScope {
   unreachable_changes?: string[];
 }
 
+/** The literal +/- code change, collected client-side from GitHub's `.diff`
+ *  (the scanner has no base tree to diff against) and injected into the scan-pr
+ *  JSON so the actual added/removed lines travel with the report + export. */
+export interface PrDiff {
+  files: FileDiff[];
+  /** Hunks were capped by the size budget on at least one file. */
+  truncated?: boolean;
+}
+
 export interface ScanOutput {
   schema_version?: string;
   mode?: string;
   pr_scope?: PrScope;
   pr_review?: PrReview;
   pr_review_ext?: PrReviewExt;
+  pr_diff?: PrDiff;
+  /** The PR's opening-comment body (the author's description), fetched
+   *  client-side and injected so it travels with the report + export. */
+  pr_description?: string;
 }
 
 /** Narrow an unknown payload to a ScanOutput if it carries the PR markers. */

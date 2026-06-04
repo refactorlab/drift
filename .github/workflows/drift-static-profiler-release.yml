@@ -10,8 +10,10 @@ name: drift-static-profiler / release
 #   (Manual override available via workflow_dispatch with an explicit tag.)
 #
 # The Drift GitHub Action (action.yml) auto-detects the newest release whose
-# tag matches `drift-static-profiler-v*` (or `drift-lab-v*`) and has the
-# binary asset — so a fresh CLI release is picked up automatically. Asset
+# tag matches `drift-static-profiler-v*` and has the binary asset — so a
+# fresh CLI release is picked up automatically. This is the SINGLE source of
+# truth for that binary; the desktop `drift-lab-v*` releases no longer carry
+# it (de-duplicated — see drift-lab-desktop-build.yml's publish job). Asset
 # naming MUST match action/scripts/install-profiler.sh:
 #     drift-static-profiler-<arch>-<os>.{tar.gz | zip}  (+ sibling .sha256)
 
@@ -144,3 +146,76 @@ jobs:
           manifest-path: drift-static-profiler/Cargo.toml
           ref: refs/tags/${{ needs.create-release.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build the scanner as a WASM module and upload it to the same release.
+  #
+  # Why here: the WASM is compiled directly from drift-static-profiler, so it
+  # belongs alongside the native binary release. Hosting it on GitHub Releases
+  # lets the Chrome extension (or any tool) point `scannerUrl` at the download
+  # URL to pull the latest scanner without waiting for a Web Store review cycle.
+  #
+  # Assets uploaded:
+  #   drift-static-profiler.wasm   — the wasm32-wasip1 binary (~22 MB)
+  #   drift-scanner.meta.json      — {version, bytes, target} read by the extension
+  build-wasm:
+    name: build / wasm32-wasip1
+    needs: create-release
+    if: needs.create-release.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      # Keep in sync with drift-chrome-extension-release.yml so the wasi-sdk
+      # cache key is shared across workflows on the same runner pool.
+      WASI_SDK_VERSION: '24'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: drift-static-profiler
+          key: wasm32-wasip1
+
+      - name: Cache wasi-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/wasi-sdk
+          key: wasi-sdk-${{ env.WASI_SDK_VERSION }}
+
+      # build-wasm.sh is self-contained: it installs wasi-sdk on a cache miss,
+      # compiles drift-static-profiler with --no-default-features for the wasm
+      # target, and writes public/drift-static-profiler.wasm + drift-scanner.meta.json.
+      - name: Build WASM scanner
+        run: bash drift-chrome-extension/scripts/build-wasm.sh
+
+      - name: Upload WASM assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_ID=$(curl -sf \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+
+          upload_asset() {
+            local file="$1" name="$2" mime="$3"
+            curl -sf \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: $mime" \
+              --data-binary "@$file" \
+              "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=${name}" \
+              >/dev/null
+            echo "✓ uploaded $name ($(du -h "$file" | cut -f1))"
+          }
+
+          upload_asset drift-chrome-extension/public/drift-static-profiler.wasm \
+            drift-static-profiler.wasm application/wasm
+          upload_asset drift-chrome-extension/public/drift-scanner.meta.json \
+            drift-scanner.meta.json application/json

@@ -122,7 +122,7 @@ fn classify_schema_libs(file_path: &str, haystacks: &[&str]) -> Vec<(String, Str
     out
 }
 
-fn walk<'a>(entries: &'a [CallTreeNode]) -> Vec<&'a CallTreeNode> {
+fn walk(entries: &[CallTreeNode]) -> Vec<&CallTreeNode> {
     let mut out: Vec<&CallTreeNode> = Vec::new();
     let mut stack: Vec<&CallTreeNode> = entries.iter().collect();
     while let Some(n) = stack.pop() {
@@ -207,8 +207,8 @@ pub fn compute(
         }
     }
 
-    high_complexity.sort_by(|a, b| b.complexity.cmp(&a.complexity));
-    long_functions.sort_by(|a, b| b.loc.cmp(&a.loc));
+    high_complexity.sort_by_key(|b| std::cmp::Reverse(b.complexity));
+    long_functions.sort_by_key(|b| std::cmp::Reverse(b.loc));
     high_complexity.truncate(20);
     long_functions.truncate(20);
 
@@ -226,7 +226,7 @@ pub fn compute(
             docs,
         });
     }
-    detected.sort_by(|a, b| b.count.cmp(&a.count));
+    detected.sort_by_key(|b| std::cmp::Reverse(b.count));
 
     let supported_languages: Vec<String> = {
         let mut s: HashSet<String> = HashSet::new();

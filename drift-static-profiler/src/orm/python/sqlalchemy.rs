@@ -107,7 +107,7 @@ fn matches_sa_n1_001(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
                 // Infer model name from loop var by capitalizing the first char.
                 // `user` → `User`, `order` → `Order` — covers the common case.
                 let model = capitalize_first(&root_text);
-                if !g.is_relation_field(&model, &methods[0]) {
+                if !g.is_relation_field(&model, methods[0]) {
                     continue 'chains;
                 }
             }
@@ -239,7 +239,7 @@ fn matches_sa_perf_005(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
             continue;
         }
         let methods: Vec<&str> = chain.steps.iter().map(|s| s.method.as_str()).collect();
-        if methods.iter().any(|m| *m == "select") {
+        if methods.contains(&"select") {
             out.push(hit(chain, "SA-PERF-005"));
         }
     }
@@ -376,7 +376,7 @@ fn matches_sa_auto_010(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
                 .steps
                 .iter()
                 .any(|s| s.method == "execute" && s.args_text.iter().any(|a| a.contains("select(")));
-            if last == "execute" && (methods.iter().any(|m| *m == "select") || select_in_args) {
+            if last == "execute" && (methods.contains(&"select") || select_in_args) {
                 has_execute = Some(chain);
             }
         }
@@ -638,7 +638,9 @@ mod tests {
         let mut p = Parser::new();
         p.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
         let tree = p.parse(src, None).unwrap();
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

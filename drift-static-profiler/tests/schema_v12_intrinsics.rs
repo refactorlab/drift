@@ -129,6 +129,7 @@ fn report_roundtrips_through_v1_2() {
 /// concrete intrinsic (`complexity`) and assert:
 ///   - at least one Frame has a non-zero `complexity`
 ///   - no entry tree node carries a non-zero `complexity`
+///
 /// Together this proves the hoist actually happened.
 #[test]
 fn intrinsic_complexity_lives_on_frame_not_entry() {
@@ -144,7 +145,7 @@ fn intrinsic_complexity_lives_on_frame_not_entry() {
         let some_frame_has_complexity = frames.iter().any(|f| {
             f.get("complexity")
                 .and_then(|c| c.as_u64())
-                .map_or(false, |c| c > 0)
+                .is_some_and(|c| c > 0)
         });
         // Some tiny fixtures may have all-1-complexity bodies, which
         // serialize as skipped (`is_zero_usize` only skips 0). For
@@ -249,7 +250,7 @@ fn total_complexity(entries: &[drift_static_profiler::tree::CallTreeNode]) -> us
 fn walk_value_for_field(arr: &[serde_json::Value], field: &str) -> bool {
     fn check_obj(obj: &serde_json::Value, field: &str) -> bool {
         if let Some(map) = obj.as_object() {
-            if map.get(field).and_then(|v| v.as_u64()).map_or(false, |v| v > 0) {
+            if map.get(field).and_then(|v| v.as_u64()).is_some_and(|v| v > 0) {
                 return true;
             }
             for v in map.values() {

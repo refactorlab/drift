@@ -496,7 +496,7 @@ fn extract_tags_inner(
             });
         }
         if let (Some(name), Some((byte, line))) = (ref_name, ref_byte) {
-            let sql = ref_sql_literal.and_then(|s| extract_sql_string(s));
+            let sql = ref_sql_literal.and_then(extract_sql_string);
             // Dedup: a single call site may match BOTH the generic call
             // pattern (which doesn't capture SQL) and a SQL-sink pattern
             // (which does). Both produce a Reference at the same byte
@@ -542,7 +542,7 @@ fn extract_tags_inner(
                 .or_else(|| import_name.map(|s| s.to_string()))
                 .unwrap_or_else(|| {
                     module_clean
-                        .rsplit(|c| c == '.' || c == '/')
+                        .rsplit(['.', '/'])
                         .next()
                         .unwrap_or(module_clean)
                         .to_string()
@@ -984,7 +984,7 @@ fn infer_binding_name(source: &str, lambda_byte_start: usize) -> Option<String> 
     // Defensive: reject all-digit "identifiers" (shouldn't be possible
     // syntactically but easier to filter here than to reproduce per-
     // language identifier rules).
-    if ident.chars().next().map_or(true, |c| c.is_ascii_digit()) {
+    if ident.chars().next().is_none_or(|c| c.is_ascii_digit()) {
         return None;
     }
     // Common keywords that look like idents at this position would

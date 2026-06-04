@@ -142,7 +142,7 @@ fn assert_methods_carry_parent_class(tags: &drift_static_profiler::FileTags, lan
 ///   * TS/JS:  `constructor` method on the class
 ///   * Java:   method named like the class (`OrderService`)
 ///   * Kotlin: implicit primary constructor — no separate symbol
-///             (skip; covered by class symbol itself)
+///     (skip; covered by class symbol itself)
 ///   * Scala:  class body is the constructor (skip; covered by class)
 ///   * Go:     `NewOrderService` free function (factory convention)
 ///   * Rust:   `new` method on the impl block

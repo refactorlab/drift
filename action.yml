@@ -13,9 +13,9 @@ inputs:
     default: 'andy'
   profiler-release-tag:
     description: |
-      Pin to a specific release tag (e.g. drift-lab-v0.4.0). Default empty
-      → auto-detect the latest non-prerelease release in profiler-repo
-      whose tag matches drift-lab-v* OR drift-static-profiler-v* AND has
+      Pin to a specific release tag (e.g. drift-static-profiler-v0.8.1).
+      Default empty → auto-detect the latest non-prerelease release in
+      profiler-repo whose tag matches drift-static-profiler-v* AND has
       our binary asset attached. Zero-config for most consumers.
     required: false
     default: ''
@@ -629,8 +629,10 @@ runs:
     # ─── 2. Resolve the release tag (auto-detect or pinned) ──────────
     # We resolve the tag HERE (before the cache step) because the cache
     # key includes the tag. Auto-detect: most-recent published release
-    # in profiler-repo whose tag matches drift-lab-v* or
-    # drift-static-profiler-v* AND has the binary asset attached.
+    # in profiler-repo whose tag matches drift-static-profiler-v* AND has
+    # the binary asset attached. (The profiler ships from its own
+    # dedicated release stream — drift-static-profiler-release.yml — and
+    # is NOT bundled into drift-lab-v* desktop releases.)
     - name: Resolve release tag
       continue-on-error: true   # advisory: never fail the PR on our own error
       id: resolve
@@ -668,13 +670,16 @@ runs:
         auth=()
         [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
         echo "🔍 Auto-detecting latest release in ${DRIFT_PROFILER_REPO} containing ${asset}"
+        # per_page=100 (not 30): the repo also cuts frequent drift-lab-v*
+        # desktop releases, so the profiler release could otherwise fall
+        # off a small page between profiler version bumps.
         releases=$(curl --fail --silent --location "${auth[@]}" \
-          "https://api.github.com/repos/${DRIFT_PROFILER_REPO}/releases?per_page=30" 2>/dev/null || echo '[]')
+          "https://api.github.com/repos/${DRIFT_PROFILER_REPO}/releases?per_page=100" 2>/dev/null || echo '[]')
         tag=$(echo "$releases" | jq -r --arg asset "$asset" '
           [.[]
             | select(.draft == false)
             | select(.prerelease == false)
-            | select(.tag_name | test("^(drift-lab-v|drift-static-profiler-v)"))
+            | select(.tag_name | test("^drift-static-profiler-v"))
             | select(any(.assets[]?; .name == $asset))
           ][0].tag_name // empty
         ')

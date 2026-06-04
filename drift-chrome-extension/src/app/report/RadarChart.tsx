@@ -14,8 +14,13 @@ function polar(cx: number, cy: number, r: number, angle: number): [number, numbe
 }
 
 function shortLabel(s: string): string {
-  return s.length > 22 ? `${s.slice(0, 20)}…` : s;
+  return s.length > 16 ? `${s.slice(0, 15)}…` : s;
 }
+
+// Horizontal / vertical padding added around the size×size circle box so the
+// axis labels (which sit OUTSIDE the circle) aren't clipped at the viewBox edge.
+const PAD_X = 66;
+const PAD_Y = 12;
 
 export function RadarChart({ axes, size = 300 }: { axes: RadarAxis[]; size?: number }) {
   if (axes.length < 3) return null;
@@ -39,7 +44,13 @@ export function RadarChart({ axes, size = 300 }: { axes: RadarAxis[]; size?: num
   const dataPoly = dataPts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
 
   return (
-    <svg className="rp-radar" width="100%" viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Quality metrics radar">
+    <svg
+      className="rp-radar"
+      width="100%"
+      viewBox={`${-PAD_X} ${-PAD_Y} ${size + PAD_X * 2} ${size + PAD_Y * 2}`}
+      role="img"
+      aria-label="Quality metrics radar"
+    >
       {rings.map((pts, i) => (
         <polygon key={i} points={pts} className="rp-radar-ring" />
       ))}

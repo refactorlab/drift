@@ -43,7 +43,7 @@ fn tpws_root() -> Option<PathBuf> {
     }
 }
 
-fn entry_names<'a>(outcome: &'a drift_static_profiler::api::AnalyzeOutcome) -> Vec<&'a str> {
+fn entry_names(outcome: &drift_static_profiler::api::AnalyzeOutcome) -> Vec<&str> {
     outcome
         .report
         .entries
@@ -203,8 +203,10 @@ fn tpws_lower_min_reach_surfaces_leaf_handlers() {
         eprintln!("skipping: test-python-web-server fixture not present");
         return;
     };
-    let mut discover = DiscoverOpts::default();
-    discover.min_reach = 1;
+    let discover = DiscoverOpts {
+        min_reach: 1,
+        ..Default::default()
+    };
     let outcome = analyze_roots_with_progress(
         &root,
         &discover,

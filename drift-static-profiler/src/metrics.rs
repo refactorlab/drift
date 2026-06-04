@@ -156,20 +156,41 @@ fn is_decision_point(n: Node, lang: Language) -> bool {
 }
 
 fn max_nesting(root: Node, lang: Language) -> usize {
-    fn rec(node: Node, depth: usize, lang: Language) -> usize {
-        let inc = is_nesting_kind(node, lang);
-        let depth_here = if inc { depth + 1 } else { depth };
-        let mut max = depth_here;
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            let d = rec(child, depth_here, lang);
-            if d > max {
-                max = d;
+    // ITERATIVE: track the count of nesting-kind ancestors (inclusive) along the
+    // current path, incrementing on entry and decrementing on exit, over a single
+    // `TreeCursor`. The recursive form overflowed the wasm call stack on
+    // deeply-nested bodies (see `walk` above) — this is O(1) extra memory, one
+    // cursor, arbitrary depth. Result is identical to the recursive version.
+    let mut cursor = root.walk();
+    let mut depth = 0usize;
+    let mut max = 0usize;
+    loop {
+        if is_nesting_kind(cursor.node(), lang) {
+            depth += 1;
+        }
+        if depth > max {
+            max = depth;
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        // Leaf: ascend, decrementing as we leave each node, until we can move to a
+        // sibling — but never above `root`.
+        loop {
+            if is_nesting_kind(cursor.node(), lang) {
+                depth -= 1;
+            }
+            if cursor.node().id() == root.id() {
+                return max;
+            }
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return max;
             }
         }
-        max
     }
-    rec(root, 0, lang)
 }
 
 fn is_nesting_kind(n: Node, _lang: Language) -> bool {
@@ -337,15 +358,41 @@ fn detect_async(node: Node, source: &str, lang: Language) -> bool {
     }
 }
 
-fn walk<F: FnMut(Node)>(node: Node, visit: &mut F) {
-    visit(node);
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk(child, visit);
+/// Pre-order visit of every node in `root`'s subtree — ITERATIVE.
+///
+/// The obvious recursive form (`visit(n); for child { walk(child) }`) recurses
+/// one stack frame per AST level AND allocates a fresh `TreeCursor` per frame.
+/// A pathologically deep AST (minified bundles, generated code, deeply-nested
+/// expressions — common in a large monorepo) then overflows the wasm call stack
+/// (V8 caps wasm call depth independently of the shadow-stack size). This single
+/// `TreeCursor` walk uses O(1) extra memory, allocates ONE cursor, and handles
+/// arbitrary depth — strictly faster and unbounded-depth safe. Visit order is
+/// identical (pre-order, children left→right).
+fn walk<F: FnMut(Node)>(root: Node, visit: &mut F) {
+    let mut cursor = root.walk();
+    loop {
+        visit(cursor.node()); // pre-order: visit on first arrival
+        if cursor.goto_first_child() {
+            continue;
+        }
+        // Leaf: advance to the next sibling, climbing as needed — but never
+        // above `root` (so we stay within its subtree).
+        loop {
+            if cursor.node().id() == root.id() {
+                return; // climbed back to the start node → subtree exhausted
+            }
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            cursor.goto_parent();
+        }
     }
 }
 
-fn collect_loop_and_await_ranges(body: Node) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+/// A list of `(start_byte, end_byte)` source spans.
+type ByteRanges = Vec<(usize, usize)>;
+
+fn collect_loop_and_await_ranges(body: Node) -> (ByteRanges, ByteRanges) {
     let mut loops = Vec::new();
     let mut awaits = Vec::new();
     walk(body, &mut |n| {
@@ -588,5 +635,30 @@ mod tests {
             matches!(foo.kind, crate::SymbolKind::Class),
             "class Foo should be SymbolKind::Class"
         );
+    }
+
+    // Regression guard for the ITERATIVE `walk` / `max_nesting`. A pathologically
+    // deep AST (here 5000 nested `if`s) is exactly what overflowed the wasm call
+    // stack with the old recursive form. It also overflows a cargo test thread's
+    // ~2 MB stack, so reverting to recursion makes THIS test crash — while the
+    // iterative form computes the correct metrics in O(1) extra space.
+    #[test]
+    fn deeply_nested_body_no_overflow_and_exact_metrics() {
+        let n = 5000usize;
+        let mut src = String::from("function f(a) {");
+        for _ in 0..n {
+            src.push_str("if(a){");
+        }
+        src.push_str("return 0;");
+        for _ in 0..n {
+            src.push('}');
+        }
+        src.push('}');
+
+        let s = sym(&src, Language::JavaScript, "f");
+        // max_nesting: every level is an `if_statement` (a nesting kind) → depth == n.
+        assert_eq!(s.nesting_depth, n, "nesting_depth should equal the nesting count");
+        // complexity: 1 (base) + one decision point per `if` → n + 1.
+        assert_eq!(s.complexity, n + 1, "complexity should be 1 + {n} ifs");
     }
 }

@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useActivePr } from '../state/activePr';
 import type { PrInput } from '../core/scanProvider';
-import { fetchPrHead, fetchPrChangedFiles, type ChangedFileStatus } from '../core/prDiff';
+import { fetchPrHead, fetchPrChangedFiles, fetchPrBody, type ChangedFileStatus } from '../core/prDiff';
 import { downloadArchive, type DownloadProgress } from '../core/githubZip';
 import { scanInWorker } from '../core/scanWorkerClient';
 import { loadScannerModule } from '../core/scannerStore';
 import { scanToReport } from '../core/scanReport';
+import { saveTextFile } from '../core/saveFile';
 import { buildNarration, summaryLine, type LiveScanMeta } from '../core/liveSummary';
 import type { DriftReport, PrContext } from '../core/types';
-import { createTtsProvider, type PreparedAudio, type TtsProvider } from '../core/ttsProvider';
-import { isTtsAvailable, loadKokoroRuntime } from '../core/ttsStore';
+import { type PreparedAudio } from '../core/ttsProvider';
+import { getSharedTtsProvider } from '../core/ttsEngine';
+import { isTtsAvailable } from '../core/ttsStore';
 import { SpokenSummary } from './SpokenSummary';
 import { ScanReportView } from './report/ScanReportView';
+import { ForceExpandContext } from './report/primitives';
 import { getSettings } from '../state/settings';
 import {
   addScan,
@@ -20,6 +23,14 @@ import {
   type ScanRecord,
 } from '../state/scanHistory';
 import { setLiveContext } from '../state/liveContext';
+import { saveSpokenAudio, getSpokenAudio, removeSpokenAudio } from '../state/spokenAudio';
+// Inlined as strings (Vite `?inline`) so the HTML export can ship a fully
+// self-contained file — same pattern the content script uses to sandbox its
+// styles. theme.css holds the design tokens; app.css carries the dark-theme
+// override + layout; report.css styles the `rp-*` report markup we snapshot.
+import themeCss from '../ui/theme.css?inline';
+import appCss from './app.css?inline';
+import reportCss from './report/report.css?inline';
 
 // "Drift Live Scan" — runs the Drift pipeline locally, in the extension, with
 // NO AI and NO REST API: read the PR's head sha + changed files from GitHub's
@@ -32,8 +43,9 @@ import { setLiveContext } from '../state/liveContext';
 // published as the PR's chat grounding, so the result becomes a conversation.
 
 async function loadWasmModule(): Promise<WebAssembly.Module> {
-  const { scannerUrl } = await getSettings();
-  return loadScannerModule(scannerUrl);
+  // loadScannerModule reads settings itself to pick the cached (downloaded)
+  // scanner over the bundled build.
+  return loadScannerModule();
 }
 
 const SCAN_LABEL = 'Static drift profiler (WASM)';
@@ -115,6 +127,10 @@ function StepRow({ step, now }: { step: Step; now: number }) {
 // A single resolved result — the live run or a replayed history record. The two
 // paths render through the exact same UI so they never drift.
 type Display = {
+  /** Scan-record id (`${url}@${sha}@${ts}`) — the storage key for this scan's
+   *  spoken audio. Lets a lazily-synthesized clip be cached back to the right
+   *  record. Empty for the no-narration display (which is never persisted). */
+  id: string;
   report: DriftReport;
   meta: LiveScanMeta;
   narration: string;
@@ -123,6 +139,8 @@ type Display = {
   /** Per-file git status (the literal diff), reconstructed client-side from the
    *  unified .diff — drives the always-visible "Changed files" section. */
   changedStatus: ChangedFileStatus[];
+  /** Full commit messages from the .patch — drives the Commits section. */
+  commits: string[];
   ts: number;
   durationMs: number | null;
   // Audio synthesized eagerly during the run → SpokenSummary plays it instantly.
@@ -131,25 +149,96 @@ type Display = {
   audio: PreparedAudio | null;
 };
 
-// Stable, self-describing filename for an exported scan-pr.json. Sanitises the
-// repo coordinates so the result is filesystem-safe on every OS (no slashes,
-// spaces or punctuation), e.g. `drift-scan-acme-web-pr1423.json`. Pure so it
-// can be unit-tested without a DOM.
-export function scanExportFilename(meta: LiveScanMeta): string {
+// Stable, self-describing filename for an exported scan. Sanitises the repo
+// coordinates so the result is filesystem-safe on every OS (no slashes, spaces
+// or punctuation), e.g. `drift-scan-acme-web-pr1423.json`. Pure so it can be
+// unit-tested without a DOM. `ext` switches the JSON vs HTML export.
+export function scanExportFilename(meta: LiveScanMeta, ext: 'json' | 'html' = 'json'): string {
   const slug = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
   const owner = slug(meta.owner ?? '');
   const repo = slug(meta.repo);
   const repoPart = [owner, repo].filter(Boolean).join('-') || 'scan';
-  return `drift-scan-${repoPart}-pr${meta.number}.json`;
+  return `drift-scan-${repoPart}-pr${meta.number}.${ext}`;
+}
+
+// Attribute-safe escape (also handles quotes) — used for the <title>.
+const escHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Text-content escape — the minimum a element/<pre> body needs. Leaves quotes
+// intact so embedded JSON keeps its readable `"key"` form in the export source.
+const escHtmlText = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Frame a captured report body into a standalone, offline HTML document: the
+// design tokens + report CSS are inlined, the live theme is pinned on <html>,
+// and the body is wrapped in `.drift-root` so the tokens resolve exactly as they
+// do in the panel. Pure (no DOM/Date) → unit-testable. The body is the report's
+// live `outerHTML` (so scanner-rendered mermaid/gauge SVGs are already baked in).
+export function buildScanHtmlDoc(opts: {
+  title: string;
+  theme: 'light' | 'dark';
+  css: string;
+  body: string;
+}): string {
+  const frame =
+    'body.drift-root{margin:0;min-height:100vh;background:var(--drift-bg);color:var(--drift-fg)}' +
+    '.drift-export{max-width:980px;margin:0 auto;padding:24px 20px}' +
+    '.drift-export-head{padding:0 0 14px;margin:0 0 16px;border-bottom:1px solid var(--drift-border)}' +
+    '.drift-export-head h1{font:600 18px/1.3 var(--drift-font);margin:0 0 4px}' +
+    '.drift-export-head p{margin:0;color:var(--drift-fg-muted);font-size:12px}' +
+    // The raw-JSON block renders in full (no max-height clamp) so the export is a
+    // complete, self-contained record — wrapping long lines instead of truncating.
+    '.drift-export-raw pre{margin:0;white-space:pre-wrap;word-break:break-word;' +
+    'font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--drift-bg);' +
+    'border:1px solid var(--drift-border);border-radius:8px;padding:12px;overflow:auto}';
+  return [
+    '<!doctype html>',
+    `<html lang="en" data-theme="${opts.theme}" style="color-scheme:${opts.theme}">`,
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    `<title>${escHtml(opts.title)}</title>`,
+    `<style>${opts.css}</style>`,
+    `<style>${frame}</style>`,
+    '</head>',
+    `<body class="drift-root"><main class="drift-export">${opts.body}</main></body>`,
+    '</html>',
+  ].join('\n');
+}
+
+// The complete raw scan-pr.json, pretty-printed and embedded as an HTML section.
+// The rendered report above it is lossy by design — collapsed sections and
+// truncated lists ("10 more suggestions", closed mindmaps) never reach the DOM —
+// so this block is what makes the export a LOSSLESS record: every field of the
+// ScanPrOutput, escaped so even string values containing markup stay literal.
+export function buildRawJsonSection(scan: unknown): string {
+  const json = JSON.stringify(scan, null, 2) ?? 'null';
+  return (
+    '<section class="rp-section drift-export-raw">' +
+    '<header class="rp-section-head"><h3><span class="rp-section-icon">🧾</span>Raw scan-pr.json</h3>' +
+    '<span class="rp-badge" style="color: var(--drift-fg-muted); border-color: var(--drift-fg-muted);">complete · lossless</span>' +
+    `</header><pre>${escHtmlText(json)}</pre></section>`
+  );
+}
+
+// The theme actually painted right now, resolving 'system' to a concrete value
+// so the export isn't at the mercy of the reader's OS preference.
+function resolveActiveTheme(): 'light' | 'dark' {
+  const t = document.documentElement.dataset.theme;
+  if (t === 'dark' || t === 'light') return t;
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 function recordToDisplay(r: ScanRecord): Display {
   return {
+    id: r.id,
     report: r.report,
     meta: { owner: r.owner, repo: r.repo, number: r.number, title: r.title, changedFiles: r.changedFiles },
     narration: r.narration,
     scan: r.scan,
     changedStatus: r.changedStatus ?? [],
+    commits: r.commits ?? [],
     ts: r.ts,
     durationMs: r.durationMs,
     audio: null,
@@ -179,9 +268,6 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
   const [now, setNow] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const runStartRef = useRef(0);
-  // One Kokoro provider for the panel's lifetime: the worker + model load once
-  // and every run's synthesis reuses them (mirrors SpokenSummary's lazy provider).
-  const ttsProviderRef = useRef<TtsProvider | null>(null);
 
   const prUrl = activePr
     ? `https://github.com/${activePr.owner}/${activePr.repo}/pull/${activePr.number}`
@@ -260,11 +346,9 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           patch('audio', { state: 'done', note: 'engine not staged · system voice' });
           return null;
         }
-        const provider = (ttsProviderRef.current ??= createTtsProvider(async () => {
-          const { ttsUrl: u } = await getSettings();
-          return loadKokoroRuntime(u);
-        }));
-        const res = await provider.synthesize({
+        // The ONE shared engine — the model loads once and the card reuses the
+        // same warm worker, so it never "loads again" after the scan.
+        const res = await getSharedTtsProvider().synthesize({
           text,
           voice: ttsVoice,
           signal: sig,
@@ -300,9 +384,12 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
       // 1. Resolve head sha + PR diff from the STABLE git endpoints (.patch /
       //    .diff) — credentialed, private-repo safe, no fragile DOM scrape.
       patch('resolve', { state: 'active' });
-      const [head, diff] = await Promise.all([
+      const [head, diff, prBody] = await Promise.all([
         fetchPrHead(owner, repo, number, sig),
         fetchPrChangedFiles(owner, repo, number, sig),
+        // The PR description (best-effort; public repos always, private only with
+        // a token). Fail-soft inside, so it never blocks the scan.
+        fetchPrBody(owner, repo, number, sig),
       ]);
       const title = head.title ?? null;
       patch('resolve', {
@@ -325,9 +412,13 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
 
       const pr: PrInput = {
         owner, repo, number, title: title ?? undefined,
+        body: prBody,
         baseRef: '', headRef: '',
         baseSha: '', headSha: head.headSha,
         changedFiles: diff.changedPaths, diffStats: diff.diffStats, diffStatus: diff.diffStatus,
+        // Commit messages from the .patch → feeds the scanner's feat:/fix: counts
+        // + value-card (previously empty on the live path) and the Commits section.
+        commits: head.commits,
       };
 
       // 4. Unzip + execute the scanner in a Web Worker (no AI). Both are single
@@ -351,9 +442,21 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
       patch('scan', { state: 'done', note: SCAN_LABEL });
 
       // 5. The result is the raw scan-pr.json — the React report renders every
-      //    section from it directly (no markdown, no action renderer).
+      //    section from it directly (no markdown, no action renderer). We attach
+      //    the literal +/- code diff (collected client-side from the .diff — the
+      //    scanner has no base tree to produce it) so the actual added/removed
+      //    lines travel inside the scan-pr JSON (render + export + history).
       patch('render', { state: 'active' });
       const scan: unknown = report;
+      if (scan && typeof scan === 'object') {
+        (scan as Record<string, unknown>).pr_diff = {
+          files: diff.fileDiffs,
+          truncated: diff.diffTruncated || undefined,
+        };
+        // The PR description rides in the scan JSON too, so it renders (live +
+        // export + replayed history) and is preserved in the raw export.
+        if (prBody) (scan as Record<string, unknown>).pr_description = prBody;
+      }
       patch('render', { state: 'done', note: 'native React report' });
 
       // Build the at-a-glance summary + spoken narration from the same report,
@@ -369,15 +472,17 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           ? await synthSpokenSummary(narration, sig)
           : (patch('audio', { state: 'done', note: 'no narration' }), null);
 
-        const durationMs = Date.now() - runStartRef.current;
-        const next: Display = { report: driftReport, meta, narration, scan, changedStatus: diff.entries, ts: Date.now(), durationMs, audio };
+        const ts = Date.now();
+        const id = `${url}@${head.headSha}@${ts}`;
+        const durationMs = ts - runStartRef.current;
+        const next: Display = { id, report: driftReport, meta, narration, scan, changedStatus: diff.entries, commits: head.commits, ts, durationMs, audio };
         setResult(next);
 
         const record: ScanRecord = {
-          id: `${url}@${head.headSha}@${next.ts}`,
+          id,
           url, owner, repo, number, title,
           sha: head.headSha,
-          ts: next.ts,
+          ts,
           durationMs,
           caption: summaryLine(driftReport, meta),
           verdict: driftReport.verdict,
@@ -387,8 +492,15 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           narration,
           changedFiles: diff.changedPaths.length,
           changedStatus: diff.entries,
+          commits: head.commits,
         };
         const hist = await addScan(record);
+        // Persist the synthesized WAV BEFORE the history row becomes clickable.
+        // The old order exposed the row first, so clicking the just-run scan could
+        // race the (multi-MB encode + full-storage prune) save: getSpokenAudio
+        // returned null and the replay fell back to a "… Synthesizing" re-run. Now
+        // the clip is on disk by the time the row appears. Fail-soft.
+        if (audio) await saveSpokenAudio(record.id, audio);
         setHistory(hist.filter((r) => r.url === url));
         await setLiveContext(toLiveContext(next));
       } else {
@@ -397,11 +509,13 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
         patch('audio', { state: 'done', note: 'no narration' });
         const durationMs = Date.now() - runStartRef.current;
         setResult({
+          id: '', // no narration → no spoken audio to ever persist
           report: { found: true, verdict: 'unknown', verdictLabel: '', effortLabel: null, mergeConfidence: null, gauges: [], blastRadius: null, criticalCount: null, metricCount: null, sections: [], prUrl: url, scrapedAt: 0 },
           meta: { owner, repo, number, title, changedFiles: diff.changedPaths.length },
           narration: '',
           scan,
           changedStatus: diff.entries,
+          commits: head.commits,
           ts: Date.now(),
           durationMs,
           audio: null,
@@ -424,6 +538,18 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     }
   }, [activePr, patch, synthSpokenSummary]);
 
+  // SpokenSummary just lazily synthesized a clip (a replayed scan whose WAV
+  // wasn't cached — e.g. one recorded before eager-save existed, or whose eager
+  // synthesis failed). Cache it back to that scan's record so the NEXT replay
+  // (re-open, or after a reload) is instant. We deliberately do NOT mutate the
+  // on-screen display's `audio`: feeding new `prepared` to the mounted
+  // SpokenSummary would re-fire its reset effect and cut off the playback that
+  // just started. Re-pressing the SAME card is already instant via SpokenSummary's
+  // own blob cache; re-opening reads this persisted clip. Fail-soft (storage only).
+  const cacheSynthesized = useCallback((id: string, audio: PreparedAudio) => {
+    if (id) void saveSpokenAudio(id, audio);
+  }, []);
+
   // "Discuss in chat" — publish this result as the PR's grounding and go back to
   // the chat, which picks it up and opens with a grounded reasoning turn.
   const discuss = useCallback(async () => {
@@ -434,33 +560,70 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
 
   // "Export JSON" — save the raw scan-pr.json (ScanPrOutput — the exact artifact
   // the GitHub Action produces) to disk. Works for both a live run and a replayed
-  // history record, since both carry `scan`. Uses the same blob-URL +
-  // chrome.downloads path as ArtifactFile so it behaves identically under MV3.
-  const exportBlobRef = useRef<string | null>(null);
+  // history record, since both carry `scan`. Prefers the native File System
+  // Access "Save As" (no download-manager round-trip, no blob URL to leak) and
+  // falls back to chrome.downloads where it isn't available — see saveTextFile.
   const exportScan = useCallback(() => {
     if (!display) return;
-    const json = JSON.stringify(display.scan, null, 2);
-    if (exportBlobRef.current) URL.revokeObjectURL(exportBlobRef.current);
-    exportBlobRef.current = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-    chrome.downloads.download(
-      { url: exportBlobRef.current, filename: scanExportFilename(display.meta), saveAs: true },
-      () => void chrome.runtime.lastError, // swallow "user cancelled"; nothing else to do
-    );
+    void saveTextFile({
+      suggestedName: scanExportFilename(display.meta),
+      data: JSON.stringify(display.scan, null, 2),
+      mime: 'application/json',
+      description: 'Drift scan JSON',
+    });
   }, [display]);
 
-  // Release the last export's object URL when the panel unmounts.
-  useEffect(() => () => {
-    if (exportBlobRef.current) URL.revokeObjectURL(exportBlobRef.current);
-  }, []);
+  // "Export HTML" — save a standalone, offline copy of the report. We snapshot a
+  // mounted DOM (not renderToStaticMarkup) on purpose: the mermaid + gauge SVGs
+  // are produced in a useEffect and only exist in the mounted tree. We snapshot
+  // the OFF-SCREEN, force-expanded copy (exportReportRef) rather than the visible
+  // one, so every collapsed section — and the mermaid inside it — is present and
+  // the exported render is COMPLETE, not just whatever the user had expanded.
+  const reportRef = useRef<HTMLDivElement>(null);
+  const exportReportRef = useRef<HTMLDivElement>(null);
+  const exportHtml = useCallback(() => {
+    if (!display) return;
+    // Prefer the fully-expanded off-screen copy; fall back to the visible report.
+    const reportHtml =
+      exportReportRef.current?.innerHTML ?? reportRef.current?.outerHTML;
+    if (!reportHtml) return;
+    const { owner = '', repo, number, title } = display.meta;
+    const heading = `${owner ? `${owner}/` : ''}${repo} · PR #${number}`;
+    const docTitle = title ? `${heading} — ${title}` : heading;
+    const when = new Date(display.ts).toLocaleString();
+    const header =
+      `<header class="drift-export-head"><h1>${escHtml(docTitle)}</h1>` +
+      `<p>Drift live scan · ${escHtml(when)}</p></header>`;
+    const html = buildScanHtmlDoc({
+      title: docTitle,
+      theme: resolveActiveTheme(),
+      css: `${themeCss}\n${appCss}\n${reportCss}`,
+      // Fully-expanded rendered report + full raw JSON (complete, lossless record).
+      body: header + reportHtml + buildRawJsonSection(display.scan),
+    });
+    void saveTextFile({
+      suggestedName: scanExportFilename(display.meta, 'html'),
+      data: html,
+      mime: 'text/html',
+      description: 'Drift scan report (HTML)',
+    });
+  }, [display]);
 
-  const openRecord = useCallback((r: ScanRecord) => {
-    setViewing(recordToDisplay(r));
-  }, []);
+  const openRecord = useCallback(async (r: ScanRecord) => {
+    // Replaying a past scan must arm its WAV immediately — no "… Synthesizing"
+    // round-trip. If this is the scan we just ran, its synthesized audio is still
+    // in memory (result.audio) — reuse it directly, immune to any save-timing
+    // race. Otherwise load the clip persisted alongside the record.
+    const inMemory = result && result.ts === r.ts ? result.audio : null;
+    const audio = inMemory ?? (await getSpokenAudio(r.id));
+    setViewing({ ...recordToDisplay(r), audio });
+  }, [result]);
 
   const deleteRecord = useCallback(
     async (e: React.MouseEvent, r: ScanRecord) => {
       e.stopPropagation();
       const next = await removeScan(r.id);
+      await removeSpokenAudio(r.id); // drop its cached WAV too — no orphans
       setHistory(next.filter((x) => x.url === r.url));
       setViewing((v) => (v && v.ts === r.ts ? null : v));
     },
@@ -556,6 +719,13 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
                 >
                   ⬇ Export JSON
                 </button>
+                <button
+                  className="pl-pill"
+                  onClick={exportHtml}
+                  title="Download a standalone, offline HTML copy of this report"
+                >
+                  ⬇ Export HTML
+                </button>
                 <button className="pl-pill accent" onClick={() => void discuss()}>
                   💬 Discuss in chat
                 </button>
@@ -563,10 +733,35 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
             </div>
 
             {display.narration && (
-              <SpokenSummary text={display.narration} prepared={display.audio} />
+              <SpokenSummary
+                text={display.narration}
+                prepared={display.audio}
+                // Cache a lazily-synthesized clip back to this scan's record so a
+                // later replay is instant. Bound to the displayed id, not undefined,
+                // only when there's a record to key it by.
+                onSynthesized={
+                  display.id ? (audio) => cacheSynthesized(display.id, audio) : undefined
+                }
+              />
             )}
 
-            <ScanReportView scan={display.scan} changedFiles={display.changedStatus} />
+            <div ref={reportRef}>
+              <ScanReportView scan={display.scan} changedFiles={display.changedStatus} commits={display.commits} />
+            </div>
+
+            {/* Off-screen, fully-expanded twin used only as the HTML-export source.
+                Mounted (not display:none) so its mermaid/gauge useEffects run and
+                bake real SVGs; pushed off-canvas + aria-hidden so it never affects
+                the visible panel. */}
+            <div
+              ref={exportReportRef}
+              aria-hidden
+              style={{ position: 'absolute', left: -99999, top: 0, width: 980, pointerEvents: 'none' }}
+            >
+              <ForceExpandContext.Provider value={true}>
+                <ScanReportView scan={display.scan} changedFiles={display.changedStatus} commits={display.commits} />
+              </ForceExpandContext.Provider>
+            </div>
           </>
         )}
 
@@ -582,7 +777,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
                   <button
                     key={r.id}
                     className={`pl-hist-row${active ? ' active' : ''}`}
-                    onClick={() => openRecord(r)}
+                    onClick={() => void openRecord(r)}
                     title={`Replay scan of ${r.sha.slice(0, 7)}`}
                   >
                     <span className={`pl-hist-dot pl-verdict-${r.verdict}`} />

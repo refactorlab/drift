@@ -21,8 +21,9 @@
 // (e.g. replaying a past scan), the lazy Kokoro→Web-Speech path below still runs.
 
 import { useEffect, useRef, useState } from 'react';
-import { createTtsProvider, type PreparedAudio, type TtsProvider } from '../core/ttsProvider';
-import { isTtsAvailable, loadKokoroRuntime } from '../core/ttsStore';
+import { type PreparedAudio } from '../core/ttsProvider';
+import { getSharedTtsProvider } from '../core/ttsEngine';
+import { isTtsAvailable } from '../core/ttsStore';
 import { getSettings } from '../state/settings';
 
 type Engine = 'probing' | 'kokoro' | 'speech' | 'none';
@@ -40,10 +41,15 @@ function pickVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undef
 export function SpokenSummary({
   text,
   prepared,
+  onSynthesized,
 }: {
   text: string;
   /** Audio synthesized ahead of time by the pipeline → instantly playable. */
   prepared?: PreparedAudio | null;
+  /** Fired once when THIS component lazily synthesizes a clip (the Kokoro path,
+   *  not the system-voice fallback). Lets the parent cache it back to the scan
+   *  record so a later replay is instant — see LivePipelineRun.cacheSynthesized. */
+  onSynthesized?: (audio: PreparedAudio) => void;
 }) {
   const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
@@ -54,22 +60,17 @@ export function SpokenSummary({
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Kokoro: a single provider instance + a native <audio> element. The
-  // synthesized blob URL is cached for this text so a re-press never re-runs the
-  // model; it's revoked when the text changes or on unmount.
-  const providerRef = useRef<TtsProvider | null>(null);
+  // Kokoro plays through a native <audio> element. The synthesized blob URL is
+  // cached for this text so a re-press never re-runs the model; it's revoked when
+  // the text changes or on unmount. The ENGINE itself is the app-wide shared
+  // provider (getSharedTtsProvider) — NOT a per-card instance — so the model loads
+  // once for the whole panel and the card reuses the pipeline's warm worker
+  // instead of loading the 92 MB model a second time.
   const audioRef = useRef<HTMLAudioElement>(null);
   const blobUrlRef = useRef<string | null>(null);
 
   // Web Speech fallback: a local voice.
   const speechVoiceRef = useRef<SpeechSynthesisVoice | undefined>(undefined);
-
-  if (!providerRef.current) {
-    providerRef.current = createTtsProvider(async () => {
-      const { ttsUrl } = await getSettings();
-      return loadKokoroRuntime(ttsUrl);
-    });
-  }
 
   // Resolve the engine once: prefer Kokoro (matches the action's audio), fall
   // back to the browser voice, else hide the card entirely. The Kokoro check is
@@ -167,7 +168,7 @@ export function SpokenSummary({
     setError(null);
     try {
       const { ttsVoice } = await getSettings();
-      const res = await providerRef.current!.synthesize({ text, voice: ttsVoice });
+      const res = await getSharedTtsProvider().synthesize({ text, voice: ttsVoice });
       const url = URL.createObjectURL(new Blob([res.wav.buffer as ArrayBuffer], { type: 'audio/wav' }));
       blobUrlRef.current = url;
       setVoiceName(res.voice);
@@ -176,6 +177,14 @@ export function SpokenSummary({
       el.currentTime = 0;
       void el.play();
       setPhase('speaking');
+      // Hand the freshly-synthesized clip up so the parent can persist it (this is
+      // the only place a real WAV is produced on the lazy path). Best-effort: a
+      // throwing handler must never break playback that already started.
+      try {
+        onSynthesized?.({ wav: res.wav, voice: res.voice, durationSeconds: res.durationSeconds });
+      } catch {
+        /* parent-side cache is fail-soft; ignore */
+      }
     } catch (e) {
       // First synthesis can fail even when the glue probe passed (model assets
       // missing, OOM, engine vanished mid-run). Degrade to the browser voice and

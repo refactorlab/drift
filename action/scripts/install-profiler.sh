@@ -11,10 +11,9 @@
 #                               Default: refactorlab/drift
 #
 #   DRIFT_PROFILER_RELEASE_TAG  Pin to a specific release tag (e.g.
-#                               drift-lab-v0.4.0). Default: empty →
-#                               auto-detect the latest release matching
-#                               drift-lab-v* OR drift-static-profiler-v*
-#                               that has our binary asset attached.
+#                               drift-static-profiler-v0.8.1). Default: empty →
+#                               auto-detect the latest drift-static-profiler-v*
+#                               release that has our binary asset attached.
 #
 #   DRIFT_PROFILER_INSTALL_DIR  Where to put the binary. action.yml's
 #                               actions/cache step passes the same path
@@ -87,18 +86,20 @@ else
     echo "⚠️  jq not on PATH — can't auto-detect. Set DRIFT_PROFILER_RELEASE_TAG explicitly."
     exit 0
   fi
-  # Fetch first page of releases (most recent 30, sorted by created date).
-  # We accept releases whose tag matches either naming convention AND
-  # publishes the binary asset we need for this OS/arch. Filtering by
-  # asset name guarantees the release actually has what we need (vs.
-  # picking the most recent release of any kind and 404'ing later).
+  # Fetch the first 100 releases (sorted by created date). We accept the
+  # most recent `drift-static-profiler-v*` release that publishes the
+  # binary asset for this OS/arch. per_page is 100 (not 30) because the
+  # repo also cuts frequent `drift-lab-v*` desktop releases — with a small
+  # page the profiler release could fall off the window between bumps.
+  # Filtering by asset name guarantees the release actually has what we
+  # need (vs. picking the most recent and 404'ing later).
   releases_json="$(curl --fail --silent --location "${auth_args[@]}" \
-      "https://api.github.com/repos/${REPO}/releases?per_page=30" 2>/dev/null || echo '[]')"
+      "https://api.github.com/repos/${REPO}/releases?per_page=100" 2>/dev/null || echo '[]')"
   TAG="$(echo "$releases_json" | jq -r --arg asset "$asset" '
     [.[]
       | select(.draft == false)
       | select(.prerelease == false)
-      | select(.tag_name | test("^(drift-lab-v|drift-static-profiler-v)"))
+      | select(.tag_name | test("^drift-static-profiler-v"))
       | select(any(.assets[]?; .name == $asset))
     ][0].tag_name // empty
   ')"
@@ -111,7 +112,18 @@ else
 fi
 
 archive_url="https://github.com/${REPO}/releases/download/${TAG}/${asset}"
-sha_url="${archive_url}.sha256"
+
+# Checksum asset naming differs by producer:
+#   • drift-static-profiler-release.yml (taiki-e/upload-rust-binary-action,
+#     the single source of truth) REPLACES the archive extension:
+#         drift-static-profiler-<target>.sha256
+#   • Older drift-lab desktop releases APPENDED it:  <archive>.tar.gz.sha256
+# Try the canonical name first, then the legacy one, so a pinned older tag
+# still verifies. (Requesting only the legacy name 404s on every current
+# release and silently drops integrity verification.)
+checksum_asset="drift-static-profiler-${target}.sha256"
+sha_url="https://github.com/${REPO}/releases/download/${TAG}/${checksum_asset}"
+sha_url_legacy="${archive_url}.sha256"
 
 # ─── Install dir resolution + cache short-circuit ────────────────────────
 # action.yml exports DRIFT_PROFILER_INSTALL_DIR so its actions/cache step
@@ -144,10 +156,18 @@ if ! curl --fail --silent --show-error --location "${auth_args[@]}" \
   exit 0
 fi
 
-echo "↓ Downloading ${asset}.sha256"
-if ! curl --fail --silent --show-error --location "${auth_args[@]}" \
+echo "↓ Downloading checksum (${checksum_asset})"
+if curl --fail --silent --show-error --location "${auth_args[@]}" \
      --output "${asset}.sha256" "$sha_url"; then
-  echo "⚠️  Could not download ${asset}.sha256 — proceeding without sha verification."
+  : # canonical name found
+elif curl --fail --silent --show-error --location "${auth_args[@]}" \
+     --output "${asset}.sha256" "$sha_url_legacy"; then
+  echo "   (used legacy ${asset}.sha256 name)"
+else
+  # Remove any empty/partial file curl may have left so the verify block
+  # below doesn't read a blank hash and false-positive a mismatch.
+  rm -f "${asset}.sha256"
+  echo "⚠️  No checksum asset for ${asset} — proceeding without sha verification."
 fi
 
 # Verify by extracting the expected hash and comparing manually rather

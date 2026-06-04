@@ -777,7 +777,7 @@ pub fn collect_roots_overview(
         })
         .collect();
 
-    out.sort_by(|a, b| b.subtree_size.cmp(&a.subtree_size));
+    out.sort_by_key(|b| std::cmp::Reverse(b.subtree_size));
     out
 }
 
@@ -807,13 +807,9 @@ fn count_findings_by_severity(
 
 /// Inputs the per-node detectors need that aren't on `Symbol` /
 /// `&[ExternalCall]`. Currently empty; we'll grow it as detectors land.
+#[derive(Default)]
 pub struct Ctx {}
 
-impl Default for Ctx {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 /// Collect every node-local finding for a single symbol. Called once per
 /// node from `tree::build_inner` alongside the existing Phase D booleans.
@@ -1549,7 +1545,7 @@ pub fn collect_findings_top(
     for e in entries {
         walk_for_top(e, &mut out);
     }
-    out.sort_by(|a, b| severity_rank(b.severity).cmp(&severity_rank(a.severity)));
+    out.sort_by_key(|b| std::cmp::Reverse(severity_rank(b.severity)));
     // Per-kind diversity gate — same reasoning as `collect_immediate_fixes`:
     // one rule pack with hundreds of high-severity findings must not push
     // every other kind out of the visible top-N. See `enforce_per_kind_cap`
@@ -1622,14 +1618,18 @@ fn walk_for_kinds(
 ///
 /// `cap` defaults to 50 in callers — bounded memory + bounded JSON
 /// even on huge repos where one rule pack might fire 10k times.
-pub fn collect_findings_grouped_by_category(
-    entries: &[crate::tree::CallTreeNode],
-    cap: usize,
-) -> (
+///
+/// Returns `(rollup_by_category, orm_family_counts, top_entries_by_category)`.
+pub type GroupedFindingsByCategory = (
     std::collections::BTreeMap<String, crate::report::CategoryRollup>,
     std::collections::BTreeMap<String, usize>,
     std::collections::BTreeMap<String, Vec<crate::report::CategoryTopEntry>>,
-) {
+);
+
+pub fn collect_findings_grouped_by_category(
+    entries: &[crate::tree::CallTreeNode],
+    cap: usize,
+) -> GroupedFindingsByCategory {
     use crate::report::{CategoryRollup, CategoryTopEntry};
     use std::collections::BTreeMap;
     let mut by_category: BTreeMap<FindingCategory, CategoryRollup> = BTreeMap::new();

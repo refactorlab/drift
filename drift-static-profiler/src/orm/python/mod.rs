@@ -40,15 +40,14 @@ pub fn build_context<'a>(source: &'a str, tree: &'a Tree) -> PyOrmContext<'a> {
         | "generator_expression" => handle_comprehension(node, source, &mut ctx),
         "decorated_definition" => handle_decorator(node, source, &mut ctx),
         "function_definition" => handle_function(node, source, &mut ctx),
-        "call" => {
+        "call"
             // Only register the OUTERMOST call of each chain; the
             // chain reconstructor walks inward from there.
-            if !is_inner_call_of_chain(node) {
+            if !is_inner_call_of_chain(node) => {
                 if let Some(chain) = reconstruct_chain(node, source, &ctx) {
                     ctx.chains.push(chain);
                 }
             }
-        }
         _ => {}
     });
     infer_bindings(source, &mut ctx);
@@ -321,7 +320,7 @@ fn reconstruct_chain(outer: Node, source: &str, ctx: &PyOrmContext<'_>) -> Optio
                 let args_text = current
                     .child_by_field_name("arguments")
                     .and_then(|a| a.utf8_text(source.as_bytes()).ok())
-                    .map(|s| split_top_level_args(s))
+                    .map(split_top_level_args)
                     .unwrap_or_default();
                 match function.kind() {
                     "identifier" => {
@@ -500,7 +499,7 @@ fn infer_bindings(source: &str, ctx: &mut PyOrmContext<'_>) {
             let kind = classify_chain(chain).unwrap_or(BindingKind::Unknown);
             ctx.bindings
                 .entry(lhs.to_string())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(Binding {
                     kind,
                     byte_range: chain.byte_range.clone(),
@@ -761,7 +760,7 @@ fn push_model_inst_binding(
 ) {
     bindings
         .entry(loop_var.to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .push(Binding {
             kind: BindingKind::DjangoModelInst(ModelInstFacts { model, source_queryset }),
             byte_range: body_range,

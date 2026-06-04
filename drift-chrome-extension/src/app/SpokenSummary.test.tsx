@@ -15,6 +15,8 @@ vi.mock('../core/ttsStore', () => ({
 }));
 
 import { SpokenSummary } from './SpokenSummary';
+import { __resetSharedTtsProvider } from '../core/ttsEngine';
+import { saveSpokenAudio, getSpokenAudio } from '../state/spokenAudio';
 
 const fakeRuntime: KokoroRuntime = {
   async synthesize() {
@@ -26,6 +28,10 @@ const fakeRuntime: KokoroRuntime = {
 describe('SpokenSummary — engine selection + gate', () => {
   beforeEach(() => {
     installChromeMock();
+    // The Kokoro engine is now an app-wide singleton (ttsEngine). Drop it so each
+    // test builds a fresh provider against THIS test's mocked loader — otherwise a
+    // runtime cached by an earlier test would mask later mockReset()s.
+    __resetSharedTtsProvider();
     loadKokoroRuntime.mockReset();
     isTtsAvailable.mockReset();
     // jsdom implements neither media playback nor object URLs.
@@ -55,6 +61,44 @@ describe('SpokenSummary — engine selection + gate', () => {
     // Synthesis completes → playback starts (Pause is now offered).
     await waitFor(() => expect(screen.getByText('❚❚ Pause')).toBeTruthy());
     expect(loadKokoroRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('hands a lazily-synthesized clip to onSynthesized so the parent can cache it', async () => {
+    // The cache-back contract: when this component synthesizes a clip on the lazy
+    // path (a replayed scan whose WAV was never persisted), it must surface the
+    // finished WAV so the parent can save it — making the NEXT replay instant.
+    isTtsAvailable.mockResolvedValue(true);
+    loadKokoroRuntime.mockResolvedValue(fakeRuntime);
+    const onSynthesized = vi.fn();
+    render(<SpokenSummary text="A short narration." onSynthesized={onSynthesized} />);
+
+    await waitFor(() => expect(screen.getByText('▶ Listen')).toBeTruthy());
+    expect(onSynthesized).not.toHaveBeenCalled(); // nothing synthesized just to offer the button
+
+    fireEvent.click(screen.getByText('▶ Listen'));
+    await waitFor(() => expect(screen.getByText('❚❚ Pause')).toBeTruthy());
+
+    // Fired once, with a real WAV + the voice + duration the parent persists.
+    expect(onSynthesized).toHaveBeenCalledTimes(1);
+    const clip = onSynthesized.mock.calls[0][0] as { wav: Uint8Array; voice: string; durationSeconds: number };
+    expect(clip.wav).toBeInstanceOf(Uint8Array);
+    expect(clip.wav.length).toBeGreaterThan(0);
+    expect(typeof clip.voice).toBe('string');
+    expect(clip.durationSeconds).toBeGreaterThan(0);
+  });
+
+  it('does NOT notify onSynthesized when playing pipeline-prepared audio (nothing was synthesized)', async () => {
+    // Prepared audio is already cached by the pipeline — re-persisting it would be
+    // wasteful, so the callback must stay silent on the instant path.
+    const onSynthesized = vi.fn();
+    const prepared = { wav: new Uint8Array([1, 2, 3, 4]), voice: 'af_heart', durationSeconds: 12.5 };
+    render(<SpokenSummary text="A short narration." prepared={prepared} onSynthesized={onSynthesized} />);
+
+    await waitFor(() => expect(screen.getByText('▶ Listen')).toBeTruthy());
+    fireEvent.click(screen.getByText('▶ Listen'));
+    await waitFor(() => expect(screen.getByText('❚❚ Pause')).toBeTruthy());
+    expect(onSynthesized).not.toHaveBeenCalled();
+    expect(loadKokoroRuntime).not.toHaveBeenCalled();
   });
 
   it('falls back to the system voice when the Kokoro engine is unavailable', async () => {
@@ -97,6 +141,42 @@ describe('SpokenSummary — engine selection + gate', () => {
     fireEvent.click(screen.getByText('▶ Listen'));
     // Plays straight away — straight to Pause, never the "Synthesizing" state.
     await waitFor(() => expect(screen.getByText('❚❚ Pause')).toBeTruthy());
+    expect(loadKokoroRuntime).not.toHaveBeenCalled();
+  });
+
+  it('REGRESSION — a REPLAYED scan plays its persisted audio, never re-synthesizing', async () => {
+    // This is the user-reported bug: pressing Listen on a past scan showed
+    // "… Synthesizing" even though the scan already produced the audio. Exercise
+    // the FULL replay chain through real chrome.storage: the scan persists its
+    // WAV (saveSpokenAudio), the replay loads it (getSpokenAudio) and hands it to
+    // SpokenSummary — which must play it instantly with NO model work.
+    isTtsAvailable.mockResolvedValue(true);
+    loadKokoroRuntime.mockResolvedValue(fakeRuntime);
+
+    const recordId = 'https://github.com/acme/web/pull/1@deadbeef@1718000000000';
+    await saveSpokenAudio(recordId, {
+      wav: new Uint8Array([82, 73, 70, 70, 1, 2, 3, 255, 0, 128]), // "RIFF"… real bytes
+      voice: 'af_heart',
+      durationSeconds: 18.2,
+    });
+
+    // The replay path (openRecord) loads the persisted clip from storage.
+    const replayed = await getSpokenAudio(recordId);
+    expect(replayed).not.toBeNull();
+
+    render(<SpokenSummary text="A short narration." prepared={replayed} />);
+
+    await waitFor(() => expect(screen.getByText(/Kokoro · on-device/)).toBeTruthy());
+    // The persisted voice + duration surfaced — proof the stored metadata survived.
+    expect(screen.getByText(/af_heart/)).toBeTruthy();
+    // No probe, no model load: prepared audio short-circuits both.
+    expect(isTtsAvailable).not.toHaveBeenCalled();
+    expect(loadKokoroRuntime).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('▶ Listen'));
+    // Straight to playback — never the "… Synthesizing" state the bug showed.
+    await waitFor(() => expect(screen.getByText('❚❚ Pause')).toBeTruthy());
+    expect(screen.queryByText('… Synthesizing')).toBeNull();
     expect(loadKokoroRuntime).not.toHaveBeenCalled();
   });
 

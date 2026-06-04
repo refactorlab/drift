@@ -247,7 +247,7 @@ fn reconstruct_chain(outer: Node, source: &str, ctx: &PyOrmContext<'_>) -> Optio
                 let args_text = current
                     .child_by_field_name("arguments")
                     .and_then(|a| a.utf8_text(source.as_bytes()).ok())
-                    .map(|s| split_top_level_args(s))
+                    .map(split_top_level_args)
                     .unwrap_or_default();
                 steps.push(CallStep {
                     method: name,
@@ -390,7 +390,7 @@ fn infer_bindings(source: &str, ctx: &mut PyOrmContext<'_>) {
         if let Some(kind) = kind {
             ctx.bindings
                 .entry(lhs)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(Binding {
                     kind,
                     byte_range,
@@ -459,7 +459,7 @@ fn propagate_loop_bindings(ctx: &mut PyOrmContext<'_>) {
         }
         ctx.bindings
             .entry(loop_var)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Binding {
                 kind: BindingKind::TsClient(TsClientFacts {
                     kind: TsClientKind::Generic,

@@ -779,7 +779,7 @@ fn fuzz_label(rng: &mut Lcg) -> String {
     (0..len).map(|_| *rng.pick(POOL)).collect()
 }
 
-const FUZZ_SEED: u64 = 0xC0FFEE_5EED_FEED;
+const FUZZ_SEED: u64 = 0x00C0_FFEE_5EED_FEED;
 const FUZZ_ITERATIONS: usize = 300;
 
 /// Build + validate one full fuzz batch across all four diagram types for the
@@ -885,7 +885,7 @@ fn fuzz_multi_seed_extensive_coverage() {
         0xDEAD_BEEF_CAFE_BABE,
         0x1234_5678_90AB_CDEF,
         0xFEDC_BA09_8765_4321,
-        0xC0FF_EE_FA_CE_BEEF,
+        0x00C0_FFEE_FACE_BEEF,
         0xBAAD_F00D_DEAD_C0DE,
     ];
     for &seed in SEEDS {

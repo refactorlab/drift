@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signInWithGoogle, signOut, type AuthState } from '../auth/google';
 import { HAS_GOOGLE_OAUTH } from '../config';
 import { patchSettings, type Settings as SettingsT, type ThemePref } from '../state/settings';
@@ -6,13 +6,23 @@ import { ensureScanner } from '../core/scannerStore';
 import { downloadTts } from '../core/ttsStore';
 import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
+import { getHistory, clearHistoryForPr, type ScanRecord } from '../state/scanHistory';
+import { removeSpokenAudioForUrl } from '../state/spokenAudio';
 
-// The live-scan engine dependency: shows the acquired wasm version and lets the
-// user re-check / update it (uses the bundled build, or settings.scannerUrl).
+// The live-scan engine dependency: shows the acquired wasm version + source.
+//   • "Check for update" re-verifies the BUNDLED build (the store-compliant
+//     default that ships in the package).
+//   • "Download latest" is the OPTIONAL override — it pulls the prebuilt wasm
+//     from the GitHub release and caches it on-device, so this device runs the
+//     latest scanner without waiting for a Web Store update. (Remote wasm isn't
+//     the store default — MV3 forbids remote code — so this is a dev/sideload
+//     affordance.) Once downloaded, every scan uses the cached build.
 function ScannerRow({ settings }: { settings: SettingsT }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
   const s = settings.scanner;
+  const downloaded = s?.source === 'remote';
 
   async function recheck() {
     setBusy(true);
@@ -27,10 +37,35 @@ function ScannerRow({ settings }: { settings: SettingsT }) {
     }
   }
 
+  async function download() {
+    // STORE BUILD GUARD: __DRIFT_STORE_BUILD__ is statically `true` in the
+    // Web Store build, so everything below is dead-code-eliminated and the
+    // remote-download module (scannerDownload.ts) never enters the bundle.
+    if (__DRIFT_STORE_BUILD__) return;
+    setBusy(true);
+    setNote(null);
+    setPct(0);
+    try {
+      // Dynamic import so the store build (where this line is unreachable) drops
+      // the module entirely — keeps fetch-remote-wasm code out of the package.
+      const { downloadScanner } = await import('../core/scannerDownload');
+      const r = await downloadScanner((p) => {
+        setNote(p.phase);
+        setPct(p.fraction != null ? Math.round(p.fraction * 100) : null);
+      });
+      setNote(r.status === 'ready' ? `Up to date · v${r.meta.version}` : `${r.status} · v${r.meta.version}`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setPct(null);
+    }
+  }
+
   return (
     <>
       <div className="section-title">Scan engine</div>
-      <div className="row" style={{ borderBottom: 'none' }}>
+      <div className="row">
         <div className="grow">
           <div className="label">Static drift profiler (WASM)</div>
           <div className="hint">
@@ -38,12 +73,29 @@ function ScannerRow({ settings }: { settings: SettingsT }) {
               (s
                 ? `v${s.version} · ${(s.bytes / 1024 / 1024).toFixed(1)} MB · ${s.source}`
                 : 'Not acquired yet')}
+            {busy && pct != null && ` · ${pct}%`}
           </div>
         </div>
         <button className="btn ghost" onClick={() => void recheck()} disabled={busy}>
-          {busy ? 'Checking…' : 'Check for update'}
+          {busy && pct == null ? 'Checking…' : 'Check for update'}
         </button>
       </div>
+      {/* DEV/SIDELOAD ONLY. __DRIFT_STORE_BUILD__ is statically true in the
+          store build, so this whole row is dead-code-eliminated and never
+          renders — the shipping package has no remote-download affordance. */}
+      {!__DRIFT_STORE_BUILD__ && (
+        <div className="row" style={{ borderBottom: 'none' }}>
+          <div className="grow">
+            <div className="label">Latest from release</div>
+            <div className="hint">
+              Download the newest scanner from the Drift release and run it on this device.
+            </div>
+          </div>
+          <button className="btn ghost" onClick={() => void download()} disabled={busy}>
+            {busy && pct != null ? (pct ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download latest'}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -192,6 +244,92 @@ function Account({ auth }: { auth: AuthState | null }) {
   );
 }
 
+// Coarse "x ago" for the saved-scan rows.
+function timeAgo(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+interface ScanGroup {
+  url: string;
+  title: string;
+  count: number;
+  lastTs: number;
+}
+
+function groupByPr(records: ScanRecord[]): ScanGroup[] {
+  const byUrl = new Map<string, ScanRecord[]>();
+  for (const r of records) {
+    const list = byUrl.get(r.url);
+    if (list) list.push(r);
+    else byUrl.set(r.url, [r]);
+  }
+  return [...byUrl.values()]
+    .map((recs) => ({
+      url: recs[0].url,
+      title: `${recs[0].owner}/${recs[0].repo} #${recs[0].number}`,
+      count: recs.length,
+      lastTs: Math.max(...recs.map((r) => r.ts)),
+    }))
+    .sort((a, b) => b.lastTs - a.lastTs);
+}
+
+// Saved scans live in chrome.storage.local (state/scanHistory + state/spokenAudio).
+// This section makes that storage visible and manageable: one row per PR, with a
+// per-PR delete that drops BOTH the scan history and its cached spoken audio.
+function SavedScans() {
+  const [groups, setGroups] = useState<ScanGroup[] | null>(null);
+
+  async function load() {
+    setGroups(groupByPr(await getHistory()));
+  }
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function deletePr(url: string) {
+    await clearHistoryForPr(url);
+    await removeSpokenAudioForUrl(url);
+    await load();
+  }
+
+  if (groups == null) return null;
+
+  return (
+    <>
+      <div className="section-title">Saved scans · {groups.length}</div>
+      {groups.length === 0 ? (
+        <div className="hint" style={{ padding: '6px 0' }}>
+          No scans saved yet. Run a live scan and it’s stored here for instant replay.
+        </div>
+      ) : (
+        groups.map((g) => (
+          <div className="row" key={g.url}>
+            <div className="grow">
+              <div className="label">{g.title}</div>
+              <div className="hint">
+                {g.count} scan{g.count === 1 ? '' : 's'} · last {timeAgo(g.lastTs)}
+              </div>
+            </div>
+            <button
+              className="btn ghost danger"
+              onClick={() => void deletePr(g.url)}
+              title="Delete this PR's saved scans and audio"
+            >
+              Delete
+            </button>
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
 // Account + preferences. Writes straight through to chrome.storage; the store
 // subscription re-renders the rest of the app.
 export function Settings({
@@ -251,13 +389,14 @@ export function Settings({
         <VoiceEngineRow settings={settings} />
 
         <div className="section-title">Data</div>
+        <SavedScans />
         <div className="row" style={{ borderBottom: 'none' }}>
           <div className="grow">
             <div className="label">Clear local data</div>
-            <div className="hint">Removes saved reports and downloaded files from this browser.</div>
+            <div className="hint">Removes ALL saved scans, cached audio and downloaded files from this browser.</div>
           </div>
-          <button className="btn ghost" onClick={() => void clearData()}>
-            Clear
+          <button className="btn ghost danger" onClick={() => void clearData()}>
+            Clear all
           </button>
         </div>
       </div>
