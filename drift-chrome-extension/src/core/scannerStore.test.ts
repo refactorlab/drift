@@ -34,6 +34,14 @@ const TINY_WASM = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00
 function stubFetch(version: string) {
   globalThis.fetch = vi.fn(async (input: unknown) => {
     const url = String(input);
+    // GitHub releases API → newest-first list; downloadScanner picks the first
+    // drift-static-profiler-v* tag and downloads from its tag-pinned URL.
+    if (url.includes('/releases?')) {
+      return new Response(
+        JSON.stringify([{ tag_name: `drift-static-profiler-v${version}`, draft: false, prerelease: false }]),
+        { status: 200 },
+      );
+    }
     if (url.endsWith(META_FILE)) {
       return new Response(JSON.stringify({ version, bytes: TINY_WASM.length }), { status: 200 });
     }
@@ -213,9 +221,50 @@ describe('scannerStore.downloadScanner — explicit release download (override)'
     expect(wasmCalls.length).toBe(0);
   });
 
+  it('auto-resolves the NEWEST drift-static-profiler-v* tag from a multi-train repo', async () => {
+    // A realistic releases list (newest-first, as the GitHub API returns it):
+    // the repo-wide newest is the DESKTOP app, and there are older + draft +
+    // prerelease profiler entries that MUST be ignored. The download must land
+    // on the newest PUBLISHED profiler tag — no extension code change needed to
+    // pick up a freshly-bumped version.
+    const releases = [
+      { tag_name: 'drift-lab-v0.11.1', draft: false, prerelease: false }, // other train → ignore
+      { tag_name: 'drift-static-profiler-v0.9.0', draft: true, prerelease: false }, // draft → ignore
+      { tag_name: 'drift-static-profiler-v0.8.3', draft: false, prerelease: true }, // pre-release → ignore
+      { tag_name: 'drift-static-profiler-v0.8.2', draft: false, prerelease: false }, // ← the winner
+      { tag_name: 'drift-static-profiler-v0.8.1', draft: false, prerelease: false }, // older → ignore
+    ];
+    const seen: string[] = [];
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.includes('/releases?')) return new Response(JSON.stringify(releases), { status: 200 });
+      if (url.endsWith(META_FILE)) return new Response(JSON.stringify({ version: '0.8.2', bytes: TINY_WASM.length }), { status: 200 });
+      if (url.endsWith(WASM_FILE)) return new Response(TINY_WASM, { status: 200 });
+      return new Response('nope', { status: 404 });
+    }) as typeof fetch;
+
+    const r = await downloadScanner();
+
+    expect(r.status).toBe('acquired');
+    expect(r.meta.version).toBe('0.8.2');
+    // The wasm came from the tag-pinned URL of the newest published profiler tag.
+    const wasmUrl = seen.find((u) => u.endsWith(WASM_FILE));
+    expect(wasmUrl).toBe(
+      'https://github.com/refactorlab/drift/releases/download/drift-static-profiler-v0.8.2/drift-static-profiler.wasm',
+    );
+    // It did NOT fall back to the repo-wide `releases/latest/download` path that 404s.
+    expect(wasmUrl).not.toContain('/releases/latest/download/');
+  });
+
   it('rejects a release file that is not valid wasm (and caches nothing)', async () => {
     globalThis.fetch = vi.fn(async (input: unknown) => {
       const url = String(input);
+      if (url.includes('/releases?'))
+        return new Response(
+          JSON.stringify([{ tag_name: 'drift-static-profiler-v0.9.0', draft: false, prerelease: false }]),
+          { status: 200 },
+        );
       if (url.endsWith(META_FILE)) return new Response(JSON.stringify({ version: '0.9.0' }), { status: 200 });
       if (url.endsWith(WASM_FILE)) return new Response(BAD_MAGIC, { status: 200 });
       return new Response('nope', { status: 404 });

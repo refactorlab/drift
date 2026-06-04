@@ -12,7 +12,7 @@
 // The bundled-wasm path (scannerStore.ts: ensureScanner / loadScannerModule)
 // is the store default and does NOT live here.
 
-import { SCANNER_RELEASE_BASE } from '../config';
+import { SCANNER_RELEASES_API, SCANNER_RELEASE_DOWNLOAD, SCANNER_TAG_PREFIX } from '../config';
 import { getSettings, patchSettings, type ScannerMeta } from '../state/settings';
 import {
   CACHED_WASM_KEY,
@@ -55,6 +55,25 @@ async function readBodyWithProgress(res: Response, onLoaded: (loaded: number) =>
 }
 
 /**
+ * Resolve the tag-pinned download base for the NEWEST profiler release. The
+ * repo-wide `releases/latest` points at the desktop app (a different release
+ * train), so we query the releases API — which returns releases newest-first —
+ * and take the first published `drift-static-profiler-v*` tag. Returns e.g.
+ * `…/releases/download/drift-static-profiler-v0.8.2`.
+ */
+async function resolveLatestProfilerBase(): Promise<string> {
+  const res = await fetch(SCANNER_RELEASES_API, {
+    credentials: 'omit',
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  if (!res.ok) throw new Error(`scanner release lookup failed: HTTP ${res.status}`);
+  const releases = (await res.json()) as Array<{ tag_name?: string; draft?: boolean; prerelease?: boolean }>;
+  const rel = releases.find((r) => !r.draft && !r.prerelease && r.tag_name?.startsWith(SCANNER_TAG_PREFIX));
+  if (!rel?.tag_name) throw new Error(`no published ${SCANNER_TAG_PREFIX}* release found`);
+  return `${SCANNER_RELEASE_DOWNLOAD}/${rel.tag_name}`;
+}
+
+/**
  * DOWNLOAD the scanner wasm from a release (the user's explicit Settings
  * action) and persist it in CacheStorage. Idempotent: if the same version is
  * already cached it short-circuits to "ready". Records source:'remote' so
@@ -68,8 +87,14 @@ export async function downloadScanner(
 ): Promise<AcquireResult> {
   const log = onProgress ?? (() => {});
   const settings = await getSettings();
-  const base = (baseUrl ?? settings.scannerUrl ?? SCANNER_RELEASE_BASE).replace(/\/$/, '');
   const have = settings.scanner ?? null;
+
+  // An explicit base (param or settings.scannerUrl) is used verbatim; otherwise
+  // resolve the newest profiler release via the API (the repo-wide `latest` is a
+  // different release train and 404s — see config.ts).
+  const explicit = baseUrl ?? settings.scannerUrl;
+  if (!explicit) log({ phase: 'Finding latest scanner release…', fraction: null });
+  const base = (explicit ?? (await resolveLatestProfilerBase())).replace(/\/$/, '');
 
   log({ phase: 'Fetching scanner manifest…', fraction: null });
   let version = 'remote';

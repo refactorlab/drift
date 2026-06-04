@@ -20,11 +20,20 @@ export const HAS_GOOGLE_OAUTH = GOOGLE_CLIENT_ID.trim().length > 0;
 // ─── Scanner WASM source ─────────────────────────────────────────────────────
 // The scanner WASM is BUNDLED in the published store package (MV3 forbids
 // executing remote code, so a runtime download is NOT the store-compliant
-// default — see scannerStore.ts). This URL is the base for an OPTIONAL,
-// explicit "download the latest scanner" override (dev / sideload / always-
-// latest), pulling the prebuilt `drift-static-profiler.wasm` +
-// `drift-scanner.meta.json` assets uploaded to the latest GitHub release by
-// drift-static-profiler-release.yml. Overridable per-device via
-// settings.scannerUrl.
-export const SCANNER_RELEASE_BASE =
-  'https://github.com/refactorlab/drift/releases/latest/download';
+// default — see scannerStore.ts). The OPTIONAL, explicit "download the latest
+// scanner" override (dev / sideload / always-latest) pulls the prebuilt
+// `drift-static-profiler.wasm` + `drift-scanner.meta.json` assets uploaded to
+// the GitHub release by drift-static-profiler-release.yml.
+//
+// IMPORTANT: the repo hosts SEVERAL release trains (drift-lab-v*,
+// drift-static-profiler-v*, …), so the repo-wide `releases/latest` resolves to
+// the desktop app — NOT the profiler — and `releases/latest/download/drift-
+// static-profiler.wasm` 404s. We therefore query the releases API and pick the
+// newest `drift-static-profiler-v*` tag, then download from its tag-pinned URL.
+// Overridable per-device via settings.scannerUrl (an explicit base that skips
+// API resolution).
+export const SCANNER_RELEASES_API =
+  'https://api.github.com/repos/refactorlab/drift/releases?per_page=30';
+export const SCANNER_TAG_PREFIX = 'drift-static-profiler-v';
+export const SCANNER_RELEASE_DOWNLOAD =
+  'https://github.com/refactorlab/drift/releases/download';
