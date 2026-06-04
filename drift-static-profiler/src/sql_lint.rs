@@ -103,7 +103,7 @@ impl SqlRule {
     }
 
     /// Materialize a `Finding` anchored at a call-site line.
-    fn to_finding(&self, line: usize, sql_snippet: &str) -> Finding {
+    fn to_finding(self, line: usize, sql_snippet: &str) -> Finding {
         Finding {
             kind: self.kind(),
             severity: self.severity,
@@ -524,11 +524,10 @@ fn matches_function_in_where(stmt: &Statement) -> bool {
                     | BinaryOperator::Lt
                     | BinaryOperator::GtEq
                     | BinaryOperator::LtEq
-            ) {
-                if is_function_on_identifier(left) || is_function_on_identifier(right) {
+            )
+                && (is_function_on_identifier(left) || is_function_on_identifier(right)) {
                     found = true;
                 }
-            }
         }
     });
     found

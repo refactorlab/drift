@@ -130,7 +130,7 @@ fn write_index_atomic(dir: &Path, items: &[IndexItem]) -> io::Result<()> {
         let file = File::create(&tmp_path)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer_pretty(&mut writer, items)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         // Trailing newline matches the Python script (`fp.write("\n")`)
         // so a byte-level diff against an existing committed index is
         // empty when the content hasn't changed.

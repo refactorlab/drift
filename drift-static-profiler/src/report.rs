@@ -420,7 +420,7 @@ impl Report {
         }
         let total_findings: usize = entries
             .iter()
-            .map(|e| count_findings(e))
+            .map(count_findings)
             .sum();
         tracing::info!(
             entries = entries.len(),

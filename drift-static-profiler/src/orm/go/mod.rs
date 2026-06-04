@@ -22,13 +22,12 @@ pub fn build_context<'a>(source: &'a str, tree: &'a Tree) -> PyOrmContext<'a> {
         "import_spec" => handle_import_node(node, source, &mut ctx),
         "type_spec" => handle_type_spec(node, source, &mut ctx),
         "for_statement" => handle_for_loop(node, source, &mut ctx),
-        "call_expression" => {
-            if !is_inner_call_of_chain(node) {
+        "call_expression"
+            if !is_inner_call_of_chain(node) => {
                 if let Some(chain) = reconstruct_chain(node, source, &ctx) {
                     ctx.chains.push(chain);
                 }
             }
-        }
         _ => {}
     });
     propagate_loop_bindings(&mut ctx);
@@ -79,7 +78,7 @@ fn handle_for_loop(node: Node, source: &str, ctx: &mut PyOrmContext<'_>) {
                     .and_then(|r| r.utf8_text(source.as_bytes()).ok())
                     .unwrap_or("");
                 iter_var = right.trim().to_string();
-                loop_var = left.split(',').last().unwrap_or("").trim().to_string();
+                loop_var = left.split(',').next_back().unwrap_or("").trim().to_string();
                 break;
             }
             if !cur.goto_next_sibling() {
@@ -120,7 +119,7 @@ fn reconstruct_chain(outer: Node, source: &str, ctx: &PyOrmContext<'_>) -> Optio
                 let args_text = current
                     .child_by_field_name("arguments")
                     .and_then(|a| a.utf8_text(source.as_bytes()).ok())
-                    .map(|s| split_top_level_args(s))
+                    .map(split_top_level_args)
                     .unwrap_or_default();
                 match function.kind() {
                     "identifier" => {
@@ -261,7 +260,7 @@ fn propagate_loop_bindings(ctx: &mut PyOrmContext<'_>) {
         }
         ctx.bindings
             .entry(loop_var)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Binding {
                 kind: BindingKind::TsClient(TsClientFacts {
                     kind: TsClientKind::Generic,

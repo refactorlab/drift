@@ -418,9 +418,9 @@ jobs:
       #     Drift Lab_<v>_<arch>.app.tar.gz(.sig)?
       #     drift-lab_<v>_amd64.{deb,AppImage,AppImage.tar.gz(.sig)?,rpm}
       #     SHA256SUMS
-      # Note: drift-static-profiler ships from a SEPARATE job below
-      # (build-static-profiler) — that way it only appears in a Linux
-      # job and doesn't clutter the macOS matrix leg with skipped steps.
+      # Note: the drift-static-profiler standalone CLI is NOT staged here.
+      # It ships from its own dedicated release stream
+      # (drift-static-profiler-release.yml) — see the publish job comment.
       # Logic is unit-tested in drift-lab/scripts/ci/test-collect-artifacts.sh.
       - name: Stage artifacts + compute SHA256SUMS
         env:
@@ -436,77 +436,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # ─── Dedicated job for the drift-static-profiler standalone CLI ──────
-  # Lives in its own job (not in the desktop `build` matrix) for two reasons:
-  #   1) The CLI is single-arch (Linux x86_64) — putting it in a 2-leg
-  #      matrix that includes macOS forces a skipped-step under the
-  #      macOS leg's UI listing, which is confusing.
-  #   2) Decouples CLI failures from desktop builds and vice-versa —
-  #      a Tauri toolchain hiccup on macos-14 doesn't block the action's
-  #      binary from being released.
-  #
-  # Uploads its own artifact "drift-static-profiler-tarball"; the publish
-  # job below depends on both this job and the desktop `build` matrix,
-  # downloads everything into dist/, and ships the union.
-  #
-  # Asset naming + URL must stay byte-identical to what
-  # action/scripts/install-profiler.sh expects:
-  #   drift-static-profiler-x86_64-unknown-linux-gnu.tar.gz   (+ .sha256)
-  build-static-profiler:
-    name: build / drift-static-profiler (Linux x86_64)
-    needs: [preflight, bump]
-    if: |
-      always() && needs.preflight.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.bump.outputs.skip != 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust target/ (shared-key with desktop linux leg)
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: drift-static-profiler -> target
-          shared-key: drift-static-profiler-linux
-
-      - name: Build drift-static-profiler --release
-        working-directory: drift-static-profiler
-        run: |
-          set -euo pipefail
-          cargo build --release --bin drift-static-profiler
-          ls -lh target/release/drift-static-profiler
-
-      - name: Package tarball + sha256
-        run: |
-          set -euo pipefail
-          mkdir -p staging
-          target=x86_64-unknown-linux-gnu
-          asset="drift-static-profiler-${target}.tar.gz"
-          tar -czf "staging/${asset}" -C drift-static-profiler/target/release drift-static-profiler
-          # cd into staging so the .sha256 file records the bare asset
-          # name. `sha256sum --check` (used by install-profiler.sh) opens
-          # whatever path is in the file relative to cwd — embedding
-          # "staging/" here would make consumers' verification fail.
-          (cd staging && shasum -a 256 "$asset" > "${asset}.sha256")
-          ls -lh "staging/${asset}" "staging/${asset}.sha256"
-
-      - name: Upload static-profiler artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: drift-static-profiler-tarball
-          path: staging/
-          if-no-files-found: error
-          retention-days: 7
-
   # Publish — main-branch only. Downloads every matrix artifact, builds the
   # latest.json updater manifest, tags the new drift-lab-v* version, and
   # creates a GitHub Release with all bundles + sigs attached. Idempotent
   # via gh release view + --clobber.
+  #
+  # NOTE: drift-static-profiler standalone CLI is NOT bundled here.
+  # It has its own dedicated release stream (drift-static-profiler-release.yml)
+  # that fires on every Cargo.toml version bump and is the single source of
+  # truth for that binary. The Drift GitHub Action (install-profiler.sh)
+  # auto-detects from drift-static-profiler-v* releases only.
   publish:
     name: publish ${{ needs.bump.outputs.tag }}
-    needs: [bump, build, build-static-profiler]
+    needs: [bump, build]
     if: github.event_name == 'push' && needs.bump.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -523,20 +465,11 @@ jobs:
           packages: jq
           version: 1.0
 
-      # Download both the desktop bundles AND the static-profiler tarball
-      # into the same dist/ dir. The flatten step below normalises them
-      # and recomputes a single SHA256SUMS that covers everything.
       - name: Download desktop bundle artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: drift-lab-v*
           merge-multiple: true
-          path: dist
-
-      - name: Download drift-static-profiler artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: drift-static-profiler-tarball
           path: dist
 
       - name: List downloaded assets (pre-flatten)
@@ -670,17 +603,10 @@ jobs:
           # updater manifest + the tar.gz updater bundles + their detached
           # signatures. The plugin fetches `latest.json` first, then the
           # platform tar.gz it points to. Manual installers stay too.
-          #
-          # `drift-static-profiler-*.tar.gz` (+ `.sha256` sidecar) is the
-          # Linux x86_64 standalone CLI the Drift GitHub Action downloads
-          # via action/scripts/install-profiler.sh — see the linux build
-          # step above for how it lands in staging/.
           mapfile -t files < <(find dist -maxdepth 1 -type f \
             \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \
             -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
             -o -name "*.AppImage.tar.gz" -o -name "*.AppImage.tar.gz.sig" \
-            -o -name "drift-static-profiler-*.tar.gz" \
-            -o -name "drift-static-profiler-*.tar.gz.sha256" \
             -o -name "latest.json" -o -name "SHA256SUMS" \))
 
           if [ ${#files[@]} -eq 0 ]; then

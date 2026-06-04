@@ -4,7 +4,7 @@
 //!   - Slick:   SLI-INJ-001, SLI-N1-002, SLI-COMP-003, SLI-BLK-004
 //!   - Quill:   QUI-INJ-001, QUI-N1-002, QUI-DYN-003
 //!   - Exposed: EXP-N1-001..002, EXP-RAW-003, EXP-INS-004, EXP-DEL-005,
-//!              EXP-INS-006, EXP-TXN-007
+//!     EXP-INS-006, EXP-TXN-007
 //!   - Ktorm:   KTO-N1-001, KTO-RAW-002, KTO-UPD-003, KTO-INS-004, KTO-DEL-005
 //!
 //! Scala/Kotlin idioms use trailing-lambda forms (`.forEach { … }`)

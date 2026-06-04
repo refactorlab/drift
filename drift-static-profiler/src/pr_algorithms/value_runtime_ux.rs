@@ -107,9 +107,11 @@ mod tests {
 
     #[test]
     fn many_new_tests_medium_confidence() {
-        let mut c = PrCounts::default();
-        c.new_test_files = CountChip {
-            value: 3,
+        let c = PrCounts {
+            new_test_files: CountChip {
+                value: 3,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let r = compute(&c, &[], &PrSignals::default());

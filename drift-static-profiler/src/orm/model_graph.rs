@@ -389,7 +389,7 @@ fn extract_java_from_source(file: &std::path::Path, source: &str, graph: &mut Mo
     let Some(tree) = parser.parse(source, None) else {
         return;
     };
-    walk_java(tree.root_node(), &source, file, graph);
+    walk_java(tree.root_node(), source, file, graph);
 }
 
 /// Pure-tree variant for Java — used by `ModelGraph::from_parsed`
@@ -549,7 +549,7 @@ class User(models.Model):
     groups = models.ManyToManyField('Group')
 "#;
         let t = TmpFile::new("django_m2m.py", src);
-        let g = ModelGraph::build(&[t.0.clone()]);
+        let g = ModelGraph::build(std::slice::from_ref(&t.0));
         assert!(g.is_collection_field("User", "groups"));
         assert!(!g.is_collection_field("User", "name"));
     }
@@ -558,7 +558,7 @@ class User(models.Model):
     fn detects_jpa_onetomany() {
         let src = "@Entity\nclass User {\n  @OneToMany(mappedBy=\"user\") List<Post> posts;\n  String name;\n}\n";
         let t = TmpFile::new("jpa_otm.java", src);
-        let g = ModelGraph::build(&[t.0.clone()]);
+        let g = ModelGraph::build(std::slice::from_ref(&t.0));
         assert!(g.is_collection_field("User", "posts"));
         assert!(!g.is_collection_field("User", "name"));
     }
@@ -570,7 +570,7 @@ class Post(models.Model):
     author = models.ForeignKey('User', on_delete=models.CASCADE)
 "#;
         let t = TmpFile::new("django_fk.py", src);
-        let g = ModelGraph::build(&[t.0.clone()]);
+        let g = ModelGraph::build(std::slice::from_ref(&t.0));
         assert_eq!(g.target_of("Post", "author"), Some("User"));
     }
 }

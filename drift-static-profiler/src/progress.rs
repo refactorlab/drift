@@ -425,6 +425,7 @@ impl Progress for CliProgress {
 /// when too long. Keeps both ends visible so a long file path like
 /// `/a/b/c/very/long/path/foo.rs` becomes `/a/b/c/very…/foo.rs` —
 /// the basename (most informative part) stays visible.
+#[cfg(feature = "native")]
 fn truncate_middle(s: &str, max: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= max {
@@ -443,6 +444,7 @@ fn truncate_middle(s: &str, max: usize) -> String {
 /// Format a byte count as "1.2 MB" / "456 kB". Decimal (kB = 1000)
 /// matches how disk-usage tools and GitHub display sizes. Output is
 /// always ≤7 chars so the progress line stays bounded.
+#[cfg(feature = "native")]
 fn human_bytes(b: u64) -> String {
     const KB: u64 = 1_000;
     const MB: u64 = 1_000_000;
@@ -487,6 +489,7 @@ mod tests {
         p.finish();
     }
 
+    #[cfg(feature = "native")]
     #[test]
     fn truncate_middle_short_string_is_untouched() {
         // ≤ max → string returned verbatim. Without this we'd insert
@@ -496,6 +499,7 @@ mod tests {
         assert_eq!(truncate_middle("", 60), "");
     }
 
+    #[cfg(feature = "native")]
     #[test]
     fn truncate_middle_long_string_keeps_basename() {
         // The tail-biased split must preserve the basename so the
@@ -507,6 +511,7 @@ mod tests {
         assert_eq!(out.chars().count(), 30, "must hit the budget");
     }
 
+    #[cfg(feature = "native")]
     #[test]
     fn human_bytes_picks_the_right_unit() {
         assert_eq!(human_bytes(0), "0 B");

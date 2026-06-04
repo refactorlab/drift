@@ -1,0 +1,12 @@
+# WASM build tuning. Target-scoped so the NATIVE build is byte-for-byte
+# unaffected (this only applies when compiling for wasm32-wasip1).
+#
+# The wasm linker (wasm-ld) defaults the shadow stack to 1 MiB, but the native
+# target gets 8 MiB — and the analysis does moderately deep recursion (call-tree
+# walks, AST visits, petgraph SCC) that is fine at 8 MiB but overflows the 1 MiB
+# wasm stack on very large repos (e.g. a 33k-file monorepo), surfacing in V8 as
+# "Maximum call stack size exceeded". We raise the wasm stack to 16 MiB — 2× the
+# native budget — so the wasm engine matches (and exceeds) the proven native
+# headroom. `-z stack-size=<bytes>` is passed as two tokens to wasm-ld.
+[target.wasm32-wasip1]
+rustflags = ["-C", "link-arg=-z", "-C", "link-arg=stack-size=16777216"]

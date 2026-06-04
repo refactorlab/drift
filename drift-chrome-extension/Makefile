@@ -76,12 +76,18 @@ build: node_modules ensure-wasm ## Production build → dist/
 	@$(NPM) run build
 	@printf "$(GREEN)✓$(RESET) built → $(CYAN)dist/$(RESET)\n"
 
-# Standalone production deploy. Unlike `dev`, the result has NO Vite/CRXJS HMR
-# client and no dependency on a running server: load dist/ unpacked once and it
-# runs entirely inside Chrome (the bundled WASM scanner + UI), with this terminal
-# closed. Behaviourally identical to the shipped store build — `release` just
-# zips this same dist/ for Web Store upload.
-prod: node_modules ## Standalone production deploy → dist/ (no dev server, verified dev-free)
+# Standalone production deploy in the SIDELOAD profile. Unlike `dev`, the result
+# has NO Vite/CRXJS HMR client and no dependency on a running server: load dist/
+# unpacked once and it runs entirely inside Chrome (the bundled WASM scanner +
+# UI), with this terminal closed.
+#
+# PROFILE: this is the SIDELOAD build (DRIFT_STORE_BUILD unset) — it INCLUDES the
+# "Download latest from release" override in Settings. That override fetches +
+# runs remote WASM, which MV3 store review forbids, so it is intentionally NOT in
+# the store artifact. The literal Web Store upload is `make release` (→ npm run
+# zip), which builds the STORE profile (DRIFT_STORE_BUILD=1) that DCEs the
+# download path out and runs `verify:store` to prove the bundle is clean.
+prod: node_modules ## Standalone SIDELOAD deploy → dist/ (no dev server; includes the dev download override)
 	@printf "$(BLUE)▶$(RESET) Production deploy build — no HMR, no dev server\n"
 	@$(MAKE) --no-print-directory kill          # 1. ensure nothing is watching/overwriting dist/
 	@rm -rf dist                                # 2. drop any dev-contaminated build
@@ -102,7 +108,8 @@ prod: node_modules ## Standalone production deploy → dist/ (no dev server, ver
 	@printf "  3. $(CYAN)Load unpacked$(RESET) → select $(CYAN)$(CURDIR)/dist$(RESET)\n"
 	@printf "  4. Close this terminal if you like — the extension runs entirely in Chrome.\n\n"
 	@printf "$(CYAN)i$(RESET) For the on-device voice that ships in the store build: $(CYAN)make tts && make prod$(RESET)\n"
-	@printf "$(CYAN)i$(RESET) For the literal Web Store upload artifact (same bits, zipped): $(CYAN)make release$(RESET)\n"
+	@printf "$(CYAN)i$(RESET) This SIDELOAD build includes the dev 'Download latest' override. The Web Store\n"
+	@printf "    upload artifact strips it (store profile + $(CYAN)verify:store$(RESET)): $(CYAN)make release$(RESET)\n"
 
 test: node_modules ## Run the test suite (vitest: parser unit + integration)
 	@$(NPM) run test

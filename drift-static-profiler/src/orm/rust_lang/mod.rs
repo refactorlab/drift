@@ -24,13 +24,12 @@ pub fn build_context<'a>(source: &'a str, tree: &'a Tree) -> PyOrmContext<'a> {
         "use_declaration" => handle_use(node, source, &mut ctx),
         "struct_item" | "enum_item" => handle_struct(node, source, &mut ctx),
         "for_expression" => handle_for_loop(node, source, &mut ctx),
-        "call_expression" => {
-            if !is_inner_call_of_chain(node) {
+        "call_expression"
+            if !is_inner_call_of_chain(node) => {
                 if let Some(chain) = reconstruct_chain(node, source, &ctx) {
                     ctx.chains.push(chain);
                 }
             }
-        }
         // Capture `sqlx::query!(...)` style macros — they aren't
         // call_expressions in tree-sitter-rust.
         "macro_invocation" => {
@@ -112,7 +111,7 @@ fn reconstruct_chain(outer: Node, source: &str, ctx: &PyOrmContext<'_>) -> Optio
                 let args_text = current
                     .child_by_field_name("arguments")
                     .and_then(|a| a.utf8_text(source.as_bytes()).ok())
-                    .map(|s| split_top_level_args(s))
+                    .map(split_top_level_args)
                     .unwrap_or_default();
                 match function.kind() {
                     "identifier" => {

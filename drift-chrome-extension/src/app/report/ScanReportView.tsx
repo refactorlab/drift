@@ -5,9 +5,12 @@
 
 import { useMemo } from 'react';
 import { asScanOutput } from '../../core/scanOutput';
-import { ArcGauge, Badge, type Tone } from './primitives';
+import { StatTile, Badge, type Tone } from './primitives';
 import { ComplexityReport } from './sections/ComplexityReport';
 import { ChangedFilesSection } from './sections/ChangedFilesSection';
+import { CommitsSection } from './sections/CommitsSection';
+import { AffectedRootsSection } from './sections/AffectedRootsSection';
+import { DescriptionSection } from './sections/DescriptionSection';
 import { ArchitectureSection } from './sections/ArchitectureSection';
 import type { ChangedFileStatus } from '../../core/prDiff';
 import { ValueSection } from './sections/ValueSection';
@@ -39,9 +42,11 @@ function signedPct(pct: number): string {
 export function ScanReportView({
   scan,
   changedFiles,
+  commits,
 }: {
   scan: unknown;
   changedFiles?: ChangedFileStatus[];
+  commits?: string[];
 }) {
   const report = useMemo(() => asScanOutput(scan), [scan]);
   if (!report) {
@@ -88,39 +93,51 @@ export function ScanReportView({
         </div>
       </div>
 
-      {/* Headline KPI dials */}
+      {/* Headline KPI tiles — fractional metrics (confidence, drift) carry a
+          thin meter; plain counts read as clean numbers, not empty rings. */}
       <div className="rp-kpis">
         {confValue != null && (
-          <ArcGauge label="Merge confidence" value={`${confValue}/5`} fraction={composite!.score ?? 0} tone={confTone} />
-        )}
-        {drift && (
-          <ArcGauge
-            label="Drift"
-            value={signedPct(drift.percent)}
-            fraction={Math.min(1, Math.abs(drift.percent) / 100)}
-            tone="info"
+          <StatTile
+            label="Merge confidence"
+            value={`${confValue}/5`}
+            tone={confTone}
+            fraction={composite?.score ?? 0}
           />
         )}
-        <ArcGauge
-          label="Risks"
+        {drift && (
+          <StatTile
+            label="Drift"
+            value={signedPct(drift.percent)}
+            tone="info"
+            fraction={Math.min(1, Math.abs(drift.percent) / 100)}
+          />
+        )}
+        <StatTile
+          label={`Risk${risks.length === 1 ? '' : 's'}`}
           value={String(risks.length)}
-          fraction={null}
           tone={gatingRisks ? 'bad' : 'good'}
         />
-        <ArcGauge label="Suggestions" value={String(suggestions.length)} fraction={null} tone="info" />
+        <StatTile
+          label={`Suggestion${suggestions.length === 1 ? '' : 's'}`}
+          value={String(suggestions.length)}
+          tone="info"
+        />
         {newTests != null && (
-          <ArcGauge label="New tests" value={String(newTests)} fraction={null} tone={newTests > 0 ? 'good' : 'muted'} />
+          <StatTile label="New tests" value={String(newTests)} tone={newTests > 0 ? 'good' : 'muted'} />
         )}
       </div>
 
       {/* Sections — each renders only when it has data */}
+      <DescriptionSection body={report.pr_description} />
       <ChangedFilesSection files={changedFiles} />
+      <CommitsSection commits={commits} />
       <ComplexityReport quality={quality} />
       <ArchitectureSection
         arch={review.architecture_flow}
         business={review.business_logic}
         keyFiles={review.visual_summary?.key_files}
       />
+      <AffectedRootsSection report={report} />
       <ValueSection value={review.value_card} />
       <SuggestionsSection suggestions={suggestions} />
       <RisksSection visual={review.visual_summary} />

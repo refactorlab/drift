@@ -97,12 +97,12 @@ fn references_for(kind: &FindingKind, language: &str) -> Vec<ReferenceLink> {
     let slug = kind_slug(kind);
     for (k, lang, refs) in REFERENCE_TABLE {
         if *k == slug && *lang == language {
-            return refs.iter().map(|r| make_ref(r)).collect();
+            return refs.iter().map(make_ref).collect();
         }
     }
     for (k, lang, refs) in REFERENCE_TABLE {
         if *k == slug && *lang == "*" {
-            return refs.iter().map(|r| make_ref(r)).collect();
+            return refs.iter().map(make_ref).collect();
         }
     }
     Vec::new()
@@ -119,7 +119,7 @@ fn make_ref(r: &(&'static str, &'static str, &'static str)) -> ReferenceLink {
 /// (url, title, tag) per (kind_slug, language). The lookup function
 /// above handles (kind, lang) → (kind, "*") fallback.
 type RefRow = (&'static str, &'static str, &'static str);
-const REFERENCE_TABLE: &[(&'static str, &'static str, &'static [RefRow])] = &[
+const REFERENCE_TABLE: &[(&str, &str, &[RefRow])] = &[
     // ─── ORM-specific ──────────────────────────────────────────────
     ("sqlalchemy_antipattern", "python", &[
         ("https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html",
@@ -413,7 +413,7 @@ impl<'a> Default for Inputs<'a> {
     }
 }
 
-fn walk<'a>(entries: &'a [CallTreeNode]) -> Vec<&'a CallTreeNode> {
+fn walk(entries: &[CallTreeNode]) -> Vec<&CallTreeNode> {
     let mut out = Vec::new();
     let mut stack: Vec<&CallTreeNode> = entries.iter().collect();
     while let Some(n) = stack.pop() {
@@ -530,7 +530,7 @@ fn call_graph_n_plus_one(
             continue;
         }
         // S7 calibration: ramp by db_count.
-        let confidence = ((0.65 + (db_count as f64) * 0.04).min(0.95)).max(DEFAULT_THRESHOLD);
+        let confidence = (0.65 + (db_count as f64) * 0.04).clamp(DEFAULT_THRESHOLD, 0.95);
         let severity = if db_count >= 6 { "high" } else { "medium" };
         // Readable token for synthetic names (`<module>` / `<anonymous@N>`);
         // location lives in the file/line fields. See `symbol_label`.
@@ -874,12 +874,12 @@ fn sentinel_value_suggestions(
 fn references_for_synthetic(slug: &str, language: &str) -> Vec<ReferenceLink> {
     for (k, lang, refs) in REFERENCE_TABLE {
         if *k == slug && *lang == language {
-            return refs.iter().map(|r| make_ref(r)).collect();
+            return refs.iter().map(make_ref).collect();
         }
     }
     for (k, lang, refs) in REFERENCE_TABLE {
         if *k == slug && *lang == "*" {
-            return refs.iter().map(|r| make_ref(r)).collect();
+            return refs.iter().map(make_ref).collect();
         }
     }
     Vec::new()

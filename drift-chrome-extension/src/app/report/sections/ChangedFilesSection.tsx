@@ -1,5 +1,6 @@
-// Changed files — the literal "what this PR touches" view: every changed file
-// with its git status (added / modified / removed / renamed / copied) and LOC.
+// Changed files — a one-line scope summary: file count + per-status badges
+// (added / modified / removed / renamed / copied) + total LOC. The full
+// per-file list lives in the PR's own diff view, so we don't duplicate it here.
 // Sourced from the client-side `--diff-status` we reconstruct from the unified
 // diff, so it ALWAYS shows — independent of whether the changed files appear in
 // the call-graph (config/docs PRs have no graph but still have a real diff).
@@ -18,12 +19,6 @@ const STATUS: Record<ChangedFileStatus['code'], { label: string; tone: Tone }> =
 // Status display order: surface adds/removes/renames before the bulk of modifies.
 const ORDER: ChangedFileStatus['code'][] = ['A', 'M', 'D', 'R', 'C', 'T'];
 
-function loc(f: ChangedFileStatus): string {
-  if (f.code === 'D') return `−${f.deletions}`;
-  if (f.code === 'A') return `+${f.additions}`;
-  return `+${f.additions} −${f.deletions}`;
-}
-
 export function ChangedFilesSection({ files }: { files?: ChangedFileStatus[] }) {
   if (!files || files.length === 0) return null;
 
@@ -32,9 +27,8 @@ export function ChangedFilesSection({ files }: { files?: ChangedFileStatus[] }) 
     n: files.filter((f) => f.code === code).length,
   })).filter((c) => c.n > 0);
 
-  const sorted = [...files].sort(
-    (a, b) => ORDER.indexOf(a.code) - ORDER.indexOf(b.code) || a.path.localeCompare(b.path),
-  );
+  const additions = files.reduce((s, f) => s + (f.additions || 0), 0);
+  const deletions = files.reduce((s, f) => s + (f.deletions || 0), 0);
 
   return (
     <Section
@@ -50,36 +44,14 @@ export function ChangedFilesSection({ files }: { files?: ChangedFileStatus[] }) 
         </span>
       }
     >
-      <table className="rp-table rp-changed-table">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>File</th>
-            <th>Lines</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((f, i) => (
-            <tr key={`${f.path}-${i}`}>
-              <td>
-                <Badge tone={STATUS[f.code].tone} filled>
-                  {STATUS[f.code].label}
-                </Badge>
-              </td>
-              <td>
-                {f.oldPath ? (
-                  <code className="rp-rename">
-                    <span className="rp-rename-old">{f.oldPath}</span> → {f.path}
-                  </code>
-                ) : (
-                  <code>{f.path}</code>
-                )}
-              </td>
-              <td className="rp-muted rp-loc">{loc(f)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* One-line summary — the full per-file table lives in the PR's own diff
+          view, so here we just headline the scope. */}
+      <p className="rp-changed-summary">
+        {files.length} file{files.length === 1 ? '' : 's'} changed
+        <span className="rp-muted"> · </span>
+        <span className="rp-loc-add">+{additions}</span>{' '}
+        <span className="rp-loc-del">−{deletions}</span>
+      </p>
     </Section>
   );
 }

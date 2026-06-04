@@ -86,7 +86,7 @@ pub fn page_rank(
     let out_deg: Vec<usize> = (0..n)
         .map(|i| g.edges(NodeIndex::new(i)).count())
         .collect();
-    let has_any_dangling = out_deg.iter().any(|&d| d == 0);
+    let has_any_dangling = out_deg.contains(&0);
 
     let mut ranks: Vec<f64> = vec![1.0 / n_f; n];
     let mut next: Vec<f64> = vec![0.0; n];

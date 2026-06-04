@@ -120,14 +120,26 @@ jobs:
       - name: Build scanner wasm
         run: npm run build:wasm
 
-      # `npm run build` already runs `tsc --noEmit` before `vite build`
-      # (see package.json), so this covers the type check too.
-      - name: Build
+      # Build the STORE profile (DRIFT_STORE_BUILD=1) — the exact bytes that ship
+      # to the Web Store. This DCEs the remote-scanner download path out of the
+      # bundle (src/core/scannerDownload.ts), so CI validates the shippable
+      # artifact, not the looser sideload build. `npm run build` already runs
+      # `tsc --noEmit` before `vite build`, so this covers the type check too.
+      # (The DEV/sideload path is exercised separately by the test step below —
+      # vitest builds with the flag off.)
+      - name: Build (store profile — what ships to the Web Store)
         run: npm run build
+        env:
+          DRIFT_STORE_BUILD: '1'
 
       # Gate: the packaged dist/ must contain a valid scanner wasm + meta.
       - name: Verify packaged assets
         run: npm run verify:assets
+
+      # Gate: the store bundle must contain NO remote-scanner-download code
+      # (MV3 forbids fetching + running remotely-hosted WASM).
+      - name: Verify store build is MV3-clean
+        run: npm run verify:store
 
       - name: Test
         run: npm test

@@ -280,11 +280,13 @@ jobs:
           fi
           echo "::notice::drift CLI present in .deb"
 
-      # NOTE: drift-static-profiler standalone CLI is now built + uploaded
-      # by drift-lab-desktop-build.yml's `build-static-profiler` job (single
-      # source of truth, runs once on a dedicated Linux job — see comments
-      # there). Removed from this workflow to avoid building the same binary
-      # twice and racing on `gh release upload` for the same tag.
+      # NOTE: the drift-static-profiler standalone CLI is NOT built or
+      # uploaded here. It ships from its own dedicated release stream
+      # (drift-static-profiler-release.yml), which fires on every
+      # drift-static-profiler/Cargo.toml version bump and is the single
+      # source of truth for that binary. Keeping it out of the desktop
+      # release avoids building the same binary twice and racing on
+      # `gh release upload` for the same tag.
 
       # Post-process latest.json on the draft release. Two fixes:
       #

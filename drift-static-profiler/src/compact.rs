@@ -397,6 +397,10 @@ impl FramePool {
     /// across the entire pool. The frame's `id` is omitted (stored as
     /// `0`) when it equals the canonical join — see
     /// [`Self::with_source_root_prefix`].
+    // The positional args mirror the symbol fields 1:1 across ~12 call
+    // sites; a params struct would add ceremony at every call without
+    // making this interning hot path clearer.
+    #[allow(clippy::too_many_arguments)]
     pub fn intern(
         &mut self,
         strings: &mut StringPool,
@@ -1523,7 +1527,7 @@ impl CompactReport {
     }
 }
 
-fn frame_at<'a>(frames: &'a [Frame], ix: u32) -> Option<&'a Frame> {
+fn frame_at(frames: &[Frame], ix: u32) -> Option<&Frame> {
     frames.get(ix as usize)
 }
 

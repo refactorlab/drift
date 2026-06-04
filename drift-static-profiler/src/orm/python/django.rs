@@ -816,7 +816,9 @@ mod tests {
         let tree = p.parse(src, None).unwrap();
         // SAFETY: we leak the source lifetime by storing the tree
         // alongside the ctx; tests don't need to outlive the source.
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

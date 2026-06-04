@@ -7,6 +7,16 @@ import { driftAlias, fsStubAlias, driftFsAllow } from './build/alias';
 export default defineConfig({
   plugins: [react(), crx({ manifest })],
   resolve: { alias: [...driftAlias, ...fsStubAlias] },
+  // Distribution profile. The STORE build (DRIFT_STORE_BUILD=1, set by the
+  // Chrome Web Store publish workflow) statically flips this to `true`, which
+  // dead-code-eliminates the remote-scanner-download path (Settings row +
+  // scannerDownload.ts) so the shipping package contains NO fetch-remote-wasm
+  // code — the pattern MV3 reviewers reject. Any other build (dev / sideload)
+  // leaves it `false` and keeps the download override. verify-store-build.mjs
+  // asserts the store bundle is actually clean.
+  define: {
+    __DRIFT_STORE_BUILD__: JSON.stringify(process.env.DRIFT_STORE_BUILD === '1'),
+  },
   // ttsWorker.ts dynamic-imports @huggingface/transformers + kokoro-js, so the
   // worker must be a code-split ES module (Vite's default IIFE worker format
   // can't do code-splitting). MV3 loads it via `new Worker(url, {type:'module'})`.

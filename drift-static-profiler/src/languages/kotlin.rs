@@ -12,8 +12,8 @@
 //!   - `foo()`     → `call_expression` with an `identifier` child
 //!   - `obj.foo()` → `call_expression` with `navigation_expression(receiver, name)`
 //!   - `Type(...)` → `call_expression` with `identifier` (constructor
-//!                   invocation syntactically identical to a function
-//!                   call in Kotlin)
+//!     invocation syntactically identical to a function
+//!     call in Kotlin)
 //!
 //! The `navigation_expression` has positional `(expression,
 //! identifier)` children — first is the receiver, second is the

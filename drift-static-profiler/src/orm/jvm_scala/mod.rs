@@ -278,7 +278,7 @@ fn reconstruct_chain(outer: Node, source: &str, _ctx: &PyOrmContext<'_>) -> Opti
                         let args_text = current
                             .child_by_field_name("arguments")
                             .and_then(|a| a.utf8_text(source.as_bytes()).ok())
-                            .map(|s| split_top_level_args(s))
+                            .map(split_top_level_args)
                             .unwrap_or_default();
                         steps.push(CallStep {
                             method: name.clone(),
@@ -304,7 +304,7 @@ fn reconstruct_chain(outer: Node, source: &str, _ctx: &PyOrmContext<'_>) -> Opti
                         let args_text = current
                             .child_by_field_name("arguments")
                             .and_then(|a| a.utf8_text(source.as_bytes()).ok())
-                            .map(|s| split_top_level_args(s))
+                            .map(split_top_level_args)
                             .unwrap_or_default();
                         steps.push(CallStep {
                             method: name.clone(),

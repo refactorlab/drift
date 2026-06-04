@@ -115,18 +115,33 @@ export const defaultRuntimeFactory: RuntimeFactory = async (_assets, onProgress)
     worker.postMessage(init);
   });
 
+  // Init has resolved; repurpose onerror. A worker crash MID-SYNTH posts no
+  // `synth-error`, so without this the synth promise never settles and the UI
+  // hangs on "… Synthesizing" forever. Reject every in-flight request so the
+  // caller fails soft to the system voice instead.
   let seq = 0;
+  const pending = new Map<number, (err: Error) => void>();
+  worker.onerror = (ev) => {
+    const err = new Error(ev.message || 'tts worker crashed during synthesis');
+    for (const reject of pending.values()) reject(err);
+    pending.clear();
+  };
   return {
     synthesize(text, { voice = 'af_heart', speed = 1.0 }) {
       const id = ++seq;
       return new Promise<KokoroPcm>((resolve, reject) => {
+        pending.set(id, reject);
+        const settle = () => {
+          worker.removeEventListener('message', onMsg);
+          pending.delete(id);
+        };
         const onMsg = (e: MessageEvent<TtsWorkerMessage>) => {
           const m = e.data;
           if (m.type === 'result' && m.id === id) {
-            worker.removeEventListener('message', onMsg);
+            settle();
             resolve({ samples: new Float32Array(m.samples), sampleRate: m.sampleRate });
           } else if (m.type === 'synth-error' && m.id === id) {
-            worker.removeEventListener('message', onMsg);
+            settle();
             reject(new Error(m.message));
           }
         };

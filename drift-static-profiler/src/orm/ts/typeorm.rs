@@ -128,7 +128,7 @@ fn matches_to_sync_004(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
     let mut out = Vec::new();
     for chain in &ctx.chains {
         let methods: Vec<&str> = chain.steps.iter().map(|s| s.method.as_str()).collect();
-        if !methods.iter().any(|m| *m == "DataSource") {
+        if !methods.contains(&"DataSource") {
             continue;
         }
         for step in &chain.steps {
@@ -295,7 +295,9 @@ mod tests {
         p.set_language(&crate::languages::typescript::language())
             .unwrap();
         let tree = p.parse(src, None).unwrap();
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

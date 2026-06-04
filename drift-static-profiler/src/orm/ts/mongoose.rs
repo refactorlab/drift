@@ -82,7 +82,7 @@ fn matches_mng_lean_003(ctx: &PyOrmContext<'_>) -> Vec<MatchHit> {
         // `.toObject()` / `.toJSON()` call in loop body that's NOT
         // already on a .lean() chain.
         if methods.iter().any(|m| matches!(*m, "toObject" | "toJSON"))
-            && !methods.iter().any(|m| *m == "lean")
+            && !methods.contains(&"lean")
         {
             out.push(hit(chain, "MNG-LEAN-003"));
         }
@@ -199,7 +199,9 @@ mod tests {
         p.set_language(&crate::languages::typescript::language())
             .unwrap();
         let tree = p.parse(src, None).unwrap();
-        let c = build_context(src, unsafe { std::mem::transmute(&tree) });
+        let c = build_context(src, unsafe {
+            std::mem::transmute::<&tree_sitter::Tree, &tree_sitter::Tree>(&tree)
+        });
         (c, tree)
     }
 

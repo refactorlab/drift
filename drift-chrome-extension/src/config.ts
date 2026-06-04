@@ -16,3 +16,15 @@ export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 
 /** True when a real OAuth client id has been configured. */
 export const HAS_GOOGLE_OAUTH = GOOGLE_CLIENT_ID.trim().length > 0;
+
+// ─── Scanner WASM source ─────────────────────────────────────────────────────
+// The scanner WASM is BUNDLED in the published store package (MV3 forbids
+// executing remote code, so a runtime download is NOT the store-compliant
+// default — see scannerStore.ts). This URL is the base for an OPTIONAL,
+// explicit "download the latest scanner" override (dev / sideload / always-
+// latest), pulling the prebuilt `drift-static-profiler.wasm` +
+// `drift-scanner.meta.json` assets uploaded to the latest GitHub release by
+// drift-static-profiler-release.yml. Overridable per-device via
+// settings.scannerUrl.
+export const SCANNER_RELEASE_BASE =
+  'https://github.com/refactorlab/drift/releases/latest/download';

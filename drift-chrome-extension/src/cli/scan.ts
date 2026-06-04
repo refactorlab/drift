@@ -90,10 +90,17 @@ export async function runCli(opts: CliOptions, hooks: RunHooks = {}): Promise<un
     changedFiles: diff.changedPaths,
     diffStats: diff.diffStats,
     diffStatus: diff.diffStatus,
+    commits: head.commits,
     prTitle: head.title,
     onLog: (line) => log(line),
   });
-  return JSON.parse(new TextDecoder().decode(out));
+  const report = JSON.parse(new TextDecoder().decode(out));
+  // Attach the literal +/- code diff (collected from the .diff — the scanner has
+  // no base tree to produce it) so it travels inside the scan-pr JSON.
+  if (report && typeof report === 'object') {
+    report.pr_diff = { files: diff.fileDiffs, truncated: diff.diffTruncated || undefined };
+  }
+  return report;
 }
 
 /** CLI body: parse args, scan, emit JSON. Returns the process exit code. */

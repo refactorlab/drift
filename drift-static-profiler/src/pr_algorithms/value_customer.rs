@@ -115,17 +115,21 @@ mod tests {
 
     #[test]
     fn one_feature_yields_some_delta() {
-        let mut c = PrCounts::default();
-        c.features = chip(1);
+        let c = PrCounts {
+            features: chip(1),
+            ..Default::default()
+        };
         let r = compute(&c, &PrSignals::default());
         assert!(r.delta_percent > 0.0);
     }
 
     #[test]
     fn many_signals_high_confidence() {
-        let mut c = PrCounts::default();
-        c.features = chip(3);
-        c.bug_fixes = chip(2);
+        let c = PrCounts {
+            features: chip(3),
+            bug_fixes: chip(2),
+            ..Default::default()
+        };
         let r = compute(&c, &PrSignals::default());
         assert_eq!(r.confidence, Confidence::High);
     }
@@ -135,9 +139,11 @@ mod tests {
     /// not the buggy 28.7% from misplaced parens.
     #[test]
     fn delta_pct_matches_python_reference_for_known_inputs() {
-        let mut c = PrCounts::default();
-        c.features = chip(1);
-        c.bug_fixes = chip(2);
+        let c = PrCounts {
+            features: chip(1),
+            bug_fixes: chip(2),
+            ..Default::default()
+        };
         let r = compute(&c, &PrSignals::default());
         // feat_pct = 1/3 × 100 ≈ 33.3; issues_pct = 2/3 × 100 ≈ 66.7
         // delta = 0.6×33.3 + 0.4×66.7 ≈ 46.7
@@ -151,10 +157,12 @@ mod tests {
     #[test]
     fn delta_pct_caps_at_100() {
         // Cap test: 100 features + 100 fixes can't exceed 100%.
-        let mut c = PrCounts::default();
-        c.features = chip(100);
-        c.bug_fixes = chip(100);
-        c.issues_resolved = chip(100);
+        let c = PrCounts {
+            features: chip(100),
+            bug_fixes: chip(100),
+            issues_resolved: chip(100),
+            ..Default::default()
+        };
         let r = compute(&c, &PrSignals::default());
         assert!(r.delta_percent <= 100.0, "uncapped output: {}", r.delta_percent);
     }
@@ -167,9 +175,11 @@ mod tests {
         use crate::pr_algorithms::pr_signals::{collect, QualityBar};
         use crate::pr_algorithms::test_helpers::{mk_node, with_findings};
 
-        let mut c = PrCounts::default();
-        c.features = chip(3);
-        c.bug_fixes = chip(2); // total >= 4 → High confidence when clean
+        let c = PrCounts {
+            features: chip(3),
+            bug_fixes: chip(2), // total >= 4 → High confidence when clean
+            ..Default::default()
+        };
 
         let clean = compute(&c, &PrSignals::default());
         assert_eq!(clean.confidence, Confidence::High);
