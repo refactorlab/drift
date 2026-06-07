@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installChromeMock } from '../test/chromeMock';
-import { ensureScanner, loadScannerModule, META_FILE, WASM_FILE } from './scannerStore';
+import { ensureScanner, isOlderVersion, loadScannerModule, META_FILE, WASM_FILE } from './scannerStore';
 import { downloadScanner } from './scannerDownload';
 import { getSettings, patchSettings, type ScannerMeta } from '../state/settings';
 
@@ -306,5 +306,51 @@ describe('scannerStore.loadScannerModule — source preference', () => {
 
     const mod = await loadScannerModule();
     expect(mod).toBeInstanceOf(WebAssembly.Module);
+  });
+
+  it('self-heals a STALE remote scanner (older than bundled) → uses bundled + clears it', async () => {
+    // Cache an OLD remote build (the "resolve newest release" bug shipped these).
+    stubFetch('0.8.0');
+    await downloadScanner();
+    expect((await getSettings()).scanner).toMatchObject({ version: '0.8.0', source: 'remote' });
+
+    // This extension build now ships a NEWER bundled scanner.
+    stubFetch('0.8.1');
+    const mod = await loadScannerModule();
+    expect(mod).toBeInstanceOf(WebAssembly.Module);
+
+    // The stale remote record is dropped so future loads/UI use the bundled build.
+    expect((await getSettings()).scanner).toBeUndefined();
+  });
+
+  it('keeps a NEWER remote scanner (the normal "Download latest" case)', async () => {
+    stubFetch('0.9.0');
+    await downloadScanner(); // remote 0.9.0 recorded + cached
+    stubFetch('0.8.1'); // bundled is older → remote is NOT stale
+
+    const mod = await loadScannerModule();
+    expect(mod).toBeInstanceOf(WebAssembly.Module);
+    expect((await getSettings()).scanner).toMatchObject({ version: '0.9.0', source: 'remote' });
+  });
+});
+
+describe('isOlderVersion — only downgrades on a confident comparison', () => {
+  it('detects a strictly older semver', () => {
+    expect(isOlderVersion('0.8.0', '0.8.1')).toBe(true);
+    expect(isOlderVersion('0.7.9', '0.8.0')).toBe(true);
+    expect(isOlderVersion('1.0.0', '2.0.0')).toBe(true);
+  });
+  it('is false for equal or newer', () => {
+    expect(isOlderVersion('0.8.1', '0.8.1')).toBe(false);
+    expect(isOlderVersion('0.9.0', '0.8.1')).toBe(false);
+    expect(isOlderVersion('2.0.0', '1.9.9')).toBe(false);
+  });
+  it('never downgrades on an unparseable tag (e.g. "remote"/"bundled")', () => {
+    expect(isOlderVersion('remote', '0.8.1')).toBe(false);
+    expect(isOlderVersion('0.8.0', 'bundled')).toBe(false);
+  });
+  it('tolerates suffixes by comparing the leading MAJOR.MINOR.PATCH', () => {
+    expect(isOlderVersion('0.8.0-rc1', '0.8.1')).toBe(true);
+    expect(isOlderVersion('0.8.1+build', '0.8.1')).toBe(false);
   });
 });
