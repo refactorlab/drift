@@ -6290,5 +6290,38 @@
     "repoScore": 64502,
     "file": "prs/auto-x64dbg-x64dbg-3317.md",
     "collectedAt": "2026-06-07T12:57:53.074Z"
+  },
+  {
+    "repo": "Homebrew/brew",
+    "number": 17554,
+    "title": "Add cask install receipts",
+    "created_at": "2024-06-23T01:36:37Z",
+    "topReactions": 1,
+    "repoStars": 48317,
+    "repoScore": 97901,
+    "file": "prs/auto-homebrew-brew-17554.md",
+    "collectedAt": "2026-06-07T12:58:45.195Z"
+  },
+  {
+    "repo": "Homebrew/brew",
+    "number": 16594,
+    "title": "feat: add generated SPDX file on bottling",
+    "created_at": "2024-02-05T22:54:25Z",
+    "topReactions": 2,
+    "repoStars": 48317,
+    "repoScore": 97901,
+    "file": "prs/auto-homebrew-brew-16594.md",
+    "collectedAt": "2026-06-07T12:58:46.091Z"
+  },
+  {
+    "repo": "bigskysoftware/htmx",
+    "number": 3234,
+    "title": "Replace jsDelivr w/ UNPKG",
+    "created_at": "2025-03-15T15:54:07Z",
+    "topReactions": 1,
+    "repoStars": 48161,
+    "repoScore": 59533,
+    "file": "prs/auto-bigskysoftware-htmx-3234.md",
+    "collectedAt": "2026-06-07T12:58:48.857Z"
   }
 ]
