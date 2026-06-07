@@ -42,7 +42,8 @@ if [ ! -x "$WASI_SDK/bin/clang" ]; then
   echo "  ↓ $url"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
-  curl -fsSL "$url" -o "$tmp/wasi-sdk.tar.gz"
+  # --retry guards against the same transient CI timeouts that hit rustup below.
+  curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors "$url" -o "$tmp/wasi-sdk.tar.gz"
   tar -xzf "$tmp/wasi-sdk.tar.gz" -C "$tmp"
   # The tarball's top-level dir name varies by version (e.g.
   # wasi-sdk-24.0-arm64-macos); move whatever it is to $WASI_SDK.
@@ -57,9 +58,25 @@ if [ ! -x "$WASI_SDK/bin/clang" ]; then
 fi
 
 # Ensure the Rust wasm target is installed (idempotent, quick no-op if present).
+# `rustup target add` fetches the rust-std component from static.rust-lang.org,
+# which intermittently times out in CI ("Connection timed out (os error 110)").
+# A single failure shouldn't kill the whole publish, so retry with backoff;
+# rustup keeps the partial download and resumes, so retries are cheap.
 if command -v rustup >/dev/null 2>&1; then
-  rustup target list --installed 2>/dev/null | grep -q wasm32-wasip1 || \
-    rustup target add wasm32-wasip1
+  if ! rustup target list --installed 2>/dev/null | grep -q wasm32-wasip1; then
+    attempts=5
+    for i in $(seq 1 "$attempts"); do
+      if rustup target add wasm32-wasip1; then
+        break
+      fi
+      if [ "$i" -eq "$attempts" ]; then
+        echo "error: failed to add wasm32-wasip1 target after $attempts attempts" >&2
+        exit 1
+      fi
+      echo "→ rustup target add wasm32-wasip1 failed (attempt $i/$attempts) — retrying in $((i * 5))s…" >&2
+      sleep "$((i * 5))"
+    done
+  fi
 fi
 
 export WASI_SYSROOT="$WASI_SDK/share/wasi-sysroot"
