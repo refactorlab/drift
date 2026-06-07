@@ -22,9 +22,20 @@ export function archiveUrl(owner: string, repo: string, ref: string): string {
 
 // `total` is the Content-Length when the server sends one. GitHub's codeload
 // generates the archive on the fly (Transfer-Encoding: chunked) and usually
-// OMITS it — so `total` is often undefined and the UI shows downloaded bytes
-// ticking up rather than a percentage.
-export type DownloadProgress = { phase: string; bytes: number; total?: number };
+// OMITS it — so the real total is often undefined. When the caller supplies an
+// `estimatedTotal` (a cached prior size or GitHub's repo size) we use it instead
+// and set `estimated: true` so the UI can mark the percentage approximate. With
+// neither, the UI just shows downloaded bytes ticking up.
+export type DownloadProgress = {
+  phase: string;
+  bytes: number;
+  total?: number;
+  estimated?: boolean;
+  /** Running average download speed in bytes/sec, once enough has elapsed to be
+   *  meaningful. Lets the UI show live progress even with no total to divide by
+   *  — the only honest feedback GitHub leaves us on a first, uncached download. */
+  bytesPerSec?: number;
+};
 
 /**
  * Fetch a ref's archive as raw zip bytes, WITHOUT unzipping. The unzip is the
@@ -38,15 +49,18 @@ export async function downloadArchive(
   ref: string,
   onProgress?: (p: DownloadProgress) => void,
   signal?: AbortSignal,
+  estimatedTotal?: number,
 ): Promise<Uint8Array> {
   const url = archiveUrl(owner, repo, ref);
   const label = `${owner}/${repo}@${shortRef(ref)}`;
-  onProgress?.({ phase: `fetching ${label}`, bytes: 0 });
+  // Surface the estimate up front so the (sometimes slow) wait for the first
+  // byte already shows "0 B / ~X MB" instead of a sizeless "fetching".
+  onProgress?.({ phase: `fetching ${label}`, bytes: 0, total: estimatedTotal, estimated: !!estimatedTotal });
   const res = await fetch(url, { credentials: 'include', redirect: 'follow', signal });
   if (!res.ok) {
     throw new Error(`download ${label} failed: HTTP ${res.status}`);
   }
-  return readBodyWithProgress(res, `downloading ${label}`, onProgress);
+  return readBodyWithProgress(res, `downloading ${label}`, onProgress, estimatedTotal);
 }
 
 /** Fetch + unzip a ref into a FileTree. Throws with a useful message on HTTP/zip errors. */
@@ -56,15 +70,16 @@ export async function downloadTree(
   ref: string,
   onProgress?: (p: DownloadProgress) => void,
   signal?: AbortSignal,
+  estimatedTotal?: number,
 ): Promise<FileTree> {
   const url = archiveUrl(owner, repo, ref);
   const label = `${owner}/${repo}@${shortRef(ref)}`;
-  onProgress?.({ phase: `fetching ${label}`, bytes: 0 });
+  onProgress?.({ phase: `fetching ${label}`, bytes: 0, total: estimatedTotal, estimated: !!estimatedTotal });
   const res = await fetch(url, { credentials: 'include', redirect: 'follow', signal });
   if (!res.ok) {
     throw new Error(`download ${label} failed: HTTP ${res.status}`);
   }
-  const buf = await readBodyWithProgress(res, `downloading ${label}`, onProgress);
+  const buf = await readBodyWithProgress(res, `downloading ${label}`, onProgress, estimatedTotal);
   onProgress?.({ phase: `unzipping ${label}`, bytes: buf.length, total: buf.length });
   const tree = unzipRepoArchive(buf);
   onProgress?.({ phase: `unzipped ${tree.size} files`, bytes: treeBytes(tree) });
@@ -82,11 +97,18 @@ async function readBodyWithProgress(
   res: Response,
   phase: string,
   onProgress?: (p: DownloadProgress) => void,
+  estimatedTotal?: number,
 ): Promise<Uint8Array> {
-  const total = Number(res.headers.get('content-length')) || undefined;
+  // Real Content-Length wins; otherwise fall back to the caller's estimate and
+  // flag it (codeload's chunked archives omit Content-Length, so the estimate
+  // is the usual path here).
+  const real = Number(res.headers.get('content-length')) || undefined;
+  const total = real ?? (estimatedTotal && estimatedTotal > 0 ? estimatedTotal : undefined);
+  const estimated = real == null && total != null;
   if (!res.body) {
     const buf = new Uint8Array(await res.arrayBuffer());
-    onProgress?.({ phase, bytes: buf.length, total: total ?? buf.length });
+    // A buffered read already has the true size — report it exactly, not the estimate.
+    onProgress?.({ phase, bytes: buf.length, total: buf.length });
     return buf;
   }
 
@@ -94,7 +116,14 @@ async function readBodyWithProgress(
   const chunks: Uint8Array[] = [];
   let received = 0;
   let lastTick = 0;
-  onProgress?.({ phase, bytes: 0, total });
+  const startMs = Date.now();
+  // Average speed, suppressed until a little has elapsed so the first reading
+  // isn't a wild divide-by-near-zero.
+  const speed = (nowMs: number): number | undefined => {
+    const elapsed = nowMs - startMs;
+    return elapsed > 250 ? Math.round((received / elapsed) * 1000) : undefined;
+  };
+  onProgress?.({ phase, bytes: 0, total, estimated });
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -104,10 +133,12 @@ async function readBodyWithProgress(
     const nowMs = Date.now();
     if (nowMs - lastTick > 120) {
       lastTick = nowMs;
-      onProgress?.({ phase, bytes: received, total });
+      onProgress?.({ phase, bytes: received, total, estimated, bytesPerSec: speed(nowMs) });
     }
   }
-  onProgress?.({ phase, bytes: received, total });
+  // The stream is fully drained: `received` is the true size, so report it as an
+  // exact total regardless of the estimate.
+  onProgress?.({ phase, bytes: received, total: received, bytesPerSec: speed(Date.now()) });
 
   const out = new Uint8Array(received);
   let offset = 0;

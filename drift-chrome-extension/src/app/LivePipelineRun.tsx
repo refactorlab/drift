@@ -3,6 +3,7 @@ import { useActivePr } from '../state/activePr';
 import type { PrInput } from '../core/scanProvider';
 import { fetchPrHead, fetchPrChangedFiles, fetchPrBody, type ChangedFileStatus } from '../core/prDiff';
 import { downloadArchive, type DownloadProgress } from '../core/githubZip';
+import { getCachedZipSize, setCachedZipSize } from '../core/downloadSizeEstimate';
 import { scanInWorker } from '../core/scanWorkerClient';
 import { loadScannerModule } from '../core/scannerStore';
 import { scanToReport } from '../core/scanReport';
@@ -95,13 +96,22 @@ function fmtAgo(ts: number): string {
   return `${d}d ago`;
 }
 
-// Turn a download progress tick into a step note.
-function downloadNote(p: DownloadProgress): string {
+// Exported for unit testing the estimate marker + clamp logic below.
+// Turn a download progress tick into a step note. When the total is estimated
+// (codeload omits Content-Length, so we lean on a cached/API size) we prefix the
+// total + percentage with `~` so the number reads as approximate, and never let
+// a low estimate show less than the bytes already downloaded.
+export function downloadNote(p: DownloadProgress): string {
+  // Live speed is appended whenever known — it's the progress signal that keeps
+  // a totalless first download from looking frozen.
+  const speed = p.bytesPerSec ? ` · ${fmtBytes(p.bytesPerSec)}/s` : '';
   if (p.total && p.total > 0) {
-    const pct = Math.min(100, Math.round((p.bytes / p.total) * 100));
-    return `${p.phase} · ${fmtBytes(p.bytes)} / ${fmtBytes(p.total)} (${pct}%)`;
+    const total = p.estimated ? Math.max(p.total, p.bytes) : p.total;
+    const pct = Math.min(100, Math.round((p.bytes / total) * 100));
+    const approx = p.estimated ? '~' : '';
+    return `${p.phase} · ${fmtBytes(p.bytes)} / ${approx}${fmtBytes(total)} (${approx}${pct}%)${speed}`;
   }
-  return p.bytes > 0 ? `${p.phase} · ${fmtBytes(p.bytes)}` : p.phase;
+  return p.bytes > 0 ? `${p.phase} · ${fmtBytes(p.bytes)}${speed}` : p.phase;
 }
 
 function StepRow({ step, now }: { step: Step; now: number }) {
@@ -381,6 +391,12 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     const url = `https://github.com/${owner}/${repo}/pull/${number}`;
 
     try {
+      // The head-tree zip total, only knowable from a PRIOR download of this repo
+      // (GitHub exposes no size before a first download — see downloadSizeEstimate).
+      // So this is undefined on the first run (UI shows live bytes + speed) and an
+      // exact-ish percentage on every run after. Fail-soft to undefined.
+      const estimatePromise = getCachedZipSize(owner, repo).catch(() => undefined);
+
       // 1. Resolve head sha + PR diff from the STABLE git endpoints (.patch /
       //    .diff) — credentialed, private-repo safe, no fragile DOM scrape.
       patch('resolve', { state: 'active' });
@@ -400,11 +416,15 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
       // 2. Download ONLY the HEAD tree (by sha) as raw zip bytes — the unzip is
       //    deferred to the worker so it never blocks this thread.
       patch('download', { state: 'active', note: 'fetching head tree…' });
+      const estimatedTotal = await estimatePromise.catch(() => undefined);
       const zipBytes = await downloadArchive(
         owner, repo, head.headSha,
-        (p) => patch('download', { note: downloadNote(p) }), sig,
+        (p) => patch('download', { note: downloadNote(p) }), sig, estimatedTotal,
       );
       patch('download', { state: 'done', note: `${fmtBytes(zipBytes.length)} downloaded` });
+      // Remember the true size so the NEXT run of this repo shows an exact-ish
+      // percentage (fire-and-forget; a failed write just means no cached seed).
+      void setCachedZipSize(owner, repo, zipBytes.length);
 
       // 3. Changed files came from the .diff (no base zip, no local tree diff).
       patch('diff', { state: 'active' });

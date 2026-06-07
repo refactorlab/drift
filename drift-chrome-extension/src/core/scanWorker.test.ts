@@ -8,8 +8,38 @@ import { zipSync, strToU8 } from 'fflate';
 const runScanPr = vi.fn();
 vi.mock('./wasi', () => ({ runScanPr: (...a: unknown[]) => runScanPr(...a) }));
 
-import { runScanJob } from './scanWorker';
+import { runScanJob, appendScannerReason } from './scanWorker';
 import type { ScanWorkerMessage, ScanWorkerRequest } from './scanWorker';
+
+describe('appendScannerReason — surfaces WHY behind an exit code', () => {
+  it('appends clap\'s usage line so "exited with code 2" is not a dead end', () => {
+    const tail = ['scan-pr · 800 files', "error: unexpected argument '--frobnicate' found", 'tip: …'];
+    expect(appendScannerReason('scan-pr exited with code 2', tail)).toBe(
+      "scan-pr exited with code 2 — error: unexpected argument '--frobnicate' found",
+    );
+  });
+
+  it('prefers the most telling line (error/panic) over the last line', () => {
+    const tail = ['error: invalid value for --pretty', 'some trailing info line'];
+    expect(appendScannerReason('exited with code 2', tail)).toMatch(/invalid value for --pretty$/);
+  });
+
+  it('falls back to the last line when nothing matches the reason pattern', () => {
+    expect(appendScannerReason('exited with code 1', ['just progress', 'last breadcrumb'])).toBe(
+      'exited with code 1 — last breadcrumb',
+    );
+  });
+
+  it('returns the base error unchanged when there is no log tail', () => {
+    expect(appendScannerReason('boom', [])).toBe('boom');
+  });
+
+  it('does not duplicate a reason already contained in the base message', () => {
+    expect(appendScannerReason('error: bad thing happened', ['error: bad thing happened'])).toBe(
+      'error: bad thing happened',
+    );
+  });
+});
 
 beforeEach(() => runScanPr.mockReset());
 

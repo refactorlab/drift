@@ -30,6 +30,36 @@ export type AcquireResult = { status: AcquireStatus; meta: ScannerMeta };
 
 type SourceMeta = { version: string; source: 'bundled' | 'remote'; wasmUrl: string; metaBytes?: number };
 
+/** Parse a leading `MAJOR.MINOR.PATCH` into a tuple, or null if it isn't clean
+ *  numeric semver (e.g. the generic 'bundled'/'remote' fallback tags). */
+function parseSemver(v: string): [number, number, number] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** True ONLY when both versions are clean semver and `a` is strictly older than
+ *  `b`. Anything unparseable → false: we never downgrade a scanner on a guess. */
+export function isOlderVersion(a: string, b: string): boolean {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  if (!pa || !pb) return false;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i];
+  return false;
+}
+
+/** The version of the wasm shipped INSIDE this extension build (from the bundled
+ *  meta). Used to detect a stale remote scanner that's older than what we ship. */
+async function readBundledMetaVersion(): Promise<string | undefined> {
+  try {
+    const res = await fetch(chrome.runtime.getURL(META_FILE));
+    if (!res.ok) return undefined;
+    const j = (await res.json()) as { version?: string };
+    return j.version;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolve where the scanner comes from + its advertised version. */
 async function resolveSource(scannerUrl?: string): Promise<SourceMeta> {
   if (scannerUrl) {
@@ -70,9 +100,11 @@ export async function ensureScanner(onProgress?: (p: AcquireProgress) => void): 
   const have = settings.scanner ?? null;
 
   // A downloaded (remote, cached) scanner is authoritative: the bundled launch
-  // check must NOT silently downgrade it. Re-acquiring the remote build is the
-  // explicit "Download latest" Settings action (downloadScanner), not this probe.
-  if (have?.source === 'remote') {
+  // check must NOT silently downgrade it — UNLESS it's older than what we now
+  // ship (a stale build from the old "resolve newest release" bug), which
+  // isRemoteScannerStale drops so we fall through and re-acquire the bundled one.
+  // Re-acquiring a NEWER remote is the explicit "Download latest" action.
+  if (have?.source === 'remote' && !(await isRemoteScannerStale(have.version))) {
     log({ phase: `Scanner ready · v${have.version}`, fraction: 1 });
     return { status: 'ready', meta: have };
   }
@@ -166,7 +198,7 @@ export function invalidateRemoteModule(): void {
 export async function loadScannerModule(): Promise<WebAssembly.Module> {
   const settings = await getSettings();
 
-  if (settings.scanner?.source === 'remote') {
+  if (settings.scanner?.source === 'remote' && !(await isRemoteScannerStale(settings.scanner.version))) {
     const cached = await loadCachedWasm();
     if (cached) {
       let p = moduleCache.get('cache:remote');
@@ -195,6 +227,27 @@ export async function loadScannerModule(): Promise<WebAssembly.Module> {
     moduleCache.set(url, p);
   }
   return p;
+}
+
+/**
+ * A downloaded (remote) scanner is only ever meant to be NEWER than the build's
+ * bundled wasm — it's the "run the latest" override. But a remote build cached by
+ * the old buggy "resolve newest release" logic can be OLDER, and because the
+ * cache survives every extension reload it stays pinned as authoritative — older
+ * builds reject flags this extension passes (clap exit 2) on every scan, and a
+ * rebuild never clears it. So when the recorded remote version is strictly older
+ * than what we now ship, treat it as stale: drop the record + compiled module so
+ * this and future scans use the known-good bundled build. Self-healing, no user
+ * action needed. Returns true when the remote was stale (caller skips it).
+ */
+async function isRemoteScannerStale(remoteVersion: string): Promise<boolean> {
+  const bundled = await readBundledMetaVersion();
+  if (!bundled || !isOlderVersion(remoteVersion, bundled)) return false;
+  moduleCache.delete('cache:remote');
+  // Clear the stale record so ensureScanner re-acquires the bundled build and the
+  // Settings UI stops showing the outdated remote version. Fire-and-forget.
+  void patchSettings({ scanner: undefined }).catch(() => {});
+  return true;
 }
 
 /** Kick off the compile in the background (non-blocking) so the first scan is

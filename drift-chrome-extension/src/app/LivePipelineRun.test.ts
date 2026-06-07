@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRawJsonSection, buildScanHtmlDoc, scanExportFilename } from './LivePipelineRun';
+import { buildRawJsonSection, buildScanHtmlDoc, downloadNote, scanExportFilename } from './LivePipelineRun';
 import type { LiveScanMeta } from '../core/liveSummary';
 import sampleScan from './__fixtures__/sampleScan.json';
 
@@ -46,6 +46,51 @@ describe('scanExportFilename', () => {
 
   it('switches the extension for the HTML export', () => {
     expect(scanExportFilename(meta({}), 'html')).toBe('drift-scan-acme-web-pr1423.html');
+  });
+});
+
+describe('downloadNote', () => {
+  it('shows an exact percentage when the total is real (Content-Length)', () => {
+    expect(downloadNote({ phase: 'downloading', bytes: 512 * 1024, total: 1024 * 1024 })).toBe(
+      'downloading · 512 KB / 1.0 MB (50%)',
+    );
+  });
+
+  it('marks an estimated total + percentage with a ~ prefix', () => {
+    expect(
+      downloadNote({ phase: 'downloading', bytes: 1024 * 1024, total: 4 * 1024 * 1024, estimated: true }),
+    ).toBe('downloading · 1.0 MB / ~4.0 MB (~25%)');
+  });
+
+  it('never shows a total below the bytes already downloaded (low estimate)', () => {
+    // Estimate said 2 MB but we already pulled 3 MB → clamp the shown total up.
+    expect(
+      downloadNote({ phase: 'downloading', bytes: 3 * 1024 * 1024, total: 2 * 1024 * 1024, estimated: true }),
+    ).toBe('downloading · 3.0 MB / ~3.0 MB (~100%)');
+  });
+
+  it('caps a real percentage at 100 rather than overflowing', () => {
+    expect(downloadNote({ phase: 'downloading', bytes: 30, total: 20 })).toContain('(100%)');
+  });
+
+  it('falls back to a bare byte counter when no total is known', () => {
+    expect(downloadNote({ phase: 'downloading', bytes: 2048 })).toBe('downloading · 2 KB');
+  });
+
+  it('appends live speed so a totalless first download still shows progress', () => {
+    expect(
+      downloadNote({ phase: 'downloading', bytes: 12 * 1024 * 1024, bytesPerSec: 1.8 * 1024 * 1024 }),
+    ).toBe('downloading · 12.0 MB · 1.8 MB/s');
+  });
+
+  it('shows speed alongside a percentage when both are known', () => {
+    expect(
+      downloadNote({ phase: 'downloading', bytes: 512 * 1024, total: 1024 * 1024, bytesPerSec: 900 * 1024 }),
+    ).toBe('downloading · 512 KB / 1.0 MB (50%) · 900 KB/s');
+  });
+
+  it('shows just the phase before any bytes arrive with no total', () => {
+    expect(downloadNote({ phase: 'fetching o/r@abc', bytes: 0 })).toBe('fetching o/r@abc');
   });
 });
 

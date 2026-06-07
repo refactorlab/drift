@@ -37,6 +37,7 @@ RESET  := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help \
+        collect-pr-reviews \
         install check run-llm \
         kill-port kill-port-test kill-bun-sock kill-dev \
         dev setup \
@@ -954,3 +955,7 @@ extension-release: ## Build the Chrome Web Store release bundle → drift-chrome
 extension-cws-exchange: ## Exchange an OAuth CODE → CWS refresh token (writes .env). Usage: make extension-cws-exchange CODE='4/0...' [CWS_REDIRECT_URI=http://localhost]
 	@printf "$(BLUE)▶$(RESET) Chrome Web Store: exchanging OAuth code for a refresh token\n"
 	@CODE='$(CODE)' CWS_REDIRECT_URI='$(CWS_REDIRECT_URI)' bash drift-chrome-extension/scripts/cws-exchange.sh
+
+collect-pr-reviews: ## Collect valuable PR review comments → research/pr-review-research/prs (no token, rate-limit-aware, UNLIMITED importance-ranked repo discovery). Usage: make collect-pr-reviews [LIMIT=50000] [MAX_REPOS=50000] [RUNTIME=0] [MIN_STARS=2000] [MIN_FORKS=200] [REPO_LANG=rust] [MIN_COMMENTS=15] [MIN_REACTIONS=0] [REPOS=a/b,c/d]
+	@printf "$(BLUE)▶$(RESET) Collecting valuable PR review comments (no token; waits out rate limits; LIMIT=$(or $(LIMIT),∞) MAX_REPOS=$(or $(MAX_REPOS),∞) RUNTIME=$(or $(RUNTIME),60)m)\n"
+	@MAX_PRS='$(LIMIT)' MAX_REPOS='$(MAX_REPOS)' RUNTIME_MIN='$(RUNTIME)' MIN_STARS='$(MIN_STARS)' MIN_FORKS='$(MIN_FORKS)' REPO_LANG='$(REPO_LANG)' PER_REPO='$(PER_REPO)' MIN_COMMENTS='$(MIN_COMMENTS)' MIN_REACTIONS='$(MIN_REACTIONS)' TOP_COMMENTS='$(TOP_COMMENTS)' SINCE='$(SINCE)' ACTIVE_SINCE='$(ACTIVE_SINCE)' REPOS='$(REPOS)' bun run research/pr-review-research/collect.ts

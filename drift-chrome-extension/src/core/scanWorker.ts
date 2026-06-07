@@ -40,6 +40,10 @@ type PostFn = (msg: ScanWorkerMessage, transfer?: Transferable[]) => void;
  */
 export async function runScanJob(req: ScanWorkerRequest, post: PostFn): Promise<void> {
   const { zip, wasm, inputs } = req;
+  // Rolling tail of the scanner's stdout/stderr. On a non-zero exit the bare
+  // "exited with code N" hides WHY — clap's `error: …` / a panic line lands here,
+  // so we append it to the surfaced error instead of dropping it.
+  const logTail: string[] = [];
   try {
     post({ type: 'progress', phase: 'unzip', message: 'unzipping archive…' });
     const tree = unzipRepoArchive(new Uint8Array(zip));
@@ -48,15 +52,32 @@ export async function runScanJob(req: ScanWorkerRequest, post: PostFn): Promise<
     post({ type: 'progress', phase: 'scan', message: `scan-pr · ${tree.size} files` });
     const out = await runScanPr(wasm, tree, {
       ...inputs,
-      onLog: (line) => post({ type: 'progress', phase: 'scan', message: line.slice(0, 120) }),
+      onLog: (line) => {
+        logTail.push(line);
+        if (logTail.length > 12) logTail.shift();
+        post({ type: 'progress', phase: 'scan', message: line.slice(0, 120) });
+      },
     });
 
     // Copy out of the WASI buffer into a standalone ArrayBuffer we can transfer.
     const buf = out.slice().buffer;
     post({ type: 'done', out: buf }, [buf]);
   } catch (err) {
-    post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    const base = err instanceof Error ? err.message : String(err);
+    post({ type: 'error', message: appendScannerReason(base, logTail) });
   }
+}
+
+// The scanner's clap/panic line — the actual reason behind an exit code — lands
+// in the log tail. Pull the most telling line out and append it to the error so
+// the UI shows "exited with code 2 — error: <reason>" rather than a dead end.
+export function appendScannerReason(base: string, logTail: string[]): string {
+  if (!logTail.length) return base;
+  const hit = [...logTail]
+    .reverse()
+    .find((l) => /\b(error|panic|unexpected|unrecognized|required|invalid|usage:)\b/i.test(l));
+  const reason = (hit ?? logTail[logTail.length - 1]).replace(/\s+/g, ' ').trim().slice(0, 240);
+  return reason && !base.includes(reason) ? `${base} — ${reason}` : base;
 }
 
 // Wire the handler only inside an actual Worker (guarded so importing this
