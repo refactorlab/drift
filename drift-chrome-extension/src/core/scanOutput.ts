@@ -265,6 +265,61 @@ export interface ScanOutput {
   pr_description?: string;
 }
 
+// ─── Review brief ────────────────────────────────────────────────────────────
+// A compact, reviewer-facing distillation of the scan JSON — the signal a code
+// reviewer actually asks about (risk, tests, suggestions, value, scope) that the
+// raw `report`/`pr_diff` don't carry. Built once per scan and threaded into the
+// PrContext so the Dial phone agent can ground on it, not just the literal diff.
+// Bounded by construction (every list is capped) so it stays small enough to pin.
+
+export interface BriefRisk {
+  label: string;
+  /** The scanner's action quadrant — act_before_merge is the "do something now" set. */
+  quadrant?: RiskItem['quadrant'];
+}
+export interface BriefSuggestion {
+  file: string;
+  line?: number;
+  severity?: string;
+  /** Why the change matters — the reviewer-facing explanation. */
+  why: string;
+}
+
+export interface ReviewBrief {
+  /** Who wrote the PR — distinct commit-author display names (from the patch). */
+  authors?: string[];
+  /** The author's own description of the PR (the opening comment body). */
+  description?: string;
+  /** Commit subject lines (first line of each message). */
+  commits?: string[];
+  /** Business-logic summary the scanner inferred from the change. */
+  businessSummary?: string;
+  /** Overall quality band + label, e.g. "C — do not merge as-is". */
+  qualityBand?: string;
+  /** Human-readable change counts, e.g. ["2 features", "1 bug fix", "3 new test files"]. */
+  counts?: string[];
+  /** Flagged risks, most-actionable first. */
+  risks?: BriefRisk[];
+  /** Concrete code-review suggestions, highest-severity first. */
+  suggestions?: BriefSuggestion[];
+  /** Files the reviewer should look at first ("path — why"). */
+  keyFiles?: string[];
+  /** Code areas (graph roots) the change reaches into. */
+  affectedRoots?: string[];
+  /** Changes the scanner could not reach from any root — possible dead code. */
+  unreachableChanges?: string[];
+  /** Entry points with no test coverage in the graph. */
+  uncoveredRoots?: string[];
+  /** Reliability / edge-case gaps (error handling, missing guards, …). */
+  reliabilityGaps?: string[];
+  /** Maintainability hotspots (high complexity / long functions). */
+  techDebt?: string[];
+  /** Count of duplicate-code clusters the scanner found. */
+  duplication?: number;
+  /** The value-card bottom line (is the change worth its cost?). */
+  valueBottomLine?: string;
+}
+
 /** Narrow an unknown payload to a ScanOutput if it carries the PR markers. */
 export function asScanOutput(o: unknown): ScanOutput | null {
   if (!o || typeof o !== 'object') return null;

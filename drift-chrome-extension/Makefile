@@ -14,6 +14,10 @@ NPM ?= npm
 DEV_PORTS ?= 5181 5182 5183 5184 5185 5186
 # The live scan loads this packaged WASM scanner; dev/build stage it if missing.
 WASM := public/drift-static-profiler.wasm
+# The live VOICE agent loads this volley-core turn-taking FSM. Unlike the scanner
+# wasm, this artifact is COMMITTED (src/vendor/volley/*), so it's normally already
+# present; `make dev` only rebuilds it on demand and watches the Rust for edits.
+VOICE_WASM := src/vendor/volley/volley_core_bg.wasm
 
 BLUE   := \033[1;34m
 GREEN  := \033[1;32m
@@ -22,7 +26,7 @@ CYAN   := \033[1;36m
 RESET  := \033[0m
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev build prod test typecheck zip store-assets release clean kill ensure-wasm wasm tts doctor logs
+.PHONY: help install dev build prod test typecheck zip store-assets release clean kill ensure-wasm wasm ensure-voice-wasm voice-wasm tts doctor logs
 
 help: ## Show this help
 	@printf "\n$(BLUE)drift-chrome-extension — make targets$(RESET)\n\n"
@@ -59,6 +63,24 @@ wasm: node_modules ## Force-rebuild the scanner WASM → public/ (auto-installs 
 	@bash scripts/build-wasm.sh
 	@printf "$(GREEN)✓$(RESET) scanner wasm staged → $(CYAN)$(WASM)$(RESET)\n"
 
+# The volley-core voice FSM is COMMITTED (src/vendor/volley/*), so unlike the
+# scanner this is normally already present — we only (re)build when it's missing
+# (e.g. someone wiped it). Never hard-fails dev: a missing wasm-pack/cargo just
+# warns; the committed copy or a later `make voice-wasm` covers it. While `make
+# dev` runs, the Rust source is watched and rebuilt live (see scripts/watch-voice-wasm.mjs).
+ensure-voice-wasm: ## Stage the live-voice (volley-core) wasm into src/vendor/volley/ (builds once if missing)
+	@if [ -f "$(VOICE_WASM)" ]; then \
+	  printf "$(GREEN)✓$(RESET) voice wasm present ($$(du -h "$(VOICE_WASM)" | cut -f1))\n"; \
+	else \
+	  printf "$(YELLOW)→$(RESET) voice wasm missing — building once (needs wasm-pack + cargo)…\n"; \
+	  bash scripts/build-voice-wasm.sh || \
+	    printf "$(YELLOW)⚠ voice wasm not built$(RESET) — live voice stays disabled until $(CYAN)make voice-wasm$(RESET) succeeds (install wasm-pack: $(CYAN)cargo install wasm-pack$(RESET)).\n"; \
+	fi
+
+voice-wasm: node_modules ## Force-rebuild the live-voice (volley-core) wasm → src/vendor/volley/ (needs wasm-pack + cargo)
+	@bash scripts/build-voice-wasm.sh
+	@printf "$(GREEN)✓$(RESET) voice wasm staged → $(CYAN)$(VOICE_WASM)$(RESET)\n"
+
 tts: node_modules ## Bundle the on-device Kokoro voice into the extension (ort engine + ~105 MB model, staged into public/)
 	@printf "$(BLUE)▶$(RESET) staging onnxruntime-web engine → public/ort/\n"
 	@node scripts/stage-ort.mjs
@@ -66,10 +88,18 @@ tts: node_modules ## Bundle the on-device Kokoro voice into the extension (ort e
 	@node scripts/stage-kokoro.mjs
 	@printf "$(GREEN)✓$(RESET) Kokoro bundled — it now ships INSIDE the extension (offline, no runtime download)\n"
 
-dev: node_modules ensure-wasm ## Dev server with hot-reload (Vite + CRXJS); writes dist/, reloads on save
+dev: node_modules ensure-wasm ensure-voice-wasm ## Dev server with hot-reload (Vite + CRXJS); writes dist/, reloads on save. Also watches the volley-core Rust → rebuilds the voice wasm on edit
 	@printf "$(YELLOW)→$(RESET) Load $(CYAN)$(CURDIR)/dist$(RESET) at chrome://extensions (Developer mode → Load unpacked)\n"
-	@printf "$(YELLOW)→$(RESET) Then click the $(CYAN)Drift$(RESET) toolbar icon to open the side panel. Saving a file hot-reloads it.\n\n"
-	@$(NPM) run dev
+	@printf "$(YELLOW)→$(RESET) Then click the $(CYAN)Drift$(RESET) toolbar icon to open the side panel. Saving a file hot-reloads it.\n"
+	@printf "$(YELLOW)→$(RESET) Editing $(CYAN)crates/volley-core/src/*.rs$(RESET) rebuilds the voice wasm → HMR reloads the live agent.\n\n"
+	@# Run the volley-core wasm watcher BESIDE the Vite dev server. Single shell line
+	@# (Make spawns a fresh shell per recipe line) so the trap stays in scope: when
+	@# vite exits on Ctrl+C, the trap reaps the background watcher. The watcher never
+	@# blocks or fails dev — at worst it logs that auto-rebuild is unavailable.
+	@node scripts/watch-voice-wasm.mjs & \
+	  WATCH_PID=$$!; \
+	  trap 'kill $$WATCH_PID 2>/dev/null' EXIT INT TERM; \
+	  $(NPM) run dev
 
 build: node_modules ensure-wasm ## Production build → dist/
 	@printf "$(BLUE)▶$(RESET) vite build\n"
@@ -165,8 +195,11 @@ doctor: ## Diagnose live-scan prerequisites (node, rust wasm target, wasi-sdk, s
 	@command -v node >/dev/null 2>&1 && printf "  $(GREEN)✓$(RESET) node $$(node -v)\n" || printf "  $(YELLOW)⚠$(RESET) node missing\n"
 	@[ -d node_modules ] && printf "  $(GREEN)✓$(RESET) npm deps installed\n" || printf "  $(YELLOW)⚠$(RESET) deps missing → make install\n"
 	@command -v cargo >/dev/null 2>&1 && printf "  $(GREEN)✓$(RESET) cargo present\n" || printf "  $(YELLOW)⚠$(RESET) cargo missing (only needed to rebuild the wasm)\n"
-	@rustup target list --installed 2>/dev/null | grep -q wasm32-wasip1 && printf "  $(GREEN)✓$(RESET) rust target wasm32-wasip1\n" || printf "  $(YELLOW)⚠$(RESET) run: rustup target add wasm32-wasip1\n"
+	@rustup target list --installed 2>/dev/null | grep -q wasm32-wasip1 && printf "  $(GREEN)✓$(RESET) rust target wasm32-wasip1 (scanner)\n" || printf "  $(YELLOW)⚠$(RESET) run: rustup target add wasm32-wasip1\n"
+	@rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown && printf "  $(GREEN)✓$(RESET) rust target wasm32-unknown-unknown (voice)\n" || printf "  $(YELLOW)⚠$(RESET) run: rustup target add wasm32-unknown-unknown\n"
+	@command -v wasm-pack >/dev/null 2>&1 && printf "  $(GREEN)✓$(RESET) wasm-pack $$(wasm-pack --version 2>/dev/null | awk '{print $$2}')\n" || printf "  $(CYAN)i$(RESET) wasm-pack missing (only needed to rebuild the voice wasm) → cargo install wasm-pack\n"
 	@[ -x "$${WASI_SDK:-$$HOME/wasi-sdk}/bin/clang" ] && printf "  $(GREEN)✓$(RESET) wasi-sdk\n" || printf "  $(YELLOW)⚠$(RESET) wasi-sdk missing → https://github.com/WebAssembly/wasi-sdk/releases\n"
 	@[ -f "$(WASM)" ] && printf "  $(GREEN)✓$(RESET) scanner wasm staged ($$(du -h "$(WASM)" | cut -f1))\n" || printf "  $(YELLOW)⚠$(RESET) scanner wasm not staged → make wasm\n"
+	@[ -f "$(VOICE_WASM)" ] && printf "  $(GREEN)✓$(RESET) voice wasm staged ($$(du -h "$(VOICE_WASM)" | cut -f1))\n" || printf "  $(YELLOW)⚠$(RESET) voice wasm not staged → make voice-wasm\n"
 	@[ -f public/kokoro.meta.json ] && printf "  $(GREEN)✓$(RESET) Kokoro model bundled ($$(du -sh public/models 2>/dev/null | cut -f1))\n" || printf "  $(CYAN)i$(RESET) Kokoro model not bundled — audio uses the system voice → make tts\n"
 	@[ -f public/ort/ort-wasm-simd-threaded.jsep.wasm ] && printf "  $(GREEN)✓$(RESET) onnxruntime-web engine staged\n" || printf "  $(CYAN)i$(RESET) ort engine not staged → make tts (or npm run stage:ort)\n"

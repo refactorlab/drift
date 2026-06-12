@@ -1,0 +1,17 @@
+{
+  "name": "drift-brain",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "description": "Local Claude brain for Drift voice chat — reuses your `claude login` via the Agent SDK (no API key). Bun loopback SSE endpoint: POST /turn.",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --hot src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.170"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

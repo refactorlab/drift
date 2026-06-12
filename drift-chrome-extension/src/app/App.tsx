@@ -10,14 +10,19 @@ import { Chat } from './Chat';
 import { Settings } from './Settings';
 import { Context } from './Context';
 import { LivePipelineRun } from './LivePipelineRun';
+import { Voice } from './Voice';
+import { PhoneCall } from './PhoneCall';
 import '../ui/theme.css';
 import './app.css';
 
-type View = 'chat' | 'settings' | 'context' | 'pipeline';
+type View = 'chat' | 'settings' | 'context' | 'pipeline' | 'voice';
 
 export function App() {
   const { ready, auth, settings } = useStore();
-  const [view, setView] = useState<View>('chat');
+  // The live-scan dashboard is the home surface: opening the panel lands here, it
+  // auto-scans the active PR (once per session) and exposes Call + the Claude
+  // top-risks summary. Chat / Voice / Settings are reachable from its header.
+  const [view, setView] = useState<View>('pipeline');
 
   // Default to a local guest account so the user is always "connected" (shown
   // in Settings) — no forced sign-in. Google is an optional upgrade.
@@ -70,20 +75,37 @@ export function App() {
   }
 
   if (view === 'settings') {
-    return <Settings auth={auth} settings={settings} onBack={() => setView('chat')} />;
+    return <Settings auth={auth} settings={settings} onBack={() => setView('pipeline')} />;
   }
   if (view === 'context') {
-    return <Context onBack={() => setView('chat')} />;
+    return <Context onBack={() => setView('pipeline')} />;
   }
-  if (view === 'pipeline') {
-    return <LivePipelineRun onBack={() => setView('chat')} />;
+  if (view === 'chat') {
+    return (
+      <Chat
+        settings={settings}
+        onOpenSettings={() => setView('settings')}
+        onOpenContext={() => setView('context')}
+        onOpenPipeline={() => setView('pipeline')}
+        onOpenVoice={() => setView('voice')}
+      />
+    );
   }
+  if (view === 'voice') {
+    // Default to Dial's hosted phone call; the browser mic agent is the fallback.
+    return settings.voiceMode === 'browser' ? (
+      <Voice settings={settings} onBack={() => setView('pipeline')} />
+    ) : (
+      <PhoneCall settings={settings} onBack={() => setView('pipeline')} />
+    );
+  }
+  // Home: the live-scan dashboard.
   return (
-    <Chat
+    <LivePipelineRun
       settings={settings}
+      onOpenChat={() => setView('chat')}
+      onOpenVoice={() => setView('voice')}
       onOpenSettings={() => setView('settings')}
-      onOpenContext={() => setView('context')}
-      onOpenPipeline={() => setView('pipeline')}
     />
   );
 }

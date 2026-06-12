@@ -19,6 +19,7 @@
     "store-assets": "node scripts/generate-store-assets.mjs",
     "prepare:assets": "npm run build:wasm && npm run build:tts",
     "build:wasm": "bash scripts/build-wasm.sh",
+    "build:voice-wasm": "bash scripts/build-voice-wasm.sh",
     "build:tts": "node scripts/stage-ort.mjs"
   },
   "dependencies": {

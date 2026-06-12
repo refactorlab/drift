@@ -32,7 +32,7 @@ const SETTINGS = { onboarded: true, askBeforeActing: true, theme: 'light' as con
 
 function renderChat() {
   return render(
-    <Chat settings={SETTINGS} onOpenSettings={noop} onOpenContext={noop} onOpenPipeline={noop} />,
+    <Chat settings={SETTINGS} onOpenSettings={noop} onOpenContext={noop} onOpenPipeline={noop} onOpenVoice={noop} />,
   );
 }
 

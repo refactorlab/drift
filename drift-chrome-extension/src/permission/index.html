@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enable microphone — Andy</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        display: grid; place-items: center; min-height: 100vh; margin: 0;
+        background: Canvas; color: CanvasText;
+      }
+      .card { max-width: 28rem; padding: 2rem; text-align: center; line-height: 1.5; }
+      h1 { font-size: 1.25rem; }
+      #status { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 0.5rem; background: color-mix(in srgb, CanvasText 8%, transparent); }
+      #status.ok { background: color-mix(in srgb, green 18%, transparent); }
+      #status.err { background: color-mix(in srgb, red 18%, transparent); }
+      button { margin-top: 1rem; padding: 0.5rem 1rem; border-radius: 0.5rem; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent); background: transparent; color: inherit; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>🎙 Enable the microphone for Andy</h1>
+      <p>Andy needs microphone access to hold a live voice conversation about your pull request. Allow it once here, then return to the side panel.</p>
+      <div id="status">Requesting microphone access…</div>
+      <button id="retry">Try again</button>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -197,6 +197,33 @@ Subject: [PATCH 2/2] second and final
     expect(head.title).toBe('second and final');
     expect(head.commits).toEqual(['first', 'second and final']);
   });
+
+  it('captures distinct commit authors (who wrote the PR), names only, first-seen order', () => {
+    const patch = `From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: Ada Lovelace <ada@example.com>
+Subject: [PATCH 1/3] first
+
+From 2222222222222222222222222222222222222222 Mon Sep 17 00:00:00 2001
+From: Grace Hopper <grace@example.com>
+Subject: [PATCH 2/3] second
+
+From 3333333333333333333333333333333333333333 Mon Sep 17 00:00:00 2001
+From: Ada Lovelace <ada@example.com>
+Subject: [PATCH 3/3] third
+
+`;
+    const head = parsePatchHead(patch);
+    expect(head.authors).toEqual(['Ada Lovelace', 'Grace Hopper']); // distinct, in order
+  });
+
+  it('falls back to the email when a commit has no display name', () => {
+    const patch = `From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: <noreply@users.github.com>
+Subject: [PATCH] bot change
+
+`;
+    expect(parsePatchHead(patch).authors).toEqual(['noreply@users.github.com']);
+  });
 });
 
 // The .patch carries every commit (subject + body + the `---` diff separator) —

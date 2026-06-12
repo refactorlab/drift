@@ -66,5 +66,8 @@ export default defineManifest({
   // hosts makes the background worker's fetch CORS-exempt for ANY redirect
   // target, so a failure can only be auth (404), not host coverage. This is the
   // same access a download-manager extension needs.
-  host_permissions: ['https://*/*'],
+  //
+  // `http://localhost/*` lets the side panel reach the local drift-brain
+  // (the Claude voice "brain") over loopback for the live voice agent.
+  host_permissions: ['https://*/*', 'http://localhost/*'],
 });
