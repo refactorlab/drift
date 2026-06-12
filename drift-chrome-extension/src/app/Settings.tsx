@@ -8,6 +8,9 @@ import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
 import { getHistory, clearHistoryForPr, type ScanRecord } from '../state/scanHistory';
 import { removeSpokenAudioForUrl } from '../state/spokenAudio';
+import { AURA_SPEAKERS, DEFAULT_SPEAKER } from '../core/cfVoice';
+import { DEFAULT_BRAIN_URL, DEFAULT_VOICE_MODEL, VOICE_MODELS } from '../core/voiceBrain';
+import { listNumbers, type DialNumber } from '../core/dialVoice';
 
 // The live-scan engine dependency: shows the acquired wasm version + source.
 //   • "Check for update" re-verifies the BUNDLED build (the store-compliant
@@ -175,6 +178,248 @@ function VoiceEngineRow({ settings }: { settings: SettingsT }) {
         <button className="btn ghost" onClick={() => void download()} disabled={busy}>
           {busy ? (pct != null ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download model'}
         </button>
+      </div>
+    </>
+  );
+}
+
+// A write-through text field: controlled local state keeps the display in sync
+// with external settings changes (e.g. "Clear all"), and every edit persists
+// immediately — so a value isn't lost if the user leaves without blurring.
+function PersistedInput({
+  value,
+  onSave,
+  type = 'text',
+  placeholder,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  type?: 'text' | 'password';
+  placeholder?: string;
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]); // resync when storage changes elsewhere
+  return (
+    <input
+      className="text-input"
+      type={type}
+      spellCheck={false}
+      placeholder={placeholder}
+      value={v}
+      onChange={(e) => {
+        setV(e.target.value);
+        onSave(e.target.value.trim());
+      }}
+    />
+  );
+}
+
+// The live voice agent (browser-orchestrated): the side panel runs the turn loop
+// locally, using Cloudflare Workers AI (BYO token) for speech-to-text and
+// text-to-speech, and the local drift-brain for Claude. These fields are the
+// user's own credentials, stored only on this device.
+function VoiceAgentRow({ settings }: { settings: SettingsT }) {
+  const speaker = settings.voiceSpeaker || DEFAULT_SPEAKER;
+  const model = settings.voiceModel || DEFAULT_VOICE_MODEL;
+  return (
+    <>
+      <div className="section-title">Live voice agent</div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Brain model</div>
+          <div className="hint">The Claude model Andy thinks with. Opus is most capable; Haiku is fastest for live.</div>
+        </div>
+        <select
+          className="model-select"
+          value={model}
+          onChange={(e) => void patchSettings({ voiceModel: e.target.value })}
+        >
+          {VOICE_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Cloudflare account id</div>
+          <div className="hint">From the Workers AI dashboard. Used for speech-to-text and text-to-speech.</div>
+        </div>
+        <PersistedInput
+          placeholder="account id"
+          value={settings.voiceCfAccountId ?? ''}
+          onSave={(v) => void patchSettings({ voiceCfAccountId: v })}
+        />
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Workers AI API token</div>
+          <div className="hint">A token scoped to Workers AI. Stored only on this device.</div>
+        </div>
+        <PersistedInput
+          type="password"
+          placeholder="api token"
+          value={settings.voiceCfApiToken ?? ''}
+          onSave={(v) => void patchSettings({ voiceCfApiToken: v })}
+        />
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Andy’s voice</div>
+          <div className="hint">Deepgram Aura speaker used for the spoken replies.</div>
+        </div>
+        <select
+          className="model-select"
+          value={speaker}
+          onChange={(e) => void patchSettings({ voiceSpeaker: e.target.value })}
+        >
+          {AURA_SPEAKERS.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row" style={{ borderBottom: 'none' }}>
+        <div className="grow">
+          <div className="label">Brain endpoint</div>
+          <div className="hint">
+            The local drift-brain (Claude via your subscription). Run <code>npm start</code> in
+            <code> drift-brain/</code>.
+          </div>
+        </div>
+        <PersistedInput
+          placeholder={DEFAULT_BRAIN_URL}
+          value={settings.voiceBrainUrl ?? ''}
+          onSave={(v) => void patchSettings({ voiceBrainUrl: v })}
+        />
+      </div>
+    </>
+  );
+}
+
+// The Dial phone-call agent (fully hosted): Dial places a REAL outbound call and
+// runs the whole conversation (STT, TTS, LLM) on their side — the opposite of the
+// browser agent above. The user supplies their Dial API key; we list their numbers
+// to pick the "from" number. All BYO, stored only on this device.
+function DialCallRow({ settings }: { settings: SettingsT }) {
+  const [numbers, setNumbers] = useState<DialNumber[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const apiKey = settings.dialApiKey?.trim() ?? '';
+  const gender = settings.dialVoiceGender ?? 'female';
+
+  async function refresh(key: string) {
+    if (!key) {
+      setNumbers(null);
+      setNote(null);
+      return;
+    }
+    setLoading(true);
+    setNote(null);
+    try {
+      const ns = await listNumbers(key);
+      setNumbers(ns);
+      setNote(ns.length ? `${ns.length} number(s) on your account` : 'No numbers on this account yet.');
+      // Auto-select when there's exactly one and none is chosen.
+      if (!settings.dialFromNumberId && ns.length === 1) {
+        void patchSettings({ dialFromNumberId: ns[0].id });
+      }
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+      setNumbers(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load numbers whenever a key is present (on mount and after it changes).
+  useEffect(() => {
+    void refresh(apiKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey]);
+
+  return (
+    <>
+      <div className="section-title">Phone call (Dial)</div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Dial API key</div>
+          <div className="hint">
+            Your <code>sk_live_…</code> key from getdial.ai. Dial does the speech and the conversation. Stored only on
+            this device.
+          </div>
+        </div>
+        <PersistedInput
+          type="password"
+          placeholder="sk_live_…"
+          value={settings.dialApiKey ?? ''}
+          onSave={(v) => void patchSettings({ dialApiKey: v })}
+        />
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Call from</div>
+          <div className="hint">{loading ? 'Loading your Dial numbers…' : note ?? 'The Dial number Andy calls from.'}</div>
+        </div>
+        {numbers && numbers.length > 0 ? (
+          <select
+            className="model-select"
+            value={settings.dialFromNumberId ?? ''}
+            onChange={(e) => void patchSettings({ dialFromNumberId: e.target.value })}
+          >
+            <option value="" disabled>
+              choose a number
+            </option>
+            {numbers.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.number}
+                {n.nickname ? ` · ${n.nickname}` : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <button className="btn ghost" disabled={!apiKey || loading} onClick={() => void refresh(apiKey)}>
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+        )}
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Call this phone</div>
+          <div className="hint">The number Andy calls (your phone), in E.164 — e.g. +14155550123.</div>
+        </div>
+        <PersistedInput
+          placeholder="+14155550123"
+          value={settings.dialToNumber ?? ''}
+          onSave={(v) => void patchSettings({ dialToNumber: v })}
+        />
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Voice</div>
+          <div className="hint">The voice Dial's agent speaks with on the call.</div>
+        </div>
+        <select
+          className="model-select"
+          value={gender}
+          onChange={(e) => void patchSettings({ dialVoiceGender: e.target.value as 'male' | 'female' })}
+        >
+          <option value="female">Female</option>
+          <option value="male">Male</option>
+        </select>
+      </div>
+      <div className="row" style={{ borderBottom: 'none' }}>
+        <div className="grow">
+          <div className="label">Language</div>
+          <div className="hint">BCP-47 tag to pin the call (e.g. en-US). Leave blank to let Dial auto-detect.</div>
+        </div>
+        <PersistedInput
+          placeholder="auto-detect"
+          value={settings.dialLanguage ?? ''}
+          onSave={(v) => void patchSettings({ dialLanguage: v })}
+        />
       </div>
     </>
   );
@@ -387,6 +632,10 @@ export function Settings({
         <ScannerRow settings={settings} />
 
         <VoiceEngineRow settings={settings} />
+
+        <DialCallRow settings={settings} />
+
+        <VoiceAgentRow settings={settings} />
 
         <div className="section-title">Data</div>
         <SavedScans />

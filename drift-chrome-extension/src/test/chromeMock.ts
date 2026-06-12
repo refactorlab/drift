@@ -88,6 +88,8 @@ export function installChromeMock(): ChromeMock {
         if (msg?.type === 'GET_CONTEXT') cb?.({ ok: true, context });
         else cb?.({ ok: true });
       },
+      update: async (tabId: number, props: { url?: string }) => ({ id: tabId, ...props }),
+      create: async (props: { url?: string }) => ({ id: 2, ...props }),
       onActivated: noopHub(),
       onUpdated: noopHub(),
     },

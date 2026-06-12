@@ -50,6 +50,7 @@ function signature(ctx: PrContext | null): string {
     ctx.pr.url,
     ctx.report.verdictLabel,
     ctx.report.metricCount,
+    ctx.prDiff?.files.length ?? 0,
     ctx.artifacts.map((a) => `${a.name}:${a.url ?? ''}`).join(','),
   ].join('|');
 }
@@ -61,14 +62,18 @@ async function liveContextFromTab(): Promise<PrContext | null> {
     if (!tab?.id || !tab.url?.includes('github.com')) return null;
     const res = await sendToTab(tab.id, { type: 'GET_CONTEXT' });
     const scraped = res.ok && 'context' in res ? res.context : null;
-    if (scraped) return scraped;
+    const id = tab.url ? parsePrUrl(tab.url) : null;
+    const liveUrl = id ? `https://github.com/${id.owner}/${id.repo}/pull/${id.number}` : null;
+    if (scraped) {
+      // A scraped Drift comment carries no code diff. If the user has run a live
+      // scan for this PR, attach its `pr_diff` so the voice agent — which grounds
+      // ONLY on the diff — can talk about the change even on a commented PR.
+      const live = liveUrl ? await getLiveContext(liveUrl) : null;
+      return live?.prDiff ? { ...scraped, prDiff: live.prDiff } : scraped;
+    }
     // No Drift comment on the page — fall back to a live-scan context if the
     // user has run the in-extension scanner on this PR.
-    const id = tab.url ? parsePrUrl(tab.url) : null;
-    if (id) {
-      const url = `https://github.com/${id.owner}/${id.repo}/pull/${id.number}`;
-      return await getLiveContext(url);
-    }
+    if (liveUrl) return await getLiveContext(liveUrl);
   } catch {
     /* content script not present on this tab */
   }

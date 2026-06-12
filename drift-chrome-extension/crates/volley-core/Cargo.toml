@@ -1,0 +1,22 @@
+[package]
+name = "volley-core"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Real-time control/DSP core for Volley: VAD + DuplexCascade micro-turn FSM. Compiles to wasm32 (browser) and native."
+
+[lib]
+# cdylib → the wasm module for the browser; rlib → the native lib for tests / a terminal twin.
+crate-type = ["cdylib", "rlib"]
+
+# wasm-bindgen is ONLY needed for the browser target; native builds/tests stay clean.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.115"
+
+# Modern rustc emits bulk-memory + nontrapping-float-to-int + sign-ext ops; binaryen
+# must be told to allow them or wasm-opt's validator rejects the (valid) module.
+# NOTE: NO `--enable-bulk-memory-opt` — that flag exists only in recent binaryen, and
+# wasm-pack's cached/older wasm-opt rejects it ("Unknown option"). `--enable-bulk-memory`
+# already enables the full feature (the opt subset included), so it's redundant + portable.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O4', '--enable-bulk-memory', '--enable-nontrapping-float-to-int', '--enable-sign-ext', '--enable-mutable-globals']

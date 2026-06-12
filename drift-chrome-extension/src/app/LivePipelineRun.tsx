@@ -10,19 +10,26 @@ import { scanToReport } from '../core/scanReport';
 import { saveTextFile } from '../core/saveFile';
 import { buildNarration, summaryLine, type LiveScanMeta } from '../core/liveSummary';
 import type { DriftReport, PrContext } from '../core/types';
+import type { PrDiff } from '../core/scanOutput';
+import { buildReviewBrief } from '../core/reviewBrief';
 import { type PreparedAudio } from '../core/ttsProvider';
 import { getSharedTtsProvider } from '../core/ttsEngine';
 import { isTtsAvailable } from '../core/ttsStore';
 import { SpokenSummary } from './SpokenSummary';
+import { TopRisks } from './TopRisks';
 import { ScanReportView } from './report/ScanReportView';
 import { ForceExpandContext } from './report/primitives';
-import { getSettings } from '../state/settings';
+import { getSettings, type Settings } from '../state/settings';
+import { markAutoHandled, wasAutoHandled } from '../state/sessionScan';
 import {
   addScan,
   getHistoryForPr,
+  getPrGroups,
   removeScan,
+  type PrGroup,
   type ScanRecord,
 } from '../state/scanHistory';
+import { openUrlInTab } from '../core/messaging';
 import { setLiveContext } from '../state/liveContext';
 import { saveSpokenAudio, getSpokenAudio, removeSpokenAudio } from '../state/spokenAudio';
 // Inlined as strings (Vite `?inline`) so the HTML export can ship a fully
@@ -151,6 +158,8 @@ type Display = {
   changedStatus: ChangedFileStatus[];
   /** Full commit messages from the .patch — drives the Commits section. */
   commits: string[];
+  /** Distinct commit-author display names — "who wrote the PR". */
+  authors: string[];
   ts: number;
   durationMs: number | null;
   // Audio synthesized eagerly during the run → SpokenSummary plays it instantly.
@@ -249,6 +258,7 @@ function recordToDisplay(r: ScanRecord): Display {
     scan: r.scan,
     changedStatus: r.changedStatus ?? [],
     commits: r.commits ?? [],
+    authors: r.authors ?? [],
     ts: r.ts,
     durationMs: r.durationMs,
     audio: null,
@@ -258,26 +268,67 @@ function recordToDisplay(r: ScanRecord): Display {
 function toLiveContext(d: Display): PrContext {
   const { owner = '', repo, number, title = null } = d.meta;
   const url = `https://github.com/${owner}/${repo}/pull/${number}`;
+  // The live scan injected `pr_diff` into the raw scan JSON (see the run loop);
+  // carry it through so the voice agent grounds on the actual code change.
+  const prDiff = (d.scan as { pr_diff?: PrDiff } | null | undefined)?.pr_diff;
   return {
     pr: { owner, repo, number, title, url },
     report: d.report,
     artifacts: [],
+    prDiff,
+    // The reviewer-facing distillation of the scan — risk, suggestions, tests,
+    // scope, value — so a "call me" conversation can cover what a reviewer asks,
+    // not just the diff. Commit subjects + authors ride alongside (the authors are
+    // "who wrote the PR"; neither is in the scan JSON itself).
+    reviewBrief: buildReviewBrief(d.scan, d.commits, d.authors),
     detectedAt: d.ts,
   };
 }
 
-export function LivePipelineRun({ onBack }: { onBack: () => void }) {
+export function LivePipelineRun({
+  onBack,
+  onOpenVoice,
+  onOpenChat,
+  onOpenSettings,
+  settings,
+  autoScan = true,
+}: {
+  onBack?: () => void;
+  /** Open the voice/phone "Call" surface. Present when this view is the home. */
+  onOpenVoice?: () => void;
+  /** Open the chat surface (grounded on the current scan). */
+  onOpenChat?: () => void;
+  /** Open settings. */
+  onOpenSettings?: () => void;
+  /** Live settings — feeds the Claude top-risks summary (brain url + model). */
+  settings?: Settings;
+  /** Auto-run/auto-load the active PR's scan on first sight this session.
+   *  Default on for the real app; tests pass `false` to drive the flow manually. */
+  autoScan?: boolean;
+}) {
   const activePr = useActivePr();
+  // Home = mounted as the landing dashboard (App passes nav handlers). Tests mount
+  // it bare (only onBack) and get the legacy back-arrow header instead.
+  const isHome = !!(onOpenChat || onOpenVoice || onOpenSettings);
 
   const [steps, setSteps] = useState<Step[]>(STEPS);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Display | null>(null);
   const [viewing, setViewing] = useState<Display | null>(null);
   const [history, setHistory] = useState<ScanRecord[]>([]);
+  // The PR url the loaded `history` belongs to — lets the auto-scan effect wait
+  // until THIS PR's history has actually been read in before deciding run-vs-load.
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  // Every PR we hold scans for (across all tabs) — drives the cross-PR picker.
+  const [prGroups, setPrGroups] = useState<PrGroup[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const runStartRef = useRef(0);
+  // When the user picks a PR that isn't the active tab, we navigate the browser
+  // there and stash what to do once useActivePr catches up: load the latest scan
+  // (the PR already has history) or kick off a fresh run (never scanned).
+  const pendingRef = useRef<{ url: string; action: 'run' | 'load-latest' } | null>(null);
 
   const prUrl = activePr
     ? `https://github.com/${activePr.owner}/${activePr.repo}/pull/${activePr.number}`
@@ -310,18 +361,35 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     setResult(null);
     setError(null);
     setSteps(STEPS.map((s) => ({ ...s })));
+    setHistoryFor(null);
     if (!prUrl) {
       setHistory([]);
       return;
     }
     let live = true;
     void getHistoryForPr(prUrl).then((h) => {
-      if (live) setHistory(h);
+      if (live) {
+        setHistory(h);
+        setHistoryFor(prUrl);
+      }
     });
     return () => {
       live = false;
     };
   }, [prUrl]);
+
+  // Keep the cross-PR picker in sync with stored history. `history` changes on
+  // every mutation we care about — initial load, PR switch, a completed run
+  // (setHistory), and a delete — so this single dependency covers them all.
+  useEffect(() => {
+    let live = true;
+    void getPrGroups().then((g) => {
+      if (live) setPrGroups(g);
+    });
+    return () => {
+      live = false;
+    };
+  }, [history]);
 
   const patch = useCallback((id: StepId, p: Partial<Step>) => {
     setSteps((prev) =>
@@ -377,6 +445,9 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
 
   const run = useCallback(async () => {
     if (!activePr) return;
+    // A fresh run supersedes any deferred "load latest on arrival" intent, so a
+    // pending jump can't later replace this run's result with an old scan.
+    pendingRef.current = null;
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -389,6 +460,9 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     const sig = ac.signal;
     const { owner, repo, number } = activePr;
     const url = `https://github.com/${owner}/${repo}/pull/${number}`;
+    // A run is a deliberate "handled" — so the auto-scan effect won't re-fire for
+    // this PR after a tab switch-back later this session.
+    markAutoHandled(url);
 
     try {
       // The head-tree zip total, only knowable from a PRIOR download of this repo
@@ -495,7 +569,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
         const ts = Date.now();
         const id = `${url}@${head.headSha}@${ts}`;
         const durationMs = ts - runStartRef.current;
-        const next: Display = { id, report: driftReport, meta, narration, scan, changedStatus: diff.entries, commits: head.commits, ts, durationMs, audio };
+        const next: Display = { id, report: driftReport, meta, narration, scan, changedStatus: diff.entries, commits: head.commits, authors: head.authors, ts, durationMs, audio };
         setResult(next);
 
         const record: ScanRecord = {
@@ -513,6 +587,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           changedFiles: diff.changedPaths.length,
           changedStatus: diff.entries,
           commits: head.commits,
+          authors: head.authors,
         };
         const hist = await addScan(record);
         // Persist the synthesized WAV BEFORE the history row becomes clickable.
@@ -536,6 +611,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           scan,
           changedStatus: diff.entries,
           commits: head.commits,
+          authors: head.authors,
           ts: Date.now(),
           durationMs,
           audio: null,
@@ -570,13 +646,23 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     if (id) void saveSpokenAudio(id, audio);
   }, []);
 
-  // "Discuss in chat" — publish this result as the PR's grounding and go back to
-  // the chat, which picks it up and opens with a grounded reasoning turn.
+  // "Discuss in chat" — publish this result as the PR's grounding and open the
+  // chat, which picks it up and opens with a grounded reasoning turn. As the home
+  // surface we navigate via onOpenChat; the legacy back-arrow mount uses onBack.
   const discuss = useCallback(async () => {
     if (!display) return;
     await setLiveContext(toLiveContext(display));
-    onBack();
-  }, [display, onBack]);
+    (onOpenChat ?? onBack)?.();
+  }, [display, onOpenChat, onBack]);
+
+  // "Call" — same grounding contract as discuss(): publish the scan CURRENTLY on
+  // screen (which may be a replayed/older record, not the latest run) as the PR's
+  // live context before opening the voice surface, so Andy talks about exactly what
+  // the user is looking at — not whatever run last wrote the context.
+  const callAboutScan = useCallback(async () => {
+    if (display) await setLiveContext(toLiveContext(display));
+    onOpenVoice?.();
+  }, [display, onOpenVoice]);
 
   // "Export JSON" — save the raw scan-pr.json (ScanPrOutput — the exact artifact
   // the GitHub Action produces) to disk. Works for both a live run and a replayed
@@ -650,68 +736,217 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     [],
   );
 
+  // Pick a PR from the cross-PR list. The single click "does the right thing":
+  //  • already the active tab → act now (load its latest scan, or run if it has
+  //    none).
+  //  • a different PR → navigate the browser there and defer the same action to
+  //    the pending-intent effect below, which fires once useActivePr lands on it
+  //    (and, for a load, once that PR's history has been read in).
+  const selectPr = useCallback(
+    async (p: { url: string; hasScans: boolean }) => {
+      const action = p.hasScans ? 'load-latest' : 'run';
+      if (p.url === prUrl) {
+        if (action === 'load-latest') {
+          // Usually this PR's history is already in state — load its newest scan
+          // now. If the read is still in flight, defer to the pending effect,
+          // which fires the moment it lands.
+          if (history[0] && history[0].url === prUrl) void openRecord(history[0]);
+          else pendingRef.current = { url: p.url, action };
+        } else if (!running) {
+          void run();
+        }
+        return;
+      }
+      pendingRef.current = { url: p.url, action };
+      setViewing(null);
+      setResult(null);
+      await openUrlInTab(p.url);
+    },
+    [prUrl, history, running, openRecord, run],
+  );
+
+  // Finish a deferred PR jump once the active tab has caught up to the picked PR.
+  useEffect(() => {
+    const pending = pendingRef.current;
+    if (!pending || pending.url !== prUrl) return;
+    if (pending.action === 'load-latest') {
+      // Wait until THIS PR's history is the one in state (entries carry its url),
+      // then replay its most recent scan. Records exist (the row was scanned), so
+      // this resolves as soon as the PR-switch effect's read lands.
+      if (history.length > 0 && history[0].url === prUrl) {
+        pendingRef.current = null;
+        if (prUrl) markAutoHandled(prUrl); // a deliberate jump counts as handled
+        void openRecord(history[0]);
+      }
+      return;
+    }
+    if (!running) {
+      pendingRef.current = null;
+      void run(); // run() marks this PR handled itself
+    }
+  }, [prUrl, history, running, openRecord, run]);
+
+  // Auto-run (or auto-load) the active PR's scan the FIRST time it's seen this
+  // session — the "open the panel and it's already working" behaviour. Gated so it
+  // never re-fires on a tab switch-back (the session set), never fights a deliberate
+  // picker jump (pendingRef), and waits until this PR's history is in (historyFor)
+  // so it can choose: replay the latest scan if one exists, else scan fresh.
+  useEffect(() => {
+    if (!autoScan || !activePr || !prUrl) return;
+    if (running) return;
+    if (pendingRef.current) return;
+    if (historyFor !== prUrl) return; // this PR's history not loaded yet
+    if (wasAutoHandled(prUrl)) return;
+    markAutoHandled(prUrl);
+    if (history.length > 0 && history[0].url === prUrl) {
+      void openRecord(history[0]);
+    } else {
+      void run();
+    }
+  }, [autoScan, activePr, prUrl, running, historyFor, history, openRecord, run]);
+
   const liveTotal = running ? now - runStartRef.current : display?.durationMs ?? null;
+
+  // The PR picker: every scanned PR, plus the active tab's PR when it isn't one
+  // of them yet — so you can scan a brand-new PR or jump back to a past one even
+  // after its GitHub tab is gone. Active PR pinned first, else most-recent first.
+  type PrRow = PrGroup;
+  const prRows: PrRow[] = (() => {
+    const rows: PrRow[] = prGroups.map((g) => ({ ...g }));
+    if (activePr && prUrl && !rows.some((r) => r.url === prUrl)) {
+      rows.push({
+        url: prUrl, owner: activePr.owner, repo: activePr.repo, number: activePr.number,
+        title: null, count: 0, lastTs: 0, lastVerdict: 'unknown', lastVerdictLabel: '',
+      });
+    }
+    return rows.sort((a, b) => {
+      if (a.url === prUrl) return -1;
+      if (b.url === prUrl) return 1;
+      return b.lastTs - a.lastTs;
+    });
+  })();
+
+  // Hero summary for the active PR — prefer the on-screen scan, else fall back to
+  // the latest stored record so the card reads as "scanned" even before a load.
+  const latest = history[0] ?? null;
+  const heroVerdict = display?.report.verdict ?? latest?.verdict ?? 'unknown';
+  const heroVerdictLabel = display?.report.verdictLabel ?? latest?.verdictLabel ?? '';
+  const heroCaption = display ? summaryLine(display.report, display.meta) : latest?.caption ?? '';
+  const heroTitle = display?.meta.title ?? latest?.title ?? null;
+  const activeScanned = history.length > 0;
+  const hasScan = !!display || activeScanned; // a scan exists for the active PR → Call is meaningful
+  // Every OTHER pull request we hold scans for (the active one is the hero above).
+  const otherRows = prRows.filter((r) => r.url !== prUrl);
 
   return (
     <div className="drift-app drift-root">
       <header className="app-bar">
-        <button className="iconbtn" title="Back" onClick={onBack}>
-          ←
-        </button>
+        {isHome ? (
+          <span className="drift-logo" />
+        ) : (
+          <button className="iconbtn" title="Back" onClick={onBack}>
+            ←
+          </button>
+        )}
         <h1>Live scan</h1>
         {liveTotal != null && liveTotal > 0 && (
+          <span className="pl-total" title="Total run time">
+            {fmtMs(liveTotal)}
+          </span>
+        )}
+        <span className="spacer" />
+        {isHome && (
           <>
-            <span className="spacer" />
-            <span className="pl-total" title="Total run time">
-              {fmtMs(liveTotal)}
-            </span>
+            {onOpenChat && (
+              <button className="iconbtn" title="Open chat about this PR" onClick={onOpenChat}>
+                💬
+              </button>
+            )}
+            {onOpenVoice && (
+              <button className="iconbtn" title="Talk to Andy — voice / phone call" onClick={onOpenVoice}>
+                🎙
+              </button>
+            )}
+            {onOpenSettings && (
+              <button className="iconbtn" title="Settings" onClick={onOpenSettings}>
+                ⚙
+              </button>
+            )}
           </>
         )}
       </header>
 
       <div className="settings">
-        <div className="section-title">Run the Drift pipeline here · no AI · no API</div>
-        <div className="hint" style={{ margin: '0 0 10px' }}>
-          Downloads the PR head tree, runs the static drift profiler’s{' '}
-          <code>scan-pr</code> in WebAssembly, and renders a full native report —
-          gauges, diagrams and all — right here. Every run is saved and becomes a
-          chat you can ask about.
-        </div>
-
-        {activePr ? (
-          <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-            <div className="grow">
-              <div className="label">
-                {activePr.owner}/{activePr.repo}
-              </div>
-              <div className="hint">Pull request #{activePr.number}</div>
-            </div>
-            {running ? (
-              <button className="btn ghost danger" onClick={() => abortRef.current?.abort()}>
-                Stop
-              </button>
-            ) : (
-              <button className="btn" onClick={() => void run()}>
-                {history.length || result ? '↻ Re-run' : '▶ Run scan'}
-              </button>
-            )}
-          </div>
-        ) : (
+        {!activePr && otherRows.length === 0 ? (
           <div className="drift-empty">
             <div className="big">⚡</div>
             Open a GitHub pull request to scan it.
           </div>
+        ) : null}
+
+        {/* ── Active PR hero: status + the primary Call / Chat / Re-run actions ── */}
+        {activePr && (
+          <div className={`pl-hero pl-verdict-${heroVerdict}`}>
+            <div className="pl-hero-top">
+              <span className="pl-hero-id">
+                {activePr.owner}/{activePr.repo} #{activePr.number}
+              </span>
+              <span className="pl-hero-badges">
+                <span className="pl-pr-badge">current tab</span>
+                {viewing && <span className="pl-pr-badge pl-badge-past">Past scan</span>}
+              </span>
+            </div>
+            {heroTitle && <div className="pl-hero-title">{heroTitle}</div>}
+            <div className="pl-hero-status">
+              {running
+                ? 'Scanning…'
+                : hasScan
+                  ? `${heroVerdictLabel || 'Reviewed'}${heroCaption ? ` · ${heroCaption}` : ''}`
+                  : 'Not scanned yet'}
+            </div>
+
+            <div className="pl-hero-actions">
+              {running ? (
+                <button className="btn ghost danger" onClick={() => abortRef.current?.abort()}>
+                  ◼ Stop
+                </button>
+              ) : (
+                <>
+                  {hasScan && onOpenVoice && (
+                    <button className="btn" onClick={() => void callAboutScan()} title="Talk to Andy about this scan">
+                      📞 Call
+                    </button>
+                  )}
+                  {hasScan && (
+                    <button className="btn ghost" onClick={() => void discuss()} title="Open a grounded chat about this PR">
+                      💬 Chat
+                    </button>
+                  )}
+                  {activeScanned && !display && (
+                    <button
+                      className="btn ghost"
+                      onClick={() => void selectPr({ url: prUrl!, hasScans: true })}
+                      title="Load the latest scan for this PR"
+                    >
+                      ⤓ Load latest scan
+                    </button>
+                  )}
+                  <button className="btn ghost" onClick={() => void run()}>
+                    {activeScanned || display ? '↻ Re-run' : '▶ Run scan'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         )}
 
+        {/* Live pipeline steps — only while a scan is actually running. */}
         {activePr && running && (
-          <>
-            <div className="section-title">Steps</div>
-            <div className="pl-steps">
-              {steps.map((s) => (
-                <StepRow key={s.id} step={s} now={now} />
-              ))}
-            </div>
-          </>
+          <div className="pl-steps">
+            {steps.map((s) => (
+              <StepRow key={s.id} step={s} now={now} />
+            ))}
+          </div>
         )}
 
         {error && (
@@ -720,59 +955,56 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           </div>
         )}
 
+        {/* ── Top risks (Claude, on-device fallback) — the at-a-glance headline.
+            Gated on a persisted id: the degenerate no-quality display (id '') has
+            no real report to summarize, so it skips the card + the brain call. ── */}
+        {display && display.id && (
+          <TopRisks
+            scanId={display.id}
+            scan={display.scan}
+            report={display.report}
+            brainUrl={settings?.voiceBrainUrl}
+            model={settings?.voiceModel}
+          />
+        )}
+
+        {/* Spoken summary — on-device narration, playable inline. */}
+        {display?.narration && (
+          <SpokenSummary
+            text={display.narration}
+            prepared={display.audio}
+            onSynthesized={display.id ? (audio) => cacheSynthesized(display.id, audio) : undefined}
+          />
+        )}
+
+        {/* ── Full report (collapsible) — gauges, diagrams, diff, commits ── */}
         {display && (
           <>
-            <div className="pl-result-head">
-              <div className="section-title" style={{ margin: 0 }}>
-                {viewing ? 'Past scan' : 'Result'}
-              </div>
-              <div className="pl-result-actions">
-                {viewing && (
-                  <button className="pl-pill" onClick={() => setViewing(null)}>
-                    ✕ Close
+            <details className="pl-fold" open>
+              <summary className="pl-fold-summary">
+                <span className="pl-fold-title">Full report</span>
+                <span className="pl-fold-actions" onClick={(e) => e.preventDefault()}>
+                  <button className="pl-pill" onClick={exportScan} title="Download the raw scan-pr.json for this scan">
+                    ⬇ JSON
                   </button>
-                )}
-                <button
-                  className="pl-pill"
-                  onClick={exportScan}
-                  title="Download the raw scan-pr.json for this scan"
-                >
-                  ⬇ Export JSON
-                </button>
-                <button
-                  className="pl-pill"
-                  onClick={exportHtml}
-                  title="Download a standalone, offline HTML copy of this report"
-                >
-                  ⬇ Export HTML
-                </button>
-                <button className="pl-pill accent" onClick={() => void discuss()}>
-                  💬 Discuss in chat
-                </button>
+                  <button className="pl-pill" onClick={exportHtml} title="Download a standalone, offline HTML copy of this report">
+                    ⬇ HTML
+                  </button>
+                  {viewing && (
+                    <button className="pl-pill" onClick={() => setViewing(null)} title="Close this past scan">
+                      ✕ Close
+                    </button>
+                  )}
+                </span>
+              </summary>
+              <div ref={reportRef} className="pl-fold-body">
+                <ScanReportView scan={display.scan} changedFiles={display.changedStatus} commits={display.commits} />
               </div>
-            </div>
-
-            {display.narration && (
-              <SpokenSummary
-                text={display.narration}
-                prepared={display.audio}
-                // Cache a lazily-synthesized clip back to this scan's record so a
-                // later replay is instant. Bound to the displayed id, not undefined,
-                // only when there's a record to key it by.
-                onSynthesized={
-                  display.id ? (audio) => cacheSynthesized(display.id, audio) : undefined
-                }
-              />
-            )}
-
-            <div ref={reportRef}>
-              <ScanReportView scan={display.scan} changedFiles={display.changedStatus} commits={display.commits} />
-            </div>
+            </details>
 
             {/* Off-screen, fully-expanded twin used only as the HTML-export source.
-                Mounted (not display:none) so its mermaid/gauge useEffects run and
-                bake real SVGs; pushed off-canvas + aria-hidden so it never affects
-                the visible panel. */}
+                Kept OUTSIDE the collapsible so its mermaid/gauge useEffects run and
+                bake real SVGs even when the visible report is collapsed. */}
             <div
               ref={exportReportRef}
               aria-hidden
@@ -785,12 +1017,48 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
           </>
         )}
 
-        {activePr && history.length > 0 && (
-          <>
-            <div className="section-title" style={{ marginTop: 18 }}>
-              Recent scans · {history.length}
+        {/* ── Other pull requests (collapsible picker) ── */}
+        {otherRows.length > 0 && (
+          <details className="pl-fold">
+            <summary className="pl-fold-summary">
+              <span className="pl-fold-title">Other pull requests · {otherRows.length}</span>
+            </summary>
+            <div className="pl-prlist pl-fold-body">
+              {otherRows.map((p) => {
+                const scanned = p.count > 0;
+                return (
+                  <div key={p.url} className="pl-pr-row">
+                    <button
+                      className="pl-pr-main"
+                      onClick={() => void selectPr({ url: p.url, hasScans: scanned })}
+                      title={scanned ? 'Open this PR and load its latest scan' : 'Open this PR and scan it'}
+                    >
+                      <span className={`pl-hist-dot${scanned ? ` pl-verdict-${p.lastVerdict}` : ''}`} />
+                      <span className="grow">
+                        <span className="pl-pr-title">
+                          {p.owner}/{p.repo} #{p.number}
+                        </span>
+                        <span className="pl-pr-sub">
+                          {scanned
+                            ? `${p.count} scan${p.count === 1 ? '' : 's'} · ${p.lastVerdictLabel || 'Reviewed'} · ${fmtAgo(p.lastTs)}`
+                            : 'Not scanned yet'}
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-            <div className="pl-history">
+          </details>
+        )}
+
+        {/* ── Recent scans for the active PR (collapsible history) ── */}
+        {activePr && history.length > 0 && (
+          <details className="pl-fold">
+            <summary className="pl-fold-summary">
+              <span className="pl-fold-title">Recent scans · {history.length}</span>
+            </summary>
+            <div className="pl-history pl-fold-body">
               {history.map((r) => {
                 const active = viewing != null && viewing.ts === r.ts;
                 return (
@@ -819,7 +1087,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
                 );
               })}
             </div>
-          </>
+          </details>
         )}
       </div>
     </div>

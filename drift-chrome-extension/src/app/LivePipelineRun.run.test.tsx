@@ -55,6 +55,8 @@ vi.mock('../core/liveSummary', () => ({
 }));
 // The heavy report renderer is irrelevant here — stub it so the test is fast.
 vi.mock('./report/ScanReportView', () => ({ ScanReportView: () => <div data-testid="report" /> }));
+// The top-risks card owns its own async (Claude/brain) — out of scope for this test.
+vi.mock('./TopRisks', () => ({ TopRisks: () => <div data-testid="top-risks" /> }));
 
 import { LivePipelineRun } from './LivePipelineRun';
 import { getHistoryForPr } from '../state/scanHistory';
@@ -73,7 +75,7 @@ describe('LivePipelineRun — live scan → spoken summary is ready, replay neve
   afterEach(cleanup);
 
   it('after a live scan the card shows "Listen" (never stuck synthesizing), persists the WAV, and replay reuses it', async () => {
-    render(<LivePipelineRun onBack={() => {}} />);
+    render(<LivePipelineRun onBack={() => {}} autoScan={false} />);
 
     fireEvent.click(screen.getByText('▶ Run scan'));
 
@@ -103,7 +105,7 @@ describe('LivePipelineRun — live scan → spoken summary is ready, replay neve
   });
 
   it('pressing Listen plays instantly (uses the armed clip, no extra synthesis)', async () => {
-    render(<LivePipelineRun onBack={() => {}} />);
+    render(<LivePipelineRun onBack={() => {}} autoScan={false} />);
     fireEvent.click(screen.getByText('▶ Run scan'));
     await waitFor(() => expect(screen.getByText('▶ Listen')).toBeTruthy(), { timeout: 5000 });
 

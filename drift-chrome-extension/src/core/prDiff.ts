@@ -17,6 +17,10 @@ export type PrHead = {
    *  action feeds via `git log --format=%B%x00`. Drives the scanner's
    *  feat:/fix:/perf: counts + value-card, and the Commits section. */
   commits: string[];
+  /** Distinct commit-author display names, in first-seen order — "who wrote the
+   *  PR". Read from each patch's `From: Name <email>` header (same-origin,
+   *  private-repo safe). Usually one name; multi-author PRs list each. */
+  authors: string[];
 };
 
 /** One changed file with its status — the structured form the UI renders as a
@@ -88,7 +92,37 @@ export function parsePatchHead(patch: string): PrHead {
   const commits = parsePatchCommits(patch);
   // The LAST `From` is the head commit; its subject (first message line) is the title.
   const title = commits.at(-1)?.split('\n', 1)[0] || undefined;
-  return { headSha: shas[shas.length - 1], title, commits };
+  return { headSha: shas[shas.length - 1], title, commits, authors: parsePatchAuthors(patch) };
+}
+
+/**
+ * Extract the distinct commit-author display names from a `git format-patch`
+ * stream (each entry's RFC2822 `From: Name <email>` header), in first-seen order.
+ * This is "who wrote the PR" — the same-origin, private-repo-safe source (unlike
+ * the REST author, which needs a token on private repos). Falls back to the email
+ * when a name is absent. Pure → testable.
+ */
+export function parsePatchAuthors(patch: string): string[] {
+  const blocks = patch
+    .split(/^(?=From [0-9a-f]{40} )/m)
+    .filter((b) => /^From [0-9a-f]{40} /.test(b));
+  const seen = new Set<string>();
+  const authors: string[] = [];
+  for (const block of blocks) {
+    const m = block.match(/^From:\s*(.+)$/m); // the `From:` HEADER (with colon), not `From <sha>`
+    if (!m) continue;
+    let name = m[1].replace(/\s*<[^>]*>\s*$/, '').trim(); // "Name <email>" → "Name"
+    if (!name) {
+      const em = m[1].match(/<([^>]+)>/); // bare "<email>" → the address
+      name = em ? em[1] : m[1].trim();
+    }
+    name = name.replace(/^"(.*)"$/, '$1').trim(); // unquote "Last, First"
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      authors.push(name);
+    }
+  }
+  return authors;
 }
 
 /**

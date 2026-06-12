@@ -38,7 +38,7 @@ RESET  := \033[0m
 .DEFAULT_GOAL := help
 .PHONY: help \
         collect-pr-reviews \
-        install check run-llm \
+        install check run-llm drift-brain \
         kill-port kill-port-test kill-bun-sock kill-dev \
         dev setup \
         test test-fast test-all test-profiler test-lab test-clean test-clean-target \
@@ -179,6 +179,25 @@ check: ## Show runner status, loaded models, and current config
 
 run-llm: ## Reconfigure context-size on a secondary model (ai/gemma4:E4B)
 	@docker model configure --context-size 40960 ai/gemma4:E4B
+
+### Drift Brain — local Claude voice brain (Bun)
+# The one opt-in localhost process behind the extension's in-browser voice chat:
+# a tiny Bun server whose /turn SSE endpoint is backed by your `claude login`
+# (Agent SDK, no API key) — the only sanctioned way to use your subscription,
+# since the public API rejects subscription OAuth tokens from non-first-party
+# clients. `bun --hot` swaps the fetch handler on save without dropping the port
+# or open SSE streams. Override via env, e.g.:
+#   PORT=9000 ANTHROPIC_MODEL=claude-haiku-4-5 make drift-brain
+
+drift-brain: ## Run the local Claude voice brain (Bun · hot-reload). Uses your `claude login` — no API key. Health: /health?deep=1 · docs: /docs
+	@command -v bun >/dev/null 2>&1 || { \
+	  printf "$(RED)✗$(RESET) bun not installed — run: $(CYAN)curl -fsSL https://bun.sh/install | bash$(RESET)\n"; exit 1; }
+	@command -v claude >/dev/null 2>&1 || \
+	  printf "$(YELLOW)!$(RESET) claude CLI not on PATH — log in first ($(CYAN)claude$(RESET) → /login) or the brain will 401\n"
+	@printf "$(BLUE)▶$(RESET) drift-brain (Bun · hot-reload) — Ctrl+C to stop\n"
+	@printf "    Endpoint: $(CYAN)http://127.0.0.1:8787$(RESET)  (POST /turn · GET /health?deep=1 · GET /docs)\n"
+	@printf "    Auth:     your $(CYAN)claude login$(RESET) (subscription · no API key)\n"
+	@cd drift-brain && bun install && bun run dev
 
 ### Dev hygiene
 
@@ -917,10 +936,10 @@ llm-docker:                             ## curl-test Docker Model Runner (http:/
 
 ### Drift Chrome extension — side-panel app (drift-chrome-extension/)
 
-.PHONY: extension-dev extension-build extension-prod extension-test extension-install extension-kill extension-release extension-cws-exchange extension-wasm extension-tts extension-doctor
+.PHONY: extension-dev extension-build extension-prod extension-test extension-install extension-kill extension-release extension-cws-exchange extension-wasm extension-voice-wasm extension-tts extension-doctor
 
-extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — stages the scanner wasm first, then load drift-chrome-extension/dist unpacked
-	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR)\n"
+extension-dev: ## Run the Chrome extension in dev with HOT-RELOAD (Vite + CRXJS) — stages scanner + voice wasm, watches crates/volley-core for live voice-wasm rebuilds, then load drift-chrome-extension/dist unpacked
+	@printf "$(BLUE)▶$(RESET) Chrome extension dev server (HMR · live voice-wasm rebuild)\n"
 	@$(MAKE) --no-print-directory -C drift-chrome-extension dev
 
 extension-kill: ## Stop any running Chrome-extension dev servers (frees Vite ports 5181+)
@@ -931,6 +950,9 @@ extension-doctor: ## Diagnose live-scan prerequisites (node, rust wasm target, w
 
 extension-wasm: ## Force-rebuild the scanner WASM → drift-chrome-extension/public/
 	@$(MAKE) --no-print-directory -C drift-chrome-extension wasm
+
+extension-voice-wasm: ## Force-rebuild the live-voice (volley-core) WASM → drift-chrome-extension/src/vendor/volley/
+	@$(MAKE) --no-print-directory -C drift-chrome-extension voice-wasm
 
 extension-tts: ## Stage the Kokoro voice engine (set SHERPA_WASM_TARBALL + KOKORO_MODEL_TARBALL)
 	@$(MAKE) --no-print-directory -C drift-chrome-extension tts

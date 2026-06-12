@@ -67,6 +67,23 @@ export async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   return tab;
 }
 
+/**
+ * Send the user to `url`. When the active tab is already a github.com page we
+ * navigate it IN PLACE — so a PR→PR jump keeps a single tab and the side panel
+ * stays attached to it (useActivePr re-detects the new URL) — otherwise we open
+ * a fresh tab rather than hijacking whatever non-GitHub page is focused. Returns
+ * the id of the tab we landed on, when known.
+ */
+export async function openUrlInTab(url: string): Promise<number | undefined> {
+  const tab = await activeTab();
+  if (tab?.id != null && /^https?:\/\/github\.com\//.test(tab.url ?? '')) {
+    await chrome.tabs.update(tab.id, { url, active: true });
+    return tab.id;
+  }
+  const created = await chrome.tabs.create({ url });
+  return created?.id;
+}
+
 const STORAGE_KEY = 'drift:last-report';
 
 export async function cacheReport(report: DriftReport): Promise<void> {

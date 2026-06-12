@@ -42,6 +42,9 @@ export interface ScanRecord {
   changedStatus?: ChangedFileStatus[];
   /** Commit messages (subject + body) so a replay shows the Commits section. */
   commits?: string[];
+  /** Distinct commit-author display names ("who wrote the PR") so a replayed
+   *  call/brief still names the author. Optional for older records. */
+  authors?: string[];
 }
 
 /** Newest-first, then trimmed to MAX_PER_PR per PR and MAX_TOTAL overall. */
@@ -68,6 +71,55 @@ export async function getHistory(): Promise<ScanRecord[]> {
 /** Scans for one PR url, newest first. */
 export async function getHistoryForPr(url: string): Promise<ScanRecord[]> {
   return (await getHistory()).filter((r) => r.url === url);
+}
+
+/** One row in the cross-PR picker: a PR plus its scan count and latest verdict. */
+export interface PrGroup {
+  url: string;
+  owner: string;
+  repo: string;
+  number: number;
+  title: string | null;
+  /** Number of saved scans for this PR. */
+  count: number;
+  /** When the most recent scan finished (epoch ms) — drives recency sort + "x ago". */
+  lastTs: number;
+  /** Verdict of the most recent scan — drives the row's status dot. */
+  lastVerdict: DriftReport['verdict'];
+  lastVerdictLabel: string;
+}
+
+/** Collapse a flat scan list into one row per PR (newest scan wins the metadata),
+ *  sorted most-recently-scanned first. Shared by the Live-scan PR picker and the
+ *  Settings "Saved scans" manager so the two never diverge. */
+export function groupHistoryByPr(records: ScanRecord[]): PrGroup[] {
+  const byUrl = new Map<string, ScanRecord[]>();
+  for (const r of records) {
+    const list = byUrl.get(r.url);
+    if (list) list.push(r);
+    else byUrl.set(r.url, [r]);
+  }
+  return [...byUrl.values()]
+    .map((recs) => {
+      const latest = recs.reduce((a, b) => (b.ts > a.ts ? b : a));
+      return {
+        url: latest.url,
+        owner: latest.owner,
+        repo: latest.repo,
+        number: latest.number,
+        title: latest.title,
+        count: recs.length,
+        lastTs: latest.ts,
+        lastVerdict: latest.verdict,
+        lastVerdictLabel: latest.verdictLabel,
+      };
+    })
+    .sort((a, b) => b.lastTs - a.lastTs);
+}
+
+/** All scanned PRs as picker rows, newest-scanned first. */
+export async function getPrGroups(): Promise<PrGroup[]> {
+  return groupHistoryByPr(await getHistory());
 }
 
 export async function addScan(record: ScanRecord): Promise<ScanRecord[]> {

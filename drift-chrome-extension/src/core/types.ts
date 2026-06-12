@@ -7,6 +7,8 @@
 // future machine-readable payload can populate the same types without the UI
 // changing.
 
+import type { PrDiff, ReviewBrief } from './scanOutput';
+
 export type Verdict = 'address' | 'review' | 'approve' | 'unknown';
 
 export type MetricLevel = 'low' | 'moderate' | 'critical' | 'unknown';
@@ -101,6 +103,19 @@ export interface PrContext {
   pr: PrIdentity;
   report: DriftReport;
   artifacts: ArtifactRef[];
+  /**
+   * The literal +/- code change (the scan-pr JSON's `pr_diff`), present only on
+   * a live-scan context — it's what the voice agent grounds on per scan. Absent
+   * for a scraped-comment context (a Drift comment carries no diff).
+   */
+  prDiff?: PrDiff;
+  /**
+   * Reviewer-facing distillation of the scan (risk, suggestions, tests, scope,
+   * value) — present only on a live-scan context. The Dial phone agent grounds on
+   * this ALONGSIDE the diff so it can answer the questions a reviewer actually
+   * asks, not just walk the changed lines.
+   */
+  reviewBrief?: ReviewBrief;
   /** Spoken-summary audio, when the comment linked one. */
   audio?: AudioRef;
   detectedAt: number;

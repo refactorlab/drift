@@ -38,7 +38,9 @@ if [ ! -x "$WASI_SDK/bin/clang" ]; then
   asset="wasi-sdk-${WASI_SDK_VERSION}.0-${arch_part}-${os_part}.tar.gz"
   url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/${asset}"
 
-  echo "→ wasi-sdk not found at $WASI_SDK — installing $asset…"
+  # ${asset} is brace-delimited so macOS's bash 3.2 doesn't absorb the trailing
+  # multibyte "…" byte into the variable name (→ `asset…: unbound variable`).
+  echo "→ wasi-sdk not found at $WASI_SDK — installing ${asset}…"
   echo "  ↓ $url"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT

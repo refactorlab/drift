@@ -19,11 +19,13 @@ export function Chat({
   onOpenSettings,
   onOpenContext,
   onOpenPipeline,
+  onOpenVoice,
 }: {
   settings: Settings;
   onOpenSettings: () => void;
   onOpenContext: () => void;
   onOpenPipeline: () => void;
+  onOpenVoice: () => void;
 }) {
   // The conversation is bound to a PR url so persistence is always atomic.
   const [chat, setChat] = useState<{ url: string | null; messages: ChatMessage[] }>({
@@ -186,6 +188,13 @@ export function Chat({
           onClick={onOpenPipeline}
         >
           ⚡
+        </button>
+        <button
+          className="iconbtn"
+          title="Talk to Andy — hands-free voice conversation about the scan"
+          onClick={onOpenVoice}
+        >
+          🎙
         </button>
         <button className="iconbtn" title="Settings" onClick={onOpenSettings}>
           ⚙

@@ -28,7 +28,7 @@ describe('Chat — spoken-summary audio (end-to-end)', () => {
 
   it('renders a playable audio card once a PR with audio is detected', async () => {
     mock.setContext(contextWithAudio());
-    render(<Chat settings={SETTINGS} onOpenSettings={noop} onOpenContext={noop} onOpenPipeline={noop} />);
+    render(<Chat settings={SETTINGS} onOpenSettings={noop} onOpenContext={noop} onOpenPipeline={noop} onOpenVoice={noop} />);
 
     // The card appears (the reasoning turn pushes messages.length > 0).
     const play = await waitFor(
@@ -60,7 +60,7 @@ describe('Chat — spoken-summary audio (end-to-end)', () => {
     const noAudio = contextWithAudio();
     delete (noAudio as { audio?: unknown }).audio;
     mock.setContext(noAudio);
-    render(<Chat settings={SETTINGS} onOpenSettings={noop} onOpenContext={noop} onOpenPipeline={noop} />);
+    render(<Chat settings={SETTINGS} onOpenSettings={noop} onOpenContext={noop} onOpenPipeline={noop} onOpenVoice={noop} />);
 
     await waitFor(() => expect(screen.getByText(/Recognised a Drift scan/i)).toBeTruthy(), {
       timeout: 3000,
