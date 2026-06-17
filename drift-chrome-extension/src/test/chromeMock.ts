@@ -7,12 +7,31 @@ import type { PrContext } from '../core/types';
 type Changes = Record<string, { oldValue?: unknown; newValue?: unknown }>;
 type Listener = (changes: Changes, area: string) => void;
 
+/** A recorded chrome.tabs.update call — lets navigation tests assert the URL. */
+export interface TabUpdateRecord {
+  tabId?: number;
+  props: { url?: string };
+}
+
+/** A recorded chrome.scripting.executeScript call (the post-nav scroll inject). */
+export interface ExecuteScriptRecord {
+  tabId?: number;
+  func?: (...a: unknown[]) => unknown;
+  args?: unknown[];
+}
+
 export interface ChromeMock {
   store: Map<string, unknown>;
   /** Responder for chrome.runtime.sendMessage (FETCH_ARTIFACT / OPEN_SIDE_PANEL). */
   setResponder: (fn: (msg: unknown) => unknown | Promise<unknown>) => void;
   /** Context returned to GET_CONTEXT queries (the active-tab content script). */
   setContext: (ctx: PrContext | null) => void;
+  /** Override the active tab returned by chrome.tabs.query (id/url). */
+  setActiveTab: (tab: { id?: number; url?: string } | undefined) => void;
+  /** The most recent chrome.tabs.update call (navigation), or null. */
+  lastTabUpdate: () => TabUpdateRecord | null;
+  /** The most recent chrome.scripting.executeScript call, or null. */
+  lastExecuteScript: () => ExecuteScriptRecord | null;
 }
 
 const noopHub = () => ({ addListener: () => {}, removeListener: () => {} });
@@ -27,6 +46,12 @@ export function installChromeMock(): ChromeMock {
     error: 'no responder installed',
   });
   let context: PrContext | null = null;
+  let activeTab: { id?: number; url?: string } | undefined = {
+    id: 1,
+    url: 'https://github.com/o/r/pull/70',
+  };
+  let lastTabUpdate: TabUpdateRecord | null = null;
+  let lastExecuteScript: ExecuteScriptRecord | null = null;
 
   const local = {
     async get(keys?: string | string[] | null) {
@@ -83,13 +108,37 @@ export function installChromeMock(): ChromeMock {
       onMessage: noopHub(),
     },
     tabs: {
-      query: async () => [{ id: 1, url: 'https://github.com/o/r/pull/70' }],
+      query: async () => (activeTab ? [activeTab] : []),
+      // chrome.tabs.update navigates a tab (MV3 returns a Promise<Tab>; the
+      // callback form is supported too). We record it so navigation tests can
+      // assert the URL, and reflect the new URL back into the active tab.
+      update: (tabId: number, props: { url?: string }, cb?: (tab: unknown) => void) => {
+        lastTabUpdate = { tabId, props };
+        if (props?.url) activeTab = { ...(activeTab ?? {}), id: tabId, url: props.url };
+        const tab = { ...(activeTab ?? {}), id: tabId };
+        cb?.(tab);
+        return Promise.resolve(tab);
+      },
+      // Tabs are reported ready immediately so waitForTabComplete resolves fast.
+      get: (tabId: number, cb?: (tab: unknown) => void) => {
+        const tab = { ...(activeTab ?? {}), id: tabId, status: 'complete' };
+        cb?.(tab);
+        return Promise.resolve(tab);
+      },
       sendMessage: (_tabId: number, msg: { type?: string }, cb?: (res: unknown) => void) => {
         if (msg?.type === 'GET_CONTEXT') cb?.({ ok: true, context });
         else cb?.({ ok: true });
       },
       onActivated: noopHub(),
       onUpdated: noopHub(),
+    },
+    scripting: {
+      // Record the post-navigation scroll injection so tests can assert it ran with
+      // the right (anchor, path). We don't execute `func` (no real DOM here).
+      executeScript: (injection: { target?: { tabId?: number }; func?: (...a: unknown[]) => unknown; args?: unknown[] }) => {
+        lastExecuteScript = { tabId: injection?.target?.tabId, func: injection?.func, args: injection?.args };
+        return Promise.resolve([{ result: undefined }]);
+      },
     },
     webNavigation: {
       onHistoryStateUpdated: noopHub(),
@@ -108,5 +157,8 @@ export function installChromeMock(): ChromeMock {
     store,
     setResponder: (fn) => (responder = fn),
     setContext: (c) => (context = c),
+    setActiveTab: (tab) => (activeTab = tab),
+    lastTabUpdate: () => lastTabUpdate,
+    lastExecuteScript: () => lastExecuteScript,
   };
 }

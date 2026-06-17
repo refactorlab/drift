@@ -20,6 +20,7 @@ import { runAgentTurn } from '../core/agentLoop';
 import { EMPTY_PR_STATE, type PrToolState } from '../core/chatTools';
 import { LENSES } from '../agents/lenses';
 import { latestScanForPr, prUrl } from '../core/runLiveScan';
+import { hasHandoverSession } from '../state/handoverSession';
 
 const STEP_INTERVAL_MS = 450;
 
@@ -76,31 +77,48 @@ export function Chat({
 
   // Recompute tool state when the active PR changes: read the latest scan from
   // history (cache, no network) so "scan ran" + file count are known up front.
+  // Keyed ONLY on the PR identity (owner/repo/number) — NOT ctx.pr.title, which goes
+  // undefined on the /files & /changes sub-pages and would otherwise RESET scan_ran +
+  // handover_active to false (breaking handover routing) until the async re-fetch
+  // healed it. The title is patched in separately below.
   useEffect(() => {
     let alive = true;
     if (!activePr) {
       setToolState(EMPTY_PR_STATE);
       return;
     }
-    const base: PrToolState = {
+    const url = prUrl(activePr);
+    setToolState({
       pr: activePr,
-      url: prUrl(activePr),
+      url,
       title: ctx?.pr.title ?? null,
       scanRan: false,
       scanRunning: false,
       changedCount: null,
       architectureKnown: false,
-    };
-    setToolState(base);
+      handoverActive: false,
+    });
     void latestScanForPr(activePr).then((rec) => {
       if (!alive || !rec) return;
       setToolState((s) => ({ ...s, scanRan: true, changedCount: rec.changedFiles ?? null }));
+    });
+    // Resume a handover walkthrough if one is saved for this PR (survives reloads
+    // + tab switches), so "next"/"resume" deterministically route back into it.
+    void hasHandoverSession(url).then((active) => {
+      if (alive && active) setToolState((s) => ({ ...s, handoverActive: true }));
     });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePr?.owner, activePr?.repo, activePr?.number, ctx?.pr.title]);
+  }, [activePr?.owner, activePr?.repo, activePr?.number]);
+
+  // Patch in the PR title once the report scrape (ctx) lands, without resetting the
+  // rest of the tool state (so navigating to a sub-page never drops scan/handover).
+  useEffect(() => {
+    if (ctx?.pr.title) setToolState((s) => (s.pr && s.title !== ctx.pr.title ? { ...s, title: ctx.pr.title } : s));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx?.pr.title]);
 
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
@@ -163,8 +181,16 @@ export function Chat({
 
   // Switch conversation when the active PR changes: persist the outgoing one,
   // restore the incoming one from storage (instant), or stream it fresh.
+  //
+  // KEYED ON activePr (the tab-URL PR identity), NOT the scraped `ctx`. `ctx` goes
+  // NULL on a PR's /files & /changes sub-pages (the Drift comment it scrapes lives
+  // only on the Conversation tab) — and the handover navigates the tab THERE — so
+  // keying on ctx wiped the whole conversation (and reset the voice context)
+  // mid-walkthrough. activePr is stable across a PR's sub-pages, so /pull/N →
+  // /pull/N/files is a no-op here and the conversation persists.
+  const convoUrl = activePr ? prUrl(activePr) : null;
   useEffect(() => {
-    const url = ctx?.pr.url ?? null;
+    const url = convoUrl;
     if (url === chatRef.current.url) return;
     targetUrl.current = url;
 
@@ -172,12 +198,11 @@ export function Chat({
     if (prev.url && prev.messages.length) void saveChat(prev.url, prev.messages);
     stopStream();
 
-    if (!url || !ctx) {
+    if (!url) {
       setChat({ url, messages: [] });
-      syncVoiceTo([]); // a live voice session must drop the old PR's context
+      syncVoiceTo([]); // left every PR — drop the old PR's voice context
       return;
     }
-    const pr = ctx;
     void getChat(url).then((saved) => {
       if (targetUrl.current !== url) return; // navigated again — drop stale load
       if (saved.length) {
@@ -187,9 +212,19 @@ export function Chat({
       } else {
         setChat({ url, messages: [] });
         syncVoiceTo([]);
-        startReasoning(pr);
+        if (ctx && ctx.pr.url === url) startReasoning(ctx); // intro only if the report is already scraped
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convoUrl]);
+
+  // The scraped report (ctx) usually lands a beat AFTER activePr. If it arrives for
+  // the current, still-empty conversation, stream the reasoning intro then. (No-op
+  // when ctx is null — e.g. on the /files sub-page — so it never clears anything.)
+  useEffect(() => {
+    if (ctx && ctx.pr.url === chatRef.current.url && chatRef.current.messages.length === 0) {
+      startReasoning(ctx);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx?.pr.url]);
 

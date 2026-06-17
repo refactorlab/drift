@@ -24,6 +24,11 @@ vi.mock('../agents/architecture', () => ({ buildArchitectureOverview: vi.fn(() =
 vi.mock('../agents/iterative-agent', () => ({
   runIterativeAgent: vi.fn(async () => ({ answer: 'DEEP ANSWER', readPaths: ['a.ts'] })),
 }));
+// The handover orchestrator is exercised in agents/handover.test.ts; here we only
+// need it to return a known reply so we can assert the loop emits it VERBATIM.
+vi.mock('../agents/handover', () => ({
+  runHandoverTurn: vi.fn(async () => ({ content: 'HANDOVER PLAN — file 1 of 3.', summary: 'Handover · 3 file(s)', handoverActive: true })),
+}));
 
 import { runAgentTurn } from './agentLoop';
 import type { BrainRuntime } from './brainRuntime';
@@ -58,6 +63,7 @@ const STATE: PrToolState = {
   scanRunning: false,
   changedCount: 2,
   architectureKnown: false, // host state never flips during this synchronous turn
+  handoverActive: false,
 };
 
 beforeEach(() => {
@@ -111,6 +117,26 @@ describe('runAgentTurn — architecture tool chain', () => {
     expect(complete).not.toHaveBeenCalled(); // guard fired before the router
     expect(mockRunIterative).not.toHaveBeenCalled();
     expect(answer).toBe('CAPS');
+  });
+
+  it('emits a final (handover) reply VERBATIM — never re-generates it (the "Next." bug)', async () => {
+    const tokens: string[] = [];
+    const generate = vi.fn(async () => 'REGEN'); // the answer model — must NOT run for a final tool
+    const brain: BrainRuntime = { complete: vi.fn(async () => '{"tool":"none"}'), generate, interrupt() {}, free() {} };
+    const patches: Array<Partial<PrToolState>> = [];
+    const answer = await runAgentTurn({
+      brain,
+      persona: 'P',
+      history: [],
+      userText: 'walk me through this PR', // routeHandover forces pr_handover_mode (scan_ran:true)
+      getState: () => STATE,
+      signal: new AbortController().signal,
+      events: { onToken: (t) => tokens.push(t), onStatePatch: (p) => patches.push(p) },
+    });
+    expect(answer).toBe('HANDOVER PLAN — file 1 of 3.'); // the tool's content, untouched
+    expect(tokens.join('')).toBe('HANDOVER PLAN — file 1 of 3.'); // streamed verbatim to the UI
+    expect(generate).not.toHaveBeenCalled(); // NO re-generation pass (that produced "Next.")
+    expect(patches).toContainEqual({ handoverActive: true });
   });
 
   it('passes the live question into the iterative agent', async () => {

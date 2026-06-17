@@ -17,6 +17,8 @@ import { truncateToTokens } from './chatContext';
 import { buildArchitectureOverview } from '../agents/architecture';
 import { runIterativeAgent } from '../agents/iterative-agent';
 import { LENSES, type AgentLens } from '../agents/lenses';
+import { runHandoverTurn } from '../agents/handover';
+import { parseHandoverIntent } from './handoverIntent';
 import { listPrFiles } from '../state/prFileStore';
 import type { BrainRuntime } from './brainRuntime';
 import type { ChangedFileStatus } from './prDiff';
@@ -82,6 +84,10 @@ export interface PrToolState {
   /** The architecture overview has been built this session (get_pr_architecture
    *  ran) — gates explain_architecture so the deep agent always has the map. */
   architectureKnown: boolean;
+  /** A handover walkthrough session EXISTS for this PR (active or completed) — set
+   *  while one is in progress, cleared on "stop". Gates the deterministic
+   *  `routeHandover` short-circuit so "next"/"proceed"/"resume" capture routing. */
+  handoverActive: boolean;
 }
 
 export const EMPTY_PR_STATE: PrToolState = {
@@ -92,6 +98,7 @@ export const EMPTY_PR_STATE: PrToolState = {
   scanRunning: false,
   changedCount: null,
   architectureKnown: false,
+  handoverActive: false,
 };
 
 export interface ToolRunContext {
@@ -104,6 +111,9 @@ export interface ToolRunContext {
   brain: BrainRuntime;
   /** The user's latest message — the question a deep tool must answer. */
   userText: string;
+  /** Whether this turn is typed or spoken — lets the handover pace its guided
+   *  scroll to reading speed (text) vs TTS speaking speed (voice). Defaults to text. */
+  mode?: 'text' | 'voice';
 }
 
 export interface ToolResult {
@@ -118,6 +128,14 @@ export interface ToolResult {
    *  progress log) the user can copy off the tool-step card so the failure can
    *  be understood and fixed. Built by `buildToolFailureReport`. */
   details?: string;
+  /** Terminal for THIS turn: the tool's `content` IS the user-facing reply, emitted
+   *  VERBATIM (no answer-model re-generation — which collapsed the handover plan to
+   *  "Next."). Also stops the text loop re-routing (a second cursor advance). */
+  final?: boolean;
+  /** For a `final` tool: a CONDENSED text-to-speech variant of `content` (voice
+   *  speaks this; text shows `content`). For the handover, `content` lists every
+   *  file — fine to read, painful to hear. Omitted when content is speech-sized. */
+  spoken?: string;
 }
 
 /** A timestamped progress note captured while a tool runs, kept so a failure can
@@ -297,11 +315,53 @@ export const TOOLS: ChatTool[] = [
       };
     },
   },
+  {
+    name: 'pr_handover_mode',
+    description:
+      'Guided, file-by-file PR walkthrough that DRIVES THE BROWSER to each change, explains it, and stops for you to proceed. Use to START a handover ("walk me through this PR", "give me a guided review"), and — once it is running — for "next"/"proceed"/"continue", "go to <file>", "back", "resume", "where are we", or "stop".',
+    capability:
+      'Give a guided, file-by-file PR handover — I navigate the browser to each change, explain it high-level → low-level, and pause for you to proceed (pr_handover_mode).',
+    spokenAction: 'Walking through the PR…',
+    available: (s) => s.scanRan && !!s.pr,
+    async run(_args, ctx) {
+      if (!ctx.state.pr || !ctx.state.url) return { ok: false, content: 'No pull request is open in the current tab.' };
+      const rec = await latestScanForPr(ctx.state.pr);
+      if (!rec) return { ok: false, content: 'No scan result found — run run_live_pr_scan first.' };
+      log(`pr_handover_mode ${rec.owner}/${rec.repo}#${rec.number} · "${ctx.userText.slice(0, 40)}"`);
+      const r = await runHandoverTurn({
+        pr: ctx.state.pr,
+        url: ctx.state.url,
+        rec,
+        userText: ctx.userText,
+        brain: ctx.brain,
+        signal: ctx.signal,
+        onProgress: ctx.onProgress,
+        mode: ctx.mode ?? 'text',
+      });
+      // `final`: the content IS the reply — emit verbatim (no re-generation) and
+      // don't re-route this turn. `spoken` is the condensed variant voice speaks.
+      return { ok: true, content: r.content, spoken: r.spoken, summary: r.summary, statePatch: { handoverActive: r.handoverActive }, final: true };
+    },
+  },
   // The 5 specialized question agents — one shared iterative engine, per-lens
   // task + file-bias + narration (see agents/lenses.ts). All read the changed
   // files so their answers are GROUNDED (real paths/contents), not guessed.
   ...LENSES.map(lensTool),
 ];
+
+/** Deterministic handover routing — the analog of `isMetaQuestion`, run BEFORE the
+ *  LLM router in both loops. A 1.5B model can't reliably tell "next"/"proceed"/"yes"
+ *  from a fresh PR question, so we resolve the walkthrough's CONTROL utterances in
+ *  code. "start"/"stop" can fire anytime a scan exists; movement/status only while a
+ *  session is live. Returns null → let the LLM router decide (off-topic question
+ *  mid-walkthrough falls through to the lenses). */
+export function routeHandover(userText: string, state: PrToolState): 'pr_handover_mode' | null {
+  if (!state.scanRan || !state.pr) return null; // tool unavailable
+  const intent = parseHandoverIntent(userText);
+  if (!intent) return null;
+  if (intent.kind === 'start' || intent.kind === 'stop') return 'pr_handover_mode';
+  return state.handoverActive ? 'pr_handover_mode' : null;
+}
 
 /** Turn a lens (agents/lenses.ts) into a routable, grounded ChatTool. Each runs
  *  the shared iterative agent under its task lens, narrating its action first. */
@@ -357,6 +417,7 @@ function contextBlock(state: PrToolState): string {
     state.title ? `- pr_title: ${state.title}` : null,
     state.changedCount != null ? `- changed_files: ${state.changedCount}` : null,
     `- architecture_known: ${state.architectureKnown}`,
+    state.handoverActive ? `- handover_in_progress: true` : null,
   ].filter(Boolean);
   return `Current context:\n${lines.join('\n')}`;
 }
@@ -422,6 +483,11 @@ export function buildRouterSystemPrompt(persona: string, state: PrToolState): st
   const rules: string[] = [
     `- The user asks about YOU — what you can do, what tools / functions / commands you can run, how to use you — or just greets, thanks, or makes small talk → "none". You answer in words; no tool describes you.`,
   ];
+  if (has('pr_handover_mode')) {
+    rules.push(
+      `- The user wants a guided walkthrough / handover / file-by-file or step-by-step review or tour of the PR, OR — while one is in progress (handover_in_progress) — says next / proceed / continue / "go to <file>" / back / resume / "where are we" / stop → pr_handover_mode (NOT explain_architecture).`,
+    );
+  }
   if (has('run_live_pr_scan')) {
     rules.push(
       `- scan_ran is false AND the user asks about THIS pull request's code, changes, quality, intent, or "what's going on here" → run_live_pr_scan. A scan is the only way to read the PR — scan it, don't ask the user to paste it.`,

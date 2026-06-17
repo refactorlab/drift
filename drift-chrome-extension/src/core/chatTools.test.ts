@@ -8,6 +8,7 @@ import {
   buildSystemPrompt,
   buildScanContext,
   isMetaQuestion,
+  routeHandover,
   type PrToolState,
   type ScanContextInput,
 } from './chatTools';
@@ -66,6 +67,11 @@ describe('tool gating', () => {
   it('the specialized agents are NOT available before a scan', () => {
     const names = getAvailableTools(withPr()).map((t) => t.name);
     expect(names).not.toContain('find_breaking_changes');
+  });
+
+  it('pr_handover_mode is available after a scan (PR open), not before', () => {
+    expect(getAvailableTools(withPr()).map((t) => t.name)).not.toContain('pr_handover_mode');
+    expect(getAvailableTools(withPr({ scanRan: true })).map((t) => t.name)).toContain('pr_handover_mode');
   });
 
   it('after a scan → get_pr_architecture is offered; explain_architecture only once mapped', () => {
@@ -230,6 +236,56 @@ describe('isMetaQuestion (deterministic route guard)', () => {
       'cool, can you scan it?',
     ])
       expect(isMetaQuestion(q)).toBe(false);
+  });
+});
+
+describe('routeHandover (deterministic handover short-circuit)', () => {
+  it('routes START requests to pr_handover_mode once a scan exists', () => {
+    expect(routeHandover('walk me through this PR', withPr({ scanRan: true }))).toBe('pr_handover_mode');
+    expect(routeHandover('give me a guided review', withPr({ scanRan: true }))).toBe('pr_handover_mode');
+  });
+
+  it('routes movement (next/proceed/goto/resume/status) ONLY while a session is live', () => {
+    expect(routeHandover('next', withPr({ scanRan: true }))).toBeNull(); // no session yet
+    expect(routeHandover('next', withPr({ scanRan: true, handoverActive: true }))).toBe('pr_handover_mode');
+    expect(routeHandover('go to auth.ts', withPr({ scanRan: true, handoverActive: true }))).toBe('pr_handover_mode');
+    expect(routeHandover('where are we', withPr({ scanRan: true, handoverActive: true }))).toBe('pr_handover_mode');
+  });
+
+  it('captures affirmatives during a walkthrough (advance), but only with a live session', () => {
+    for (const a of ['ok', 'got it', 'yes', 'sure', 'proceed', 'continue']) {
+      expect(routeHandover(a, withPr({ scanRan: true, handoverActive: true }))).toBe('pr_handover_mode');
+      expect(routeHandover(a, withPr({ scanRan: true }))).toBeNull(); // no session → stays chit-chat
+    }
+  });
+
+  it('"ok"/"got it" are ALSO greetings — so handover routing must win over the meta guard (both loops check it first)', () => {
+    for (const a of ['ok', 'got it']) {
+      expect(isMetaQuestion(a)).toBe(true); // the meta guard alone would chit-chat
+      expect(routeHandover(a, withPr({ scanRan: true, handoverActive: true }))).toBe('pr_handover_mode'); // …handover wins
+    }
+  });
+
+  it('lets "stop" fire anytime a scan exists (harmless if no session)', () => {
+    expect(routeHandover('stop the walkthrough', withPr({ scanRan: true }))).toBe('pr_handover_mode');
+  });
+
+  it('returns null without a scan, and for off-topic questions mid-walkthrough', () => {
+    expect(routeHandover('walk me through this PR', withPr())).toBeNull(); // no scan → tool unavailable
+    expect(routeHandover('what does auth.ts do?', withPr({ scanRan: true, handoverActive: true }))).toBeNull();
+  });
+});
+
+describe('handover router wiring', () => {
+  it('the router prompt carries the handover rule after a scan', () => {
+    const p = buildRouterSystemPrompt('P', withPr({ scanRan: true }));
+    expect(p).toContain('pr_handover_mode');
+    expect(p).toContain('handover');
+  });
+
+  it('parseRouterDecision accepts pr_handover_mode when available', () => {
+    expect(parseRouterDecision('{"tool":"pr_handover_mode"}', withPr({ scanRan: true }))).toBe('pr_handover_mode');
+    expect(parseRouterDecision('{"tool":"pr_handover_mode"}', withPr())).toBeNull(); // gated pre-scan
   });
 });
 

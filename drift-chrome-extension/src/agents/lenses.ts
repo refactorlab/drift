@@ -30,17 +30,20 @@ export interface AgentLens extends IterativeLens {
 }
 
 // ── file classifiers (shared) ────────────────────────────────────────────────
+// Exported so other PR-reasoning code (e.g. the handover plan builder) classifies
+// files the SAME way the lenses' file-bias does — one source of truth for "is this
+// a test / config / source / dependency manifest".
 
-const isTest = (p: string): boolean => /(\.|_)(test|spec)\.[tj]sx?$/.test(p) || /(^|\/)__tests__\//.test(p);
-const isDocs = (p: string): boolean => /\.mdx?$/.test(p) || /(^|\/)readme/i.test(p);
-const isConfig = (p: string): boolean =>
+export const isTest = (p: string): boolean => /(\.|_)(test|spec)\.[tj]sx?$/.test(p) || /(^|\/)__tests__\//.test(p);
+export const isDocs = (p: string): boolean => /\.mdx?$/.test(p) || /(^|\/)readme/i.test(p);
+export const isConfig = (p: string): boolean =>
   /\.(json|ya?ml|toml)$/.test(p) || /\.config\.[tj]s$/.test(p) || /(^|\/)(manifest|vite|tsconfig|package)\b/.test(p);
 /** API-surface-ish: barrels, type/decl files, public entrypoints. */
-const isApiSurface = (p: string): boolean =>
+export const isApiSurface = (p: string): boolean =>
   /(^|\/)index\.[tj]sx?$/.test(p) || /\.d\.ts$/.test(p) || /(^|\/)types?\.[tj]s$/.test(p) || /(^|\/)(api|public)\//.test(p);
-const isSource = (p: string): boolean => /\.[tj]sx?$/.test(p) && !isTest(p) && !isConfig(p);
+export const isSource = (p: string): boolean => /\.[tj]sx?$/.test(p) && !isTest(p) && !isConfig(p);
 /** Dependency manifests / lockfiles across ecosystems. */
-const isDepManifest = (p: string): boolean =>
+export const isDepManifest = (p: string): boolean =>
   /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|cargo\.(toml|lock)|go\.(mod|sum)|requirements\.txt|pyproject\.toml|gemfile(\.lock)?|composer\.(json|lock))$/i.test(
     p,
   );

@@ -24,6 +24,7 @@ import {
   getAvailableTools,
   findTool,
   isMetaQuestion,
+  routeHandover,
   buildToolFailureReport,
   type PrToolState,
   type ToolRunContext,
@@ -104,7 +105,15 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
     // on the first round so a 1.5B router can't misfire it into a PR scan. (Later
     // rounds carry tool results, so skip the guard there.)
     let chosen: string | null = null;
-    if (tools.length && !(round === 0 && extra.length === 0 && isMetaQuestion(userText))) {
+    // Deterministic handover control ("next"/"proceed"/"go to <file>"/"stop"/…)
+    // bypasses the weak LLM router — same principle as isMetaQuestion. Checked
+    // EVERY round so a "walk me through" on an unscanned PR can scan (round 0) then
+    // start the walkthrough (round 1, once scan_ran flips in turnPatch).
+    const forced = routeHandover(userText, state);
+    if (forced && findTool(forced)?.available(state)) {
+      chosen = forced;
+      log.log(`route → ${chosen} (handover short-circuit)`);
+    } else if (tools.length && !(round === 0 && extra.length === 0 && isMetaQuestion(userText))) {
       const routeMsgs = [
         ...buildMessages(buildRouterSystemPrompt(persona, state), history, userText),
         ...extra,
@@ -157,8 +166,9 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
       },
       brain,
       userText,
+      mode: 'text',
     };
-    let result: { ok: boolean; content: string; statePatch?: Partial<PrToolState>; summary?: string; details?: string };
+    let result: { ok: boolean; content: string; statePatch?: Partial<PrToolState>; summary?: string; details?: string; final?: boolean };
     try {
       result = await tool.run(call_args(), ctx);
     } catch (e) {
@@ -177,6 +187,17 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
     events.onToolEnd?.(tool.name, result.ok, result.summary ?? (result.ok ? 'done' : 'failed'), result.details);
     toolTimer();
     log.log(`◀ tool ${tool.name} ${result.ok ? 'ok' : 'failed'} · ${result.content.slice(0, 80)}`);
+
+    // A `final` tool (handover) produces the user-facing reply ITSELF — already
+    // formatted (the plan, the per-file explanation, the "Proceed?" prompt). Emit it
+    // VERBATIM and return. Feeding it back through the weak 1.5B answer model
+    // collapsed the whole thing into a useless "Next." (it latched onto the
+    // 'say "next"' instruction). This is also terminal — no re-route, no second
+    // cursor advance.
+    if (result.final) {
+      if (result.content) events.onToken(result.content);
+      return result.content;
+    }
 
     extra.push({ role: 'assistant', content: `Called ${tool.name}.` });
     extra.push({ role: 'user', content: `Tool result (${tool.name}):\n${result.content}` });
