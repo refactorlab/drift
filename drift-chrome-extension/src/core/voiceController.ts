@@ -25,6 +25,7 @@ import {
   getAvailableTools,
   findTool,
   isMetaQuestion,
+  routeHandover,
   buildRouterSystemPrompt,
   routerSchema,
   parseRouterDecision,
@@ -319,8 +320,11 @@ export class VoiceController {
   }
 
   /**
-   * Router → run-one-tool, shared with the text chat. Returns a `[Tool result …]`
-   * block to fold into the answer prompt, or null (no tool / no PR / cancelled).
+   * Router → run-one-tool, shared with the text chat. Returns the tool's output and
+   * whether it's `final` — a final tool (handover) produces the user-facing reply
+   * ITSELF, so the caller SPEAKS it verbatim instead of folding it into the answer
+   * prompt (the weak model collapses it to "Next."). A non-final tool returns a
+   * `[Tool result …]` block to fold into generation. Null = no tool / cancelled.
    */
   private async maybeRunTool(
     brain: BrainRuntime,
@@ -328,31 +332,41 @@ export class VoiceController {
     signal: AbortSignal,
     live: () => boolean,
     announce?: (action: string) => void,
-  ): Promise<string | null> {
+  ): Promise<{ text: string; speak: string; final: boolean } | null> {
     const state = this.opts.getToolState?.() ?? null;
     if (!state) return null;
     const tools = getAvailableTools(state);
     if (!tools.length) return null;
-    // A question about US / chit-chat needs no tool — short-circuit deterministically
-    // so the 1.5B router can't misfire it into a PR scan (matches the text path).
-    if (isMetaQuestion(userText)) return null;
-    let chosen: string | null = null;
-    try {
-      const routerMessages = this.ctx.toMessages(buildRouterSystemPrompt(this.persona, state), userText);
-      const decision = await brain.complete(routerMessages, {
-        signal,
-        // Headroom so the longest tool name can't be truncated mid-JSON (truncated
-        // structured output fails to parse). Matches the text router (agentLoop).
-        maxTokens: 40,
-        temperature: 0,
-        responseFormat: { type: 'json_object', schema: routerSchema(state) },
-      });
-      if (!live()) return null;
-      chosen = parseRouterDecision(decision, state);
-      log.log(`route → ${chosen ?? 'none'} (tools=[${tools.map((t) => t.name).join(', ')}])`);
-    } catch (e) {
-      log.warn('route failed → answering without a tool', e);
-      return null; // routing failed → answer without a tool
+    // Deterministic handover control ("next"/"proceed"/"go to <file>"/"stop"/…)
+    // bypasses the weak LLM router — same short-circuit the text loop uses. It is
+    // checked BEFORE the meta/chit-chat guard because affirmatives like "ok"/"got
+    // it" are BOTH greetings and walkthrough "proceed" — during an active handover
+    // they must advance it, not be answered as small talk (matches the text path).
+    let chosen: string | null = routeHandover(userText, state);
+    if (chosen && !findTool(chosen)?.available(state)) chosen = null;
+    if (chosen) {
+      log.log(`route → ${chosen} (handover short-circuit)`);
+    } else {
+      // A question about US / chit-chat needs no tool — short-circuit deterministically
+      // so the 1.5B router can't misfire it into a PR scan (matches the text path).
+      if (isMetaQuestion(userText)) return null;
+      try {
+        const routerMessages = this.ctx.toMessages(buildRouterSystemPrompt(this.persona, state), userText);
+        const decision = await brain.complete(routerMessages, {
+          signal,
+          // Headroom so the longest tool name can't be truncated mid-JSON (truncated
+          // structured output fails to parse). Matches the text router (agentLoop).
+          maxTokens: 40,
+          temperature: 0,
+          responseFormat: { type: 'json_object', schema: routerSchema(state) },
+        });
+        if (!live()) return null;
+        chosen = parseRouterDecision(decision, state);
+        log.log(`route → ${chosen ?? 'none'} (tools=[${tools.map((t) => t.name).join(', ')}])`);
+      } catch (e) {
+        log.warn('route failed → answering without a tool', e);
+        return null; // routing failed → answer without a tool
+      }
     }
     if (!chosen) return null;
 
@@ -378,11 +392,17 @@ export class VoiceController {
           },
           brain,
           userText,
+          mode: 'voice',
         },
       );
       if (result.statePatch) this.handlers.onStatePatch?.(result.statePatch);
       this.handlers.onToolEnd?.(tool.name, result.ok, result.summary ?? (result.ok ? 'done' : 'failed'), result.details);
-      return `[Tool result (${tool.name})]:\n${result.content}`;
+      // `final` (handover): the content IS the reply → show it + speak it (the
+      // condensed `spoken` variant when present). Otherwise wrap it as a tool-result
+      // block for the answer generation to fold in.
+      return result.final
+        ? { text: result.content, speak: result.spoken ?? result.content, final: true }
+        : { text: `[Tool result (${tool.name})]:\n${result.content}`, speak: '', final: false };
     } catch (e) {
       if (signal.aborted || (e as Error)?.name === 'AbortError') {
         this.handlers.onToolEnd?.(tool.name, false, 'stopped');
@@ -395,7 +415,7 @@ export class VoiceController {
       const details = buildToolFailureReport(tool.name, state, breadcrumbs, e, Date.now() - toolStart);
       log.error(`tool ${tool.name} failed`, e);
       this.handlers.onToolEnd?.(tool.name, false, `failed — ${reason}`.slice(0, 140), details);
-      return `[Tool ${tool.name} failed: ${reason}]`;
+      return { text: `[Tool ${tool.name} failed: ${reason}]`, speak: '', final: false };
     }
   }
 
@@ -486,25 +506,42 @@ export class VoiceController {
       });
       if (!live()) return;
 
-      const effectiveUser = toolResult ? `${userText}\n\n${toolResult}` : userText;
-      const messages = this.ctx.toMessages(this.persona, effectiveUser);
       this.replyActive = true; // hold Speaking across the whole reply (see field doc)
 
-      await brain.generate(messages, {
-        signal: abort.signal,
-        onToken: (tok) => {
-          full += tok;
-          sentenceBuf += tok;
-          this.handlers.onAssistantToken(tok);
-          let idx: number;
-          while ((idx = nextBreak(sentenceBuf, firstChunk ? 2 : CHUNK_MIN)) >= 0) {
-            const chunk = sentenceBuf.slice(0, idx);
-            sentenceBuf = sentenceBuf.slice(idx);
-            enqueueSpeak(chunk);
-            firstChunk = false; // later chunks use the full CHUNK_MIN (no choppy micro-clips)
-          }
-        },
-      });
+      if (toolResult?.final) {
+        // The tool produced the reply itself (handover) — DON'T run it through
+        // generation (that collapsed it to "Next."). SHOW the full content in the
+        // transcript, but SPEAK the condensed `speak` variant (the start plan lists
+        // every file — fine to read, painful to hear), chunked on the same breaks.
+        full = toolResult.text;
+        this.handlers.onAssistantToken(toolResult.text);
+        let buf = toolResult.speak;
+        let idx: number;
+        while ((idx = nextBreak(buf, firstChunk ? 2 : CHUNK_MIN)) >= 0) {
+          enqueueSpeak(buf.slice(0, idx), false); // not "heard"-tracked: `full` already holds the reply
+          buf = buf.slice(idx);
+          firstChunk = false;
+        }
+        if (buf.trim()) enqueueSpeak(buf, false);
+      } else {
+        const effectiveUser = toolResult ? `${userText}\n\n${toolResult.text}` : userText;
+        const messages = this.ctx.toMessages(this.persona, effectiveUser);
+        await brain.generate(messages, {
+          signal: abort.signal,
+          onToken: (tok) => {
+            full += tok;
+            sentenceBuf += tok;
+            this.handlers.onAssistantToken(tok);
+            let idx: number;
+            while ((idx = nextBreak(sentenceBuf, firstChunk ? 2 : CHUNK_MIN)) >= 0) {
+              const chunk = sentenceBuf.slice(0, idx);
+              sentenceBuf = sentenceBuf.slice(idx);
+              enqueueSpeak(chunk);
+              firstChunk = false; // later chunks use the full CHUNK_MIN (no choppy micro-clips)
+            }
+          },
+        });
+      }
 
       if (live()) {
         if (sentenceBuf.trim()) enqueueSpeak(sentenceBuf); // flush the tail
