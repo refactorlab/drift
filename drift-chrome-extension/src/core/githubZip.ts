@@ -4,6 +4,7 @@
 // repos work too. We unzip in-memory into a repo-relative FileTree.
 
 import { unzipRepoArchive, treeBytes, type FileTree } from './repoZip';
+import { ghWebBase, PUBLIC_GITHUB_HOST } from './githubHost';
 
 /**
  * Archive URL for a ref. We hit `github.com/{o}/{r}/archive/…` (NOT codeload
@@ -12,12 +13,14 @@ import { unzipRepoArchive, treeBytes, type FileTree } from './repoZip';
  * browser's "Download ZIP" works. Hitting codeload directly would 403 on
  * private repos because the session cookie isn't scoped to that host.
  * `ref` may be a 40-char SHA or a branch name (branch → `refs/heads/` so
- * slashes like `feature/x` resolve cleanly).
+ * slashes like `feature/x` resolve cleanly). `host` defaults to github.com but
+ * is set to the enterprise host so the archive (and its session cookie) stay on
+ * the right GitHub.
  */
-export function archiveUrl(owner: string, repo: string, ref: string): string {
+export function archiveUrl(owner: string, repo: string, ref: string, host: string = PUBLIC_GITHUB_HOST): string {
   const isSha = /^[0-9a-f]{7,40}$/i.test(ref);
   const refPath = isSha ? ref : `refs/heads/${ref}`;
-  return `https://github.com/${owner}/${repo}/archive/${refPath}.zip`;
+  return `${ghWebBase(host)}/${owner}/${repo}/archive/${refPath}.zip`;
 }
 
 // `total` is the Content-Length when the server sends one. GitHub's codeload
@@ -50,8 +53,9 @@ export async function downloadArchive(
   onProgress?: (p: DownloadProgress) => void,
   signal?: AbortSignal,
   estimatedTotal?: number,
+  host: string = PUBLIC_GITHUB_HOST,
 ): Promise<Uint8Array> {
-  const url = archiveUrl(owner, repo, ref);
+  const url = archiveUrl(owner, repo, ref, host);
   const label = `${owner}/${repo}@${shortRef(ref)}`;
   // Surface the estimate up front so the (sometimes slow) wait for the first
   // byte already shows "0 B / ~X MB" instead of a sizeless "fetching".
@@ -71,8 +75,9 @@ export async function downloadTree(
   onProgress?: (p: DownloadProgress) => void,
   signal?: AbortSignal,
   estimatedTotal?: number,
+  host: string = PUBLIC_GITHUB_HOST,
 ): Promise<FileTree> {
-  const url = archiveUrl(owner, repo, ref);
+  const url = archiveUrl(owner, repo, ref, host);
   const label = `${owner}/${repo}@${shortRef(ref)}`;
   onProgress?.({ phase: `fetching ${label}`, bytes: 0, total: estimatedTotal, estimated: !!estimatedTotal });
   const res = await fetch(url, { credentials: 'include', redirect: 'follow', signal });

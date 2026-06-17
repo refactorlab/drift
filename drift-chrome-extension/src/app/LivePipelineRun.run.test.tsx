@@ -28,7 +28,7 @@ const isTtsAvailable = vi.fn(async (..._a: unknown[]) => true);
 vi.mock('../core/ttsStore', () => ({ isTtsAvailable: (...a: unknown[]) => isTtsAvailable(...a) }));
 
 // ── PR identity + I/O edges ────────────────────────────────────────────────
-vi.mock('../state/activePr', () => ({ useActivePr: () => ({ owner: 'acme', repo: 'web', number: 7 }) }));
+vi.mock('../state/activePr', () => ({ useActivePr: () => ({ owner: 'acme', repo: 'web', number: 7, host: 'github.com' }) }));
 vi.mock('../core/prDiff', () => ({
   fetchPrHead: vi.fn(async () => ({ headSha: 'deadbeefcafe', title: 'A PR', commits: ['feat: x'] })),
   fetchPrChangedFiles: vi.fn(async () => ({

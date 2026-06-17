@@ -1,6 +1,22 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
-import { runWithDiffStatusFallback } from './wasi';
+import { runWithDiffStatusFallback, argvByteSize } from './wasi';
+
+describe('argvByteSize — UTF-8 byte sizing for WASI argv (non-ASCII scan args)', () => {
+  it('equals string length + 1 for pure ASCII', () => {
+    // 'scan-pr' (7) + 1 NUL = 8; '/repo' (5) + 1 = 6.
+    expect(argvByteSize(['scan-pr'])).toBe(8);
+    expect(argvByteSize(['scan-pr', '/repo'])).toBe(14);
+  });
+
+  it('counts UTF-8 BYTES, not UTF-16 code units, for non-ASCII args', () => {
+    // The bug: a PR title with an em-dash / accent / emoji is longer in UTF-8
+    // than in .length. '—' is 1 code unit but 3 UTF-8 bytes; 'é' is 1 vs 2.
+    expect(argvByteSize(['--pr-title=A — b'])).toBe('--pr-title=A — b'.length + 2 + 1); // em-dash adds +2 bytes
+    expect(argvByteSize(['café'])).toBe(5 + 1); // 'café' .length 4 → 5 UTF-8 bytes
+    expect(argvByteSize(['😀'])).toBe(4 + 1); // emoji: 2 code units → 4 UTF-8 bytes
+  });
+});
 
 const OK = new Uint8Array([1, 2, 3]);
 const exit = (code: number) => Object.assign(new Error(`scan-pr exited with code ${code}`), { code });

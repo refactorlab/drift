@@ -9,6 +9,16 @@ use drift_static_profiler::{
 use drift_static_profiler::CliProgress;
 use std::path::PathBuf;
 
+// Raw C-ABI export surface for the in-browser voice control plane (VAD +
+// DuplexCascade FSM). Lives in the BINARY crate — not the library — so it's
+// always codegen'd into the final wasm CGU (a `#[no_mangle]` fn buried in an
+// rlib whose object is never pulled by the linker would vanish). wasm32-only;
+// native builds never compile it. The functions are exposed as wasm exports by
+// the `--export` link flags in scripts/build-wasm.sh; `keep_voice_exports()` is
+// referenced from `main()` below so fat-LTO keeps them reachable.
+#[cfg(target_arch = "wasm32")]
+mod voice_wasm;
+
 /// Install a `tracing` subscriber that prints compact, production-shaped
 /// log lines to stderr. The library crate emits `tracing::info!` /
 /// `debug!` / `warn!` at every pipeline boundary — without a subscriber
@@ -1309,6 +1319,11 @@ fn run_orm_scan(path: &std::path::Path, out: Option<&std::path::Path>, max_files
 }
 
 fn main() -> Result<()> {
+    // Keep the voice C-ABI exports reachable from `_start` so fat-LTO can't drop
+    // them before the linker exports them (see voice_wasm::keep_voice_exports).
+    // Never runs on the voice path (that never calls `_start`); zero cost here.
+    #[cfg(target_arch = "wasm32")]
+    voice_wasm::keep_voice_exports();
     init_tracing();
     let started_at = std::time::Instant::now();
     let cli = Cli::parse();

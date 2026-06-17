@@ -42,6 +42,9 @@ export interface ScanRecord {
   changedStatus?: ChangedFileStatus[];
   /** Commit messages (subject + body) so a replay shows the Commits section. */
   commits?: string[];
+  /** The PR's opening-comment body (author's description) so the chat can reason
+   *  about intent without a re-fetch. Optional for older records. */
+  description?: string | null;
 }
 
 /** Newest-first, then trimmed to MAX_PER_PR per PR and MAX_TOTAL overall. */

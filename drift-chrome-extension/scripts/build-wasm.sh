@@ -84,8 +84,31 @@ export CC_wasm32_wasip1="$WASI_SDK/bin/clang"
 export AR_wasm32_wasip1="$WASI_SDK/bin/llvm-ar"
 export CFLAGS_wasm32_wasip1="--sysroot=$WASI_SYSROOT"
 
+# The same wasm carries the voice control plane (VAD + DuplexCascade FSM) as a
+# raw C-ABI export surface (src/voice_wasm.rs) the side-panel voice mode calls
+# directly — so there's ONE wasm, not a second wasm-bindgen artifact. These are
+# `#[no_mangle]` functions in the binary, NOT reachable from `_start`, so wasm-ld
+# would GC them: each must be named with `--export` to land in the wasm export
+# section. (Retention through fat-LTO is handled in Rust via
+# voice_wasm::keep_voice_exports, referenced from main().) `__wasm_call_ctors`
+# is exported too: the voice path instantiates the module WITHOUT running
+# `_start`, so JS calls the ctors once itself to initialize the heap.
+VOICE_EXPORTS=(
+  __wasm_call_ctors
+  vp_alloc_f32 vp_free_f32
+  vad_new vad_free vad_push_mic
+  vad_set_speaking vad_set_thinking vad_set_barge_in_thinking vad_set_output_level
+  vad_state_code vad_reset
+  vad_get_last_energy vad_get_effective_gate vad_get_noise_floor vad_get_barge_run vad_get_last_reason
+  vad_rms vad_resample
+)
+EXPORT_FLAGS=""
+for sym in "${VOICE_EXPORTS[@]}"; do
+  EXPORT_FLAGS+=" -C link-arg=--export=$sym"
+done
+
 echo "→ building drift-static-profiler.wasm (release, wasm32-wasip1)…"
-( cd "$PROFILER" && cargo build --release --bin drift-static-profiler \
+( cd "$PROFILER" && RUSTFLAGS="${RUSTFLAGS:-}$EXPORT_FLAGS" cargo build --release --bin drift-static-profiler \
     --no-default-features --target wasm32-wasip1 )
 
 SRC="$PROFILER/target/wasm32-wasip1/release/drift-static-profiler.wasm"

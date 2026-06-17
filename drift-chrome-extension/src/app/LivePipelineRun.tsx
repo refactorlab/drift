@@ -3,6 +3,7 @@ import { useActivePr } from '../state/activePr';
 import type { PrInput } from '../core/scanProvider';
 import { fetchPrHead, fetchPrChangedFiles, fetchPrBody, type ChangedFileStatus } from '../core/prDiff';
 import { downloadArchive, type DownloadProgress } from '../core/githubZip';
+import { ghWebBase } from '../core/githubHost';
 import { getCachedZipSize, setCachedZipSize } from '../core/downloadSizeEstimate';
 import { scanInWorker } from '../core/scanWorkerClient';
 import { loadScannerModule } from '../core/scannerStore';
@@ -65,7 +66,7 @@ type Step = {
 
 const STEPS: Step[] = [
   { id: 'resolve', label: 'Resolve PR', detail: 'head sha + changed files (.patch/.diff)', state: 'idle' },
-  { id: 'download', label: 'Download head zip', detail: 'PR head tree from github.com', state: 'idle' },
+  { id: 'download', label: 'Download head zip', detail: 'PR head tree from GitHub', state: 'idle' },
   { id: 'diff', label: 'Compute diff', detail: 'changed files · numstat', state: 'idle' },
   { id: 'scan', label: 'Run scan-pr', detail: 'static drift profiler (WASM) · no AI', state: 'idle' },
   { id: 'render', label: 'Build report', detail: 'native React · no markdown', state: 'idle' },
@@ -132,6 +133,34 @@ function StepRow({ step, now }: { step: Step; now: number }) {
       </div>
     </div>
   );
+}
+
+/** Build the copyable developer report for a failed live scan: the error, the PR
+ *  it ran against, and the per-stage progress log (so the failing stage and the
+ *  state it reached are obvious). Pasted straight into a bug report so a developer
+ *  can understand and fix it. */
+function buildPipelineFailureReport(prLabel: string, prUrl: string | null, steps: Step[], error: string): string {
+  const stateIcon: Record<StepState, string> = { idle: '·', active: '…', done: '✓', error: '✗' };
+  const failing = steps.find((s) => s.state === 'error');
+  const log = steps
+    .filter((s) => s.state !== 'idle')
+    .map((s) => {
+      const t = s.elapsedMs != null ? ` (${fmtMs(s.elapsedMs)})` : '';
+      return `  ${stateIcon[s.state]} ${s.label}: ${s.note ?? s.detail}${t}`;
+    });
+  const lines = [
+    'Drift — Live scan failed',
+    `Error: ${error}`,
+    '',
+    'Context',
+    `  PR: ${prLabel}`,
+    prUrl ? `  URL: ${prUrl}` : null,
+    failing ? `  Failed at: ${failing.label}` : null,
+    '',
+    'Progress log',
+    ...(log.length ? log : ['  (none)']),
+  ].filter((l): l is string => l !== null);
+  return lines.join('\n');
 }
 
 // A single resolved result — the live run or a replayed history record. The two
@@ -275,6 +304,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
   const [viewing, setViewing] = useState<Display | null>(null);
   const [history, setHistory] = useState<ScanRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [copiedErr, setCopiedErr] = useState(false);
   const [now, setNow] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const runStartRef = useRef(0);
@@ -387,8 +417,8 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
     setViewing(null);
     setSteps(STEPS.map((s) => ({ ...s })));
     const sig = ac.signal;
-    const { owner, repo, number } = activePr;
-    const url = `https://github.com/${owner}/${repo}/pull/${number}`;
+    const { owner, repo, number, host } = activePr;
+    const url = `${ghWebBase(host)}/${owner}/${repo}/pull/${number}`;
 
     try {
       // The head-tree zip total, only knowable from a PRIOR download of this repo
@@ -401,11 +431,11 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
       //    .diff) — credentialed, private-repo safe, no fragile DOM scrape.
       patch('resolve', { state: 'active' });
       const [head, diff, prBody] = await Promise.all([
-        fetchPrHead(owner, repo, number, sig),
-        fetchPrChangedFiles(owner, repo, number, sig),
+        fetchPrHead(owner, repo, number, sig, host),
+        fetchPrChangedFiles(owner, repo, number, sig, host),
         // The PR description (best-effort; public repos always, private only with
         // a token). Fail-soft inside, so it never blocks the scan.
-        fetchPrBody(owner, repo, number, sig),
+        fetchPrBody(owner, repo, number, sig, host),
       ]);
       const title = head.title ?? null;
       patch('resolve', {
@@ -419,7 +449,7 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
       const estimatedTotal = await estimatePromise.catch(() => undefined);
       const zipBytes = await downloadArchive(
         owner, repo, head.headSha,
-        (p) => patch('download', { note: downloadNote(p) }), sig, estimatedTotal,
+        (p) => patch('download', { note: downloadNote(p) }), sig, estimatedTotal, host,
       );
       patch('download', { state: 'done', note: `${fmtBytes(zipBytes.length)} downloaded` });
       // Remember the true size so the NEXT run of this repo shows an exact-ish
@@ -716,7 +746,28 @@ export function LivePipelineRun({ onBack }: { onBack: () => void }) {
 
         {error && (
           <div className="dl-strip warn" style={{ marginTop: 10 }}>
-            ⚠ {error}
+            <span>⚠ {error}</span>
+            <button
+              className="pl-copy-err"
+              title="Copy the error and per-stage logs for developers"
+              onClick={() => {
+                const report = buildPipelineFailureReport(
+                  activePr ? `${activePr.owner}/${activePr.repo}#${activePr.number}` : 'unknown',
+                  prUrl,
+                  steps,
+                  error,
+                );
+                void navigator.clipboard.writeText(report).then(
+                  () => {
+                    setCopiedErr(true);
+                    window.setTimeout(() => setCopiedErr(false), 1500);
+                  },
+                  () => {},
+                );
+              }}
+            >
+              {copiedErr ? 'Copied' : 'Copy details'}
+            </button>
           </div>
         )}
 

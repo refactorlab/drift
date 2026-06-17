@@ -1,3 +1,9 @@
+/**
+ * The content script now gates on isGithubHost() (it's injected on all https
+ * pages and must bail off-GitHub). jsdom defaults to http://localhost/, so pin
+ * this file's document origin to github.com or the script self-aborts.
+ * @vitest-environment-options { "url": "https://github.com/" }
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { marked } from 'marked';
 import { installChromeMock } from '../test/chromeMock';

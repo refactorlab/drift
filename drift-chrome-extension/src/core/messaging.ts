@@ -32,6 +32,7 @@ export type Message =
   | { type: 'REPORT'; report: DriftReport } // content → background cache
   | { type: 'OPEN_SIDE_PANEL'; tabId?: number } // any → background
   | { type: 'FETCH_ARTIFACT'; url: string; binary?: boolean } // sidepanel → background: credentialed download (binary → audio data URL)
+  | { type: 'MIC_PERMISSION_RESULT'; ok: boolean; error?: string } // permission popup → sidepanel: mic grant outcome
   | { type: 'PING' };
 
 export type Response =

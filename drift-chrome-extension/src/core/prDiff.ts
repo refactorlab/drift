@@ -9,6 +9,12 @@
 //     local tree diff (and half the download for big monorepos).
 // The scanner never needed the base tree; the two zips only existed to compute
 // the changed-file set, which `.diff` gives us for free.
+//
+// `host` (default github.com) lets these endpoints target a GitHub Enterprise
+// host too — the `.patch`/`.diff` paths are identical there, and the REST API
+// moves to `<host>/api/v3` (see ghApiBase).
+
+import { ghApiBase, ghWebBase, PUBLIC_GITHUB_HOST } from './githubHost';
 
 export type PrHead = {
   headSha: string;
@@ -164,8 +170,9 @@ export async function fetchPrHead(
   repo: string,
   number: number,
   signal?: AbortSignal,
+  host: string = PUBLIC_GITHUB_HOST,
 ): Promise<PrHead> {
-  const url = `https://github.com/${owner}/${repo}/pull/${number}.patch`;
+  const url = `${ghWebBase(host)}/${owner}/${repo}/pull/${number}.patch`;
   const res = await fetch(url, { credentials: 'include', redirect: 'follow', signal });
   if (!res.ok) {
     throw new Error(`couldn't read the PR patch (HTTP ${res.status}) — are you signed in to GitHub?`);
@@ -183,9 +190,10 @@ export async function fetchPrBody(
   repo: string,
   number: number,
   signal?: AbortSignal,
+  host: string = PUBLIC_GITHUB_HOST,
 ): Promise<string | undefined> {
   try {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
+    const res = await fetch(`${ghApiBase(host)}/repos/${owner}/${repo}/pulls/${number}`, {
       headers: { Accept: 'application/vnd.github+json' },
       signal,
     });
@@ -357,8 +365,9 @@ export async function fetchPrChangedFiles(
   repo: string,
   number: number,
   signal?: AbortSignal,
+  host: string = PUBLIC_GITHUB_HOST,
 ): Promise<DiffResult> {
-  const url = `https://github.com/${owner}/${repo}/pull/${number}.diff`;
+  const url = `${ghWebBase(host)}/${owner}/${repo}/pull/${number}.diff`;
   const res = await fetch(url, { credentials: 'include', redirect: 'follow', signal });
   if (!res.ok) throw new Error(`couldn't read the PR diff (HTTP ${res.status})`);
   assertPrDocument(res, owner, repo, number);

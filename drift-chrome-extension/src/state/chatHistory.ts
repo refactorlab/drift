@@ -14,6 +14,16 @@ export interface ChatMessage {
   thinking?: boolean;
   /** PR url this message belongs to (dedupe key for reasoning turns). */
   prUrl?: string;
+  /** Agent tool-step card: an inline record of a tool the assistant called. */
+  tool?: {
+    name: string;
+    status: 'running' | 'done' | 'error' | 'stopped';
+    note?: string;
+    summary?: string;
+    /** On failure: the copyable developer report (error + context + progress log),
+     *  surfaced as a "Copy" button on the failed tool-step card. */
+    details?: string;
+  };
 }
 
 const key = (url: string) => `drift:chat:${url}`;

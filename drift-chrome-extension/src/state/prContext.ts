@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import type { PrContext } from '../core/types';
 import { activeTab, sendToTab } from '../core/messaging';
 import { parsePrUrl } from '../core/prRefs';
+import { ghWebBase, GITHUB_NAV_FILTER, isGithubUrl } from '../core/githubHost';
 import { getLiveContext, isLiveContextChange } from './liveContext';
 
 // Everything is scoped to a specific PR URL.
@@ -58,7 +59,7 @@ function signature(ctx: PrContext | null): string {
 async function liveContextFromTab(): Promise<PrContext | null> {
   try {
     const tab = await activeTab();
-    if (!tab?.id || !tab.url?.includes('github.com')) return null;
+    if (!tab?.id || !isGithubUrl(tab.url)) return null;
     const res = await sendToTab(tab.id, { type: 'GET_CONTEXT' });
     const scraped = res.ok && 'context' in res ? res.context : null;
     if (scraped) return scraped;
@@ -66,7 +67,7 @@ async function liveContextFromTab(): Promise<PrContext | null> {
     // user has run the in-extension scanner on this PR.
     const id = tab.url ? parsePrUrl(tab.url) : null;
     if (id) {
-      const url = `https://github.com/${id.owner}/${id.repo}/pull/${id.number}`;
+      const url = `${ghWebBase(id.host)}/${id.owner}/${id.repo}/pull/${id.number}`;
       return await getLiveContext(url);
     }
   } catch {
@@ -125,10 +126,9 @@ export function usePrContext() {
 
     // 3. GitHub Turbo SPA navigation (pushState) — the reliable signal for
     //    PR→PR switches that tabs.onUpdated can miss.
-    const navFilter = { url: [{ hostEquals: 'github.com' }] };
     const onNav = () => schedule();
-    chrome.webNavigation?.onHistoryStateUpdated.addListener(onNav, navFilter);
-    chrome.webNavigation?.onCompleted.addListener(onNav, navFilter);
+    chrome.webNavigation?.onHistoryStateUpdated.addListener(onNav, GITHUB_NAV_FILTER);
+    chrome.webNavigation?.onCompleted.addListener(onNav, GITHUB_NAV_FILTER);
 
     // 4. Panel regained focus / became visible.
     const onFocus = () => schedule();

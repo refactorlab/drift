@@ -127,17 +127,27 @@ describe('prRefs.buildRefsFromRaw (injected-reader result → PrRefs)', () => {
 });
 
 describe('prRefs.parsePrUrl', () => {
-  it('extracts owner/repo/number from a PR URL (works on any PR, no comment)', () => {
+  it('extracts host/owner/repo/number from a PR URL (works on any PR, no comment)', () => {
     expect(parsePrUrl('https://github.com/acme/web/pull/123')).toEqual({
-      owner: 'acme', repo: 'web', number: 123,
+      owner: 'acme', repo: 'web', number: 123, host: 'github.com',
     });
     expect(parsePrUrl('https://github.com/a/b/pull/7/files?diff=split')).toEqual({
-      owner: 'a', repo: 'b', number: 7,
+      owner: 'a', repo: 'b', number: 7, host: 'github.com',
     });
   });
-  it('returns null off a PR page', () => {
+  it('works on GitHub Enterprise hosts (github.<org>.<tld>)', () => {
+    expect(parsePrUrl('https://github.intuit.com/acme/web/pull/42')).toEqual({
+      owner: 'acme', repo: 'web', number: 42, host: 'github.intuit.com',
+    });
+    expect(parsePrUrl('https://github.my-enterprise.com/a/b/pull/1')).toEqual({
+      owner: 'a', repo: 'b', number: 1, host: 'github.my-enterprise.com',
+    });
+  });
+  it('returns null off a PR page or non-GitHub host', () => {
     expect(parsePrUrl('https://github.com/acme/web/issues/9')).toBeNull();
     expect(parsePrUrl('https://example.com')).toBeNull();
+    expect(parsePrUrl('https://gitlab.com/a/b/pull/1')).toBeNull();
+    expect(parsePrUrl('not a url')).toBeNull();
   });
 });
 
@@ -147,6 +157,11 @@ describe('githubZip.archiveUrl', () => {
     // private repo, then 302→codeload with a signed token.
     expect(archiveUrl('a', 'b', 'feature/x')).toBe('https://github.com/a/b/archive/refs/heads/feature/x.zip');
     expect(archiveUrl('a', 'b', 'd'.repeat(40))).toBe(`https://github.com/a/b/archive/${'d'.repeat(40)}.zip`);
+  });
+  it('targets an enterprise host when given one', () => {
+    expect(archiveUrl('a', 'b', 'feature/x', 'github.intuit.com')).toBe(
+      'https://github.intuit.com/a/b/archive/refs/heads/feature/x.zip',
+    );
   });
 });
 

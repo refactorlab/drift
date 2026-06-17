@@ -32,8 +32,12 @@ export default defineConfig({
   build: {
     target: 'esnext',
     rollupOptions: {
-      // Extra HTML entries CRXJS doesn't pick up from the manifest are added
-      // automatically from the manifest fields above; nothing to list here.
+      // The mic-permission page (src/permission/index.html) isn't referenced by
+      // any manifest field — it's opened at runtime via chrome.windows.create —
+      // so CRXJS won't discover it on its own. List it as an explicit HTML input
+      // so it's built and emitted at its source path (which chrome.runtime.getURL
+      // resolves, the same way side_panel uses 'src/sidepanel/index.html').
+      input: { permission: 'src/permission/index.html' },
     },
   },
 });

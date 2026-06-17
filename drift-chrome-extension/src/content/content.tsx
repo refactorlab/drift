@@ -1,4 +1,8 @@
-// Content script entry. Runs on github.com, and on PR pages it:
+// Content script entry. Runs on github.com AND GitHub Enterprise hosts
+// (github.<org>.<tld>). The manifest matches all https pages because MV3 can't
+// express a `github.*` match pattern, so the FIRST thing we do is bail on any
+// non-GitHub host (see the isGithubHost gate at the bottom) — nothing is
+// observed/mounted elsewhere. On PR pages it:
 //   1. parses the Drift sticky comment out of the rendered DOM,
 //   2. caches the result for the popup / side panel,
 //   3. mounts a Shadow-DOM overlay (launcher + slide-in drawer),
@@ -12,6 +16,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { StrictMode } from 'react';
 import { isPrPage, parseReport, parsePrContext } from '../core/parse';
 import { readPrRefsFromDocument } from '../core/prRefs';
+import { isGithubHost } from '../core/githubHost';
 import type { PrContext } from '../core/types';
 import { cacheReport, type Message, type Response } from '../core/messaging';
 import { setPrContext } from '../state/prContext';
@@ -127,34 +132,42 @@ function watch() {
   obs.observe(document.documentElement, { childList: true, subtree: true });
 }
 
-chrome.runtime.onMessage.addListener(
-  (msg: Message, _sender, sendResponse: (r: Response) => void) => {
-    if (msg.type === 'GET_REPORT') {
-      sendResponse({ ok: true, report: parseReport(document) });
-      return true;
-    }
-    if (msg.type === 'GET_PR_REFS') {
-      // Read base/head refs off the LIVE (React-rendered) DOM — works on any PR,
-      // no Drift comment required. This is the authoritative source the live
-      // scan uses (a cold HTML fetch often lacks the deferred React data).
-      sendResponse({ ok: true, refs: readPrRefsFromDocument(document) });
-      return true;
-    }
-    if (msg.type === 'GET_CONTEXT') {
-      sendResponse({ ok: true, context: parsePrContext(document) });
-      return true;
-    }
-    if (msg.type === 'PING') {
-      sendResponse({ ok: true });
-      return true;
-    }
-    return false;
-  },
-);
+// Wire up message handling + page detection. Only called on GitHub hosts.
+function bootstrap() {
+  chrome.runtime.onMessage.addListener(
+    (msg: Message, _sender, sendResponse: (r: Response) => void) => {
+      if (msg.type === 'GET_REPORT') {
+        sendResponse({ ok: true, report: parseReport(document) });
+        return true;
+      }
+      if (msg.type === 'GET_PR_REFS') {
+        // Read base/head refs off the LIVE (React-rendered) DOM — works on any PR,
+        // no Drift comment required. This is the authoritative source the live
+        // scan uses (a cold HTML fetch often lacks the deferred React data).
+        sendResponse({ ok: true, refs: readPrRefsFromDocument(document) });
+        return true;
+      }
+      if (msg.type === 'GET_CONTEXT') {
+        sendResponse({ ok: true, context: parsePrContext(document) });
+        return true;
+      }
+      if (msg.type === 'PING') {
+        sendResponse({ ok: true });
+        return true;
+      }
+      return false;
+    },
+  );
 
-// Set up observers/listeners FIRST so a deferred comment is always caught,
-// then attempt detection, then retry on a schedule for GitHub's lazy timeline.
-console.log('[drift] content script loaded ·', location.pathname);
-watch();
-safeRender();
-for (const ms of [600, 1500, 3000, 6000, 10000]) window.setTimeout(safeRender, ms);
+  // Set up observers/listeners FIRST so a deferred comment is always caught,
+  // then attempt detection, then retry on a schedule for GitHub's lazy timeline.
+  console.log('[drift] content script loaded ·', location.pathname);
+  watch();
+  safeRender();
+  for (const ms of [600, 1500, 3000, 6000, 10000]) window.setTimeout(safeRender, ms);
+}
+
+// The manifest matches ALL https pages (MV3 can't match `github.*`), so this is
+// the real host gate: do nothing — no listeners, no observers — anywhere that
+// isn't github.com or a GitHub Enterprise host (github.<org>.<tld>).
+if (isGithubHost()) bootstrap();

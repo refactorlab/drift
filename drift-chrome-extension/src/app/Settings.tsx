@@ -4,6 +4,8 @@ import { HAS_GOOGLE_OAUTH } from '../config';
 import { patchSettings, type Settings as SettingsT, type ThemePref } from '../state/settings';
 import { ensureScanner } from '../core/scannerStore';
 import { downloadTts } from '../core/ttsStore';
+import { downloadBrain } from '../core/brainStore';
+import { isBrainSupported } from '../core/brainRuntime';
 import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
 import { getHistory, clearHistoryForPr, type ScanRecord } from '../state/scanHistory';
@@ -173,6 +175,82 @@ function VoiceEngineRow({ settings }: { settings: SettingsT }) {
           </div>
         </div>
         <button className="btn ghost" onClick={() => void download()} disabled={busy}>
+          {busy ? (pct != null ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download model'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// The in-browser AI brain: Qwen 2.5 1.5B Instruct via WebLLM (WebGPU). Lets the
+// user pre-download the ~1.1 GB model and edit the assistant persona. Without the
+// model the chat prompts to download it inline; without WebGPU the brain is off.
+function AiBrainRow({ settings }: { settings: SettingsT }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const s = settings.brain;
+  const downloaded = s?.source === 'remote';
+
+  useEffect(() => {
+    let alive = true;
+    void isBrainSupported().then((ok) => alive && setSupported(ok));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function download() {
+    setBusy(true);
+    setNote(null);
+    setPct(0);
+    try {
+      const r = await downloadBrain((p) => {
+        setNote(p.phase);
+        setPct(p.fraction != null ? Math.round(p.fraction * 100) : null);
+      });
+      setNote(r.status === 'ready' ? `Up to date · ${r.meta.version}` : `Downloaded · ${r.meta.version}`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setPct(null);
+    }
+  }
+
+  return (
+    <>
+      <div className="section-title">AI assistant</div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Assistant persona</div>
+          <div className="hint">System prompt for the on-device chat brain (leave blank for the default).</div>
+        </div>
+      </div>
+      <div className="row">
+        <textarea
+          className="persona-input"
+          rows={2}
+          placeholder="You are Andy, a concise on-device assistant…"
+          defaultValue={settings.persona ?? ''}
+          onBlur={(e) => void patchSettings({ persona: e.target.value.trim() || undefined })}
+        />
+      </div>
+      <div className="row" style={{ borderBottom: 'none' }}>
+        <div className="grow">
+          <div className="label">AI model (Qwen 2.5 1.5B)</div>
+          <div className="hint">
+            {supported === false
+              ? 'This browser has no WebGPU — the on-device AI can’t run here.'
+              : (note ??
+                (downloaded
+                  ? `${s!.version} · ~${(s!.bytes / 1024 / 1024 / 1024).toFixed(1)} GB · downloaded`
+                  : 'Not downloaded — fetch the on-device AI model (~1.1 GB, one time). Runs fully in your browser on WebGPU.'))}
+            {busy && pct != null && ` · ${pct}%`}
+          </div>
+        </div>
+        <button className="btn ghost" onClick={() => void download()} disabled={busy || supported === false}>
           {busy ? (pct != null ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download model'}
         </button>
       </div>
@@ -385,6 +463,8 @@ export function Settings({
         </div>
 
         <ScannerRow settings={settings} />
+
+        <AiBrainRow settings={settings} />
 
         <VoiceEngineRow settings={settings} />
 

@@ -41,9 +41,15 @@ export default defineManifest({
   content_security_policy: {
     extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
   },
+  // The content script must run on github.com AND on GitHub Enterprise Server
+  // hosts (`github.<org>.<tld>`, e.g. github.intuit.com). MV3 match patterns
+  // CAN'T express `github.*` — the host wildcard is only valid as the whole host
+  // or a leading `*.` label — so we match all https pages and gate at runtime
+  // via isGithubHost() (the very first thing content.tsx does is bail on
+  // non-GitHub hosts, so no observers/timers are ever set up elsewhere).
   content_scripts: [
     {
-      matches: ['https://github.com/*'],
+      matches: ['https://*/*'],
       js: ['src/content/content.tsx'],
       run_at: 'document_idle',
     },

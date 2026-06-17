@@ -1200,6 +1200,19 @@ html[data-theme='dark'] body {
   color: var(--drift-bad-soft);
   font-weight: 600;
 }
+/* "Copy details" under a live-scan error — copies the developer report. */
+.pl-copy-err {
+  align-self: flex-start;
+  border: 1px solid var(--drift-bad-soft, rgba(229, 72, 77, 0.4));
+  background: transparent;
+  color: var(--drift-bad-soft, #e5484d);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pl-copy-err:hover { background: rgba(229, 72, 77, 0.1); }
 .dl-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;
@@ -1708,3 +1721,362 @@ html[data-theme='dark'] body {
   line-height: 1.5;
   color: var(--drift-fg-muted);
 }
+
+/* ── AI brain (Qwen) status banner + streaming chat affordances ───────────── */
+.brain-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--drift-bg-subtle, rgba(127, 127, 127, 0.08));
+  border-bottom: 1px solid var(--drift-border, rgba(127, 127, 127, 0.18));
+  font-size: 12px;
+}
+.brain-banner-text {
+  flex: 1;
+  color: var(--drift-fg-muted);
+  line-height: 1.4;
+}
+.brain-banner-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--drift-fg-muted);
+}
+.brain-banner-btn {
+  flex: none;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--drift-accent, #4c7ef3);
+  background: var(--drift-accent, #4c7ef3);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.brain-banner-btn:hover {
+  filter: brightness(1.05);
+}
+/* Blinking caret shown on the live (streaming) assistant bubble. */
+.bubble .cursor {
+  display: inline-block;
+  margin-left: 1px;
+  animation: drift-blink 1s step-end infinite;
+}
+@keyframes drift-blink {
+  50% {
+    opacity: 0;
+  }
+}
+/* Stop button reuses .send geometry but reads as a halt. */
+.send.stop {
+  background: var(--drift-fg-muted, #777);
+  border-color: var(--drift-fg-muted, #777);
+}
+
+/* ── Voice input (push-to-talk mic) ───────────────────────────────────────── */
+.mic {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--drift-border, rgba(127, 127, 127, 0.25));
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.mic.recording {
+  background: #e5484d;
+  border-color: #e5484d;
+  color: #fff;
+  animation: drift-pulse 1.2s ease-in-out infinite;
+}
+@keyframes drift-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(229, 72, 77, 0); }
+}
+.voice-status {
+  font-size: 11px;
+  color: var(--drift-fg-muted);
+  margin-right: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+/* ── Hands-free voice mode panel ──────────────────────────────────────────── */
+.voice-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 16px 28px;
+  border-top: 1px solid var(--drift-border, rgba(127, 127, 127, 0.18));
+}
+.voice-orb {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  background: var(--drift-bg-subtle, rgba(127, 127, 127, 0.1));
+  transition: box-shadow 0.2s, background 0.2s;
+}
+.voice-orb.listening {
+  background: rgba(76, 126, 243, 0.15);
+  animation: drift-listen 1.6s ease-in-out infinite;
+}
+.voice-orb.thinking {
+  background: rgba(245, 184, 0, 0.18);
+}
+.voice-orb.speaking {
+  background: rgba(46, 184, 114, 0.18);
+  animation: drift-speak 0.9s ease-in-out infinite;
+}
+@keyframes drift-listen {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(76, 126, 243, 0.4); }
+  50% { box-shadow: 0 0 0 12px rgba(76, 126, 243, 0); }
+}
+@keyframes drift-speak {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 184, 114, 0.4); }
+  50% { box-shadow: 0 0 0 10px rgba(46, 184, 114, 0); }
+}
+.voice-state-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--drift-fg, inherit);
+}
+.voice-substatus {
+  font-size: 11px;
+  color: var(--drift-fg-muted);
+  max-width: 240px;
+  text-align: center;
+}
+.voice-exit {
+  margin-top: 4px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--drift-border, rgba(127, 127, 127, 0.3));
+  background: transparent;
+  color: var(--drift-fg, inherit);
+  font-size: 13px;
+  cursor: pointer;
+}
+.voice-exit:hover {
+  background: var(--drift-bg-subtle, rgba(127, 127, 127, 0.08));
+}
+
+/* Persona / system-prompt editor in Settings. */
+.persona-input {
+  width: 100%;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid var(--drift-border, rgba(127, 127, 127, 0.25));
+  background: var(--drift-bg, transparent);
+  color: var(--drift-fg, inherit);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  line-height: 1.4;
+}
+
+/* ── Voice mode: cinematic entity orb panel ───────────────────────────────── */
+/* Override the earlier light voice-panel: in voice mode we go full-cinematic on
+   a deep-space surface so the WebGL entity reads as the focal point. */
+.voice-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: 10px;
+  padding: 18px 16px 20px;
+  border: 1px solid rgba(150, 160, 220, 0.12);
+  border-radius: 24px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(120, 110, 220, 0.1), transparent 60%),
+    #04050a;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(180, 190, 255, 0.06);
+}
+.vorb {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.vorb-canvas {
+  width: 100%;
+  display: block;
+  border-radius: 18px;
+}
+.vorb-fallback {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: radial-gradient(circle at 50% 50%, rgba(120, 110, 220, 0.14), #04050a 70%);
+}
+.vorb-fallback-core {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  animation: drift-forge-breathe 2.6s ease-in-out infinite;
+}
+.vorb-fallback.thinking .vorb-fallback-core,
+.vorb-fallback.speaking .vorb-fallback-core {
+  animation-duration: 1.1s;
+}
+@keyframes drift-forge-breathe {
+  0%, 100% { transform: scale(0.9); opacity: 0.78; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+.vorb-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vorb-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.5em;
+  text-transform: uppercase;
+  padding-left: 0.5em; /* offset the trailing letter-spacing so the chip reads centered */
+}
+.vorb-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+/* On-dark overrides for the panel's label / status / exit. */
+.voice-panel .voice-state-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #eef0ff;
+}
+.voice-panel .voice-substatus {
+  font-size: 11px;
+  color: rgba(190, 198, 245, 0.6);
+  text-align: center;
+  max-width: 260px;
+}
+.voice-panel .voice-exit {
+  margin-top: 2px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 160, 230, 0.28);
+  background: rgba(110, 120, 230, 0.08);
+  color: #d8dcff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.voice-panel .voice-exit:hover {
+  background: rgba(110, 120, 230, 0.16);
+  border-color: rgba(170, 180, 255, 0.5);
+}
+.voice-panel .voice-exit:active {
+  transform: scale(0.97);
+}
+/* Screen-reader-only (used by the orb's aria-live state). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vorb-fallback-core { animation: none; }
+}
+
+/* ── Agentic chat: PR/scan state chip + tool-step cards ───────────────────── */
+.pr-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--drift-border, rgba(127, 127, 127, 0.14));
+  background: var(--drift-bg-subtle, rgba(127, 127, 127, 0.05));
+}
+.pr-chip-link {
+  font-weight: 600;
+  color: var(--drift-accent, #4c7ef3);
+  text-decoration: none;
+}
+.pr-chip-link:hover { text-decoration: underline; }
+.pr-chip-scan {
+  color: var(--drift-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pr-chip-scan.running { color: #e08600; }
+.pr-chip-scan.done { color: #2e9b63; }
+.pr-chip-stop {
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  background: rgba(229, 72, 77, 0.08);
+  color: #e5484d;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pr-chip-stop:hover { background: rgba(229, 72, 77, 0.16); }
+
+.tool-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--drift-border, rgba(127, 127, 127, 0.18));
+  background: var(--drift-bg-subtle, rgba(127, 127, 127, 0.05));
+  font-size: 12.5px;
+}
+.tool-step.done { border-color: rgba(46, 155, 99, 0.35); }
+.tool-step.error { border-color: rgba(229, 72, 77, 0.4); }
+.tool-step-icon { width: 16px; text-align: center; color: var(--drift-fg-muted); }
+.tool-step.done .tool-step-icon { color: #2e9b63; }
+.tool-step.error .tool-step-icon { color: #e5484d; }
+.tool-step-label { font-weight: 600; }
+.tool-step-note,
+.tool-step-summary {
+  color: var(--drift-fg-muted);
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+/* "Copy details" on a failed tool-step card — copies the developer report. */
+.tool-step-copy {
+  flex: none;
+  margin-left: 8px;
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  background: transparent;
+  color: #e5484d;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tool-step-copy:hover { background: rgba(229, 72, 77, 0.1); }
+/* When there's no summary to push it right, anchor the button to the far edge. */
+.tool-step-label + .tool-step-copy { margin-left: auto; }

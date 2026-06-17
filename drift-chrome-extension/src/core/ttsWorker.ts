@@ -60,16 +60,41 @@ async function init(msg: TtsWorkerInit): Promise<Tts> {
   env.allowRemoteModels = true;
   const wasm = env.backends?.onnx?.wasm;
   if (wasm) {
-    wasm.numThreads = 1; // extension pages aren't cross-origin-isolated → no SAB threads
+    wasm.numThreads = 1; // extension pages aren't cross-origin-isolated → no SAB threads (WASM-fallback path only)
     wasm.proxy = false; // already off the page's main thread; no nested worker
     wasm.wasmPaths = msg.wasmPaths;
   }
   const { KokoroTTS } = await import('kokoro-js');
-  return KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
-    dtype: KOKORO_DTYPE,
-    device: 'wasm',
-    progress_callback: reportProgress,
-  }) as unknown as Promise<Tts>;
+
+  const loadWasm = () =>
+    KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
+      dtype: KOKORO_DTYPE,
+      device: 'wasm',
+      progress_callback: reportProgress,
+    }) as unknown as Promise<Tts>;
+
+  // Match Volley: run Kokoro on the GPU (fp32 / WebGPU) — synthesis is ~10× faster
+  // there than the q8 / WASM single-thread path. The brain (WebLLM) already uses
+  // WebGPU, so it's present. Fall back to q8 / WASM if WebGPU init THROWS — OR if
+  // it doesn't finish within a deadline: with two WebGPU models loaded (Qwen +
+  // Kokoro) the GPU init can WEDGE (never resolve/reject), which would hang the
+  // whole worker `init` and leave voice mode "stuck on Starting". The timeout
+  // guarantees we always reach a working engine.
+  try {
+    const WEBGPU_DEADLINE_MS = 45_000;
+    const webgpu = KokoroTTS.from_pretrained(KOKORO_MODEL_ID, {
+      dtype: 'fp32',
+      device: 'webgpu',
+      progress_callback: reportProgress,
+    }) as unknown as Promise<Tts>;
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error('WebGPU Kokoro init timed out')), WEBGPU_DEADLINE_MS),
+    );
+    return await Promise.race([webgpu, timeout]);
+  } catch (err) {
+    post({ type: 'progress', phase: `WebGPU unavailable (${err instanceof Error ? err.message : 'init failed'}) → q8/WASM fallback`, fraction: null });
+    return await loadWasm();
+  }
 }
 
 self.onmessage = async (e: MessageEvent<TtsWorkerRequest>) => {
@@ -78,8 +103,21 @@ self.onmessage = async (e: MessageEvent<TtsWorkerRequest>) => {
   if (msg.type === 'init') {
     try {
       ttsPromise = init(msg);
-      await ttsPromise;
+      const tts = await ttsPromise;
+      // Declare ready as soon as the MODEL is loaded — do NOT block on the warmup.
+      // The warmup synth compiles WebGPU shaders, which can be slow or even WEDGE
+      // (never resolve) on some GPUs; awaiting it here would hang the worker's
+      // `ready`, so loadKokoroRuntime() never resolves and VoiceController.start()
+      // gets stuck booting ("stuck on Starting", no listening). So warm up in the
+      // BACKGROUND instead — the first real synth still benefits if it wins the race.
       post({ type: 'ready' });
+      void (async () => {
+        try {
+          await tts.generate('Hello there.', { voice: 'af_heart', speed: 1.0 });
+        } catch {
+          /* warmup is best-effort; a real synth will surface any genuine error */
+        }
+      })();
     } catch (err) {
       ttsPromise = null;
       post({ type: 'init-error', message: err instanceof Error ? err.message : String(err) });
