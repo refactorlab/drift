@@ -9,6 +9,7 @@
 // then the visible base-ref/head-ref DOM elements, then loose regexes.
 
 import { activeTab, sendToTab } from './messaging';
+import { ghWebBase, isGithubHost, isGithubUrl, PUBLIC_GITHUB_HOST } from './githubHost';
 
 export type PrRefs = {
   baseOwner: string;
@@ -22,13 +23,24 @@ export type PrRefs = {
   title?: string;
 };
 
-export type PrId = { owner: string; repo: string; number: number };
+/** The host (`github.com` or an enterprise `github.<org>.<tld>`) is carried so
+ *  every downstream fetch (diff/patch/zip/api) targets the SAME GitHub the PR
+ *  lives on — not a hardcoded github.com. */
+export type PrId = { owner: string; repo: string; number: number; host: string };
 
-/** Parse `owner/repo` + PR number straight from a GitHub PR URL (no DOM, no API). */
+/** Parse host + `owner/repo` + PR number straight from a GitHub PR URL (no DOM,
+ *  no API). Accepts public github.com and enterprise GitHub hosts. */
 export function parsePrUrl(url: string): PrId | null {
-  const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\b/);
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!isGithubHost(u.hostname)) return null;
+  const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)\b/);
   if (!m) return null;
-  return { owner: m[1], repo: m[2], number: Number(m[3]) };
+  return { owner: m[1], repo: m[2], number: Number(m[3]), host: u.hostname };
 }
 
 function first(html: string, re: RegExp): string | undefined {
@@ -322,16 +334,17 @@ export async function resolvePrRefs(
   repo: string,
   number: number,
   signal?: AbortSignal,
+  host: string = PUBLIC_GITHUB_HOST,
 ): Promise<PrRefs> {
   const tab = await activeTab();
-  if (tab?.id && tab.url?.includes('github.com')) {
+  if (tab?.id && isGithubUrl(tab.url)) {
     const injected = await refsViaInjection(tab.id, owner, repo);
     if (injected && refsAreUsable(injected)) return injected;
     const viaMsg = await refsFromContentScript(tab.id);
     if (viaMsg && refsAreUsable(viaMsg)) return viaMsg;
   }
 
-  const url = `https://github.com/${owner}/${repo}/pull/${number}`;
+  const url = `${ghWebBase(host)}/${owner}/${repo}/pull/${number}`;
   const res = await fetch(url, { credentials: 'include', redirect: 'follow', signal });
   if (!res.ok) throw new Error(`resolve PR refs failed: HTTP ${res.status}`);
   const refs = parsePrRefs(await res.text(), owner, repo);

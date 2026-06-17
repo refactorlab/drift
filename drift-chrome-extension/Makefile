@@ -14,6 +14,20 @@ NPM ?= npm
 DEV_PORTS ?= 5181 5182 5183 5184 5185 5186
 # The live scan loads this packaged WASM scanner; dev/build stage it if missing.
 WASM := public/drift-static-profiler.wasm
+# Profiler source tree (sibling repo) — the inputs `make dev` rebuilds the local
+# wasm from when they change.
+PROFILER_DIR := ../drift-static-profiler
+
+# Where the bundled scanner WASM comes from:
+#   local   — build from $(PROFILER_DIR) (your working tree). DEV default, so
+#             in-progress profiler changes (e.g. the voice FSM) are ALWAYS used,
+#             and a rebuild is triggered whenever the Rust source changes.
+#   release — download the latest official `drift-static-profiler-v*` GitHub
+#             release artifact. Used by build/prod/release so distributables
+#             ship the published, release-pinned scanner — NOT your local tree.
+# Override per-invocation, e.g. `WASM_SOURCE=local make prod` to sideload a build
+# that bundles your locally-built wasm.
+WASM_SOURCE ?= local
 
 BLUE   := \033[1;34m
 GREEN  := \033[1;32m
@@ -46,14 +60,23 @@ install: node_modules ## Install npm deps (idempotent)
 # wasi-sdk for your OS/arch + the rustup wasm target), so no manual prereqs.
 # Never hard-fails dev: if the build can't complete we warn loudly and continue,
 # so the extension still loads (the live scan surfaces a clear error until staged).
-ensure-wasm: ## Stage the scanner WASM into public/ (builds once if missing)
-	@if [ -f "$(WASM)" ]; then \
-	  printf "$(GREEN)✓$(RESET) scanner wasm present ($$(du -h "$(WASM)" | cut -f1))\n"; \
+ensure-wasm: ## Stage the scanner WASM into public/ (local build for dev; official release otherwise)
+ifeq ($(WASM_SOURCE),release)
+	@printf "$(BLUE)▶$(RESET) staging OFFICIAL release scanner wasm (WASM_SOURCE=release)…\n"
+	@bash scripts/fetch-release-wasm.sh || \
+	  printf "$(YELLOW)⚠ could not fetch the release wasm$(RESET) — check network / GitHub. Use $(CYAN)WASM_SOURCE=local$(RESET) to build from $(PROFILER_DIR).\n"
+else
+	@# LOCAL: (re)build from the working tree when the wasm is missing OR the
+	@# profiler Rust source is newer than it — so `make dev` always picks up your
+	@# in-progress changes (e.g. the voice FSM) instead of a stale wasm.
+	@if [ -f "$(WASM)" ] && [ -z "$$(find $(PROFILER_DIR)/src $(PROFILER_DIR)/Cargo.toml -newer "$(WASM)" 2>/dev/null)" ]; then \
+	  printf "$(GREEN)✓$(RESET) local scanner wasm up to date ($$(du -h "$(WASM)" | cut -f1))\n"; \
 	else \
-	  printf "$(YELLOW)→$(RESET) scanner wasm missing — building once (auto-installs wasi-sdk + cargo)…\n"; \
+	  printf "$(YELLOW)→$(RESET) building local scanner wasm from $(PROFILER_DIR) (source changed or missing)…\n"; \
 	  bash scripts/build-wasm.sh || \
-	    printf "$(YELLOW)⚠ scanner wasm not built$(RESET) — live scan stays disabled until $(CYAN)make wasm$(RESET) succeeds (needs network for the one-time wasi-sdk download + a Rust toolchain).\n"; \
+	    printf "$(YELLOW)⚠ scanner wasm not built$(RESET) — live scan + voice stay disabled until $(CYAN)make wasm$(RESET) succeeds (needs a Rust toolchain + one-time wasi-sdk download).\n"; \
 	fi
+endif
 
 wasm: node_modules ## Force-rebuild the scanner WASM → public/ (auto-installs wasi-sdk + cargo)
 	@bash scripts/build-wasm.sh
@@ -66,12 +89,14 @@ tts: node_modules ## Bundle the on-device Kokoro voice into the extension (ort e
 	@node scripts/stage-kokoro.mjs
 	@printf "$(GREEN)✓$(RESET) Kokoro bundled — it now ships INSIDE the extension (offline, no runtime download)\n"
 
-dev: node_modules ensure-wasm ## Dev server with hot-reload (Vite + CRXJS); writes dist/, reloads on save
+dev: WASM_SOURCE := local
+dev: node_modules ensure-wasm ## Dev server with hot-reload (Vite + CRXJS); LOCAL wasm (rebuilt on profiler-source change)
 	@printf "$(YELLOW)→$(RESET) Load $(CYAN)$(CURDIR)/dist$(RESET) at chrome://extensions (Developer mode → Load unpacked)\n"
 	@printf "$(YELLOW)→$(RESET) Then click the $(CYAN)Drift$(RESET) toolbar icon to open the side panel. Saving a file hot-reloads it.\n\n"
 	@$(NPM) run dev
 
-build: node_modules ensure-wasm ## Production build → dist/
+build: WASM_SOURCE := release
+build: node_modules ensure-wasm ## Production build → dist/ (OFFICIAL release wasm; WASM_SOURCE=local to use your tree)
 	@printf "$(BLUE)▶$(RESET) vite build\n"
 	@$(NPM) run build
 	@printf "$(GREEN)✓$(RESET) built → $(CYAN)dist/$(RESET)\n"
@@ -87,11 +112,12 @@ build: node_modules ensure-wasm ## Production build → dist/
 # the store artifact. The literal Web Store upload is `make release` (→ npm run
 # zip), which builds the STORE profile (DRIFT_STORE_BUILD=1) that DCEs the
 # download path out and runs `verify:store` to prove the bundle is clean.
-prod: node_modules ## Standalone SIDELOAD deploy → dist/ (no dev server; includes the dev download override)
+prod: WASM_SOURCE := release
+prod: node_modules ## Standalone SIDELOAD deploy → dist/ (OFFICIAL release wasm; WASM_SOURCE=local to bundle your tree)
 	@printf "$(BLUE)▶$(RESET) Production deploy build — no HMR, no dev server\n"
 	@$(MAKE) --no-print-directory kill          # 1. ensure nothing is watching/overwriting dist/
 	@rm -rf dist                                # 2. drop any dev-contaminated build
-	@$(MAKE) --no-print-directory ensure-wasm   # 3. stage the bundled scanner WASM
+	@$(MAKE) --no-print-directory ensure-wasm WASM_SOURCE=$(WASM_SOURCE)  # 3. stage the scanner WASM (release by default)
 	@$(NPM) run build                           # 4. icons → ort → tsc --noEmit → vite build
 	@$(NPM) run verify:assets                   # 5. sanity-check the bundle
 	@# 6. Guard: a real production dist must carry NO dev-server references.
@@ -117,7 +143,9 @@ test: node_modules ## Run the test suite (vitest: parser unit + integration)
 typecheck: node_modules ## Type-check without emitting (tsc --noEmit)
 	@$(NPM) run typecheck
 
-zip: node_modules ## Build + zip → release/drift.zip (store upload)
+zip: WASM_SOURCE := release
+zip: node_modules ## Build + zip → release/drift.zip (store upload; OFFICIAL release wasm)
+	@$(MAKE) --no-print-directory ensure-wasm WASM_SOURCE=$(WASM_SOURCE)  # stage the scanner wasm (npm zip won't)
 	@$(NPM) run zip
 
 store-assets: node_modules ## Generate Web Store listing images → release/store-assets/

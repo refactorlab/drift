@@ -59,6 +59,16 @@ const NUL = String.fromCharCode(0);
  *  build doesn't understand an argument we passed". */
 const CLAP_USAGE_ERROR = 2;
 
+/** Total argv buffer size in BYTES (UTF-8 + a NUL terminator per arg) — what
+ *  WASI's `args_sizes_get` MUST report. browser_wasi_shim instead sums each arg's
+ *  JS string `.length` (UTF-16 code units), which under-sizes the buffer for any
+ *  non-ASCII arg and corrupts argv. We override the sizer with this. Exported for
+ *  the regression test. */
+export function argvByteSize(args: string[]): number {
+  const enc = new TextEncoder();
+  return args.reduce((n, a) => n + enc.encode(a).length + 1, 0);
+}
+
 /**
  * Run `attempt(true)` (with `--diff-status`); if the scanner is an OLDER build
  * that predates the flag, clap rejects it with a usage error (exit 2) — so
@@ -136,6 +146,26 @@ export async function runScanPr(
       repo, // fd 3 → /repo
       workDir, // fd 4 → /work
     ]);
+
+    // WORKAROUND for a browser_wasi_shim bug: its `args_sizes_get` reports the
+    // argv buffer size using each arg's JS string `.length` (UTF-16 code units),
+    // but `args_get` then writes the actual UTF-8 bytes. For ASCII they match; for
+    // ANY non-ASCII char in an arg — an em-dash, smart quote, emoji, or accent in
+    // `--pr-title`/`--pr-body` — UTF-8 is longer, so the WASI runtime under-sizes
+    // the buffer, argv is truncated/corrupted, and clap aborts with "invalid UTF-8"
+    // (exit code 2) before the scan runs. Override the sizer to report the TRUE
+    // UTF-8 byte length so non-ASCII PR titles/bodies scan correctly.
+    const trueArgvBytes = argvByteSize(args);
+    const wasiAny = wasi as unknown as {
+      inst: { exports: { memory: WebAssembly.Memory } };
+      wasiImport: Record<string, (...a: number[]) => number>;
+    };
+    wasiAny.wasiImport.args_sizes_get = (argcPtr: number, bufSizePtr: number): number => {
+      const view = new DataView(wasiAny.inst.exports.memory.buffer);
+      view.setUint32(argcPtr, args.length, true);
+      view.setUint32(bufSizePtr, trueArgvBytes, true);
+      return 0;
+    };
 
     // Module overload → resolves to the Instance directly (the bytes overload is
     // the one that returns `{ module, instance }`).

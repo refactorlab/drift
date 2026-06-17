@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { activeTab } from '../core/messaging';
 import { parsePrUrl, type PrId } from '../core/prRefs';
+import { GITHUB_NAV_FILTER } from '../core/githubHost';
 
 /** The PR the active GitHub tab is on, or null. Refreshes on tab/nav changes. */
 export function useActivePr(): PrId | null {
@@ -23,7 +24,7 @@ export function useActivePr(): PrId | null {
       } catch {
         next = null;
       }
-      const s = next ? `${next.owner}/${next.repo}#${next.number}` : 'none';
+      const s = next ? `${next.host}/${next.owner}/${next.repo}#${next.number}` : 'none';
       if (live && s !== sig) {
         sig = s;
         setPr(next);
@@ -34,9 +35,8 @@ export function useActivePr(): PrId | null {
     const onTab = () => void refresh();
     chrome.tabs?.onActivated.addListener(onTab);
     chrome.tabs?.onUpdated.addListener(onTab);
-    const navFilter = { url: [{ hostEquals: 'github.com' }] };
-    chrome.webNavigation?.onHistoryStateUpdated.addListener(onTab, navFilter);
-    chrome.webNavigation?.onCompleted.addListener(onTab, navFilter);
+    chrome.webNavigation?.onHistoryStateUpdated.addListener(onTab, GITHUB_NAV_FILTER);
+    chrome.webNavigation?.onCompleted.addListener(onTab, GITHUB_NAV_FILTER);
     const poll = window.setInterval(() => void refresh(), 3000);
 
     return () => {

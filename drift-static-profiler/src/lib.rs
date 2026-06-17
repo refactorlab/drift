@@ -27,6 +27,11 @@ pub mod sql_ast;
 pub mod sql_lint;
 pub mod tags;
 pub mod tree;
+// Real-time voice control/DSP plane (VAD + DuplexCascade FSM), vendored from
+// Volley's volley-core. Pure Rust, zero deps; the wasm-callable C-ABI surface
+// lives in the binary crate (`src/voice_wasm.rs`, wasm32-gated) so this stays
+// glue-free for native builds and `cargo test`.
+pub mod voice;
 pub mod walker;
 
 pub use api::{

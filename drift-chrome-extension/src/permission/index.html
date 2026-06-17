@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enable microphone — Drift</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: #0d1117;
+        color: #e6edf3;
+      }
+      main { max-width: 360px; padding: 24px; text-align: center; }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      #msg { margin: 0 0 16px; color: #9da7b3; }
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 8px 18px;
+        border: 0;
+        border-radius: 8px;
+        background: #2f81f7;
+        color: #fff;
+        cursor: pointer;
+      }
+      button[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>🎙️ Microphone access</h1>
+      <p id="msg">Requesting microphone access…</p>
+      <button id="retry" hidden>Enable microphone</button>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

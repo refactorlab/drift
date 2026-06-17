@@ -24,6 +24,18 @@ export interface TtsMeta {
   acquiredAt: number;
 }
 
+/** The in-browser LLM brain (Qwen via WebLLM) acquired on this device. Unlike
+ *  the scanner/TTS the model lives in IndexedDB (WebLLM's own cache), so this is
+ *  just the "the user downloaded it" record + version tag (model id). */
+export interface BrainMeta {
+  /** WebLLM model id (e.g. Qwen2.5-1.5B-Instruct-q4f16_1-MLC). */
+  version: string;
+  /** Advertised model size in bytes, for display. */
+  bytes: number;
+  source: 'remote';
+  acquiredAt: number;
+}
+
 export interface Settings {
   onboarded: boolean;
   askBeforeActing: boolean;
@@ -44,6 +56,10 @@ export interface Settings {
   ttsEnabled?: boolean;
   /** Kokoro voice name for the spoken summary (default af_heart). */
   ttsVoice?: string;
+  /** Acquired in-browser LLM brain (set when the user downloads the model). */
+  brain?: BrainMeta;
+  /** Custom system prompt / persona for the chat brain (optional override). */
+  persona?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
