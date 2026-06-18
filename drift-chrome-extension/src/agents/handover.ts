@@ -39,7 +39,8 @@ import {
 import { asScanOutput } from '../core/scanOutput';
 import { parseHandoverIntent } from '../core/handoverIntent';
 import { getPrFile } from '../state/prFileStore';
-import { buildFileCorrelation, correlationContext, resolveOverview } from './fileBriefing';
+import { buildFileCorrelation, correlationContext, composeOverview, changeVerb } from './fileBriefing';
+import { runLevel1Agent, runLevel2Agent, summaryStatus } from './overviewAgents';
 import { collectFileDiff } from './changeCollector';
 import { summarizeChange } from './changeSummary';
 import { tightenDescription } from './descriptionQuality';
@@ -92,20 +93,16 @@ import {
   type NavResult,
 } from '../core/prNavigate';
 
-/** The SINGLE live-presentation prompt. The SECTIONS are always built deterministically
- *  (hunks or symbols), so the model NEVER picks a spot — it writes a 3-level overview
- *  (Level 1 + Level 2, in WORDS) then ANNOTATES each fixed `[H<n>]` spot. This is what
- *  gives reliable descriptions AND keeps every spot anchored on real code, not the model's
- *  guess. (It can't navigate to code that isn't shown — the ranges come from us.) */
+/** The Level-3 ANNOTATOR prompt. The SECTIONS are always built deterministically (hunks or
+ *  symbols), so the model NEVER picks a spot — it only ANNOTATES each fixed `[H<n>]` with a
+ *  plain-words note. Level 1 + Level 2 are NOT produced here: two dedicated agents
+ *  (overviewAgents.ts) own those, so the model isn't splitting attention between the
+ *  overview and the per-spot notes (the cause of the useless Level 1/2 lines). */
 const PRESENT_SYSTEM =
-  'You are walking a reviewer through ONE file in a pull request. You are given how this file fits the overall change, then its key SPOTS, each tagged `[H<n>]` with its code (a diff shows − removed / + added lines). Reply in EXACTLY this shape and nothing else:\n' +
-  'PR: <what this PR changes in THIS file AND where the file sits in the overall flow (its role)>\n' +
-  'FILE: <what this file is responsible for, at a high level>\n' +
-  'DETAIL: <its responsibility within THIS PR\'s change>\n' +
-  '[H0] <in PLAIN WORDS, what spot 0 is/does and the single thing to verify>\n' +
+  'You are annotating the key SPOTS of ONE file in a pull request. Each spot is tagged `[H<n>]` with its code (a diff shows − removed / + added lines). Reply with ONE line per tag, IN ORDER and nothing else:\n' +
+  '[H0] <in PLAIN WORDS, what spot 0 does and the single thing to verify>\n' +
   '[H1] <…>\n' +
-  '…one `[H<n>]` line for EVERY tag, IN ORDER. Describe in plain words (NOT just the symbol name) and name the real functions/types.\n' +
-  'RULES: each PR/FILE/DETAIL line is ONE concrete sentence, at most 20 words. Do NOT begin with "This file"/"This PR"/"This module". Do NOT say something "implements the functionality" — name WHAT it does and WHICH functions/types do it. Describe ONLY what the shown code and fit-notes support; never invent features that are not present. No preamble, no markdown, no bullets, no code fences.';
+  'one `[H<n>]` line for EVERY tag. Name the real functions/types (NOT just the symbol name). No preamble, no markdown, no bullets, no code fences.';
 
 export interface HandoverTurnInput {
   pr: PrId;
@@ -227,29 +224,36 @@ async function buildPresentation(
     };
   }
 
-  // ── ONE generation: a 3-level overview (Level 1 + Level 2, in WORDS) + one `[H<n>]`
-  //    annotation per fixed spot (Level 3). The FILE-SCOPED architecture correlation (key
-  //    `why`, the root it lives under, the call-graph nodes that touch IT) is fed in so
-  //    Level 1 names where the file sits in the flow — never the whole-PR theme. ──
+  // THREE focused generations, run STRICTLY SEQUENTIALLY (one model pass at a time — never
+  //  concurrent, to stay light on GPU/CPU/memory):
+  //   1. the ANNOTATOR — one `[H<n>]` note per fixed spot (Level 3).
+  //   2. the LEVEL 1 AGENT — what the PR does here + the file's role (Level 1).
+  //   3. the LEVEL 2 AGENT — what the file is responsible for (Level 2).
+  //  The FILE-SCOPED correlation (key `why`, the area it lives under, its own symbols in the
+  //  delta) gives Level 1 its architectural role — never the whole-PR theme. The changed
+  //  CODE is the single grounding both agents and the annotator share.
   const correlation = buildFileCorrelation(input.rec, step, symbols);
   const context = correlationContext(correlation);
-  const messages: ChatTurn[] = [
-    { role: 'system', content: PRESENT_SYSTEM },
-    {
-      role: 'user',
-      content: `File ${step.path}.${context ? `\n\n${context}` : ''}\n\nDescribe the file, then what each numbered spot does, in order.\n\n${listSpots(sections)}`,
-    },
-  ];
-  const raw = (await input.brain.generate(messages, { signal: input.signal }).catch(() => '')).trim();
+  const code = listSpots(sections);
 
-  // Level 1 + Level 2 from the model's `PR:`/`FILE:`/`DETAIL:` header (the MODEL describes
-  // the file in WORDS); for any level it omits, a correlation-GROUNDED fallback fills it —
-  // Level 1 still carries the file's role in the flow, not a bare "+N/−N" line.
-  const overview = resolveOverview(raw, step, correlation, symbols);
+  const annotatorMsg: ChatTurn[] = [
+    { role: 'system', content: PRESENT_SYSTEM },
+    { role: 'user', content: `File ${step.path}. Annotate each numbered spot, in order.\n\n${code}` },
+  ];
+  const raw = (await input.brain.generate(annotatorMsg, { signal: input.signal }).catch(() => '')).trim();
   // Level 3: the model's annotation per spot, or — only if it skipped one — the spot's own
   // signature / first changed line (never a bare "The function X").
   const notes = parseHunkNotes(raw);
   const segs = sections.map((s, i) => ({ ...s, note: notes.get(i) || summarizeChange(s.ref, s.label) }));
+
+  // Level 1 then Level 2 — two dedicated agents, SEQUENTIAL, each surfacing what's running.
+  const agentInput = { brain: input.brain, signal: input.signal, path: step.path, verb: changeVerb(step.code), context, code };
+  input.onProgress(summaryStatus(1));
+  const level1 = await runLevel1Agent(agentInput);
+  input.onProgress(summaryStatus(2));
+  const level2 = await runLevel2Agent(agentInput);
+  // Compose: the agents' words, gated for quality, with the grounded fallback for any gap.
+  const overview = composeOverview(level1, level2, step, correlation, symbols);
 
   // Lead with an OVERVIEW beat: while Level 1 + Level 2 are read, the page starts at the
   // TOP of the file and slow-scrolls (reading-speed paced) down to the first change — THEN

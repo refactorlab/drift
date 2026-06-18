@@ -71,7 +71,6 @@ export interface FileCorrelation {
 export function buildFileCorrelation(rec: ScanRecord, step: HandoverStep, symbols: FileSymbol[]): FileCorrelation {
   const scan = asScanOutput(rec.scan);
   const review = scan?.pr_review;
-  const base = basename(step.path).toLowerCase();
   const symNames = new Set(symbols.map((s) => s.name.toLowerCase()));
 
   // Key-file `why` for THIS path (only if descriptive).
@@ -84,18 +83,16 @@ export function buildFileCorrelation(rec: ScanRecord, step: HandoverStep, symbol
 
   const root = matchedRoot(step.path, (scan?.pr_scope?.affected_roots ?? []).filter(Boolean)) ?? '';
 
-  // Call-graph delta nodes that resolve to THIS file: a node whose label matches the
-  // file's basename, or one of the file's own tree-sitter symbol names. (We never list
-  // unrelated nodes — that whole-PR theme is what made the model hallucinate.)
+  // Call-graph delta nodes that resolve to one of THIS file's own symbols (NOT the file's
+  // own basename node — "voicePrompt.ts wired into voicePrompt.ts" is circular noise, the
+  // bug report's Level 1 — and never unrelated nodes, the whole-PR theme that made the
+  // model hallucinate). A soft signal for the agents, never the headline.
   const touchedNodes = [
     ...new Set(
       (review?.architecture_flow?.diff_merged_structured?.nodes ?? [])
         .filter((n) => n.class === 'added' || n.class === 'changed' || n.class === 'removed')
         .map((n) => (n.label ?? '').trim())
-        .filter((label) => {
-          const l = label.toLowerCase();
-          return !!l && (symNames.has(l) || l === base || (l.length >= 4 && base.includes(l)));
-        }),
+        .filter((label) => label && symNames.has(label.toLowerCase())),
     ),
   ].slice(0, 4);
 
@@ -124,21 +121,23 @@ export function correlationContext(corr: FileCorrelation): string {
   return lines.length ? `How this file fits the change:\n${lines.map((l) => `- ${l}`).join('\n')}` : '';
 }
 
-/** The verb for a change code, for the deterministic Level-1 clause. */
-function changeVerb(code: string): string {
+/** The human verb for a change code — "adds"/"updates"/… — for the Level-1 sentence
+ *  (used by the fallback AND fed to the Level 1 agent). */
+export function changeVerb(code: string): string {
   return code === 'A' ? 'adds' : code === 'D' ? 'removes' : code === 'R' ? 'renames' : code === 'C' ? 'copies' : 'modifies';
 }
 
-/** A correlation-GROUNDED fallback overview — used for any level the model omitted.
- *  Level 1 always carries the file's role in the flow (key-`why` / root / call-graph),
- *  not just the +/− line; Level 2 names the file's real symbols + its place. Pure. */
+/** A correlation-GROUNDED fallback overview — the LAST resort when the Level 1 / Level 2
+ *  agents return nothing usable. Level 1 carries the file's role from the key-`why` or the
+ *  area it lives under (NEVER the circular "wired into the call-graph" line the bug report
+ *  flagged); Level 2 names the file's real symbols + its place. Pure. */
 export function fallbackOverview(step: HandoverStep, corr: FileCorrelation, symbols: FileSymbol[]): FileOverview {
   const name = basename(step.path);
   const change = `This PR ${changeVerb(step.code)} ${name} (+${step.additions}/−${step.deletions}).`;
-  // The flow clause — the architectural correlation, in priority order.
+  // The flow clause — a real, human signal only: the key-file rationale, else the area it
+  // lives under. The call-graph node list is deliberately NOT used here (it reads as noise).
   let flow = '';
   if (corr.keyWhy) flow = ` ${corr.keyWhy.replace(/\.?\s*$/, '')}.`;
-  else if (corr.touchedNodes.length) flow = ` It's wired into ${corr.touchedNodes.join(', ')} in the changed call-graph.`;
   else if (corr.root) flow = ` Part of the ${corr.root} area touched by this PR.`;
   const prChange = `${change}${flow}`;
 
@@ -149,23 +148,28 @@ export function fallbackOverview(step: HandoverStep, corr: FileCorrelation, symb
   return { prChange, purpose: `${defines}${place}` };
 }
 
-/** Combine the model's parsed header with the correlation fallback: keep the model's
- *  words for any level it produced — but only AFTER a quality gate (descriptionQuality)
- *  tightens a ramble to its informative head and rejects a content-free "implements the
- *  functionality" non-answer — and fill the rest from the grounded fallback. So neither
- *  level is ever blank, every level is short + concrete, and Level 1 is always flow-aware.
- *  Pure. */
-export function resolveOverview(
-  raw: string,
+/** Compose the final 3-level overview from the two AGENTS' Level 1 + Level 2 text: a
+ *  quality gate (descriptionQuality) tightens a ramble to its informative head and rejects
+ *  a content-free "implements the functionality" non-answer; whatever a level lacks is
+ *  filled from the grounded, deterministic fallback. So neither level is ever blank or
+ *  vacuous. Pure. */
+export function composeOverview(
+  level1: string | undefined,
+  level2: string | undefined,
   step: HandoverStep,
   corr: FileCorrelation,
   symbols: FileSymbol[],
 ): FileOverview {
-  const parsed = parseFileOverview(raw);
   const fb = fallbackOverview(step, corr, symbols);
-  // Level 1 is one sentence; Level 2 is the high-level + lower-level pair, so up to two.
   return {
-    prChange: tightenDescription(parsed?.prChange, { maxSentences: 1 }) || fb.prChange,
-    purpose: tightenDescription(parsed?.purpose, { maxSentences: 2 }) || fb.purpose,
+    prChange: tightenDescription(level1, { maxSentences: 1 }) || fb.prChange,
+    purpose: tightenDescription(level2, { maxSentences: 2 }) || fb.purpose,
   };
+}
+
+/** Back-compat composer for a SINGLE combined `PR:`/`FILE:`/`DETAIL:` reply (parses then
+ *  composes). The walkthrough now uses the dedicated agents + composeOverview directly. */
+export function resolveOverview(raw: string, step: HandoverStep, corr: FileCorrelation, symbols: FileSymbol[]): FileOverview {
+  const parsed = parseFileOverview(raw);
+  return composeOverview(parsed?.prChange, parsed?.purpose, step, corr, symbols);
 }
