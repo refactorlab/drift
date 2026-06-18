@@ -96,8 +96,12 @@ describe('fallbackOverview', () => {
     expect(o.prChange).toContain('Runs the live PR scan and renders progress');
   });
 
-  it('Level 1 falls to call-graph wiring, then root, when there is no key-why', () => {
-    expect(fallbackOverview(step(), corr({ touchedNodes: ['loadWasmModule', 'fmtMs'] }), SYMBOLS).prChange).toContain('wired into loadWasmModule, fmtMs');
+  it('Level 1 uses the area it lives under — NEVER the circular "wired into the call-graph" line', () => {
+    // The call-graph node list is no longer the headline (it read as noise in the bug report);
+    // touchedNodes alone leaves a clean structural line, while the root names where it lives.
+    const fromNodes = fallbackOverview(step(), corr({ touchedNodes: ['loadWasmModule', 'fmtMs'] }), SYMBOLS).prChange;
+    expect(fromNodes).not.toContain('wired into');
+    expect(fromNodes).not.toContain('call-graph');
     expect(fallbackOverview(step(), corr({ root: 'src/app' }), SYMBOLS).prChange).toContain('src/app');
   });
 

@@ -43,12 +43,15 @@ const REC = {
   },
 } as unknown as ScanRecord;
 
+// The overview is now produced by TWO dedicated agents (Level 1 + Level 2) plus the
+// Level-3 annotator — three SEPARATE generations. This fake brain answers each by the
+// system prompt it receives, so the test exercises the real per-agent contract.
 const BRAIN: BrainRuntime = {
-  // The hunk-path contract: a 3-level header (PR / FILE / DETAIL) then one [H<n>] note
-  // per change. On the symbol path (empty diff) the header + tag are ignored and the
-  // beats fall to the deterministic symbol fallback (overview from rationale + symbols).
-  async generate() {
-    return 'PR: Adds retry to the auth flow.\nFILE: Authenticates the user.\nDETAIL: Validates the session token.\n[H0] EXPLANATION OF THE FILE';
+  async generate(messages) {
+    const sys = messages.find((m) => m.role === 'system')?.content ?? '';
+    if (/LEVEL 1/.test(sys)) return 'Adds retry to the auth flow.';
+    if (/LEVEL 2/.test(sys)) return 'Authenticates the user. Validates the session token.';
+    return '[H0] EXPLANATION OF THE FILE'; // the Level-3 annotator
   },
   async complete() {
     return '';
@@ -185,9 +188,9 @@ describe('runHandoverTurn', () => {
         ],
       },
     } as unknown as ScanRecord;
-    // A model that ignores the format (no PR:/FILE: header, no tags) → exercises BOTH the
-    // deterministic overview fallback AND the symbol-beat fallback.
-    const dumbBrain: BrainRuntime = { async generate() { return 'prose with no tags'; }, async complete() { return ''; }, interrupt() {}, free() {} };
+    // A model that returns NOTHING for every agent → exercises BOTH the deterministic
+    // overview fallback (Level 1/2) AND the symbol-beat fallback (Level 3).
+    const dumbBrain: BrainRuntime = { async generate() { return ''; }, async complete() { return ''; }, interrupt() {}, free() {} };
     const run = (t: string) => runHandoverTurn({ pr: PR, url: URL, rec, userText: t, brain: dumbBrain, signal: new AbortController().signal, onProgress: () => {} });
     await run('walk me through this PR');
     mock.setActiveTab({ id: 9, url: URL });
