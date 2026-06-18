@@ -82,6 +82,12 @@ export type DiffResult = {
  *  +/- COUNTS (numstat) stay exact regardless — only the stored hunk lines cap. */
 export const DIFF_LINE_BUDGET = 8000;
 export const DIFF_LINE_BUDGET_PER_FILE = 1500;
+/** Per-file MINIMUM the global budget can't starve: even after the 8000-line global
+ *  pool is spent on the first big files, EVERY later changed file still keeps its first
+ *  ~120 real diff lines. Without this, tail files on a big PR got ZERO hunks → the
+ *  walkthrough had no before/after to ground on and the model guessed. Worst-case extra
+ *  storage is bounded (files × 120). */
+export const DIFF_LINE_BUDGET_PER_FILE_MIN = 120;
 
 // ── .patch → head sha ───────────────────────────────────────────────────────
 
@@ -254,17 +260,24 @@ export function parseUnifiedDiff(diff: string): DiffResult {
   let hunk: DiffHunk | null = null; // current hunk, or null while in the file header
   let budget = DIFF_LINE_BUDGET; // global cap on stored hunk lines
 
-  // Record one hunk body line, respecting the global + per-file budgets. The
-  // +/- COUNTS are tallied by the caller regardless — only storage is capped.
+  // Can this file store one more hunk line? The per-file HARD cap always applies; the
+  // global pool governs above the per-file MINIMUM, so the pool can't fully starve a
+  // file — every file keeps at least its first ~MIN real diff lines (a real before/after
+  // for the walkthrough), no matter how big the PR or where the file sits in the list.
+  const canStore = (e: DiffEntry): boolean =>
+    e.stored < DIFF_LINE_BUDGET_PER_FILE && (budget > 0 || e.stored < DIFF_LINE_BUDGET_PER_FILE_MIN);
+
+  // Record one hunk body line, respecting the budgets. The +/- COUNTS are tallied by
+  // the caller regardless — only storage is capped.
   const record = (type: DiffLineType, text: string) => {
     if (!cur || !hunk) return;
-    if (budget <= 0 || cur.stored >= DIFF_LINE_BUDGET_PER_FILE) {
+    if (!canStore(cur)) {
       cur.truncated = true;
       return;
     }
     hunk.lines.push({ type, text });
     cur.stored++;
-    budget--;
+    if (budget > 0) budget--; // minimum-guaranteed lines don't overdraw the global pool
   };
 
   for (const line of diff.split('\n')) {
@@ -287,7 +300,7 @@ export function parseUnifiedDiff(diff: string): DiffResult {
       // `+++`/`---` file headers — a body line whose content starts with `++`
       // is no longer mistaken for a header.
       hunk = { header: line, lines: [] };
-      if (budget > 0 && cur.stored < DIFF_LINE_BUDGET_PER_FILE) cur.hunks.push(hunk);
+      if (canStore(cur)) cur.hunks.push(hunk);
       else cur.truncated = true;
       continue;
     }
@@ -349,6 +362,62 @@ export function parseUnifiedDiff(diff: string): DiffResult {
     fileDiffs,
     diffTruncated: valid.some((e) => e.truncated),
   };
+}
+
+/** `@@ -a,b +c,d @@` — capture the NEW-file start line (group 1). The counts
+ *  are optional in unified-diff headers (`@@ -a +c @@` ⇒ single line). */
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/** Coalesce a sorted, de-duplicated list of line numbers into inclusive
+ *  `[start, end]` ranges (consecutive numbers merge into one range). */
+function coalesce(lines: number[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const n of lines) {
+    const last = out[out.length - 1];
+    if (last && n <= last[1] + 1) last[1] = Math.max(last[1], n);
+    else out.push([n, n]);
+  }
+  return out;
+}
+
+/**
+ * Per-file changed-line ranges in the NEW (HEAD) file, derived from the parsed
+ * hunks — the input the scanner's `--diff-hunks` flag wants. Walking each hunk
+ * from its `+`-side start line, every `add` line's new-file number is recorded
+ * (a `del` advances only the old side, so it doesn't move the new counter);
+ * `context` advances the counter without being recorded. Consecutive numbers
+ * coalesce into ranges.
+ *
+ * This is what lets the scanner attribute change at SYMBOL granularity — a
+ * function whose own lines fall in a range renders "changed", an untouched
+ * function in the same edited file stays "unchanged" — instead of painting
+ * every symbol in a touched file.
+ *
+ * A file is OMITTED (no key) when it has no usable line signal, so the scanner
+ * falls back to whole-file classification for it rather than wrongly marking
+ * everything unchanged:
+ *   • binary files (no textual hunks), and
+ *   • truncated files (hunks capped by the size budget — partial ranges would
+ *     hide real changes past the cap).
+ */
+export function changedRangesFromHunks(fileDiffs: FileDiff[]): Record<string, [number, number][]> {
+  const out: Record<string, [number, number][]> = {};
+  for (const fd of fileDiffs) {
+    if (fd.binary || fd.truncated) continue; // fall back to file-level for these
+    const added: number[] = [];
+    for (const hunk of fd.hunks) {
+      const m = HUNK_HEADER.exec(hunk.header);
+      if (!m) continue;
+      let newLine = parseInt(m[1], 10);
+      for (const ln of hunk.lines) {
+        if (ln.type === 'del') continue; // old-side only — new counter unmoved
+        if (ln.type === 'add') added.push(newLine);
+        newLine++; // both `add` and `context` occupy a new-file line
+      }
+    }
+    if (added.length) out[fd.path] = coalesce(added);
+  }
+  return out;
 }
 
 /** One `git diff --name-status` line for an entry. Renames/copies carry the

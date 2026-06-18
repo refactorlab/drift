@@ -202,6 +202,7 @@ mod tests {
             kind: SymbolKind::Function,
             file: file.into(),
             line: 1,
+            line_end: 1,
             depth,
             parent_class: None,
             children,

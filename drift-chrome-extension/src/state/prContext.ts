@@ -118,7 +118,7 @@ export function usePrContext() {
 
     // 2. Tab switched / finished loading.
     const onActivated = () => schedule();
-    const onUpdated = (_id: number, info: chrome.tabs.TabChangeInfo) => {
+    const onUpdated = (_id: number, info: chrome.tabs.OnUpdatedInfo) => {
       if (info.status === 'complete' || info.url) schedule();
     };
     chrome.tabs?.onActivated.addListener(onActivated);

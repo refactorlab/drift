@@ -23,6 +23,13 @@ pub struct CallTreeNode {
     pub kind: SymbolKind,
     pub file: String,
     pub line: usize,
+    /// Last source line of this symbol's body (inclusive). Paired with `line`,
+    /// it gives the symbol's full line span — what `architecture_flow` needs to
+    /// decide whether a symbol's OWN lines fall inside a PR's changed-line
+    /// ranges (symbol-level diff attribution), instead of painting every symbol
+    /// in a touched file as "changed". Defaults to `line` for older fixtures.
+    #[serde(default)]
+    pub line_end: usize,
     pub depth: usize,
     pub parent_class: Option<String>,
     pub children: Vec<CallTreeNode>,
@@ -211,6 +218,7 @@ impl<'a> TreeBuilder<'a> {
             kind: sym.kind.clone(),
             file,
             line: sym.line,
+            line_end: sym.line_end,
             depth,
             parent_class: sym.parent.clone(),
             children: Vec::new(),

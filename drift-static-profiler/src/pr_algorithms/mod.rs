@@ -115,6 +115,7 @@ pub(crate) mod test_helpers {
             kind: SymbolKind::Function,
             file: file.to_string(),
             line: 1,
+            line_end: 1,
             depth: 0,
             parent_class: None,
             children: vec![],
@@ -160,6 +161,14 @@ pub(crate) mod test_helpers {
 
     pub fn with_line(mut node: CallTreeNode, line: usize) -> CallTreeNode {
         node.line = line;
+        node
+    }
+
+    /// Set both ends of a node's line span — for symbol-level diff-attribution
+    /// tests that need a symbol to fall inside (or outside) a changed range.
+    pub fn with_line_span(mut node: CallTreeNode, line: usize, line_end: usize) -> CallTreeNode {
+        node.line = line;
+        node.line_end = line_end;
         node
     }
 

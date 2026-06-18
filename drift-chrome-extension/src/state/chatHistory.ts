@@ -3,6 +3,7 @@
 // later visit restores it instantly — no re-streaming.
 
 import type { ReasoningStep } from '../app/reasoning';
+import type { FilePresentation } from '../agents/scrollPlan';
 
 export interface ChatMessage {
   id: number;
@@ -14,6 +15,9 @@ export interface ChatMessage {
   thinking?: boolean;
   /** PR url this message belongs to (dedupe key for reasoning turns). */
   prUrl?: string;
+  /** A handover file step's clickable presentation — rendered as breathing buttons
+   *  that replay the scroll+highlight from a chosen spot (only on explain-PR turns). */
+  presentation?: FilePresentation;
   /** Agent tool-step card: an inline record of a tool the assistant called. */
   tool?: {
     name: string;

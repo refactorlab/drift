@@ -9,6 +9,7 @@ import {
   advance,
   prev,
   gotoIndex,
+  deepen,
   isDone,
   remainingSteps,
   findStepIndex,
@@ -90,6 +91,23 @@ describe('handoverSession transitions (pure)', () => {
     expect(remainingSteps(sessionOf(steps, 0)).map((x) => x.path)).toEqual(['b.ts', 'c.ts']);
     expect(remainingSteps(sessionOf(steps, -1)).map((x) => x.path)).toEqual(['a.ts', 'b.ts', 'c.ts']);
   });
+
+  it('deepen bumps per-file depth, keeps the cursor, and records the query', () => {
+    let s = sessionOf(steps, 0);
+    s = deepen(s, 'what does this do?');
+    expect(s.cursor).toBe(0); // stays on the file
+    expect(s.focus).toEqual({ query: 'what does this do?', depth: 1 });
+    s = deepen(s, 'and the retry path?');
+    expect(s.focus).toEqual({ query: 'and the retry path?', depth: 2 }); // deeper and deeper
+  });
+
+  it('moving files RESETS the deep-dive focus (depth restarts per file)', () => {
+    let s = deepen(sessionOf(steps, 0), 'q1');
+    expect(s.focus?.depth).toBe(1);
+    expect(advance(s).focus).toBeUndefined();
+    expect(prev(deepen(sessionOf(steps, 1), 'q')).focus).toBeUndefined();
+    expect(gotoIndex(s, 2).focus).toBeUndefined();
+  });
 });
 
 describe('findStepIndex', () => {
@@ -100,6 +118,13 @@ describe('findStepIndex', () => {
     expect(findStepIndex(steps, 'Chat.tsx')).toBe(1); // basename
     expect(findStepIndex(steps, 'auth')).toBe(0); // substring
     expect(findStepIndex(steps, 'package.json')).toBe(2);
+  });
+
+  it('resolves a SPOKEN file name (spaces → camelCase) to its path', () => {
+    const spoken = [step('src/core/riskSummary.ts'), step('src/app/LivePipelineRun.tsx')];
+    expect(findStepIndex(spoken, 'risk summary')).toBe(0); // "risk summary" → riskSummary.ts
+    expect(findStepIndex(spoken, 'live pipeline run')).toBe(1);
+    expect(findStepIndex(spoken, 'the risk summary file')).toBe(0);
   });
 
   it('returns -1 for no match or a too-short query', () => {

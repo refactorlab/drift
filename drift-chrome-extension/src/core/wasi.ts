@@ -46,6 +46,11 @@ export type ScanPrInputs = {
   /** `git diff --name-status` shape (`A/M/D/T\tpath`, `R<sim>\told\tnew`). Drives
    *  the scanner's BEFORE/AFTER architecture charts + removed-card rendering. */
   diffStatus?: string;
+  /** JSON map `{ "path": [[start,end], ...] }` of NEW-file changed-line ranges
+   *  (from `changedRangesFromHunks`). Drives SYMBOL-level diff attribution —
+   *  only functions whose own lines changed are tinted, not every symbol in a
+   *  touched file. Gated behind the same new-flags fallback as `diffStatus`. */
+  diffHunks?: string;
   prTitle?: string;
   prBody?: string;
   onLog?: (line: string) => void;
@@ -120,6 +125,10 @@ export async function runScanPr(
     if (inputs.commits?.length) work.set('commits.txt', new File(enc.encode(inputs.commits.join(NUL))));
     if (inputs.diffStats) work.set('stats.tsv', new File(enc.encode(inputs.diffStats)));
     if (withDiffStatus && inputs.diffStatus) work.set('status.tsv', new File(enc.encode(inputs.diffStatus)));
+    // `--diff-hunks` is gated behind the same `withDiffStatus` flag (both are
+    // newer-than-some-releases optional diff inputs), so the existing
+    // clap-usage-error fallback drops BOTH on an older wasm in one retry.
+    if (withDiffStatus && inputs.diffHunks) work.set('hunks.json', new File(enc.encode(inputs.diffHunks)));
     const workDir = new PreopenDirectory('/work', work);
 
     const args = [
@@ -135,6 +144,7 @@ export async function runScanPr(
     if (inputs.commits?.length) args.push('--commits', '/work/commits.txt');
     if (inputs.diffStats) args.push('--diff-stats', '/work/stats.tsv');
     if (withDiffStatus && inputs.diffStatus) args.push('--diff-status', '/work/status.tsv');
+    if (withDiffStatus && inputs.diffHunks) args.push('--diff-hunks', '/work/hunks.json');
     // `--flag=value` form is immune to a leading `-` in the title/body.
     if (inputs.prTitle != null) args.push(`--pr-title=${inputs.prTitle}`);
     if (inputs.prBody != null) args.push(`--pr-body=${inputs.prBody}`);
@@ -195,5 +205,7 @@ export async function runScanPr(
     return out.data;
   };
 
-  return runWithDiffStatusFallback(attempt, !!inputs.diffStatus, log);
+  // Take the new-flags path when EITHER newer diff input is present; an older
+  // wasm rejecting `--diff-status`/`--diff-hunks` triggers one retry without both.
+  return runWithDiffStatusFallback(attempt, !!inputs.diffStatus || !!inputs.diffHunks, log);
 }

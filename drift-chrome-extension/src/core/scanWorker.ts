@@ -20,6 +20,8 @@ export type ScanWorkerRequest = {
     commits?: string[];
     diffStats?: string;
     diffStatus?: string;
+    /** JSON map of NEW-file changed-line ranges → SYMBOL-level diff attribution. */
+    diffHunks?: string;
     prTitle?: string;
     prBody?: string;
   };

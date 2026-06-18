@@ -1,0 +1,252 @@
+/* Change-impact graph — self-contained, theme-scoped via [data-graph-theme].
+   Dark is the default (the diagram opens dark regardless of the app theme); the ☾/☀
+   control flips this one widget to light. All vars are namespaced (--cig-*) so the
+   diagram never inherits or leaks the surrounding chat's theme tokens. */
+.cig {
+  --cig-page: radial-gradient(900px 520px at 50% -20%, #131c2e 0%, transparent 60%), #0b0f17;
+  --cig-node: #161d2b;
+  --cig-border: #2a3447;
+  --cig-text: #e7edf8;
+  --cig-muted: #8a96ac;
+  --cig-down: #5b8cff;
+  --cig-up: #9b8cff;
+  --cig-seg: #2a3447;
+  --cig-seg-done: #3a4660;
+  --cig-ctrl-bg: rgba(18, 24, 38, 0.82);
+
+  margin: 8px 0 2px;
+  border: 1px solid var(--cig-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0b0f17;
+  color: var(--cig-text);
+  font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+.cig[data-graph-theme='light'] {
+  --cig-page: radial-gradient(900px 520px at 50% -20%, #ffffff 0%, transparent 55%), #eef1f7;
+  --cig-node: #ffffff;
+  --cig-border: #ccd4e2;
+  --cig-text: #1b2433;
+  --cig-muted: #5c6b82;
+  --cig-down: #2f6bff;
+  --cig-up: #7a5cff;
+  --cig-seg: #d4dbe8;
+  --cig-seg-done: #aab6cb;
+  --cig-ctrl-bg: rgba(255, 255, 255, 0.85);
+  background: #eef1f7;
+}
+
+.cig-stage {
+  position: relative;
+  height: 280px;
+  background: var(--cig-page);
+  touch-action: none;
+  cursor: grab;
+}
+.cig-stage:active {
+  cursor: grabbing;
+}
+.cig-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Edges draw IN with their target node: pathLength=1 normalises every edge to a unit
+   length, so one dashoffset rule animates the line being drawn regardless of its size. */
+.cig-edge {
+  fill: none;
+  stroke: var(--cig-border);
+  stroke-width: 1.4;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  transition: stroke-dashoffset 0.42s ease, opacity 0.3s ease, stroke 0.25s;
+}
+.cig-edge.shown {
+  stroke-dashoffset: 0;
+  opacity: 1;
+}
+.cig-edge.down {
+  stroke: var(--cig-down);
+  stroke-width: 2;
+}
+.cig-edge.up {
+  stroke: var(--cig-up);
+  stroke-width: 2;
+}
+.cig-edge.shown.dim {
+  opacity: 0.08;
+}
+
+.cig-node {
+  cursor: pointer;
+  transition: opacity 0.25s ease; /* selection dim only — reveal is the card-anim below */
+}
+.cig-card {
+  fill: var(--cig-node);
+}
+.cig-node:hover .cig-card {
+  filter: drop-shadow(0 0 6px var(--cig-col));
+}
+.cig-node.select .cig-card {
+  filter: drop-shadow(0 0 11px var(--cig-col));
+}
+.cig-node.seed .cig-card {
+  filter: drop-shadow(0 0 5px var(--cig-col));
+}
+.cig-lbl {
+  font-size: 11.5px;
+  fill: var(--cig-text);
+  pointer-events: none;
+  dominant-baseline: middle;
+}
+
+/* Each node POPS in when it joins the build (the .shown class). Hidden until then. */
+.cig-card-anim {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+}
+.cig-node.shown .cig-card-anim {
+  animation: cig-pop 0.34s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+@keyframes cig-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cig-node {
+    transition: none;
+  }
+  .cig-node.shown .cig-card-anim {
+    animation: none;
+    opacity: 1;
+  }
+  .cig-edge {
+    transition: none;
+  }
+}
+
+.cig-ctrls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+}
+.cig-ctrls button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--cig-border);
+  background: var(--cig-ctrl-bg);
+  backdrop-filter: blur(8px);
+  color: var(--cig-text);
+  cursor: pointer;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+  transition: 0.15s;
+  padding: 0;
+}
+.cig-ctrls button:hover {
+  border-color: var(--cig-down);
+  color: var(--cig-down);
+}
+.cig-ctrls button.on {
+  border-color: var(--cig-down);
+  color: var(--cig-down);
+  box-shadow: 0 0 10px rgba(91, 140, 255, 0.25);
+}
+
+.cig-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  display: flex;
+  gap: 10px;
+  font-size: 10.5px;
+  color: var(--cig-muted);
+  pointer-events: none;
+}
+.cig-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cig-legend-item i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* The scope timeline — the in→out scrubber under the stage. */
+.cig-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--cig-border);
+  background: var(--cig-node);
+}
+.cig-scope-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cig-muted);
+  white-space: nowrap;
+}
+.cig-scope-track {
+  display: flex;
+  flex: 1;
+  gap: 3px;
+  height: 14px;
+  align-items: center;
+}
+.cig-scope-seg {
+  flex: 1;
+  height: 6px;
+  border: none;
+  border-radius: 3px;
+  background: var(--cig-seg);
+  cursor: pointer;
+  transition: background 0.2s, height 0.2s, box-shadow 0.2s;
+  padding: 0;
+}
+.cig-scope-seg.done {
+  background: var(--cig-seg-done);
+}
+.cig-scope-seg.active {
+  background: var(--cig-down);
+  height: 12px;
+  box-shadow: 0 0 8px rgba(91, 140, 255, 0.4);
+}
+.cig-scope-seg:hover {
+  background: var(--cig-up);
+}
+.cig-scope-pos {
+  font-size: 10.5px;
+  color: var(--cig-muted);
+  min-width: 26px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cig-hint {
+  padding: 5px 10px 7px;
+  font-size: 10px;
+  color: var(--cig-muted);
+  background: var(--cig-node);
+  border-top: 1px solid color-mix(in srgb, var(--cig-border) 50%, transparent);
+}

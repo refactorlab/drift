@@ -38,6 +38,7 @@ fn mk_node(name: &str, file: &str) -> CallTreeNode {
         kind: SymbolKind::Function,
         file: file.to_string(),
         line: 1,
+        line_end: 1,
         depth: 0,
         parent_class: None,
         children: vec![],

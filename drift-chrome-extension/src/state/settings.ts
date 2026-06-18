@@ -56,6 +56,10 @@ export interface Settings {
   ttsEnabled?: boolean;
   /** Kokoro voice name for the spoken summary (default af_heart). */
   ttsVoice?: string;
+  /** Whether the change-impact diagram plays soft reveal ticks in TEXT mode. Default
+   *  on. (Voice mode always plays them — the diagram rides along with the spoken
+   *  walkthrough — so this only gates the typed experience.) */
+  graphSoundEnabled?: boolean;
   /** Acquired in-browser LLM brain (set when the user downloads the model). */
   brain?: BrainMeta;
   /** Custom system prompt / persona for the chat brain (optional override). */

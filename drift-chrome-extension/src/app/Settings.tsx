@@ -461,6 +461,16 @@ export function Settings({
             <option value="light">Light</option>
           </select>
         </div>
+        <div className="row">
+          <div className="grow">
+            <div className="label">Diagram sounds</div>
+            <div className="hint">Soft ticks as the change-impact graph reveals. Always on in voice mode.</div>
+          </div>
+          <Switch
+            on={settings.graphSoundEnabled !== false}
+            onChange={(v) => void patchSettings({ graphSoundEnabled: v })}
+          />
+        </div>
 
         <ScannerRow settings={settings} />
 

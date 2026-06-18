@@ -36,6 +36,10 @@ export interface HandoverSession {
   cursor: number;
   status: 'active' | 'done';
   startedAt: number;
+  /** A "deeper dive" focus on the CURRENT file: the last question asked and how many
+   *  times the reviewer has gone deeper on THIS file. Cleared on any move (next / prev /
+   *  goto) so depth restarts per file. */
+  focus?: { query: string; depth: number };
 }
 
 const PREFIX = 'drift:handover:';
@@ -76,22 +80,29 @@ export function isDone(s: HandoverSession): boolean {
 }
 
 /** Move to the next file. Advancing past the last file completes the walkthrough
- *  (status → 'done', cursor stays on the last step). */
+ *  (status → 'done', cursor stays on the last step). Clears any deep-dive focus. */
 export function advance(s: HandoverSession): HandoverSession {
   const next = s.cursor + 1;
-  if (next >= s.steps.length) return { ...s, cursor: Math.max(0, s.steps.length - 1), status: 'done' };
-  return { ...s, cursor: next, status: 'active' };
+  if (next >= s.steps.length) return { ...s, cursor: Math.max(0, s.steps.length - 1), status: 'done', focus: undefined };
+  return { ...s, cursor: next, status: 'active', focus: undefined };
 }
 
 /** Move to the previous file (clamped at the first). Re-activates a done session. */
 export function prev(s: HandoverSession): HandoverSession {
-  return { ...s, cursor: Math.max(0, s.cursor - 1), status: 'active' };
+  return { ...s, cursor: Math.max(0, s.cursor - 1), status: 'active', focus: undefined };
 }
 
 /** Jump to a specific step index (clamped). Re-activates a done session. */
 export function gotoIndex(s: HandoverSession, i: number): HandoverSession {
   const cursor = Math.max(0, Math.min(i, s.steps.length - 1));
-  return { ...s, cursor, status: 'active' };
+  return { ...s, cursor, status: 'active', focus: undefined };
+}
+
+/** Go DEEPER on the current file: record the question and bump the per-file depth (it
+ *  resets whenever the reviewer moves files, so depth tracks "how deep on THIS file").
+ *  The cursor stays put — a deep dive never leaves the file. */
+export function deepen(s: HandoverSession, query: string): HandoverSession {
+  return { ...s, status: 'active', focus: { query, depth: (s.focus?.depth ?? 0) + 1 } };
 }
 
 /** Steps not yet visited (after the cursor) — for a "what's left" summary. */
@@ -115,6 +126,22 @@ export function findStepIndex(steps: Array<{ path: string }>, query: string): nu
   if (q.length >= 3) {
     const bySub = steps.findIndex((s) => s.path.toLowerCase().includes(q) || q.includes(base(s.path).toLowerCase()));
     if (bySub >= 0) return bySub;
+  }
+  // Space/separator-insensitive match: a SPOKEN file name ("risk summary", "live pipeline
+  // run") rarely matches the camelCase/hyphenated path char-for-char. Compare with all
+  // non-alphanumerics stripped on the basename WITHOUT its extension — so "risk summary"
+  // → riskSummary.ts. Exact-normalized first (so "risk" doesn't grab "riskSummary").
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const qn = norm(q);
+  if (qn.length >= 3) {
+    const stem = (p: string) => norm(base(p).replace(/\.[^.]+$/, ''));
+    const byNormExact = steps.findIndex((s) => stem(s.path) === qn);
+    if (byNormExact >= 0) return byNormExact;
+    const byNormSub = steps.findIndex((s) => {
+      const bn = stem(s.path);
+      return bn.length >= 3 && (bn.includes(qn) || qn.includes(bn));
+    });
+    if (byNormSub >= 0) return byNormSub;
   }
   return -1;
 }

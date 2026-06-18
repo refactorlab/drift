@@ -25,6 +25,9 @@ export type PrInput = {
   /** `git diff --name-status` shape (`A/M/D/T\tpath`, `R<sim>\told\tnew`),
    *  reconstructed git-free from the unified diff. */
   diffStatus?: string;
+  /** JSON map `{ "path": [[start,end], ...] }` of NEW-file changed-line ranges
+   *  (from `changedRangesFromHunks`) → SYMBOL-level diff attribution. */
+  diffHunks?: string;
   /** Commit subjects/bodies between base..head (empty without the API). */
   commits?: string[];
 };
@@ -92,6 +95,7 @@ export class WasmScanProvider implements ScanProvider {
       commits: req.pr.commits,
       diffStats: req.pr.diffStats,
       diffStatus: req.pr.diffStatus,
+      diffHunks: req.pr.diffHunks,
       prTitle: req.pr.title,
       prBody: req.pr.body,
       onLog: (line) => req.onProgress?.({ fraction: null, message: line.slice(0, 120) }),

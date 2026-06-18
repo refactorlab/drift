@@ -118,6 +118,81 @@ fn classify_file(path: &str, changed: &[ChangedFile]) -> FileStatus {
     FileStatus::Unchanged
 }
 
+/// Overlap of a symbol's inclusive line span `[lo, hi]` with a file's
+/// `changed_ranges`. Returns `(any, full)`:
+///   - `any`  — at least one line of the span was touched by the PR.
+///   - `full` — EVERY line of the span was touched (⇒ the symbol is entirely
+///     new code, e.g. a freshly-added function inside an edited file).
+/// Ranges are few (one per hunk), so the clip-and-merge is cheap.
+fn span_overlap(lo: usize, hi: usize, ranges: &[(usize, usize)]) -> (bool, bool) {
+    // Clip each range to [lo, hi]; keep the non-empty ones.
+    let mut clipped: Vec<(usize, usize)> = ranges
+        .iter()
+        .map(|&(a, b)| (a.min(b), a.max(b)))
+        .filter_map(|(a, b)| {
+            let s = a.max(lo);
+            let e = b.min(hi);
+            (s <= e).then_some((s, e))
+        })
+        .collect();
+    if clipped.is_empty() {
+        return (false, false);
+    }
+    // Merge to test full coverage of [lo, hi] with no gaps.
+    clipped.sort_unstable();
+    let mut expected = lo;
+    for (s, e) in clipped {
+        if s > expected {
+            break; // gap at `expected` ⇒ not fully covered
+        }
+        expected = expected.max(e.saturating_add(1));
+    }
+    (true, expected > hi)
+}
+
+/// SYMBOL-level diff status — the precise counterpart of `classify_file`.
+///
+/// `classify_file` paints EVERY symbol in a touched file the same colour; that
+/// is why an unchanged function in an edited file (e.g. `load_from_metadata_server`
+/// when only a sibling function changed) wrongly shows as "changed". This
+/// instead checks the symbol's OWN line span `[line, line_end]` against the
+/// file's `changed_ranges` (the PR's touched lines in the new file):
+///   - Added / Copied file → `Added` (the whole file is new).
+///   - Removed file        → `Removed`.
+///   - Modified / Renamed:
+///       · span fully inside the touched lines → `Added`    (a NEW symbol)
+///       · span partially touched              → `Modified`
+///       · span untouched                      → `Unchanged`
+///   - Modified / Renamed with NO hunk data (`changed_ranges` empty) →
+///     `Modified` — the file-level fallback, so callers that don't supply
+///     hunks behave exactly as before.
+///   - File not in the diff → `Unchanged`.
+fn classify_node(file: &str, line: usize, line_end: usize, changed: &[ChangedFile]) -> FileStatus {
+    let Some(cf) = changed.iter().find(|cf| paths_match(file, &cf.path)) else {
+        return FileStatus::Unchanged;
+    };
+    let status = match cf.status.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        Some("added") | Some("copied") => FileStatus::Added,
+        Some("removed") | Some("deleted") => FileStatus::Removed,
+        Some("renamed") => FileStatus::Renamed,
+        _ => FileStatus::Modified,
+    };
+    // Added / Removed are whole-file verdicts; per-line ranges add nothing.
+    if matches!(status, FileStatus::Added | FileStatus::Removed) {
+        return status;
+    }
+    // Modified / Renamed: refine by the symbol's own lines when hunks exist.
+    if cf.changed_ranges.is_empty() {
+        return status; // no hunk data → file-level fallback (no regression)
+    }
+    let (lo, hi) = (line.min(line_end), line.max(line_end));
+    match span_overlap(lo, hi, &cf.changed_ranges) {
+        (false, _) => FileStatus::Unchanged, // the symbol's body didn't change
+        (true, true) => FileStatus::Added,   // every line is new ⇒ new symbol
+        (true, false) => FileStatus::Modified,
+    }
+}
+
 /// True iff `node` or any descendant lives in a changed file — i.e. this
 /// subtree leads to (or IS) part of the diff. Drives the change-anchored
 /// walk: roots that fail this are dropped, and within a kept root the walker
@@ -127,7 +202,7 @@ fn classify_file(path: &str, changed: &[ChangedFile]) -> FileStatus {
 fn subtree_has_change(node: &CallTreeNode, changed: &[ChangedFile]) -> bool {
     let mut stack: Vec<&CallTreeNode> = vec![node];
     while let Some(n) = stack.pop() {
-        if !matches!(classify_file(&n.file, changed), FileStatus::Unchanged) {
+        if !matches!(classify_node(&n.file, n.line, n.line_end, changed), FileStatus::Unchanged) {
             return true;
         }
         for c in &n.children {
@@ -145,7 +220,7 @@ fn subtree_change_count(node: &CallTreeNode, changed: &[ChangedFile]) -> usize {
     let mut count = 0;
     let mut stack: Vec<&CallTreeNode> = vec![node];
     while let Some(n) = stack.pop() {
-        if !matches!(classify_file(&n.file, changed), FileStatus::Unchanged) {
+        if !matches!(classify_node(&n.file, n.line, n.line_end, changed), FileStatus::Unchanged) {
             count += 1;
         }
         for c in &n.children {
@@ -198,7 +273,7 @@ fn subtree_reaches_unrendered(
 ) -> bool {
     let mut stack: Vec<&CallTreeNode> = vec![node];
     while let Some(n) = stack.pop() {
-        if !matches!(classify_file(&n.file, changed), FileStatus::Unchanged)
+        if !matches!(classify_node(&n.file, n.line, n.line_end, changed), FileStatus::Unchanged)
             && !rendered.contains(&n.file)
         {
             return true;
@@ -583,12 +658,18 @@ fn before_rename_label(
 /// `rename_old` (new_path → old_path) is consulted ONLY in BEFORE mode
 /// to relabel file-named nodes to their pre-PR names; AFTER passes an
 /// empty map.
+///
+/// The third return value maps each rendered FILE to one representative node id
+/// in the slice. `append_unrendered_changed_files` consults it to (a) skip files
+/// already drawn and (b) draw REAL edges from an unrendered changed file to the
+/// rendered node it actually calls — turning the "no call edges" catch-all into
+/// an accurate, connected picture.
 fn build_call_graph(
     entries: &[CallTreeNode],
     changed_files: &[ChangedFile],
     mode: GraphMode,
     rename_old: &BTreeMap<String, String>,
-) -> (Vec<FlowNode>, Vec<FlowEdge>, BTreeSet<String>) {
+) -> (Vec<FlowNode>, Vec<FlowEdge>, BTreeMap<String, String>) {
     let mut nodes: Vec<FlowNode> = Vec::new();
     let mut edges: Vec<FlowEdge> = Vec::new();
     let mut id_for: BTreeMap<String, String> = BTreeMap::new();
@@ -684,6 +765,9 @@ fn build_call_graph(
     // Changed files already rendered (node-file strings). Drives the walk's
     // steering toward changed files not yet shown. Anchor-mode only.
     let mut rendered_changed_files: BTreeSet<String> = BTreeSet::new();
+    // Every rendered file → one representative node id in the slice. Returned
+    // so the unrendered-changed-file pass can wire real edges into the slice.
+    let mut rendered_file_node: BTreeMap<String, String> = BTreeMap::new();
 
     for root in roots {
         // NO global top-of-loop cutoff here: the even per-root split already
@@ -691,7 +775,7 @@ fn build_call_graph(
         // roots (exactly the lightly-changed files we picked them to show).
         // Each root may add at most `per_root_budget` nodes (see above).
         let root_node_floor = nodes.len();
-        let root_status = classify_file(&root.file, changed_files);
+        let root_status = classify_node(&root.file, root.line, root.line_end, changed_files);
         if root_status == mode.skip_status {
             continue;
         }
@@ -709,6 +793,9 @@ fn build_call_graph(
             class_for(root_status),
             root_override.as_deref(),
         );
+        rendered_file_node
+            .entry(root.file.clone())
+            .or_insert_with(|| rid.clone());
 
         if root_changed {
             rendered_changed_files.insert(root.file.clone());
@@ -734,7 +821,7 @@ fn build_call_graph(
             if nodes.len() - root_node_floor >= per_root_budget || nodes.len() >= max_nodes {
                 break;
             }
-            let n_status = classify_file(&node.file, changed_files);
+            let n_status = classify_node(&node.file, node.line, node.line_end, changed_files);
             if n_status == mode.skip_status {
                 continue;
             }
@@ -752,6 +839,9 @@ fn build_call_graph(
                 class_for(n_status),
                 n_override.as_deref(),
             );
+            rendered_file_node
+                .entry(node.file.clone())
+                .or_insert_with(|| nid.clone());
             if parent_id != nid {
                 let key = (parent_id.clone(), nid.clone());
                 if edge_seen.insert(key) {
@@ -781,7 +871,30 @@ fn build_call_graph(
         }
     }
 
-    (nodes, edges, rendered_changed_files)
+    (nodes, edges, rendered_file_node)
+}
+
+/// Directed file→file adjacency over the WHOLE entry forest (NO node budget):
+/// for every caller→callee tree edge that crosses a file boundary, record
+/// `(caller_file, callee_file)`. This is the language-agnostic import/call graph
+/// at file granularity — the source of truth the bounded render slice can't be:
+/// it sees every changed file's real connections, not just the ~48 nodes that
+/// fit the diagram. `append_unrendered_changed_files` draws from it so a
+/// many-file PR shows how its changed files actually connect instead of a flat
+/// "no call edges" fan. Same-file edges are skipped (intra-file calls aren't
+/// import connections).
+fn collect_cross_file_edges(entries: &[CallTreeNode]) -> BTreeSet<(String, String)> {
+    let mut out: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut stack: Vec<&CallTreeNode> = entries.iter().collect();
+    while let Some(n) = stack.pop() {
+        for c in &n.children {
+            if n.file != c.file {
+                out.insert((n.file.clone(), c.file.clone()));
+            }
+            stack.push(c);
+        }
+    }
+    out
 }
 
 /// Build the AFTER-state flowchart — the call graph AT HEAD with each
@@ -869,13 +982,15 @@ fn build_diff_merged_flowchart(
     // from the call-graph slice above for legitimate reasons: it's an isolated
     // symbol (no callers), or it lives in a low-reach root whose bounded call
     // tree was never built (common in a multi-language scan where one language
-    // dominates the tree budget). Rather than silently drop it, hang each such
-    // file off a labelled "Changed (no call edges)" hub — a CONNECTED cluster
-    // so renderers (and reviewers) can't lose it the way they lose a floating,
-    // edge-less node. The diagram then shows the FULL diff: call context where
-    // we have it, an explicit hub for the rest. Removed files are placeholder
-    // cards; files with no recognized source language carry no symbols.
-    append_unrendered_changed_files(&mut nodes, &mut edges, changed_files, &rendered);
+    // dominates the tree budget). Rather than silently drop it — or fan it onto
+    // a blind "no call edges" hub that hides real structure — we wire each such
+    // file to the files it ACTUALLY calls / is called by, using the full
+    // file→file adjacency (`file_edges`). Only files with genuinely zero edges
+    // to any other changed/rendered file fall back to the hub. Removed files
+    // are placeholder cards; files with no recognized source language carry no
+    // symbols.
+    let file_edges = collect_cross_file_edges(entries);
+    append_unrendered_changed_files(&mut nodes, &mut edges, changed_files, &rendered, &file_edges);
 
     // Surface deletions as red placeholder cards (identical to the BEFORE chart).
     append_removed_placeholders(&mut nodes, changed_files);
@@ -1005,22 +1120,32 @@ fn append_removed_placeholders(nodes: &mut Vec<FlowNode>, changed_files: &[Chang
     }
 }
 
-/// Append a standalone tinted node for every ADDED / MODIFIED / RENAMED source
-/// file whose code did NOT make it into the rendered call-graph slice, so the
-/// diff diagram shows the COMPLETE set of changed source files — never silently
-/// dropping a change that the bounded call-tree walk couldn't reach.
+/// Append a tinted node for every ADDED / MODIFIED / RENAMED source file whose
+/// code did NOT make it into the rendered call-graph slice, so the diff diagram
+/// shows the COMPLETE set of changed source files — never silently dropping a
+/// change the bounded call-tree walk couldn't reach.
 ///
-/// `rendered` holds the node-file strings of changed nodes already drawn (from
-/// `build_call_graph`); a file matching any of them via [`paths_match`] is
-/// skipped. Removed files are handled by `append_removed_placeholders`; files
-/// with no recognized source language (lockfiles, Makefiles, docs) carry no
-/// symbols and are not diagrammed. Capped with an overflow summary so a
-/// thousand-file PR can't blow up the comment.
+/// Crucially, these files are NOT just fanned off a blind hub: `file_edges`
+/// (the full file→file call/import adjacency) is used to wire each one to the
+/// files it ACTUALLY calls or is called by — other unrendered changed files
+/// (card↔card) or nodes already in the slice (card→rendered, via `rendered`,
+/// which maps each rendered file to a representative node id). A file ends up on
+/// the "✏️ Changed — no call edges" hub ONLY when it has no such edge — making
+/// that label finally accurate. This is what turns a 40-file PR from a flat fan
+/// of disconnected boxes into the real, connected change graph.
+///
+/// `rendered` keys are node-file strings of files already drawn; a changed file
+/// matching one via [`paths_match`] is skipped (already shown with context).
+/// Removed files are handled by `append_removed_placeholders`; files with no
+/// recognized source language (lockfiles, Makefiles, docs) carry no symbols and
+/// are not diagrammed. Capped with an overflow summary so a thousand-file PR
+/// can't blow up the comment.
 fn append_unrendered_changed_files(
     nodes: &mut Vec<FlowNode>,
     edges: &mut Vec<FlowEdge>,
     changed_files: &[ChangedFile],
-    rendered: &BTreeSet<String>,
+    rendered: &BTreeMap<String, String>,
+    file_edges: &BTreeSet<(String, String)>,
 ) {
     // Show generously many changed files individually before summarising the
     // tail — a real PR diff that touches dozens of files should appear in full;
@@ -1029,9 +1154,13 @@ fn append_unrendered_changed_files(
     const MAX_STANDALONE: usize = 60;
     const HUB_ID: &str = "chg_hub";
 
-    // First collect the files that need a node, so we only emit the hub when
-    // there's at least one (no empty/dangling hub).
-    let mut pending: Vec<(String, FileStatus)> = Vec::new();
+    // 1. Collect the unrendered changed source files that need a card. Keyed by
+    //    normalized path so `file_edges` endpoints can be matched back to a card.
+    struct Card {
+        norm: String,
+        id: String,
+    }
+    let mut cards: Vec<Card> = Vec::new();
     let mut total = 0usize;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for cf in changed_files {
@@ -1042,56 +1171,113 @@ fn append_unrendered_changed_files(
         if crate::Language::from_path(std::path::Path::new(&cf.path)).is_none() {
             continue; // non-source: no symbols to graph
         }
-        if rendered.iter().any(|f| paths_match(f, &cf.path)) {
+        if rendered.keys().any(|f| paths_match(f, &cf.path)) {
             continue; // already shown with call context
         }
         let norm = cf.path.trim_start_matches("./").trim_start_matches('/').to_string();
-        if !seen.insert(norm) {
+        if !seen.insert(norm.clone()) {
             continue;
         }
         total += 1;
-        if pending.len() < MAX_STANDALONE {
-            pending.push((basename(&cf.path).to_string(), status));
+        if cards.len() < MAX_STANDALONE {
+            let id = format!("chg_{}", cards.len());
+            nodes.push(FlowNode {
+                id: id.clone(),
+                label: basename(&cf.path).to_string(),
+                shape: NodeShape::Rect,
+                class: class_for_status(status).map(String::from),
+            });
+            cards.push(Card { norm, id });
         }
     }
 
-    if pending.is_empty() {
+    if cards.is_empty() {
         return;
     }
 
-    // The hub: a single labelled anchor every uncovered changed file hangs off,
-    // so the cluster is CONNECTED (renderers don't drop it the way they drop a
-    // lone edge-less node) and reads as "changed, but outside the call slice".
-    nodes.push(FlowNode {
-        id: HUB_ID.into(),
-        label: "✏️ Changed — no call edges".into(),
-        shape: NodeShape::Rect,
-        class: Some("changed".into()),
-    });
-    for (i, (label, status)) in pending.into_iter().enumerate() {
-        let id = format!("chg_{i}");
-        nodes.push(FlowNode {
-            id: id.clone(),
-            label,
-            shape: NodeShape::Rect,
-            class: class_for_status(status).map(String::from),
-        });
-        edges.push(FlowEdge {
-            from: HUB_ID.into(),
-            to: id,
-            label: None,
-            style: EdgeStyle::Solid,
-        });
+    // Resolve a file path (a `file_edges` endpoint) to the node id we can draw
+    // an edge to: a card if it's one of ours, otherwise a node already in the
+    // rendered slice. `None` ⇒ that endpoint isn't on the diagram, so skip it.
+    let node_for = |file: &str| -> Option<&str> {
+        cards
+            .iter()
+            .find(|c| paths_match(&c.norm, file))
+            .map(|c| c.id.as_str())
+            .or_else(|| {
+                rendered
+                    .iter()
+                    .find(|(f, _)| paths_match(f, file))
+                    .map(|(_, id)| id.as_str())
+            })
+    };
+
+    // 2. Draw the REAL edges that touch a card. An edge is kept only when at
+    //    least one endpoint is a card (rendered↔rendered edges already exist in
+    //    the slice) and BOTH endpoints resolve to a drawn node.
+    let mut drawn: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut connected: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (from_f, to_f) in file_edges {
+        let from_is_card = cards.iter().find(|c| paths_match(&c.norm, from_f));
+        let to_is_card = cards.iter().find(|c| paths_match(&c.norm, to_f));
+        if from_is_card.is_none() && to_is_card.is_none() {
+            continue;
+        }
+        let (Some(fid), Some(tid)) = (node_for(from_f), node_for(to_f)) else {
+            continue;
+        };
+        if fid == tid {
+            continue; // both endpoints collapsed to the same card/node
+        }
+        let (fid, tid) = (fid.to_string(), tid.to_string());
+        if drawn.insert((fid.clone(), tid.clone())) {
+            edges.push(FlowEdge {
+                from: fid,
+                to: tid,
+                label: None,
+                style: EdgeStyle::Solid,
+            });
+        }
+        if let Some(c) = from_is_card {
+            connected.insert(c.norm.clone());
+        }
+        if let Some(c) = to_is_card {
+            connected.insert(c.norm.clone());
+        }
     }
-    if total > MAX_STANDALONE {
-        let id = "chg_more".to_string();
+
+    // 3. Cards with no real edge are genuinely isolated — hang them off the hub,
+    //    which now honestly means "changed, with no call edge to the diff".
+    let isolated: Vec<&str> = cards
+        .iter()
+        .filter(|c| !connected.contains(&c.norm))
+        .map(|c| c.id.as_str())
+        .collect();
+    let has_overflow = total > MAX_STANDALONE;
+    if !isolated.is_empty() || has_overflow {
         nodes.push(FlowNode {
-            id: id.clone(),
-            label: format!("+{} more changed", total - MAX_STANDALONE),
+            id: HUB_ID.into(),
+            label: "✏️ Changed — no call edges".into(),
             shape: NodeShape::Rect,
             class: Some("changed".into()),
         });
-        edges.push(FlowEdge { from: HUB_ID.into(), to: id, label: None, style: EdgeStyle::Solid });
+        for id in isolated {
+            edges.push(FlowEdge {
+                from: HUB_ID.into(),
+                to: id.to_string(),
+                label: None,
+                style: EdgeStyle::Solid,
+            });
+        }
+        if has_overflow {
+            let id = "chg_more".to_string();
+            nodes.push(FlowNode {
+                id: id.clone(),
+                label: format!("+{} more changed", total - MAX_STANDALONE),
+                shape: NodeShape::Rect,
+                class: Some("changed".into()),
+            });
+            edges.push(FlowEdge { from: HUB_ID.into(), to: id, label: None, style: EdgeStyle::Solid });
+        }
     }
 }
 
@@ -1419,7 +1605,7 @@ pub fn compute_with_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pr_algorithms::test_helpers::{mk_node, with_children, with_line};
+    use crate::pr_algorithms::test_helpers::{mk_node, with_children, with_line, with_line_span};
 
     #[test]
     fn empty_entries_renders_placeholder() {
@@ -2140,6 +2326,221 @@ mod tests {
         // Both source files the test exercises are surfaced, not just the test closures.
         assert!(merged.contains("\"renderWidget\""), "widget.ts source must surface:\n{merged}");
         assert!(merged.contains("\"renderHeader\""), "header.ts source must surface despite the heavy test diff:\n{merged}");
+    }
+
+    // ── classify_node: symbol-level diff attribution ─────────────────────────
+
+    fn cf_ranges(path: &str, status: &str, ranges: &[(usize, usize)]) -> ChangedFile {
+        ChangedFile {
+            path: path.into(),
+            status: Some(status.into()),
+            changed_ranges: ranges.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn span_overlap_detects_any_and_full_coverage() {
+        // No overlap.
+        assert_eq!(span_overlap(10, 20, &[(1, 5), (30, 40)]), (false, false));
+        // Partial overlap (some lines touched, not all).
+        assert_eq!(span_overlap(10, 20, &[(15, 17)]), (true, false));
+        // Full coverage by one range.
+        assert_eq!(span_overlap(10, 20, &[(5, 25)]), (true, true));
+        // Full coverage by adjacent ranges with no gap.
+        assert_eq!(span_overlap(10, 20, &[(10, 15), (16, 20)]), (true, true));
+        // A one-line gap ⇒ not full.
+        assert_eq!(span_overlap(10, 20, &[(10, 14), (16, 20)]), (true, false));
+    }
+
+    /// The exact bug from the report: an UNCHANGED function in an edited file
+    /// (`load_from_metadata_server`, lines 243–268) must classify as
+    /// `Unchanged` when the PR only touched OTHER lines of the same file.
+    #[test]
+    fn unchanged_function_in_edited_file_is_not_painted_changed() {
+        // PR touched lines 287 and 299–305 (a different function in the file).
+        let changed = vec![cf_ranges("gcpauth.rs", "modified", &[(287, 287), (299, 305)])];
+        let status = classify_node("gcpauth.rs", 243, 268, &changed);
+        assert_eq!(status, FileStatus::Unchanged, "untouched fn must stay Unchanged");
+    }
+
+    /// A brand-new function added inside an edited file (every line is new)
+    /// classifies as `Added` (green), not merely `Modified`.
+    #[test]
+    fn fully_new_function_in_edited_file_is_added() {
+        // refresh_credentials added at lines 270–290; the PR's range covers it all.
+        let changed = vec![cf_ranges("gcpauth.rs", "modified", &[(270, 290)])];
+        let status = classify_node("gcpauth.rs", 270, 290, &changed);
+        assert_eq!(status, FileStatus::Added, "all-new symbol ⇒ Added");
+    }
+
+    /// A pre-existing function with SOME added lines classifies as `Modified`.
+    #[test]
+    fn partially_touched_function_is_modified() {
+        // send_request_with_retry spans 277–330; the PR added line 287 + 299–305.
+        let changed = vec![cf_ranges("gcpvertexai.rs", "modified", &[(287, 287), (299, 305)])];
+        let status = classify_node("gcpvertexai.rs", 277, 330, &changed);
+        assert_eq!(status, FileStatus::Modified, "partial edit ⇒ Modified");
+    }
+
+    /// No hunk data (`changed_ranges` empty) ⇒ whole-file fallback, so existing
+    /// callers that don't pass `--diff-hunks` behave exactly as before.
+    #[test]
+    fn empty_ranges_falls_back_to_file_level() {
+        let changed = vec![cf_ranges("x.rs", "modified", &[])];
+        assert_eq!(classify_node("x.rs", 5, 9, &changed), FileStatus::Modified);
+    }
+
+    /// Added/Removed files are whole-file verdicts regardless of ranges.
+    #[test]
+    fn added_and_removed_files_are_whole_file() {
+        let added = vec![cf_ranges("new.rs", "added", &[(1, 3)])];
+        assert_eq!(classify_node("new.rs", 100, 200, &added), FileStatus::Added);
+        let removed = vec![cf_ranges("gone.rs", "removed", &[])];
+        assert_eq!(classify_node("gone.rs", 1, 1, &removed), FileStatus::Removed);
+    }
+
+    /// End-to-end: the diff-merged graph must NOT tint an untouched function in
+    /// an edited file, while it DOES tint the function whose lines changed.
+    #[test]
+    fn diff_merged_only_tints_symbols_whose_lines_changed() {
+        // Two functions in one edited file. Only `touched_fn` (lines 50–60) was
+        // edited; `untouched_fn` (lines 10–20) was not.
+        let entries = vec![with_children(
+            with_line_span(mk_node("touched_fn", "src/lib.rs"), 50, 60),
+            vec![with_line_span(mk_node("untouched_fn", "src/lib.rs"), 10, 20)],
+        )];
+        let changed = vec![cf_ranges("src/lib.rs", "modified", &[(50, 55)])];
+        let g = compute_with_diff(&entries, &changed)
+            .diff_merged_structured
+            .expect("structured graph");
+        let node = |needle: &str| g.nodes.iter().find(|n| n.label.contains(needle));
+        let touched = node("touched_fn").expect("touched_fn present");
+        assert_eq!(
+            touched.class.as_deref(),
+            Some("changed"),
+            "the edited function must be tinted changed"
+        );
+        // untouched_fn either renders uncoloured (class None) or is steered out
+        // entirely — either way it must NOT carry a changed/added tint.
+        if let Some(untouched) = node("untouched_fn") {
+            assert!(
+                !matches!(untouched.class.as_deref(), Some("changed") | Some("added")),
+                "untouched function must not be tinted: {:?}",
+                untouched.class
+            );
+        }
+    }
+
+    // ── append_unrendered_changed_files: real edges, not a blind hub ──────────
+
+    /// Two unrendered changed files that call each other are connected by a REAL
+    /// edge (from `file_edges`), NOT both fanned off the "no call edges" hub.
+    /// This is the core of the bug fix: a many-file PR shows how its changed
+    /// files actually connect. Language-agnostic — `file_edges` come from the
+    /// call graph, which is built identically for every supported language.
+    #[test]
+    fn unrendered_changed_files_get_real_edges_not_hub() {
+        let mut nodes: Vec<FlowNode> = Vec::new();
+        let mut edges: Vec<FlowEdge> = Vec::new();
+        let rendered: BTreeMap<String, String> = BTreeMap::new(); // nothing in the slice
+        let changed = vec![cf("src/a.ts", "modified"), cf("src/b.ts", "modified")];
+        // a.ts calls b.ts (the real import/call adjacency).
+        let mut file_edges = BTreeSet::new();
+        file_edges.insert(("src/a.ts".to_string(), "src/b.ts".to_string()));
+
+        append_unrendered_changed_files(&mut nodes, &mut edges, &changed, &rendered, &file_edges);
+
+        let a = nodes.iter().find(|n| n.label == "a.ts").expect("a.ts card");
+        let b = nodes.iter().find(|n| n.label == "b.ts").expect("b.ts card");
+        assert!(
+            edges.iter().any(|e| e.from == a.id && e.to == b.id),
+            "a.ts → b.ts real edge must be drawn:\n{edges:?}"
+        );
+        assert!(
+            !nodes.iter().any(|n| n.id == "chg_hub"),
+            "no hub when every card is connected by a real edge:\n{nodes:?}"
+        );
+    }
+
+    /// An unrendered changed file that calls a file ALREADY in the rendered
+    /// slice is wired to that slice node (card → rendered), not orphaned.
+    #[test]
+    fn unrendered_changed_file_links_into_rendered_slice() {
+        let mut nodes: Vec<FlowNode> = Vec::new();
+        let mut edges: Vec<FlowEdge> = Vec::new();
+        let mut rendered: BTreeMap<String, String> = BTreeMap::new();
+        rendered.insert("src/core.ts".to_string(), "n7".to_string()); // already drawn
+        let changed = vec![cf("src/a.ts", "modified")]; // core.ts also changed but rendered
+        let mut file_edges = BTreeSet::new();
+        file_edges.insert(("src/a.ts".to_string(), "src/core.ts".to_string()));
+
+        append_unrendered_changed_files(&mut nodes, &mut edges, &changed, &rendered, &file_edges);
+
+        let a = nodes.iter().find(|n| n.label == "a.ts").expect("a.ts card");
+        assert!(
+            edges.iter().any(|e| e.from == a.id && e.to == "n7"),
+            "a.ts must link to the rendered core.ts node (n7):\n{edges:?}"
+        );
+        assert!(!nodes.iter().any(|n| n.id == "chg_hub"), "connected → no hub");
+    }
+
+    /// A changed file with genuinely zero call edges still falls back to the hub
+    /// — and the hub label is now accurate (it only holds truly-isolated files).
+    #[test]
+    fn truly_isolated_changed_file_falls_back_to_hub() {
+        let mut nodes: Vec<FlowNode> = Vec::new();
+        let mut edges: Vec<FlowEdge> = Vec::new();
+        let rendered: BTreeMap<String, String> = BTreeMap::new();
+        let changed = vec![cf("src/lonely.ts", "modified")];
+        let file_edges: BTreeSet<(String, String)> = BTreeSet::new(); // no edges at all
+
+        append_unrendered_changed_files(&mut nodes, &mut edges, &changed, &rendered, &file_edges);
+
+        let hub = nodes.iter().find(|n| n.id == "chg_hub").expect("hub for isolated file");
+        assert!(hub.label.contains("no call edges"));
+        let card = nodes.iter().find(|n| n.label == "lonely.ts").expect("card");
+        assert!(
+            edges.iter().any(|e| e.from == "chg_hub" && e.to == card.id),
+            "isolated card hangs off the hub:\n{edges:?}"
+        );
+    }
+
+    /// End-to-end through `compute_with_diff`: a tree forest where two changed
+    /// files connect only to EACH OTHER (deep, off the rendered slice's budget)
+    /// still surfaces a real edge between them in the structured diff graph.
+    #[test]
+    fn diff_merged_connects_unrendered_changed_files() {
+        // One root tree whose budgeted slice leads with the test/root files; two
+        // changed util files (util_a → util_b) sit under it via a long
+        // unchanged spine so they appear in `file_edges` but the bounded slice
+        // need not draw them with full context.
+        let entries = vec![with_children(
+            mk_node("root", "app/root.ts"),
+            vec![with_children(
+                mk_node("helper_a", "app/util_a.ts"),
+                vec![mk_node("helper_b", "app/util_b.ts")],
+            )],
+        )];
+        let changed = vec![
+            cf("app/util_a.ts", "modified"),
+            cf("app/util_b.ts", "modified"),
+        ];
+        let g = compute_with_diff(&entries, &changed).diff_merged_structured;
+        let g = g.expect("structured diff graph");
+        let id_of = |needle: &str| -> Option<String> {
+            g.nodes.iter().find(|n| n.label.contains(needle)).map(|n| n.id.clone())
+        };
+        // Both changed files appear, and there is a direct edge between the two
+        // (either via the rendered slice or the unrendered-edge pass) — never a
+        // pair of disconnected boxes on a generic hub.
+        let a = id_of("util_a").or_else(|| id_of("helper_a")).expect("util_a present");
+        let b = id_of("util_b").or_else(|| id_of("helper_b")).expect("util_b present");
+        assert!(
+            g.edges.iter().any(|e| (e.from == a && e.to == b) || (e.from == b && e.to == a)),
+            "util_a and util_b must be connected by a real edge:\n{:?}",
+            g.edges
+        );
     }
 
     /// All-cases coverage: a changed SOURCE file that NO root reaches (isolated,

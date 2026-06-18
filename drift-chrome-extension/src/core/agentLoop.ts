@@ -16,6 +16,7 @@
 import type { BrainRuntime } from './brainRuntime';
 import { logger } from './debug';
 import { buildMessages, type ChatTurn, type Turn } from './chatContext';
+import type { FilePresentation } from '../agents/scrollPlan';
 import {
   buildSystemPrompt,
   buildRouterSystemPrompt,
@@ -43,6 +44,9 @@ export interface AgentEvents {
   onToolEnd?: (tool: string, ok: boolean, summary: string, details?: string) => void;
   /** Apply a state change a tool reported (e.g. scan ran → file count). */
   onStatePatch?: (patch: Partial<PrToolState>) => void;
+  /** A handover file step produced clickable presentation beats — attach them to the
+   *  reply so the message can render breathing buttons (replay scroll+highlight). */
+  onPresentation?: (presentation: FilePresentation) => void;
 }
 
 export interface AgentTurnOpts {
@@ -168,7 +172,15 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
       userText,
       mode: 'text',
     };
-    let result: { ok: boolean; content: string; statePatch?: Partial<PrToolState>; summary?: string; details?: string; final?: boolean };
+    let result: {
+      ok: boolean;
+      content: string;
+      statePatch?: Partial<PrToolState>;
+      summary?: string;
+      details?: string;
+      final?: boolean;
+      presentation?: FilePresentation;
+    };
     try {
       result = await tool.run(call_args(), ctx);
     } catch (e) {
@@ -195,6 +207,7 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
     // 'say "next"' instruction). This is also terminal — no re-route, no second
     // cursor advance.
     if (result.final) {
+      if (result.presentation) events.onPresentation?.(result.presentation);
       if (result.content) events.onToken(result.content);
       return result.content;
     }
