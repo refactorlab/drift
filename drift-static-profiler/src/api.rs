@@ -729,6 +729,30 @@ pub struct PrScopeSummary {
     pub unreachable_changes: Vec<PathBuf>,
 }
 
+/// One tree-sitter symbol of a changed file, surfaced to PR-review tooling so a
+/// live walkthrough can anchor on REAL definitions (a class/method/function and
+/// its exact line span) instead of guessing line ranges. Lines are 1-based and
+/// refer to the file AT HEAD — the same numbering as the PR diff's new side.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PrSymbolSpan {
+    pub name: String,
+    /// "function" | "method" | "class".
+    pub kind: &'static str,
+    pub line: usize,
+    pub end_line: usize,
+    /// Enclosing class/type, when the symbol is a method.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+/// A changed file's symbol map (path keyed to the caller's changed-file path so the
+/// extension can match it against the diff).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PrFileSymbols {
+    pub path: String,
+    pub symbols: Vec<PrSymbolSpan>,
+}
+
 /// Output of [`analyze_pr_with_progress`]: the standard
 /// `AnalyzeOutcome` plus the PR-scope summary. Kept as a wrapper (not
 /// a new field on `AnalyzeOutcome`) so existing analyze paths don't
@@ -745,6 +769,45 @@ pub struct AnalyzePrOutcome {
     /// multiplying by N yields a scale-invariant "× the uniform baseline"
     /// used by `pr_quality`'s inversion/blast-radius centrality arms.
     pub total_symbols: usize,
+    /// Per-changed-file tree-sitter symbols (classes/methods/functions + spans).
+    /// Drives the extension's symbol-anchored presentation; empty for languages
+    /// the profiler doesn't parse.
+    pub pr_symbols: Vec<PrFileSymbols>,
+}
+
+/// Cap per file so a giant generated file can't bloat the JSON.
+const MAX_PR_SYMBOLS_PER_FILE: usize = 120;
+
+/// Build the per-changed-file symbol map from the already-parsed `FileTags`.
+/// Cheap — just filters + projects existing tree-sitter data; no re-parse.
+fn build_pr_symbols(all_tags: &[FileTags], changed_files: &[PathBuf]) -> Vec<PrFileSymbols> {
+    let mut out = Vec::new();
+    for ft in all_tags {
+        if ft.symbols.is_empty() {
+            continue;
+        }
+        // Match this parsed file to a caller-supplied changed path (suffix match,
+        // like pr_scope) and key the output by THAT path so it lines up with the
+        // diff the extension holds.
+        let Some(changed) = changed_files.iter().find(|c| ft.file.ends_with(c)) else {
+            continue;
+        };
+        let mut symbols: Vec<PrSymbolSpan> = ft
+            .symbols
+            .iter()
+            .map(|s| PrSymbolSpan {
+                name: s.name.clone(),
+                kind: s.kind.as_str(),
+                line: s.line,
+                end_line: s.line_end,
+                parent: s.parent.clone(),
+            })
+            .collect();
+        symbols.sort_by(|a, b| a.line.cmp(&b.line).then(a.end_line.cmp(&b.end_line)));
+        symbols.truncate(MAX_PR_SYMBOLS_PER_FILE);
+        out.push(PrFileSymbols { path: changed.to_string_lossy().into_owned(), symbols });
+    }
+    out
 }
 
 /// PR-scoped scan: build the graph, discover ALL roots, then filter
@@ -891,6 +954,9 @@ pub fn analyze_pr_with_progress(
     docker::label_call_tree_entries(&ctx.entry_declarations, &mut roots_trees);
 
     let sql_opts = sql_file_opts_from(opts);
+    // Project the per-changed-file symbol map BEFORE `ctx` is partially moved into
+    // the outcome below (still a borrow of `ctx.all_tags`).
+    let pr_symbols = build_pr_symbols(&ctx.all_tags, changed_files);
     let report = Report::build_with_progress(
         &ctx.all_tags,
         &ctx.graph,
@@ -949,7 +1015,7 @@ pub fn analyze_pr_with_progress(
         elapsed_ms = started_at.elapsed().as_millis() as u64,
         "analyze-pr end"
     );
-    Ok(AnalyzePrOutcome { outcome, pr_scope, total_symbols })
+    Ok(AnalyzePrOutcome { outcome, pr_scope, total_symbols, pr_symbols })
 }
 
 /// One row of display data for the interactive root picker — enough
@@ -1114,9 +1180,71 @@ fn decorate_roots_for_picker(
 mod tests {
     use super::*;
     use crate::linguist::{LangKind, LanguageBreakdownEntry};
+    use crate::{Symbol, SymbolKind};
 
     fn paths(ps: &[&str]) -> Vec<PathBuf> {
         ps.iter().map(PathBuf::from).collect()
+    }
+
+    fn sym(name: &str, kind: SymbolKind, file: &str, line: usize, end: usize, parent: Option<&str>) -> Symbol {
+        Symbol {
+            name: name.into(),
+            kind,
+            file: PathBuf::from(file),
+            line,
+            line_end: end,
+            byte_start: 0,
+            byte_end: 1,
+            parent: parent.map(Into::into),
+            loc: 1,
+            complexity: 1,
+            nesting_depth: 0,
+            parameter_count: 0,
+            is_async: false,
+            loop_ranges: Vec::new(),
+            await_ranges: Vec::new(),
+        }
+    }
+
+    fn tags(file: &str, symbols: Vec<Symbol>) -> FileTags {
+        FileTags { file: PathBuf::from(file), language: Language::TypeScript, symbols, references: vec![], imports: vec![], bindings: vec![] }
+    }
+
+    #[test]
+    fn build_pr_symbols_projects_changed_files_only_keyed_by_changed_path() {
+        let all = vec![
+            // A changed file (walker path absolute) → kept, keyed by the changed path.
+            tags(
+                "/repo/src/auth.ts",
+                vec![
+                    sym("login", SymbolKind::Function, "/repo/src/auth.ts", 20, 30, None),
+                    sym("Auth", SymbolKind::Class, "/repo/src/auth.ts", 5, 40, None),
+                    sym("check", SymbolKind::Method, "/repo/src/auth.ts", 12, 18, Some("Auth")),
+                ],
+            ),
+            // Not in the changed set → dropped.
+            tags("/repo/src/other.ts", vec![sym("nope", SymbolKind::Function, "/repo/src/other.ts", 1, 2, None)]),
+            // Changed but no symbols (e.g. JSON) → dropped (no empty entry).
+            tags("/repo/pkg.json", vec![]),
+        ];
+        let out = build_pr_symbols(&all, &paths(&["src/auth.ts", "pkg.json"]));
+
+        assert_eq!(out.len(), 1);
+        let f = &out[0];
+        assert_eq!(f.path, "src/auth.ts"); // keyed by the CALLER's changed path, not the walker path
+        // Sorted by line; kind lowercased; parent carried for the method.
+        let names: Vec<_> = f.symbols.iter().map(|s| (s.name.as_str(), s.kind, s.line)).collect();
+        assert_eq!(names, vec![("Auth", "class", 5), ("check", "method", 12), ("login", "function", 20)]);
+        assert_eq!(f.symbols[1].parent.as_deref(), Some("Auth"));
+    }
+
+    #[test]
+    fn build_pr_symbols_caps_per_file() {
+        let many: Vec<Symbol> = (0..MAX_PR_SYMBOLS_PER_FILE + 20)
+            .map(|i| sym(&format!("f{i}"), SymbolKind::Function, "/r/a.ts", i + 1, i + 2, None))
+            .collect();
+        let out = build_pr_symbols(&[tags("/r/a.ts", many)], &paths(&["a.ts"]));
+        assert_eq!(out[0].symbols.len(), MAX_PR_SYMBOLS_PER_FILE);
     }
 
     fn cf(path: &str, name: Option<&'static str>, lang: Option<Language>) -> ClassifiedFile {

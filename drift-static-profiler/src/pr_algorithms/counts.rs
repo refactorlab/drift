@@ -29,6 +29,15 @@ pub struct ChangedFile {
     /// OLD name ("what the code was") instead of its HEAD name.
     /// `None` for every other status.
     pub old_path: Option<String>,
+    /// Inclusive line ranges in the NEW (HEAD) file that this PR actually
+    /// touched — the `+`/modified lines from the diff hunks. Lets the
+    /// architecture flow attribute change at SYMBOL granularity (a function
+    /// whose own lines fall in a range is "changed"; one whose lines don't is
+    /// left "unchanged" even though its file was edited) instead of painting
+    /// every symbol in a touched file. EMPTY means "no hunk data supplied" —
+    /// consumers then fall back to whole-file classification, so callers that
+    /// don't pass hunks see no regression.
+    pub changed_ranges: Vec<(usize, usize)>,
 }
 
 fn re_conventional() -> &'static Regex {

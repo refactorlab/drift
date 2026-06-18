@@ -363,6 +363,7 @@ mod prop_tests {
                 deletions: del,
                 status,
                 old_path: None,
+                ..Default::default()
             })
     }
 

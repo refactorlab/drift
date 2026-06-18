@@ -13,8 +13,8 @@ import {
   locateActiveTab,
   diffScrollTop,
   scrollToDiffInPage,
-  estimateReadingMs,
-  guideScrollThroughFile,
+  runScrollPlanInPage,
+  runScrollPlanThroughFile,
   DIFF_HEADER_OFFSET,
 } from './prNavigate';
 import type { PrId } from './prRefs';
@@ -103,14 +103,14 @@ describe('navigation (drives the active tab)', () => {
     expect(mock.lastTabUpdate()?.props.url).toBe(res.url);
   });
 
-  it('navigateToPrFile injects a scroll-to-top for the EXACT file (anchor + path, no guided scroll yet)', async () => {
+  it('navigateToPrFile injects a scroll-to-top for the EXACT file (anchor + path)', async () => {
     mock.setActiveTab({ id: 7, url: 'https://github.com/refactorlab/drift/pull/80/changes' });
     await navigateToPrFile(PR, 'src/agents/iterative-agent.test.ts');
     const anchor = await diffAnchor('src/agents/iterative-agent.test.ts');
     const inject = mock.lastExecuteScript();
     expect(inject?.tabId).toBe(7);
-    expect(typeof inject?.func).toBe('function'); // the in-page poll-and-scroll
-    expect(inject?.args).toEqual([anchor, 'src/agents/iterative-agent.test.ts', DIFF_HEADER_OFFSET, 0]); // durationMs 0 = land at top
+    expect(typeof inject?.func).toBe('function'); // the in-page poll-and-scroll-to-top
+    expect(inject?.args).toEqual([anchor, 'src/agents/iterative-agent.test.ts', DIFF_HEADER_OFFSET]);
   });
 
   it('does not inject a scroll when there is no tab to drive', async () => {
@@ -144,81 +144,258 @@ describe('diffScrollTop', () => {
 });
 
 describe('scrollToDiffInPage (the injected in-page scroller)', () => {
+  let scrolled: Element[];
+  let reload: ReturnType<typeof vi.fn>;
+  const ORIGINAL_LOCATION = window.location;
   beforeEach(() => {
     vi.useFakeTimers(); // the poll loop must not leak past the test
     document.body.innerHTML = '';
-    window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
+    // jsdom doesn't implement scrollIntoView — record which element it's called on so
+    // we can assert the RIGHT file container is the scroll target (not a neighbour).
+    scrolled = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    } as unknown as typeof Element.prototype.scrollIntoView;
+    // jsdom's location.reload is non-configurable (can't spyOn it) — replace the whole
+    // location with a URL-backed stub so the "virtualised, no tree row" reload fallback
+    // is observable (and silent, no "Not implemented: navigation" noise).
+    reload = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: Object.assign(new URL(ORIGINAL_LOCATION.href), { reload, assign: vi.fn(), replace: vi.fn() }),
+    });
   });
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    Object.defineProperty(window, 'location', { configurable: true, value: ORIGINAL_LOCATION });
   });
 
-  it('scrolls the file diff container to the top, below the sticky header (fixes "wrong file" + "at the bottom")', () => {
+  it('scrolls the EXACT file container into view (layout-robust → never a neighbour)', () => {
     const el = document.createElement('div');
     el.id = 'diff-abc';
-    el.getBoundingClientRect = () => ({ top: 640 }) as DOMRect;
     document.body.appendChild(el);
-    scrollToDiffInPage('diff-abc', 'src/app.ts', DIFF_HEADER_OFFSET, 0);
-    expect(window.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 640 - DIFF_HEADER_OFFSET }));
+    scrollToDiffInPage('diff-abc', 'src/app.ts', DIFF_HEADER_OFFSET);
+    expect(scrolled).toContain(el); // scrolled THIS container into view
+    expect(reload).not.toHaveBeenCalled(); // it was rendered → no fallback
   });
 
   it('auto-clicks a "Load Diff" placeholder inside the file (so the code is visible)', () => {
     const el = document.createElement('div');
     el.id = 'diff-big';
-    el.getBoundingClientRect = () => ({ top: 200 }) as DOMRect;
     const loadBtn = document.createElement('button');
     loadBtn.textContent = 'Load Diff';
     const clicked = vi.fn();
     loadBtn.addEventListener('click', clicked);
     el.appendChild(loadBtn);
     document.body.appendChild(el);
-    scrollToDiffInPage('diff-big', 'src/big.ts', DIFF_HEADER_OFFSET, 0);
+    scrollToDiffInPage('diff-big', 'src/big.ts', DIFF_HEADER_OFFSET);
     expect(clicked).toHaveBeenCalled(); // expanded the collapsed large diff
   });
 
   it('falls back to the diff header whose FULL path matches when the id is absent', () => {
     const container = document.createElement('div');
     container.id = 'diff-real';
-    container.getBoundingClientRect = () => ({ top: 320 }) as DOMRect;
     const header = document.createElement('a');
     header.textContent = 'src/state/prFileStore.ts';
     container.appendChild(header);
     document.body.appendChild(container);
-    scrollToDiffInPage('diff-MISSING', 'src/state/prFileStore.ts', DIFF_HEADER_OFFSET, 0);
-    expect(window.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 320 - DIFF_HEADER_OFFSET }));
+    scrollToDiffInPage('diff-MISSING', 'src/state/prFileStore.ts', DIFF_HEADER_OFFSET);
+    expect(scrolled).toContain(container); // climbed to the matching file container
   });
 
-  it('never scrolls to a sidebar entry (path text NOT inside a diff container)', () => {
-    const sidebar = document.createElement('a');
-    sidebar.textContent = 'src/state/prFileStore.ts'; // not within any [id^="diff-"]
-    document.body.appendChild(sidebar);
-    scrollToDiffInPage('diff-MISSING', 'src/state/prFileStore.ts', DIFF_HEADER_OFFSET, 0);
-    expect(window.scrollTo).not.toHaveBeenCalled(); // nothing valid → polls (lazy render), no wrong scroll
+  // VIRTUALISATION: an off-screen file in a big PR isn't in the DOM at all, so the hash
+  // + scrollIntoView can't reach it (the "next left the page on the previous file" bug).
+  // The always-present file-TREE row links to the same anchor — click it to drive
+  // GitHub's own render+scroll.
+  it("clicks the file-tree row (href→anchor) for a not-yet-rendered file, doesn't reload", () => {
+    const treeRow = document.createElement('a');
+    treeRow.setAttribute('href', '/o/r/pull/1/files#diff-faraway');
+    treeRow.textContent = 'voicePrompt.ts';
+    const clicked = vi.fn();
+    treeRow.addEventListener('click', (e) => {
+      e.preventDefault();
+      clicked();
+    });
+    document.body.appendChild(treeRow);
+    scrollToDiffInPage('diff-faraway', 'src/core/voicePrompt.ts', DIFF_HEADER_OFFSET);
+    expect(clicked).toHaveBeenCalled(); // drove GitHub's own navigation
+    expect(reload).not.toHaveBeenCalled(); // a tree row existed → no reload needed
+    expect(scrolled).toHaveLength(0); // container not in DOM yet → nothing wrongly scrolled
+  });
+
+  it('clicks the file-tree row matched by FULL-PATH title when there is no anchor href', () => {
+    const treeRow = document.createElement('a');
+    treeRow.setAttribute('title', 'src/core/voicePrompt.ts');
+    const clicked = vi.fn();
+    treeRow.addEventListener('click', (e) => {
+      e.preventDefault();
+      clicked();
+    });
+    document.body.appendChild(treeRow);
+    scrollToDiffInPage('diff-faraway', 'src/core/voicePrompt.ts', DIFF_HEADER_OFFSET);
+    expect(clicked).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('lands on the container once the tree-click renders it in (poll → scrollIntoView)', () => {
+    const treeRow = document.createElement('a');
+    treeRow.setAttribute('href', '#diff-faraway');
+    treeRow.addEventListener('click', (e) => e.preventDefault());
+    document.body.appendChild(treeRow);
+    scrollToDiffInPage('diff-faraway', 'src/core/voicePrompt.ts', DIFF_HEADER_OFFSET);
+    expect(scrolled).toHaveLength(0); // not rendered yet
+    // GitHub renders the file in after the tree click → the poll finds + scrolls it.
+    const container = document.createElement('div');
+    container.id = 'diff-faraway';
+    document.body.appendChild(container);
+    vi.advanceTimersByTime(300); // one poll tick
+    expect(scrolled).toContain(container);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('reloads to deep-link when the file is virtualised out AND no tree row exists', () => {
+    // A stray text match that is NOT a clickable tree row (no href/title/role) and not in
+    // a diff container → must NOT scroll to it; with no way to navigate in-page, reload to
+    // re-trigger GitHub's on-load hash handler (which renders+scrolls to the anchor).
+    const stray = document.createElement('span');
+    stray.textContent = 'src/state/prFileStore.ts';
+    document.body.appendChild(stray);
+    scrollToDiffInPage('diff-MISSING', 'src/state/prFileStore.ts', DIFF_HEADER_OFFSET);
+    expect(scrolled).toHaveLength(0); // never scrolled to the stray match
+    expect(reload).toHaveBeenCalled(); // deep-link fallback
   });
 });
 
-describe('estimateReadingMs (paces the guided scroll)', () => {
-  it('scales with word count and the words-per-minute rate', () => {
-    const text = Array.from({ length: 240 }, () => 'word').join(' '); // 240 words
-    expect(estimateReadingMs(text, 240, 0, 600000)).toBe(60000); // ~1 min at 240 wpm
-    expect(estimateReadingMs(text, 120, 0, 600000)).toBe(120000); // half the rate → twice as long
+describe('runScrollPlanInPage (the injected dwell-scroll executor)', () => {
+  let scrollIntoView: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    vi.useFakeTimers(); // bound the dwell setTimeout loop
+    document.body.innerHTML = '';
+    // jsdom doesn't implement scrollIntoView — mock it so we can assert the target.
+    scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView;
   });
-  it('clamps to a sane range (never instant, never minutes by default)', () => {
-    expect(estimateReadingMs('hi', 240)).toBe(1500); // floor
-    expect(estimateReadingMs(Array.from({ length: 5000 }, () => 'w').join(' '), 240)).toBe(30000); // ceiling
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it('expands "Load Diff", HIGHLIGHTS the range, and scrolls the line cell into view', () => {
+    const container = document.createElement('div');
+    container.id = 'diff-x';
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = 'Load Diff';
+    const clicked = vi.fn();
+    loadBtn.addEventListener('click', clicked);
+    container.appendChild(loadBtn);
+    const row = document.createElement('div');
+    row.setAttribute('role', 'row');
+    const cell = document.createElement('div');
+    cell.setAttribute('data-line-number', '20');
+    row.appendChild(cell);
+    container.appendChild(row);
+    document.body.appendChild(container);
+
+    const plan = [{ startLine: 20, endLine: 22, dwellMs: 3000 }];
+    expect(() => runScrollPlanInPage('diff-x', 'src/x.ts', DIFF_HEADER_OFFSET, plan, 0)).not.toThrow();
+    expect(clicked).toHaveBeenCalled(); // expanded the collapsed diff
+    // The first step runs synchronously (startDelay 0) → highlight + scrollIntoView.
+    expect(row.classList.contains('drift-present-hl')).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalled(); // scrolled the line cell (scoped to THIS container) into view
+    expect(document.getElementById('drift-present-style')).not.toBeNull();
+  });
+
+  it('emphasises the SYMBOL NAME sub-line (wraps it in a .drift-present-name span)', () => {
+    const container = document.createElement('div');
+    container.id = 'diff-y';
+    const row = document.createElement('div');
+    row.setAttribute('role', 'row');
+    const cell = document.createElement('div');
+    cell.setAttribute('data-line-number', '42');
+    const code = document.createElement('span');
+    code.textContent = '  const pushMic = (frame) => {'; // the line text containing the symbol
+    row.append(cell, code);
+    container.appendChild(row);
+    document.body.appendChild(container);
+
+    const plan = [{ startLine: 42, endLine: 42, dwellMs: 3000, name: 'pushMic' }];
+    runScrollPlanInPage('diff-y', 'src/v.ts', DIFF_HEADER_OFFSET, plan, 0);
+    const mark = document.querySelector('.drift-present-name');
+    expect(mark?.textContent).toBe('pushMic'); // just the name, wrapped within the line
+  });
+
+  it('OVERVIEW sweep beat scrolls to the file TOP, then advances to the first change beat', () => {
+    const container = document.createElement('div');
+    container.id = 'diff-sweep';
+    const row = document.createElement('div');
+    row.setAttribute('role', 'row');
+    const cell = document.createElement('div');
+    cell.setAttribute('data-line-number', '2'); // the first change
+    row.appendChild(cell);
+    container.appendChild(row);
+    document.body.appendChild(container);
+
+    // beat 0 = overview sweep (top → line 2); beat 1 = the change at line 2.
+    const plan = [
+      { startLine: 1, endLine: 2, dwellMs: 3000, sweep: true },
+      { startLine: 2, endLine: 2, dwellMs: 1500 },
+    ];
+    expect(() => runScrollPlanInPage('diff-sweep', 'src/s.ts', DIFF_HEADER_OFFSET, plan, 0)).not.toThrow();
+    // The sweep first scrolls the file container to the TOP (block:start), no row highlight yet.
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(row.classList.contains('drift-present-hl')).toBe(false);
+    // After the overview dwell, it advances to the first change and highlights it.
+    vi.advanceTimersByTime(3000);
+    expect(row.classList.contains('drift-present-hl')).toBe(true);
+  });
+
+  it('drives the file-tree row when the file is not yet rendered, then runs once it mounts', () => {
+    const treeRow = document.createElement('a');
+    treeRow.setAttribute('href', '#diff-late');
+    const clicked = vi.fn();
+    treeRow.addEventListener('click', (e) => {
+      e.preventDefault();
+      clicked();
+    });
+    document.body.appendChild(treeRow);
+
+    const plan = [{ startLine: 5, endLine: 5, dwellMs: 1500 }];
+    runScrollPlanInPage('diff-late', 'src/late.ts', DIFF_HEADER_OFFSET, plan, 0);
+    expect(clicked).toHaveBeenCalled(); // not in DOM → clicked the tree row to render it
+    expect(scrollIntoView).not.toHaveBeenCalled(); // nothing to scroll yet
+
+    // GitHub renders the file in → the poll picks it up and runs the dwell plan.
+    const container = document.createElement('div');
+    container.id = 'diff-late';
+    const row = document.createElement('div');
+    row.setAttribute('role', 'row');
+    const cell = document.createElement('div');
+    cell.setAttribute('data-line-number', '5');
+    row.appendChild(cell);
+    container.appendChild(row);
+    document.body.appendChild(container);
+    vi.advanceTimersByTime(300); // one poll tick
+    expect(scrollIntoView).toHaveBeenCalled(); // ran the plan on the now-rendered file
+    expect(row.classList.contains('drift-present-hl')).toBe(true);
   });
 });
 
-describe('guideScrollThroughFile', () => {
+describe('runScrollPlanThroughFile', () => {
   let mock: ChromeMock;
   beforeEach(() => {
     mock = installChromeMock();
   });
-  it('injects the scroller with the explanation-paced duration', async () => {
+  it('injects the executor with the plan + a voice lead delay', async () => {
     mock.setActiveTab({ id: 3, url: 'https://github.com/refactorlab/drift/pull/80/files' });
-    await guideScrollThroughFile('diff-abc', 'src/app.ts', 8000);
-    expect(mock.lastExecuteScript()?.args).toEqual(['diff-abc', 'src/app.ts', DIFF_HEADER_OFFSET, 8000]);
+    const plan = [{ startLine: 10, endLine: 20, dwellMs: 5000 }];
+    await runScrollPlanThroughFile('diff-abc', 'src/app.ts', plan, 'voice');
+    expect(mock.lastExecuteScript()?.args).toEqual(['diff-abc', 'src/app.ts', DIFF_HEADER_OFFSET, plan, 700]);
+  });
+  it('does nothing for an empty plan', async () => {
+    mock.setActiveTab({ id: 3, url: 'https://github.com/refactorlab/drift/pull/80/files' });
+    await runScrollPlanThroughFile('diff-abc', 'src/app.ts', [], 'text');
+    expect(mock.lastExecuteScript()).toBeNull();
   });
 });
 

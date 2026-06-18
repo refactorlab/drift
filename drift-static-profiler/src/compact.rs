@@ -1547,6 +1547,11 @@ fn expand_node(n: &CompactCallTreeNode, ctx: &ExpandCtx) -> CallTreeNode {
         kind: kind_from_byte(f.kind),
         file: ctx.s.get(f.file),
         line: f.line as usize,
+        // The compact on-disk format doesn't carry a symbol's end line, so a
+        // round-tripped (saved) scan falls back to `line`. The live PR pipeline
+        // never round-trips through compact — it reads `report.entries`
+        // directly — so symbol-level diff attribution keeps the real span.
+        line_end: f.line as usize,
         depth: n.depth,
         parent_class: ctx.s.get_opt(f.parent_class),
         children: n.children.iter().map(|c| expand_node(c, ctx)).collect(),
@@ -1967,6 +1972,7 @@ mod tests {
             kind: SymbolKind::Function,
             file: file.into(),
             line,
+            line_end: line,
             depth: 1,
             parent_class: parent.map(|s| s.into()),
             children: vec![],

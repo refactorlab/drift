@@ -2080,3 +2080,143 @@ html[data-theme='dark'] body {
 .tool-step-copy:hover { background: rgba(229, 72, 77, 0.1); }
 /* When there's no summary to push it right, anchor the button to the far edge. */
 .tool-step-label + .tool-step-copy { margin-left: auto; }
+
+/* ── Handover presentation buttons ─────────────────────────────────────────────
+   Clickable "breathing" chips on an explain-PR message; each replays the smooth
+   scroll + highlight from that spot in the GitHub diff. */
+.present-beats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.present-beat {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; font-size: 12px; font-weight: 500; line-height: 1.3;
+  color: var(--drift-fg); text-align: left;
+  background: color-mix(in srgb, var(--drift-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--drift-accent) 38%, transparent);
+  border-radius: 999px; cursor: pointer;
+  transition: background .2s ease, border-color .2s ease, transform .08s ease;
+  animation: presentBreathe 3.2s ease-in-out infinite;
+}
+.present-beat:hover {
+  background: color-mix(in srgb, var(--drift-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--drift-accent) 60%, transparent);
+  transform: translateY(-1px);
+}
+.present-beat:active { transform: translateY(0); }
+.present-beat:focus-visible { outline: 2px solid var(--drift-accent); outline-offset: 1px; }
+/* The beat the page is CURRENTLY dwelling on — lit in lockstep with the scroll, in the
+   SAME amber (#f5a623) as the in-page highlight so the chip and the code read as one. */
+.present-beat.active {
+  color: #3a2a00;
+  background: #f5a623;
+  border-color: #f5a623;
+  font-weight: 600;
+  animation: presentActivePulse 1.6s ease-in-out infinite;
+}
+.present-beat.active:hover { background: #f5b342; border-color: #f5b342; }
+.present-beat.active .present-beat-dot { background: #3a2a00; animation: none; }
+@keyframes presentActivePulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, #f5a623 22%, transparent); }
+  50% { box-shadow: 0 0 10px 3px color-mix(in srgb, #f5a623 45%, transparent); }
+}
+/* Where a manual scroll PAUSED the walkthrough — a steady (non-pulsing) amber ring +
+   ⏸ marker on the remembered spot; the "Resume" pill continues from here. */
+.present-beat.paused {
+  border-color: #f5a623;
+  box-shadow: inset 3px 0 0 0 #f5a623, 0 0 0 2px color-mix(in srgb, #f5a623 22%, transparent);
+  animation: none;
+}
+.present-beat.paused .present-beat-dot { background: #f5a623; animation: none; }
+.present-resume {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 11px; font-size: 12px; font-weight: 600; line-height: 1.3;
+  color: #3a2a00; background: #f5a623; border: 1px solid #f5a623;
+  border-radius: 999px; cursor: pointer;
+  transition: background .2s ease, transform .08s ease;
+}
+.present-resume:hover { background: #f5b342; transform: translateY(-1px); }
+.present-resume:active { transform: translateY(0); }
+.present-resume:focus-visible { outline: 2px solid var(--drift-accent); outline-offset: 1px; }
+.present-beat-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--drift-accent); animation: presentDot 2.4s ease-in-out infinite;
+}
+@keyframes presentBreathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--drift-accent) 0%, transparent); }
+  50% { box-shadow: 0 0 10px 1px color-mix(in srgb, var(--drift-accent) 30%, transparent); }
+}
+@keyframes presentDot {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--drift-accent) 60%, transparent); opacity: .75; }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--drift-accent) 0%, transparent); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .present-beat, .present-beat-dot, .present-beat.active { animation: none; }
+}
+
+/* ── Structured handover message (playbook) ────────────────────────────────────
+   intro header · inline SECTION list (button + note) · outro · replay timeline. */
+.present-msg { display: flex; flex-direction: column; gap: 8px; }
+.present-intro { font-weight: 600; opacity: .92; }
+.present-outro { opacity: .8; font-size: 13px; }
+/* The 3-level framing above the change sections: Level 1 (PR's change to this file) and
+   Level 2 (what the file does). Each level a small tag + its text, so the structure reads
+   at a glance. Level 3 is the section list itself, labelled with the same tag style. */
+.present-overview { display: flex; flex-direction: column; gap: 6px; margin: 2px 0; border-left: 3px solid transparent; padding: 4px 8px; border-radius: 8px; transition: background .25s ease, border-color .25s ease; }
+/* The overview box doubles as the first timeline beat (the top-of-file sweep): clickable,
+   and lit in the SAME amber as the change sections while it's the active spot. */
+.present-overview-play { cursor: pointer; }
+.present-overview-play:hover { background: color-mix(in srgb, #f5a623 8%, transparent); }
+.present-overview.active { background: color-mix(in srgb, #f5a623 14%, transparent); border-left-color: #f5a623; }
+.present-overview.paused { border-left-color: #f5a623; background: color-mix(in srgb, #f5a623 7%, transparent); }
+.present-level { display: flex; flex-direction: column; gap: 2px; }
+.present-level-tag {
+  align-self: flex-start; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  text-transform: uppercase; opacity: .7; padding: 1px 6px; border-radius: 5px;
+  background: color-mix(in srgb, #f5a623 12%, transparent); color: #f5a623;
+}
+.present-level-text { opacity: .92; line-height: 1.45; }
+.present-level3 { margin-top: 2px; }
+.present-sections { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.present-section {
+  padding: 5px 8px; border-radius: 8px; line-height: 1.45;
+  border-left: 3px solid transparent; transition: background .25s ease, border-color .25s ease;
+}
+/* The spot the page is CURRENTLY dwelling on — lit in the SAME amber as the in-page
+   highlight, so the message row and the highlighted code read as one. */
+.present-section.active { background: color-mix(in srgb, #f5a623 14%, transparent); border-left-color: #f5a623; }
+.present-section.paused { border-left-color: #f5a623; background: color-mix(in srgb, #f5a623 7%, transparent); }
+.present-section-note { opacity: .92; }
+/* The inline beat button sits INSIDE the row's text. Reuses .present-beat, but inline
+   (no breathing animation here — the active state is the signal). */
+.present-section .present-beat { animation: none; vertical-align: baseline; margin-right: 2px; }
+
+.present-timeline-row { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.present-timeline-toggle {
+  align-self: flex-start; padding: 2px 8px; font-size: 11px; font-weight: 600;
+  color: var(--drift-fg); opacity: .65; background: transparent;
+  border: 1px solid color-mix(in srgb, var(--drift-accent) 28%, transparent);
+  border-radius: 999px; cursor: pointer;
+}
+.present-timeline-toggle:hover { opacity: 1; }
+.present-timeline { display: flex; align-items: center; gap: 8px; }
+.present-timeline-replay {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+  color: #3a2a00; background: #f5a623; border: none; font-size: 13px; line-height: 1;
+}
+.present-timeline-replay:hover { background: #f5b342; }
+.present-timeline-track { position: relative; display: flex; flex: 1; gap: 3px; height: 8px; align-items: stretch; }
+/* The moving PLAYHEAD — a thin amber line that travels left→right as it auto-plays,
+   so the reviewer sees exactly where they are (its % is driven by the media-clock). */
+.present-timeline-head {
+  position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
+  background: #f5a623; border-radius: 2px; pointer-events: none;
+  box-shadow: 0 0 6px 1px color-mix(in srgb, #f5a623 70%, transparent);
+}
+.present-timeline-seg {
+  flex-basis: 0; min-width: 6px; height: 8px; padding: 0; cursor: pointer;
+  border: none; border-radius: 4px;
+  background: color-mix(in srgb, var(--drift-accent) 22%, transparent);
+  transition: background .2s ease, transform .08s ease;
+}
+.present-timeline-seg:hover { transform: scaleY(1.4); }
+.present-timeline-seg.done { background: color-mix(in srgb, #f5a623 45%, transparent); }
+.present-timeline-seg.active { background: #f5a623; box-shadow: 0 0 6px 1px color-mix(in srgb, #f5a623 55%, transparent); }
+.present-timeline-pos { flex: none; font-size: 11px; opacity: .6; font-variant-numeric: tabular-nums; }

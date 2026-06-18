@@ -233,6 +233,7 @@ fn make_orm_file_node(
         kind: crate::SymbolKind::Function,
         file: file_rel.to_string(),
         line: 1,
+        line_end: 1,
         depth: 0,
         parent_class: None,
         children: Vec::new(),

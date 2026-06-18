@@ -315,7 +315,7 @@ fn paths_match_invariant_via_classify_file() {
         CallTreeNode {
             id: SymbolId(format!("{file}::{name}")),
             name: name.into(), kind: SymbolKind::Function, file: file.into(),
-            line: 1, depth: 0, parent_class: None, children: vec![],
+            line: 1, line_end: 1, depth: 0, parent_class: None, children: vec![],
             truncated_reason: None, callers: vec![],
             callers_count: 0, callees_count: 0, subtree_size: 1,
             category_self: None, categories_reached: BTreeMap::new(),

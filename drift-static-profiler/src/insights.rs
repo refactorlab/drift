@@ -2071,6 +2071,7 @@ mod tests {
             kind: SymbolKind::Function,
             file: "synth.rs".into(),
             line: 1,
+            line_end: 1,
             depth: 0,
             parent_class: None,
             children: vec![],

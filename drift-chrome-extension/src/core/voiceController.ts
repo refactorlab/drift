@@ -35,6 +35,7 @@ import {
 } from './chatTools';
 import { logger } from './debug';
 import type { KokoroRuntime } from './kokoroRuntime';
+import type { FilePresentation } from '../agents/scrollPlan';
 
 const log = logger('voice');
 
@@ -70,6 +71,8 @@ export interface VoiceHandlers {
   /** On failure, `details` carries the copyable developer report (error + context + progress log). */
   onToolEnd?: (tool: string, ok: boolean, summary: string, details?: string) => void;
   onStatePatch?: (patch: Partial<PrToolState>) => void;
+  /** Handover presentation beats (clickable line spots) for the transcript message. */
+  onPresentation?: (presentation: FilePresentation) => void;
   /** Normalized 0..1 audio energy for the UI orb: mic loudness while listening,
    *  agent playback loudness while speaking. High-rate (per frame) — the sink
    *  should write a ref, not setState. */
@@ -396,6 +399,7 @@ export class VoiceController {
         },
       );
       if (result.statePatch) this.handlers.onStatePatch?.(result.statePatch);
+      if (result.presentation) this.handlers.onPresentation?.(result.presentation);
       this.handlers.onToolEnd?.(tool.name, result.ok, result.summary ?? (result.ok ? 'done' : 'failed'), result.details);
       // `final` (handover): the content IS the reply → show it + speak it (the
       // condensed `spoken` variant when present). Otherwise wrap it as a tool-result

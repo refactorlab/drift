@@ -16,6 +16,7 @@
 import { activeTab } from './messaging';
 import { ghWebBase } from './githubHost';
 import { parsePrUrl, type PrId } from './prRefs';
+import type { ScrollStep } from '../agents/scrollPlan';
 
 /** The diff route GitHub serves a PR's file changes on. */
 export type DiffRoute = 'files' | 'changes';
@@ -124,18 +125,6 @@ export function diffScrollTop(elementTop: number, scrollY: number, headerOffset 
   return Math.max(0, Math.round(elementTop + scrollY - headerOffset));
 }
 
-/** Typical reading / TTS-speaking rates (words per minute) — pace the guided scroll
- *  so the file scrolls past roughly as fast as the explanation is read / spoken. */
-export const TEXT_WPM = 240;
-export const VOICE_WPM = 155;
-
-/** Estimate how long `text` takes to read/speak at `wpm`, clamped to a sane range
- *  (a guided scroll should never be instant nor crawl for minutes). Pure. */
-export function estimateReadingMs(text: string, wpm: number, minMs = 1500, maxMs = 30000): number {
-  const words = (text.trim().match(/\S+/g) ?? []).length;
-  const ms = (words / Math.max(1, wpm)) * 60000;
-  return Math.round(Math.min(maxMs, Math.max(minMs, ms)));
-}
 
 /**
  * Runs IN THE PAGE (serialised by chrome.scripting — must be self-contained, no
@@ -143,16 +132,156 @@ export function estimateReadingMs(text: string, wpm: number, minMs = 1500, maxMs
  * rendered, so the browser's native `#diff-…` hash-scroll is unreliable. This:
  *   1. POLLS for the target file's diff container (by its `diff-<sha256(path)>` id,
  *      with a full-path-text fallback), retrying while GitHub renders it in,
- *   2. EXPANDS a collapsed "Load Diff" placeholder so the code is actually visible
- *      (we're explaining this file), then
- *   3. scrolls it to the top below the sticky header — and, when `durationMs > 0`,
- *      GUIDED-scrolls through the file over that long (paced to the explanation's
- *      read/speak time), cancelling the instant a human scrolls/keys/touches.
+ *   2. EXPANDS a collapsed "Load Diff" placeholder so the code is actually visible,
+ *   3. scrolls it to the TOP below the sticky header.
  */
-export function scrollToDiffInPage(anchorId: string, path: string, headerOffset: number, durationMs: number): void {
+export function scrollToDiffInPage(anchorId: string, path: string, headerOffset: number): void {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const w = window as any;
-  // Supersede any prior nav's poller / guided scroll so consecutive files don't fight.
+  if (w.__driftNav) {
+    try {
+      clearInterval(w.__driftNav.iv);
+      cancelAnimationFrame(w.__driftNav.raf);
+      if (w.__driftNav.stop) w.__driftNav.stop();
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  const state = (w.__driftNav = { iv: 0, raf: 0, stop: null as null | (() => void) });
+  const find = (): Element | null => {
+    const byId = document.getElementById(anchorId);
+    if (byId) return byId;
+    const nodes = document.querySelectorAll('[title],a,h3,h4,[data-path],[data-file-path]');
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i] as HTMLElement;
+      const txt = (n.getAttribute('data-path') || n.getAttribute('data-file-path') || n.getAttribute('title') || n.textContent || '').trim();
+      if (txt === path) {
+        const c = n.closest('[id^="diff-"]');
+        if (c) return c;
+      }
+    }
+    return null;
+  };
+  const expand = (c: Element): void => {
+    const cl = c.querySelectorAll('button,[role="button"],summary,a');
+    for (let i = 0; i < cl.length; i++) {
+      if (/^\s*load diff\s*$/i.test(cl[i].textContent || '')) {
+        (cl[i] as HTMLElement).click();
+        return;
+      }
+    }
+  };
+  const land = (c: Element) => {
+    expand(c);
+    // scrollIntoView is LAYOUT-ROBUST: a computed scrollTo can land on the
+    // ADJACENT file after GitHub's virtualised diff lazy-renders/shifts (the
+    // "showed voicePrompt.test.ts instead of voicePrompt.ts" bug). scroll-margin-top
+    // leaves room for the sticky header.
+    try {
+      (c as HTMLElement).style.scrollMarginTop = headerOffset + 'px';
+    } catch (e) {
+      /* ignore */
+    }
+    c.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+  // VIRTUALISATION FIX: an off-screen file's `diff-…` container isn't in the DOM
+  // at all, so neither the URL hash nor scrollIntoView can reach it — which is why
+  // "next" to a file far down a 77-file PR left the page on the PREVIOUS file. The
+  // file-TREE row (always present for every changed file, regardless of scroll) links
+  // to the same anchor; clicking it is exactly how a human jumps there — GitHub
+  // renders the file in and scrolls to it. We click it, then the poll lands precisely
+  // once the container mounts.
+  const clickFileTree = (): boolean => {
+    const byHref =
+      (document.querySelector('a[href$="#' + anchorId + '"]') as HTMLElement | null) ||
+      (document.querySelector('a[href*="#' + anchorId + '"]') as HTMLElement | null);
+    if (byHref) {
+      byHref.click();
+      return true;
+    }
+    const base = path.split('/').pop() || path;
+    const rows = Array.from(
+      document.querySelectorAll('[role="treeitem"],nav a[title],a[title],button[title],[data-tree-entry-type] a,.ActionList-item'),
+    ) as HTMLElement[];
+    const textOf = (el: HTMLElement) => (el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent || '').trim();
+    const hit =
+      rows.find((el) => {
+        const t = textOf(el);
+        return t === path || (t.indexOf('/') >= 0 && (t.endsWith('/' + path) || path.endsWith('/' + t)));
+      }) || rows.find((el) => textOf(el) === base);
+    if (hit) {
+      hit.click();
+      return true;
+    }
+    return false;
+  };
+  // Verbose-level breadcrumb (filtered out of the GitHub tab's console by default) so a
+  // future "it didn't navigate" can be traced to the exact branch that ran.
+  const log = (m: string) => {
+    try {
+      console.debug('[drift:nav] ' + m + ' — ' + path);
+    } catch (e) {
+      /* ignore */
+    }
+  };
+  const c0 = find();
+  if (c0) {
+    log('container in DOM → scrollIntoView');
+    land(c0);
+    return;
+  }
+  // Not in the DOM (virtualised). Prefer GitHub's own file-tree row (smooth, no
+  // reload). If there's NO tree row to click (tree collapsed/absent), a same-document
+  // hash can't render a far-down file — the only reliable way is to re-trigger
+  // GitHub's on-LOAD hash handler, i.e. reload the (already #anchor'd) URL.
+  if (!clickFileTree()) {
+    log('virtualised + no file-tree row → reloading to deep-link');
+    try {
+      location.reload();
+    } catch (e) {
+      /* ignore */
+    }
+    return;
+  }
+  log('virtualised → clicked file-tree row, polling for render');
+  let tries = 0;
+  state.iv = setInterval(() => {
+    const c = find();
+    if (c) {
+      clearInterval(state.iv);
+      state.iv = 0;
+      land(c);
+    } else if (++tries > 40) {
+      clearInterval(state.iv);
+      state.iv = 0;
+      try {
+        location.reload(); // tree click never rendered it → deep-link via a fresh load
+      } catch (e) {
+        /* ignore */
+      }
+    } else if (tries % 6 === 0) {
+      clickFileTree(); // retry while the SPA route/tree settles
+    }
+  }, 250) as unknown as number;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+/**
+ * Runs IN THE PAGE — the scroll-plan EXECUTOR. Walks an ordered list of line ranges,
+ * DWELLING on each for its own duration (paced to the narration), with smooth eased
+ * transitions and a hard speed cap so it never races. A tall range scrolls THROUGH
+ * itself during its dwell; a short one holds. Cancels the instant the user
+ * scrolls/keys/touches, so it follows along but never fights them. Self-contained.
+ */
+export function runScrollPlanInPage(
+  anchorId: string,
+  path: string,
+  headerOffset: number,
+  plan: ScrollStep[],
+  startDelayMs: number,
+): void {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const w = window as any;
   if (w.__driftNav) {
     try {
       clearInterval(w.__driftNav.iv);
@@ -164,88 +293,312 @@ export function scrollToDiffInPage(anchorId: string, path: string, headerOffset:
   }
   const state = (w.__driftNav = { iv: 0, raf: 0, stop: null as null | (() => void) });
 
-  const find = (): Element | null => {
+  const findContainer = (): Element | null => {
     const byId = document.getElementById(anchorId);
     if (byId) return byId;
-    // Fallback (if the id scheme ever differs): a header whose FULL path text matches,
-    // climbed to its diff container — never a sidebar entry (those aren't in a diff).
     const nodes = document.querySelectorAll('[title],a,h3,h4,[data-path],[data-file-path]');
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i] as HTMLElement;
       const txt = (n.getAttribute('data-path') || n.getAttribute('data-file-path') || n.getAttribute('title') || n.textContent || '').trim();
       if (txt === path) {
-        const container = n.closest('[id^="diff-"]');
-        if (container) return container;
+        const c = n.closest('[id^="diff-"]');
+        if (c) return c;
       }
     }
     return null;
   };
-  // Click a collapsed "Load Diff" placeholder inside the file so the code renders.
-  const expand = (container: Element): void => {
-    const clickables = container.querySelectorAll('button,[role="button"],summary,a');
-    for (let i = 0; i < clickables.length; i++) {
-      if (/^\s*load diff\s*$/i.test(clickables[i].textContent || '')) {
-        (clickables[i] as HTMLElement).click();
-        return;
+  // Inject the highlight stylesheet once — a soft amber wash + left accent bar that
+  // reads on GitHub light AND dark, with a brief arrival pulse (modern, unobtrusive).
+  const ensureStyle = () => {
+    if (document.getElementById('drift-present-style')) return;
+    const st = document.createElement('style');
+    st.id = 'drift-present-style';
+    st.textContent =
+      '.drift-present-hl{background-color:rgba(255,193,7,.16)!important;box-shadow:inset 3px 0 0 0 #f5a623!important;transition:background-color .35s ease,box-shadow .35s ease}' +
+      '.drift-present-pulse{animation:driftPresentPulse 1.1s ease-out}' +
+      '.drift-present-name{background-color:rgba(245,166,35,.5);box-shadow:0 0 0 1px rgba(245,166,35,.7);border-radius:3px;padding:0 1px}' +
+      '@keyframes driftPresentPulse{0%{background-color:rgba(245,166,35,.45)}100%{background-color:rgba(255,193,7,.16)}}';
+    (document.head || document.documentElement).appendChild(st);
+  };
+
+  const run = (container: Element) => {
+    const cl = container.querySelectorAll('button,[role="button"],summary,a');
+    for (let i = 0; i < cl.length; i++) {
+      if (/^\s*load diff\s*$/i.test(cl[i].textContent || '')) {
+        (cl[i] as HTMLElement).click();
+        break;
       }
     }
-  };
-  const absTop = (el: Element) => el.getBoundingClientRect().top + w.scrollY;
+    ensureStyle();
 
-  const begin = (container: Element): void => {
-    expand(container);
-    if (!durationMs || durationMs < 400) {
-      const top = Math.max(0, absTop(container) - headerOffset);
-      w.scrollTo({ top, behavior: 'smooth' });
-      return;
-    }
-    // GUIDED scroll: animate from the file's top to its end over durationMs, cancelled
-    // the instant the user takes over. Positions recomputed each frame so a late
-    // "Load Diff" render (layout shift) doesn't desync the scroll.
-    let startT: number | null = null;
+    // Highlight the diff rows for a NEW-side line range; clear the previous range.
+    let highlighted: HTMLElement[] = [];
+    let nameMarks: HTMLElement[] = [];
+    const clearHL = () => {
+      for (const el of highlighted) el.classList.remove('drift-present-hl', 'drift-present-pulse');
+      highlighted = [];
+      // Un-wrap any sub-line name spans (restore the original text node).
+      for (const span of nameMarks) {
+        const parent = span.parentNode;
+        if (parent) {
+          parent.replaceChild(document.createTextNode(span.textContent || ''), span);
+          (parent as Element).normalize?.();
+        }
+      }
+      nameMarks = [];
+    };
+    // SUB-LINE: emphasise the symbol NAME within a row by wrapping its first
+    // word-bounded occurrence. Best-effort + non-fatal (the row highlight is the
+    // reliable layer); restored on the next clear.
+    const wrapName = (row: HTMLElement, name: string) => {
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('(^|[^\\w$])(' + esc + ')(?![\\w$])');
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const text = node.nodeValue || '';
+        const m = text.match(re);
+        if (!m) continue;
+        const idx = (m.index || 0) + m[1].length;
+        const parent = node.parentNode;
+        if (!parent) return;
+        const span = document.createElement('span');
+        span.className = 'drift-present-name';
+        span.textContent = name;
+        parent.insertBefore(document.createTextNode(text.slice(0, idx)), node);
+        parent.insertBefore(span, node);
+        parent.insertBefore(document.createTextNode(text.slice(idx + name.length)), node);
+        parent.removeChild(node);
+        nameMarks.push(span);
+        return; // first occurrence only
+      }
+    };
+    const highlight = (a: number, b: number, name?: string) => {
+      clearHL();
+      for (let n = a; n <= b && n < a + 60; n++) {
+        const cell = container.querySelector('[data-line-number="' + n + '"]');
+        const row = (cell && (cell.closest('[role="row"],tr') || cell.parentElement)) as HTMLElement | null;
+        if (row && highlighted.indexOf(row) < 0) {
+          row.classList.add('drift-present-hl', 'drift-present-pulse');
+          highlighted.push(row);
+        }
+      }
+      if (name && highlighted.length) {
+        try {
+          wrapName(highlighted[0], name);
+        } catch (e) {
+          /* best-effort sub-line emphasis */
+        }
+      }
+    };
+
+    // The NEW-side line numbers currently rendered in this file's diff (GitHub collapses
+    // far context, so not every line is present). Used to land on the closest line.
+    const renderedLineNumbers = (): number[] => {
+      const out: number[] = [];
+      const cells = container.querySelectorAll('[data-line-number]');
+      for (let i = 0; i < cells.length; i++) {
+        const v = Number((cells[i] as HTMLElement).getAttribute('data-line-number'));
+        if (!Number.isNaN(v)) out.push(v);
+      }
+      return out;
+    };
+    // EXPAND collapsed context rows (GitHub's "Expand"/unfold controls) so a target line
+    // that's hidden between hunks can be revealed. Bounded — we only reveal a few, and only
+    // when the line we want isn't already on screen. Skips "Load diff" (handled separately).
+    const expandContext = (max: number): number => {
+      const btns = container.querySelectorAll('button,[role="button"],a');
+      let clicked = 0;
+      for (let i = 0; i < btns.length && clicked < max; i++) {
+        const el = btns[i] as HTMLElement;
+        const t = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').toLowerCase();
+        if (/expand|unfold/.test(t) && !/load diff/.test(t)) {
+          el.click();
+          clicked++;
+        }
+      }
+      return clicked;
+    };
+    // Resolve a NEW-side line number to a real cell: exact → expand-then-exact → the
+    // CLOSEST rendered line (ties → lower). So we always land on (or right beside) the
+    // changed line, never silently jump to the file top.
+    const resolveLineCell = (line: number): HTMLElement | null => {
+      let cell = container.querySelector('[data-line-number="' + line + '"]') as HTMLElement | null;
+      if (cell) return cell;
+      if (expandContext(4)) {
+        cell = container.querySelector('[data-line-number="' + line + '"]') as HTMLElement | null;
+        if (cell) return cell;
+      }
+      let best: number | null = null;
+      let bestDist = Infinity;
+      for (const n of renderedLineNumbers()) {
+        const d = Math.abs(n - line);
+        if (d < bestDist || (d === bestDist && best !== null && n < best)) {
+          best = n;
+          bestDist = d;
+        }
+      }
+      return best !== null ? (container.querySelector('[data-line-number="' + best + '"]') as HTMLElement | null) : null;
+    };
+
     let canceled = false;
-    const cancel = () => {
+    let timer = 0;
+    const cancel = (clear: boolean) => {
       canceled = true;
-      w.removeEventListener('wheel', cancel);
-      w.removeEventListener('keydown', cancel);
-      w.removeEventListener('touchstart', cancel);
+      clearTimeout(timer);
+      try {
+        cancelAnimationFrame(state.raf);
+      } catch (e) {
+        /* ignore */
+      }
+      w.removeEventListener('wheel', onUser);
+      w.removeEventListener('keydown', onUser);
+      w.removeEventListener('touchstart', onUser);
+      if (clear) clearHL();
     };
-    state.stop = cancel;
-    w.addEventListener('wheel', cancel, { passive: true });
-    w.addEventListener('keydown', cancel);
-    w.addEventListener('touchstart', cancel, { passive: true });
-    const tick = (ts: number) => {
-      if (canceled || !(container as any).isConnected) {
-        cancel();
+    const onUser = () => {
+      // A human grabbed the scroll/keys — tell the panel so it can PAUSE the walkthrough
+      // at the current spot (and offer "resume from here"), then stop following + clear.
+      // Only the USER path messages; a programmatic supersede (state.stop, below) doesn't.
+      try {
+        const r = chrome.runtime?.sendMessage?.({ type: 'drift:present-interrupted', anchorId, path });
+        if (r && typeof (r as Promise<unknown>).catch === 'function') (r as Promise<unknown>).catch(() => {});
+      } catch (e) {
+        /* messaging unavailable in this context — the page still stops following */
+      }
+      cancel(true);
+    };
+    state.stop = () => cancel(true);
+    w.addEventListener('wheel', onUser, { passive: true });
+    w.addEventListener('keydown', onUser);
+    w.addEventListener('touchstart', onUser, { passive: true });
+
+    // The document Y that puts an element's top just below the sticky header.
+    const docY = (el: HTMLElement): number => Math.max(0, Math.round((w.scrollY || 0) + el.getBoundingClientRect().top - headerOffset));
+    // OVERVIEW SWEEP: from the file top, slow-scroll the window DOWN to the first change
+    // over `dwell` (reading-speed paced) — eased + cancelable. Falls back to a no-op when
+    // there's nothing to traverse or no rAF (the top scroll already landed the file).
+    const sweepScroll = (endCell: HTMLElement | null, dwell: number) => {
+      const startY = w.scrollY || 0;
+      let endY: number;
+      if (endCell) endY = docY(endCell);
+      else {
+        const rect = (container as HTMLElement).getBoundingClientRect();
+        endY = Math.round(startY + rect.bottom - (w.innerHeight || 800) + headerOffset);
+      }
+      endY = Math.max(startY, endY);
+      if (endY <= startY + 4 || typeof requestAnimationFrame !== 'function') return;
+      const clock = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+      const t0 = clock();
+      const ease = (p: number) => 1 - Math.pow(1 - p, 2); // easeOutQuad — gentle, decelerating
+      const frame = () => {
+        if (canceled) return;
+        const p = Math.min(1, (clock() - t0) / dwell);
+        try {
+          w.scrollTo(0, Math.round(startY + (endY - startY) * ease(p)));
+        } catch (e) {
+          /* ignore */
+        }
+        if (p < 1) state.raf = requestAnimationFrame(frame) as unknown as number;
+      };
+      state.raf = requestAnimationFrame(frame) as unknown as number;
+    };
+
+    const step = (i: number) => {
+      if (canceled || i >= plan.length || !(container as any).isConnected) {
+        return; // natural end keeps the last highlight until the next nav supersedes us
+      }
+      const s = plan[i];
+      // OVERVIEW beat: start at the TOP of the file and slow-sweep down to the first change
+      // while Level 1 + Level 2 are read — no row highlight, just the gentle scroll.
+      if (s.sweep) {
+        clearHL();
+        const dwell = Math.max(900, s.dwellMs);
+        try {
+          (container as HTMLElement).style.scrollMarginTop = headerOffset + 'px';
+        } catch (e) {
+          /* ignore */
+        }
+        (container as HTMLElement).scrollIntoView({ block: 'start', behavior: 'auto' });
+        sweepScroll(resolveLineCell(s.endLine), dwell);
+        timer = setTimeout(() => step(i + 1), dwell) as unknown as number;
         return;
       }
-      if (startT == null) startT = ts;
-      const rect = container.getBoundingClientRect();
-      const start = Math.max(0, rect.top + w.scrollY - headerOffset);
-      const end = Math.max(start, rect.bottom + w.scrollY - w.innerHeight + headerOffset);
-      const p = Math.min(1, (ts - startT) / durationMs);
-      w.scrollTo({ top: start + (end - start) * p });
-      if (p < 1) state.raf = requestAnimationFrame(tick);
-      else cancel();
+      // Resolve the changed line FIRST (this may expand collapsed context), so the
+      // highlight that follows can find the now-revealed rows.
+      const cell = resolveLineCell(s.startLine);
+      highlight(s.startLine, s.endLine, s.name);
+      // If the changed range itself wasn't rendered, highlight the resolved nearest row so
+      // there's always a visible marker at the spot we scrolled to.
+      if (!highlighted.length && cell) {
+        const row = (cell.closest('[role="row"],tr') || cell.parentElement) as HTMLElement | null;
+        if (row) {
+          row.classList.add('drift-present-hl', 'drift-present-pulse');
+          highlighted.push(row);
+        }
+      }
+      // Scroll the resolved cell (scoped to THIS file's container → never a neighbouring
+      // file) into view. scrollIntoView is layout-robust on GitHub's virtualised diff.
+      const target = (cell ?? (container as HTMLElement)) as HTMLElement;
+      try {
+        target.style.scrollMarginTop = headerOffset + 'px';
+      } catch (e) {
+        /* ignore */
+      }
+      target.scrollIntoView({ block: cell ? 'center' : 'start', behavior: 'smooth' });
+      timer = setTimeout(() => step(i + 1), Math.max(900, s.dwellMs)) as unknown as number;
     };
-    state.raf = requestAnimationFrame(tick);
+    // Voice gets a small lead delay so the scroll doesn't outrun the first audio.
+    if (startDelayMs > 0) timer = setTimeout(() => step(0), startDelayMs) as unknown as number;
+    else step(0);
   };
 
-  const found = find();
-  if (found) {
-    begin(found);
+  // Same virtualisation fix as scrollToDiffInPage: if the file isn't rendered yet,
+  // click its always-present file-tree row so GitHub renders + scrolls it in, then
+  // the poll runs the dwell-plan once the container mounts. (Covers the beat-button
+  // replay path, which can target a file the user has since scrolled away from.)
+  const clickFileTree = (): boolean => {
+    const byHref =
+      (document.querySelector('a[href$="#' + anchorId + '"]') as HTMLElement | null) ||
+      (document.querySelector('a[href*="#' + anchorId + '"]') as HTMLElement | null);
+    if (byHref) {
+      byHref.click();
+      return true;
+    }
+    const base = path.split('/').pop() || path;
+    const rows = Array.from(
+      document.querySelectorAll('[role="treeitem"],nav a[title],a[title],button[title],[data-tree-entry-type] a,.ActionList-item'),
+    ) as HTMLElement[];
+    const textOf = (el: HTMLElement) => (el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent || '').trim();
+    const hit =
+      rows.find((el) => {
+        const t = textOf(el);
+        return t === path || (t.indexOf('/') >= 0 && (t.endsWith('/' + path) || path.endsWith('/' + t)));
+      }) || rows.find((el) => textOf(el) === base);
+    if (hit) {
+      hit.click();
+      return true;
+    }
+    return false;
+  };
+  const c0 = findContainer();
+  if (c0) {
+    run(c0);
     return;
   }
+  clickFileTree(); // not rendered (virtualised) → drive GitHub's own file-tree navigation
   let tries = 0;
   state.iv = setInterval(() => {
-    const c = find();
+    const c = findContainer();
     if (c) {
       clearInterval(state.iv);
       state.iv = 0;
-      begin(c);
+      run(c);
     } else if (++tries > 40) {
       clearInterval(state.iv);
       state.iv = 0;
+    } else if (tries % 6 === 0) {
+      clickFileTree(); // retry while the SPA route/tree settles
     }
   }, 250) as unknown as number;
   /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -263,23 +616,35 @@ async function waitForTabComplete(tabId: number, timeoutMs = 4000): Promise<void
   }
 }
 
-/** Inject the poll-find-expand-scroll into the tab. `durationMs > 0` adds the
- *  guided scroll-through. Best-effort (navigation already succeeded). */
-async function scrollDiffIntoView(tabId: number, anchorId: string, path: string, durationMs: number): Promise<void> {
+/** Inject the poll-find-expand-scroll-to-top into the tab. Best-effort. */
+async function scrollDiffIntoView(tabId: number, anchorId: string, path: string): Promise<void> {
   if (!chrome.scripting?.executeScript) return;
   await waitForTabComplete(tabId);
   await chrome.scripting
-    .executeScript({ target: { tabId }, func: scrollToDiffInPage, args: [anchorId, path, DIFF_HEADER_OFFSET, durationMs] })
+    .executeScript({ target: { tabId }, func: scrollToDiffInPage, args: [anchorId, path, DIFF_HEADER_OFFSET] })
     .catch(() => {});
 }
 
-/** Guided scroll through a file already on screen, paced to `durationMs` (the
- *  explanation's read/speak time). Re-expands "Load Diff" if needed. The handover
- *  calls this AFTER generating the explanation so the scroll tracks the delivery. */
-export async function guideScrollThroughFile(anchorId: string, path: string, durationMs: number): Promise<void> {
+/** Execute a scroll plan over a file already on screen — dwell on each changed
+ *  region paced to the narration. `mode` adds a small lead delay for voice so the
+ *  scroll doesn't outrun the first spoken audio. Best-effort, fire-and-forget. */
+export async function runScrollPlanThroughFile(
+  anchorId: string,
+  path: string,
+  plan: ScrollStep[],
+  mode: 'text' | 'voice' = 'text',
+): Promise<void> {
+  if (!plan.length) return;
   const tab = await activeTab().catch(() => undefined);
-  if (tab?.id == null) return;
-  await scrollDiffIntoView(tab.id, anchorId, path, durationMs);
+  if (tab?.id == null || !chrome.scripting?.executeScript) return;
+  await waitForTabComplete(tab.id);
+  await chrome.scripting
+    .executeScript({
+      target: { tabId: tab.id },
+      func: runScrollPlanInPage,
+      args: [anchorId, path, DIFF_HEADER_OFFSET, plan, mode === 'voice' ? 700 : 0],
+    })
+    .catch(() => {});
 }
 
 /** Navigate the active tab to one changed file's diff AND scroll that file to the
@@ -300,10 +665,10 @@ export async function navigateToPrFile(
     return { ok: false, url, reason: e instanceof Error ? e.message : String(e) };
   }
   // GitHub's native hash-scroll is unreliable on its virtualised diff — explicitly
-  // poll for + scroll to the file (top, below the sticky header) and expand "Load
-  // Diff". durationMs 0 = land at the top now; the guided scroll-through happens
-  // after the explanation is generated (guideScrollThroughFile).
-  await scrollDiffIntoView(tab.id, anchorId, path, 0);
+  // poll for + scroll the file to the top (below the sticky header) and expand "Load
+  // Diff". The dwell-scroll through the changed regions happens after the explanation
+  // is generated (runScrollPlanThroughFile).
+  await scrollDiffIntoView(tab.id, anchorId, path);
   return { ok: true, url };
 }
 

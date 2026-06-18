@@ -18,7 +18,10 @@ import { buildArchitectureOverview } from '../agents/architecture';
 import { runIterativeAgent } from '../agents/iterative-agent';
 import { LENSES, type AgentLens } from '../agents/lenses';
 import { runHandoverTurn } from '../agents/handover';
+import type { FilePresentation } from '../agents/scrollPlan';
+import { fileGraphFromScan } from './scanFileGraph';
 import { parseHandoverIntent } from './handoverIntent';
+import { getHandoverSession, currentStep } from '../state/handoverSession';
 import { listPrFiles } from '../state/prFileStore';
 import type { BrainRuntime } from './brainRuntime';
 import type { ChangedFileStatus } from './prDiff';
@@ -136,6 +139,9 @@ export interface ToolResult {
    *  speaks this; text shows `content`). For the handover, `content` lists every
    *  file — fine to read, painful to hear. Omitted when content is speech-sized. */
   spoken?: string;
+  /** The handover's clickable presentation (line-range beats) for this file, so the
+   *  chat message can render breathing buttons that replay the scroll+highlight. */
+  presentation?: FilePresentation;
 }
 
 /** A timestamped progress note captured while a tool runs, kept so a failure can
@@ -295,12 +301,31 @@ export const TOOLS: ChatTool[] = [
       if (!ctx.state.pr) return { ok: false, content: 'No pull request is open.' };
       const rec = await latestScanForPr(ctx.state.pr);
       if (!rec) return { ok: false, content: 'No scan result found — run run_live_pr_scan first.' };
-      const files = await listPrFiles(rec.url, rec.sha).catch(() => [] as Array<{ path: string; status: string }>);
-      ctx.onProgress(`exploring ${files.length} file(s)…`);
-      log(`explain_architecture ${rec.owner}/${rec.repo}#${rec.number} · ${files.length} readable file(s)`);
+      const allFiles = await listPrFiles(rec.url, rec.sha).catch(() => [] as Array<{ path: string; status: string }>);
+      ctx.onProgress(`exploring ${allFiles.length} file(s)…`);
+      log(`explain_architecture ${rec.owner}/${rec.repo}#${rec.number} · ${allFiles.length} readable file(s)`);
+      // During a handover, "here" / "this change" / "this file" means the file currently
+      // on screen. Read that file FIRST (so its content + diff ground the answer) and name
+      // it in the question so the model knows what "here" refers to.
+      const session = await getHandoverSession(rec.url).catch(() => null);
+      const currentFile = session ? (currentStep(session)?.path ?? null) : null;
+      const files = currentFile
+        ? [...allFiles.filter((f) => f.path === currentFile), ...allFiles.filter((f) => f.path !== currentFile)]
+        : allFiles;
+      // Name the on-screen file IN the question so file-ranking floats it first AND
+      // "here"/"this file" resolves; the 3-LEVEL output shape goes via answerFormat (the
+      // system-prompt channel) so the weak model actually obeys it — see iterative-agent.
+      const question = currentFile ? `${ctx.userText}\n\nThe file currently under review is ${currentFile} — answer about THAT file.` : ctx.userText;
+      const answerFormat = currentFile
+        ? 'Structure the answer as three short, labelled levels, grounded ONLY in the file content + diff — do not invent:\n' +
+          "Level 1 — PR change: in one line, what this PR changes in this file overall.\n" +
+          'Level 2 — What the file does: a high-level summary of the file’s purpose, then one low-level line on how it works.\n' +
+          'Level 3 — The changes: the specific functions/lines this PR changed, and the one thing to verify.'
+        : undefined;
       const { answer, readPaths } = await runIterativeAgent({
         brain: ctx.brain,
-        question: ctx.userText,
+        question,
+        answerFormat,
         architecture: buildArchitectureOverview(rec),
         url: rec.url,
         sha: rec.sha,
@@ -338,9 +363,28 @@ export const TOOLS: ChatTool[] = [
         onProgress: ctx.onProgress,
         mode: ctx.mode ?? 'text',
       });
+      // Attach the FILE-SCOPED change-impact graph (the file's call-graph blast radius)
+      // to the file step's presentation, so the message renders the interactive diagram.
+      // Done HERE (not in handover) because every presentation — walkthrough AND deep
+      // dive, text AND voice — funnels through this one result. Derived from the cached
+      // scan; null (no diagram) when the scan has no structured graph for the file.
+      let presentation = r.presentation;
+      if (presentation) {
+        const graph = fileGraphFromScan(rec.scan, presentation.path);
+        if (graph) presentation = { ...presentation, graph };
+      }
       // `final`: the content IS the reply — emit verbatim (no re-generation) and
-      // don't re-route this turn. `spoken` is the condensed variant voice speaks.
-      return { ok: true, content: r.content, spoken: r.spoken, summary: r.summary, statePatch: { handoverActive: r.handoverActive }, final: true };
+      // don't re-route this turn. `spoken` is the condensed variant voice speaks;
+      // `presentation` carries the clickable beats for the message buttons.
+      return {
+        ok: true,
+        content: r.content,
+        spoken: r.spoken,
+        summary: r.summary,
+        statePatch: { handoverActive: r.handoverActive },
+        final: true,
+        presentation,
+      };
     },
   },
   // The 5 specialized question agents — one shared iterative engine, per-lens
@@ -485,7 +529,7 @@ export function buildRouterSystemPrompt(persona: string, state: PrToolState): st
   ];
   if (has('pr_handover_mode')) {
     rules.push(
-      `- The user wants a guided walkthrough / handover / file-by-file or step-by-step review or tour of the PR, OR — while one is in progress (handover_in_progress) — says next / proceed / continue / "go to <file>" / back / resume / "where are we" / stop → pr_handover_mode (NOT explain_architecture).`,
+      `- The user wants a guided walkthrough / handover / file-by-file or step-by-step review or tour of the PR, OR — while one is in progress (handover_in_progress) — says next / proceed / continue / "go to <file>" / back / resume / "where are we" / "go deeper" / "tell me more" / "I have a question" / stop → pr_handover_mode (NOT explain_architecture).`,
     );
   }
   if (has('run_live_pr_scan')) {

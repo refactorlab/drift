@@ -11,7 +11,7 @@
 // the per-PR result ARE cached — a re-scan never recompiles the wasm and a prior
 // scan's file list is read straight from history (no network).
 
-import { fetchPrHead, fetchPrChangedFiles, fetchPrBody, type ChangedFileStatus } from './prDiff';
+import { fetchPrHead, fetchPrChangedFiles, fetchPrBody, changedRangesFromHunks, type ChangedFileStatus } from './prDiff';
 import { downloadArchive } from './githubZip';
 import { unzipRepoArchive } from './repoZip';
 import { putPrFiles, buildPrFileEntries } from '../state/prFileStore';
@@ -139,6 +139,7 @@ export async function runLiveScan(
       commits: head.commits,
       diffStats: diff.diffStats,
       diffStatus: diff.diffStatus,
+      diffHunks: JSON.stringify(changedRangesFromHunks(diff.fileDiffs)),
       prTitle: title ?? undefined,
       prBody,
     },

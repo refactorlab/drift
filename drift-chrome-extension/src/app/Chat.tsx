@@ -20,7 +20,18 @@ import { runAgentTurn } from '../core/agentLoop';
 import { EMPTY_PR_STATE, type PrToolState } from '../core/chatTools';
 import { LENSES } from '../agents/lenses';
 import { latestScanForPr, prUrl } from '../core/runLiveScan';
-import { hasHandoverSession } from '../state/handoverSession';
+import { hasHandoverSession, clearHandoverSession } from '../state/handoverSession';
+import { runScrollPlanThroughFile } from '../core/prNavigate';
+import type { FilePresentation, PresentBeat } from '../agents/scrollPlan';
+import { ChangeImpactGraph } from './report/ChangeImpactGraph';
+import {
+  beatAtElapsed,
+  beatStartOffsets,
+  clockElapsed,
+  fmtClock,
+  planDurationMs,
+  type MediaClock,
+} from '../agents/presentationClock';
 
 const STEP_INTERVAL_MS = 450;
 
@@ -55,9 +66,26 @@ export function Chat({
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [mode, setMode] = useState<'text' | 'voice'>('text');
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  // Which file-presentation beat is currently "on screen" — the chat lights up THAT
+  // button in lockstep with the page scroll. Driven by the ONE timeline media-clock
+  // below. Ephemeral UI state (msgId scopes it to the right message); never persisted.
+  const [activeBeat, setActiveBeat] = useState<{ msgId: number; index: number } | null>(null);
+  const activeBeatRef = useRef(activeBeat);
+  activeBeatRef.current = activeBeat;
+  // Where a MANUAL page-scroll paused the walkthrough — so the reviewer can RESUME from
+  // that spot (the page scroller messages us when a human grabs the scroll).
+  const [pausedBeat, setPausedBeat] = useState<{ msgId: number; index: number } | null>(null);
+  // THE timeline media-clock — the SINGLE source of truth for playback. As it counts it
+  // moves the playhead AND (via the rAF driver below) advances the active section + the
+  // page scroll, so the timeline, the buttons, and the page navigate together.
+  const [playhead, setPlayhead] = useState<({ msgId: number; mode: 'text' | 'voice' } & MediaClock) | null>(null);
+  // Which message's presentation is currently playing (its beats + anchor for the driver,
+  // and so the page→panel "user scrolled" signal pauses the right message at its spot).
+  const playingRef = useRef<{ msgId: number; pres: FilePresentation } | null>(null);
   const controllerRef = useRef<VoiceController | null>(null);
   const voiceReplyId = useRef<number | null>(null);
   const voiceToolMsgId = useRef<number | null>(null); // current tool-step card id in voice mode
+  const voicePresentation = useRef<FilePresentation | null>(null); // beats awaiting the spoken reply bubble
   const voiceLevel = useRef(0); // 0..1 energy for the orb (written per audio frame, never setState)
   const nextId = useRef(1);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -133,6 +161,126 @@ export function Chat({
     }
   };
 
+  // Halt the chat-side follow (the rAF driver stops when the playhead is cleared/paused).
+  // The page scroller independently self-cancels on a manual scroll.
+  const stopPresentation = () => {
+    playingRef.current = null;
+  };
+
+  // Scroll + highlight ONE beat on the GitHub page (a single-beat plan, so the page
+  // doesn't run its own multi-beat timer — the timeline clock decides when to advance).
+  // ALWAYS 'text' (zero lead): the media clock already owns the timing — including the
+  // one-time voice lead before beat 0 (beatStartOffsets) — so a per-beat voice lead here
+  // would re-apply 700ms on EVERY beat, making the page highlight lag the chat highlight.
+  const scrollPageToBeat = (pres: FilePresentation, index: number) => {
+    const b = pres.beats[index];
+    if (b) void runScrollPlanThroughFile(pres.anchorId, pres.path, [b], 'text');
+  };
+
+  // Start the ONE timeline media-clock that drives the whole walkthrough — the moving
+  // playhead, the active section, and the page scroll all come off this (the rAF driver
+  // below ticks it). `baseMs` is where the playhead starts (a spot's offset / elapsed).
+  const startPlayhead = (msgId: number, pres: FilePresentation, mode: 'text' | 'voice', baseMs: number) => {
+    playingRef.current = { msgId, pres };
+    setPausedBeat(null);
+    setActiveBeat({ msgId, index: beatAtElapsed(pres.beats, mode, Math.max(0, baseMs)).index });
+    setPlayhead({ msgId, mode, totalMs: planDurationMs(pres.beats, mode), baseMs: Math.max(0, baseMs), runningSince: Date.now() });
+  };
+
+  // TEXT auto-play / click. The page scroll for text is driven by the handover's in-page
+  // scroller (auto) or a click's plan; the timeline clock drives the active section +
+  // playhead in lockstep. Auto-play re-syncs to where the page already is via `startedAt`.
+  const playPresentation = (msgId: number, pres: FilePresentation, opts: { fromIndex?: number; drivePage?: boolean }) => {
+    stopPresentation();
+    if (!pres.beats.length) return;
+    const drivePage = !!opts.drivePage;
+    const from = Math.min(Math.max(0, opts.fromIndex ?? 0), pres.beats.length - 1);
+    if (drivePage) void runScrollPlanThroughFile(pres.anchorId, pres.path, pres.beats.slice(from), 'text');
+    const elapsedMs = !drivePage && pres.startedAt != null ? Math.max(0, Date.now() - pres.startedAt) : undefined;
+    startPlayhead(msgId, pres, 'text', elapsedMs ?? beatStartOffsets(pres.beats, 'text')[from] ?? 0);
+  };
+
+  // VOICE. The timeline clock (paced to speaking speed) drives EVERYTHING — the active
+  // section, the moving playhead, AND the page scroll (the handover doesn't scroll in
+  // voice) — so the page navigates smoothly and automatically as the timeline counts.
+  const startVoiceFollow = (msgId: number, pres: FilePresentation, fromIndex = 0) => {
+    stopPresentation();
+    if (!pres.beats.length) return;
+    const from = Math.min(Math.max(0, fromIndex), pres.beats.length - 1);
+    startPlayhead(msgId, pres, 'voice', beatStartOffsets(pres.beats, 'voice')[from] ?? 0);
+  };
+
+  // THE single playback driver. While the media-clock runs, each animation frame maps the
+  // elapsed time → the current beat; when it crosses into a new spot it lights that
+  // section's button AND (in voice) scrolls the page there — so the timeline, the inline
+  // buttons, and the page navigate together, smoothly and automatically. Stops + parks at
+  // the end. Re-runs only when the clock changes (play / pause / seek), not per frame.
+  useEffect(() => {
+    const ph = playhead;
+    if (!ph || ph.runningSince == null) return;
+    let raf = 0;
+    let lastIdx = -1;
+    const tick = () => {
+      const playing = playingRef.current;
+      if (!playing || playing.msgId !== ph.msgId) return; // superseded / stopped
+      const elapsed = clockElapsed(ph, Date.now());
+      const { index } = beatAtElapsed(playing.pres.beats, ph.mode, elapsed);
+      if (index !== lastIdx) {
+        lastIdx = index;
+        setActiveBeat({ msgId: ph.msgId, index });
+        // Voice: drive the page scroll here (the handover doesn't, in voice). Text: the
+        // handover's in-page scroller already walks the file — don't double-drive it.
+        if (ph.mode === 'voice') scrollPageToBeat(playing.pres, index);
+      }
+      if (elapsed >= ph.totalMs) {
+        // Reached the end → park the clock (freezes the playhead, stops the rAFs).
+        setPlayhead((p) => (p && p.msgId === ph.msgId ? { ...p, baseMs: p.totalMs, runningSince: null } : p));
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playhead]);
+
+  // A click on a beat button — jump there and proceed (voice keeps following speech;
+  // text resumes the reading clock).
+  const onBeatClick = (msgId: number, pres: FilePresentation, index: number) => {
+    if (mode === 'voice') startVoiceFollow(msgId, pres, index);
+    else playPresentation(msgId, pres, { fromIndex: index, drivePage: true });
+  };
+
+  // Resume a walkthrough a manual page-scroll paused — from the remembered spot.
+  const resumePresentation = () => {
+    const p = pausedBeat;
+    if (!p) return;
+    const pres = chatRef.current.messages.find((m) => m.id === p.msgId)?.presentation;
+    if (pres) onBeatClick(p.msgId, pres, p.index);
+  };
+
+  // The page scroller tells us when the reviewer manually grabbed the scroll mid-
+  // walkthrough → PAUSE the follow and REMEMBER the spot so they can resume from it
+  // (or click another). Matched to whichever presentation is currently playing.
+  useEffect(() => {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.onMessage) return;
+    const onMsg = (msg: unknown) => {
+      const m = msg as { type?: string; anchorId?: string };
+      if (m?.type !== 'drift:present-interrupted') return;
+      const playing = playingRef.current;
+      if (!playing || playing.pres.anchorId !== m.anchorId) return;
+      const at = activeBeatRef.current;
+      const index = at?.msgId === playing.msgId ? at.index : 0;
+      stopPresentation();
+      setPausedBeat({ msgId: playing.msgId, index });
+      // Freeze the timeline playhead where it stopped (so Resume picks up from here).
+      setPlayhead((p) => (p && p.msgId === playing.msgId ? { ...p, baseMs: clockElapsed(p, Date.now()), runningSince: null } : p));
+    };
+    chrome.runtime.onMessage.addListener(onMsg);
+    return () => chrome.runtime.onMessage.removeListener(onMsg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Probe the brain on mount: is WebGPU here, and has the model been downloaded?
   useEffect(() => {
     let alive = true;
@@ -193,6 +341,10 @@ export function Chat({
     const url = convoUrl;
     if (url === chatRef.current.url) return;
     targetUrl.current = url;
+    stopPresentation(); // leaving this PR halts its walkthrough highlight
+    setActiveBeat(null);
+    setPausedBeat(null);
+    setPlayhead(null);
 
     const prev = chatRef.current;
     if (prev.url && prev.messages.length) void saveChat(prev.url, prev.messages);
@@ -240,6 +392,7 @@ export function Chat({
     () => () => {
       stopStream();
       genAbort.current?.abort();
+      stopPresentation();
       void controllerRef.current?.stop();
     },
     [],
@@ -280,6 +433,7 @@ export function Chat({
   async function runTurn(userText: string) {
     const text = userText.trim();
     if (!text || busy) return;
+    stopPresentation(); // a new turn interrupts any running walkthrough highlight
     if (brainState !== 'ready') {
       // No brain — surface the reason instead of pretending to answer.
       setChat((prev) => ({
@@ -366,6 +520,15 @@ export function Chat({
             }));
           },
           onStatePatch: (patch) => setToolState((s) => ({ ...s, ...patch, scanRunning: false })),
+          onPresentation: (presentation) => {
+            setChat((prev) => ({
+              ...prev,
+              messages: prev.messages.map((m) => (m.id === replyId ? { ...m, presentation } : m)),
+            }));
+            // Auto-play the synchronized chat highlight alongside the page scroll the
+            // handover already started (reading pace). Clicking a beat re-seeks both.
+            playPresentation(replyId, presentation, { drivePage: false });
+          },
         },
       });
     } catch (err) {
@@ -423,24 +586,45 @@ export function Chat({
       const vc = await VoiceController.start(
         {
           onUserText: (text) => {
+            stopPresentation(); // the reviewer spoke — interrupt the running walkthrough
             voiceReplyId.current = null;
             setChat((prev) => ({ ...prev, messages: [...prev.messages, { id: nextId.current++, role: 'user', text }] }));
             scrollToBottom();
           },
           onAssistantToken: (tok) => {
-            setChat((prev) => {
-              let msgs = prev.messages;
-              if (voiceReplyId.current == null) {
-                const id = nextId.current++;
-                voiceReplyId.current = id;
-                msgs = [...msgs, { id, role: 'assistant', text: '', thinking: true }];
-              }
-              return {
+            if (voiceReplyId.current == null) {
+              // First token of a reply → open the bubble. Resolve the id + presentation
+              // SYNCHRONOUSLY (not inside the setState updater, which React may defer — that
+              // left `startVoiceFollow` never called, so the timeline never auto-started).
+              const id = nextId.current++;
+              voiceReplyId.current = id;
+              const pres = voicePresentation.current ?? undefined;
+              voicePresentation.current = null;
+              setChat((prev) => ({ ...prev, messages: [...prev.messages, { id, role: 'assistant', text: tok, thinking: false, presentation: pres }] }));
+              if (pres) startVoiceFollow(id, pres); // auto-start the timeline-driven walkthrough
+            } else {
+              const id = voiceReplyId.current;
+              setChat((prev) => ({
                 ...prev,
-                messages: msgs.map((m) => (m.id === voiceReplyId.current ? { ...m, text: (m.text ?? '') + tok, thinking: false } : m)),
-              };
-            });
+                messages: prev.messages.map((m) => (m.id === id ? { ...m, text: (m.text ?? '') + tok, thinking: false } : m)),
+              }));
+            }
             scrollToBottom();
+          },
+          onPresentation: (presentation) => {
+            // The handover beats can arrive BEFORE the spoken bubble exists — stash them
+            // (onAssistantToken attaches + plays them). If a bubble is already open,
+            // attach + start the synchronized highlight now.
+            if (voiceReplyId.current == null) {
+              voicePresentation.current = presentation;
+            } else {
+              const id = voiceReplyId.current;
+              setChat((prev) => ({
+                ...prev,
+                messages: prev.messages.map((m) => (m.id === id ? { ...m, presentation } : m)),
+              }));
+              startVoiceFollow(id, presentation);
+            }
           },
           onAssistantDone: () => {
             const id = voiceReplyId.current;
@@ -492,6 +676,10 @@ export function Chat({
   async function exitVoiceMode() {
     const vc = controllerRef.current;
     controllerRef.current = null;
+    stopPresentation();
+    setActiveBeat(null);
+    setPausedBeat(null);
+    setPlayhead(null);
     setMode('text');
     setVoiceState('idle');
     voiceReplyId.current = null;
@@ -520,10 +708,20 @@ export function Chat({
   function newChat() {
     stopStream();
     genAbort.current?.abort();
+    stopPresentation();
+    setActiveBeat(null);
+    setPausedBeat(null);
+    setPlayhead(null);
     const url = chatRef.current.url;
     setChat({ url, messages: [] });
     syncVoiceTo([]); // clear a live voice session's context too, not just the visible chat
-    if (url) void clearChat(url);
+    if (url) {
+      void clearChat(url);
+      // The handover walkthrough lives in its OWN per-PR key (drift:handover:<url>), so
+      // clearing the conversation must end it too — otherwise a fresh "walk me through the
+      // PR" RESUMES at the old cursor (e.g. file 2/60) instead of starting over.
+      void clearHandoverSession(url);
+    }
     if (ctx) startReasoning(ctx);
   }
 
@@ -635,8 +833,25 @@ export function Chat({
             ) : (
               <div key={m.id} className={`msg ${m.role}`}>
                 <div className={`bubble ${m.role === 'assistant' ? 'muted' : ''}`}>
-                  {m.text}
-                  {m.thinking && <span className="cursor">▌</span>}
+                  {m.presentation && m.presentation.beats.length > 0 ? (
+                    // A handover file step renders as a STRUCTURED playbook: intro + inline
+                    // sections (button + note, active one lit with the page) + outro + a
+                    // hideable replay timeline — not a raw prose blob.
+                    <PresentationMessage
+                      pres={m.presentation}
+                      activeIndex={activeBeat?.msgId === m.id ? activeBeat.index : undefined}
+                      pausedIndex={pausedBeat?.msgId === m.id ? pausedBeat.index : undefined}
+                      clock={playhead?.msgId === m.id ? playhead : undefined}
+                      onPlayFrom={(i) => onBeatClick(m.id, m.presentation!, i)}
+                      onResume={resumePresentation}
+                      soundEnabled={mode === 'voice' || settings.graphSoundEnabled !== false}
+                    />
+                  ) : (
+                    <>
+                      {m.text}
+                      {m.thinking && <span className="cursor">▌</span>}
+                    </>
+                  )}
                 </div>
               </div>
             ),
@@ -736,6 +951,193 @@ const TOOL_LABELS: Record<string, string> = {
   explain_architecture: 'Reading the code',
   ...Object.fromEntries(LENSES.map((l) => [l.id, l.label])),
 };
+
+// The STRUCTURED handover file message — a guided playbook, not a prose blob:
+//   • intro header ("Opened X — file N of M")
+//   • the SECTION list: one row per spot = an INLINE clickable button (the symbol /
+//     line label) + its one-line note. The row whose code the page is CURRENTLY on
+//     (`activeIndex`) lights up IN LOCKSTEP with the scroll, so the reviewer sees the
+//     exact spot under discussion; a manual-scroll pause marks its row + offers Resume.
+//   • outro footer ("Proceed to Y?")
+//   • a HIDEABLE timeline scrubber to replay from the start or seek any section.
+// Clicking any button/segment plays from that spot.
+function PresentationMessage({
+  pres,
+  activeIndex,
+  pausedIndex,
+  clock,
+  onPlayFrom,
+  onResume,
+  soundEnabled,
+}: {
+  pres: FilePresentation;
+  activeIndex?: number;
+  pausedIndex?: number;
+  clock?: MediaClock;
+  onPlayFrom: (index: number) => void;
+  onResume?: () => void;
+  /** Effective default for the diagram's reveal sound (voice → on; text → setting). */
+  soundEnabled: boolean;
+}) {
+  const [showTimeline, setShowTimeline] = useState(true); // visible by default so the playhead is seen
+  const [showGraph, setShowGraph] = useState(true); // the change-impact diagram, open by default
+  // The Level 1 + Level 2 box IS the first timeline beat (the "Overview" sweep): clicking it
+  // starts at the top of the file and slow-scrolls down to the changes while L1+L2 are read.
+  const overviewIndex = pres.beats.findIndex((b) => b.sweep);
+  const overviewActive = overviewIndex >= 0 && overviewIndex === activeIndex;
+  const overviewPaused = overviewIndex >= 0 && overviewIndex === pausedIndex;
+  return (
+    <div className="present-msg">
+      {pres.intro && <div className="present-intro">{pres.intro}</div>}
+      {/* The 3-level file framing: Level 1 (PR's change to this file) + Level 2 (what the
+          file does) — ALSO the clickable "Overview" beat (the top-of-file sweep) — then the
+          per-change sections below as Level 3. */}
+      {pres.overview && (
+        <div
+          className={`present-overview${overviewIndex >= 0 ? ' present-overview-play' : ''}${overviewActive ? ' active' : ''}${overviewPaused ? ' paused' : ''}`}
+          role={overviewIndex >= 0 ? 'button' : undefined}
+          tabIndex={overviewIndex >= 0 ? 0 : undefined}
+          aria-current={overviewActive ? 'true' : undefined}
+          title={overviewIndex >= 0 ? 'Play from the top of the file (reads Level 1 + Level 2)' : undefined}
+          onClick={overviewIndex >= 0 ? () => onPlayFrom(overviewIndex) : undefined}
+          onKeyDown={overviewIndex >= 0 ? (e) => (e.key === 'Enter' || e.key === ' ') && onPlayFrom(overviewIndex) : undefined}
+        >
+          <div className="present-level">
+            <span className="present-level-tag">Level 1 · PR change</span>
+            <span className="present-level-text">{pres.overview.prChange}</span>
+          </div>
+          <div className="present-level">
+            <span className="present-level-tag">Level 2 · What the file does</span>
+            <span className="present-level-text">{pres.overview.purpose}</span>
+          </div>
+        </div>
+      )}
+      {pres.overview && <div className="present-level-tag present-level3">Level 3 · The changes</div>}
+      <ol className="present-sections">
+        {pres.beats.map((b, i) => {
+          if (b.sweep) return null; // the overview sweep is rendered as the Level 1+2 box above
+          const active = i === activeIndex;
+          const paused = i === pausedIndex;
+          return (
+            <li
+              key={i}
+              className={`present-section${active ? ' active' : ''}${paused ? ' paused' : ''}`}
+              aria-current={active ? 'true' : undefined}
+            >
+              <button
+                type="button"
+                className={`present-beat${active ? ' active' : ''}${paused ? ' paused' : ''}`}
+                onClick={() => onPlayFrom(i)}
+                title={`Lines ${b.startLine}–${b.endLine} — play from here`}
+              >
+                <span className="present-beat-dot" aria-hidden="true" />
+                {b.label}
+              </button>{' '}
+              <span className="present-section-note">{b.note}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {pausedIndex != null && onResume && (
+        <button type="button" className="present-resume" onClick={onResume} title="Resume from where you scrolled">
+          ▶ Resume
+        </button>
+      )}
+      {pres.outro && <div className="present-outro">{pres.outro}</div>}
+      {/* The file-scoped change-impact graph — an interactive diagram with a scope
+          timeline that zooms in to the change, then out to the whole file scope. */}
+      {pres.graph && (
+        <div className="present-graph-row">
+          <button
+            type="button"
+            className="present-timeline-toggle"
+            onClick={() => setShowGraph((v) => !v)}
+            aria-expanded={showGraph}
+            title="Show/hide the change-impact graph"
+          >
+            {showGraph ? '▾' : '▸'} Change-impact graph
+          </button>
+          {showGraph && <ChangeImpactGraph graph={pres.graph} soundEnabled={soundEnabled} />}
+        </div>
+      )}
+      <div className="present-timeline-row">
+        <button
+          type="button"
+          className="present-timeline-toggle"
+          onClick={() => setShowTimeline((v) => !v)}
+          aria-expanded={showTimeline}
+          title="Show/hide the playback timeline"
+        >
+          {showTimeline ? '▾' : '▸'} Timeline
+        </button>
+        {showTimeline && <PresentationTimeline beats={pres.beats} activeIndex={activeIndex} clock={clock} onSeek={onPlayFrom} />}
+      </div>
+    </div>
+  );
+}
+
+// The playback TIMELINE — one segment per spot (sized by its dwell), with a smoothly
+// MOVING playhead + a current/total time readout, so the reviewer sees exactly where
+// they are while it auto-plays. ↻ replays from the start; clicking a segment seeks.
+function PresentationTimeline({
+  beats,
+  activeIndex,
+  clock,
+  onSeek,
+}: {
+  beats: PresentBeat[];
+  activeIndex?: number;
+  clock?: MediaClock;
+  onSeek: (index: number) => void;
+}) {
+  // Animate `elapsed` each frame WHILE the clock runs; freeze (single paint) otherwise.
+  const [elapsed, setElapsed] = useState(0);
+  const rafRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!clock) {
+      setElapsed(0);
+      return;
+    }
+    const tick = () => {
+      setElapsed(clockElapsed(clock, Date.now()));
+      if (clock.runningSince != null) rafRef.current = requestAnimationFrame(tick);
+    };
+    tick(); // paint now; keep looping only while actually playing
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [clock]);
+
+  const totalMs = clock?.totalMs ?? planDurationMs(beats, 'text');
+  // Segments are sized by dwell (no lead segment), so position the playhead on the
+  // SEGMENT timeline: subtract the lead (totalMs − Σ dwell) so it starts at 0 and the
+  // line tracks the active segment rather than drifting by the mode lead.
+  const segTotal = beats.reduce((sum, b) => sum + Math.max(900, b.dwellMs), 0);
+  const lead = Math.max(0, totalMs - segTotal);
+  const pct = segTotal > 0 ? Math.min(100, Math.max(0, ((elapsed - lead) / segTotal) * 100)) : 0;
+  return (
+    <div className="present-timeline" role="group" aria-label="Playback timeline">
+      <button type="button" className="present-timeline-replay" onClick={() => onSeek(0)} title="Replay from the start">
+        ↻
+      </button>
+      <div className="present-timeline-track">
+        {beats.map((b, i) => (
+          <button
+            key={i}
+            type="button"
+            className={`present-timeline-seg${i === activeIndex ? ' active' : ''}${activeIndex != null && i < activeIndex ? ' done' : ''}`}
+            style={{ flexGrow: Math.max(900, b.dwellMs) }}
+            onClick={() => onSeek(i)}
+            title={`${i + 1}. ${b.label}`}
+          />
+        ))}
+        {clock && <span className="present-timeline-head" style={{ left: `${pct}%` }} aria-hidden="true" />}
+      </div>
+      <span className="present-timeline-pos">{clock ? `${fmtClock(elapsed)} / ${fmtClock(totalMs)}` : `${beats.length} spots`}</span>
+    </div>
+  );
+}
 
 function ToolStep({ tool }: { tool: NonNullable<ChatMessage['tool']> }) {
   const [copied, setCopied] = useState(false);

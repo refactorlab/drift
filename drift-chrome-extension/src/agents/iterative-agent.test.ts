@@ -77,6 +77,47 @@ describe('runIterativeAgent (deterministic selection, one answer)', () => {
     expect(calls.summaries).toBe(0); // small set fits the window → no summary calls
   });
 
+  it('grounds the answer in the CHANGE — shows the diff, and flags a NEW file whose diff is empty', async () => {
+    const prompts: string[] = [];
+    const brain: BrainRuntime = {
+      async complete() {
+        throw new Error('no router call');
+      },
+      async generate(messages: ChatTurn[]) {
+        const sys = messages[0]?.content ?? '';
+        if (!sys.startsWith('Summarize')) prompts.push(sys); // the final answer prompt
+        return 'A';
+      },
+      interrupt() {},
+      free() {},
+    };
+    mockGetPrFile.mockImplementation(async (_u: string, _s: string, path: string) =>
+      path === 'mod.ts'
+        ? { path, status: 'M', content: 'current state of mod', diff: '@@ -1,2 +1,2 @@\n-old line\n+new line' }
+        : { path, status: 'A', content: 'brand new content', diff: '' },
+    );
+    await runIterativeAgent({
+      brain,
+      question: 'what is the change?',
+      architecture: 'arch',
+      url: 'u',
+      sha: 's',
+      files: [
+        { path: 'mod.ts', status: 'M' },
+        { path: 'new.ts', status: 'A' },
+      ],
+      signal: new AbortController().signal,
+    });
+    const prompt = prompts.join('\n');
+    // The modified file shows its DIFF (the actual change), not just the current content.
+    expect(prompt).toContain('the change');
+    expect(prompt).toContain('+ added');
+    expect(prompt).toContain('-old line');
+    expect(prompt).toContain('+new line');
+    // The NEW file (no cached diff) is flagged so the model knows its content IS the change.
+    expect(prompt).toContain('NEW file');
+  });
+
   it('caps how many files it reads (maxFiles)', async () => {
     const many = Array.from({ length: 20 }, (_, i) => ({ path: `f${i}.ts`, status: 'M' }));
     const { brain } = fakeBrain('A');
@@ -239,6 +280,41 @@ describe('task lens', () => {
     });
     expect(generateSystems.some((s) => s.includes('FOCUS ON BREAKING CHANGES'))).toBe(true);
     expect(generateSystems.some((s) => s.includes('List each change.'))).toBe(true);
+  });
+});
+
+describe('answerFormat (output shape rides the SYSTEM prompt, not the user turn)', () => {
+  it('puts the requested structure in the answer system prompt — where a 1.5B model actually obeys it', async () => {
+    let answerSystem = '';
+    let answerUser = '';
+    const brain: BrainRuntime = {
+      async complete() {
+        throw new Error('no decision call');
+      },
+      async generate(messages: ChatTurn[]) {
+        answerSystem = messages[0].content;
+        answerUser = messages[1]?.content ?? '';
+        return 'ANSWER';
+      },
+      interrupt() {},
+      free() {},
+    };
+    await runIterativeAgent({
+      brain,
+      question: 'what is this file about?',
+      answerFormat: 'Level 1 — PR change. Level 2 — what the file does. Level 3 — the changes.',
+      architecture: 'arch',
+      url: 'u',
+      sha: 's',
+      files: [{ path: 'a.ts', status: 'M' }],
+      signal: new AbortController().signal,
+    });
+    // The output SHAPE must be in the SYSTEM prompt (the user turn alone was the bug)…
+    expect(answerSystem).toContain('Level 1 — PR change');
+    expect(answerSystem).toContain('Level 3 — the changes');
+    // …and the actual question stays in the user turn.
+    expect(answerUser).toContain('what is this file about?');
+    expect(answerUser).not.toContain('Level 1 — PR change');
   });
 });
 

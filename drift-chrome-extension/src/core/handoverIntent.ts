@@ -15,6 +15,7 @@ export type HandoverAction =
   | { kind: 'prev' } // go back one file
   | { kind: 'goto'; file: string } // jump to a named file
   | { kind: 'resume' } // re-open where we left off
+  | { kind: 'deeper'; query: string } // dig deeper on the CURRENT file (a focused sub-timeline)
   | { kind: 'stop' } // exit the walkthrough
   | { kind: 'status' }; // show the plan / position / what's left
 
@@ -30,14 +31,32 @@ const START_WORDS = /\b(?:hand\s?over|handover|walkthrough|guided (?:review|walk
 // explain/lens requests). Object = pr / changes / files / diff / pull request / review.
 const START_THROUGH = /\b(?:walk|take|guide) me through\b[\s\w]*\b(?:pr|pull request|changes?|files?|diff|review)\b/;
 const START_VERB = /\b(?:start|begin|do|run|give me)\s+(?:a |an |the )?(?:pr )?(?:handover|walkthrough|walk\s?through|guided (?:review|tour|walkthrough)|tour)\b/;
-const START_PR = /\bpr handover(?: mode)?\b/;
+// Tolerate the separator the user actually types — "pr handover", "pr_handover mode",
+// "pr-handover" — since `_` is a word char (no \b inside "pr_handover", so a plain space
+// pattern misses it and the turn falls through to a stale-session RESUME).
+const START_PR = /\bpr[\s_-]?handover(?:[\s_-]?mode)?\b/;
 const START_REVIEW = /\b(?:review|go through)\s+(?:this |the )?(?:pr|changes?|files?|diff|pull request)\b[\s\w]*\b(?:step by step|file by file|with me|together)\b/;
 const START_BYFILE = /\b(?:file by file|step by step)\s+(?:review|walkthrough|tour)\b/;
 const isStart = (t: string) =>
   START_WORDS.test(t) || START_THROUGH.test(t) || START_VERB.test(t) || START_PR.test(t) || START_REVIEW.test(t) || START_BYFILE.test(t);
 
+// "start from the first file", "start next", "open the first/next file", "let's start
+// with the first one" — the reviewer wants to OPEN a file (ADVANCE), not re-list the
+// plan. From the overview, advancing opens the first file, so this reads as 'next'.
+// Checked BEFORE isStart so the leading "start" isn't taken as a fresh walkthrough that
+// merely re-shows the plan (the "said 'start the first file' but it didn't open" bug).
+const isStartFile = (t: string) => /\b(?:start|begin|open|kick\s*off)\b[\s\w]{0,24}?\b(?:first|next|beginning|top)\b/.test(t);
+
+// "start from/with/at <file>" — begin the walk AT a named file (a goto). Captured so the
+// handover re-resolves the name against the plan; recognised even without `steps` (the
+// router's probe call) so the deterministic route fires instead of the LLM guessing.
+const START_AT_FILE = /\b(?:start|begin|kick\s*off)\b\s+(?:from|with|at|on)\s+(?:the\s+)?(.+)/;
+
 const isResume = (t: string) =>
   /\bresume\b/.test(t) ||
+  // "play it again" / "hear that again" / "replay" / "repeat" / "once more" / "read it
+  // again" — re-present the file the reviewer just heard (the "didn't replay" bug).
+  /\b(?:replay|play (?:it |that |this )?again|hear (?:it |that |this )?again|repeat(?: it| that| this)?|say (?:it |that |this )?again|read (?:it |that |this )?again|go over (?:it|that)(?: again)?|once more)\b/.test(t) ||
   /\bpick up where (?:we|i) (?:left off|stopped)\b/.test(t) ||
   /\bwhere (?:were|did) we(?: leave off| stop)?\b/.test(t) ||
   /\b(?:continue|carry on|get back to)\b[\s\w]*\b(?:handover|walkthrough|walk\s?through|tour|review)\b/.test(t);
@@ -52,6 +71,17 @@ const isStatus = (t: string) =>
 
 const isPrev = (t: string) =>
   /^(?:back|prev|previous)\b/.test(t) || /\b(?:go back|back up|previous file|last file|go to the previous)\b/.test(t);
+
+// "DEEPER" — the reviewer wants to dig further into the CURRENT file (review it again, go
+// over it more closely, understand more), which spins up a NEW focused timeline on that
+// file. We fire ONLY on explicit deepening phrases ("go deeper", "tell me more", "explain
+// this further", "I have a question", "break it down") — NOT on every question. A plain
+// question ("is this tested?", "why was this changed?") still falls through to the lenses,
+// preserving the established routing. Checked AFTER resume so "play it again" re-presents
+// the same beats, and BEFORE next so "go deeper" isn't read as "next".
+const DEEPEN =
+  /\bdeeper\b|\b(?:in )?more detail\b|\btell me more\b|\bexplain (?:more|further|this|it|that|how)\b|\bgo (?:in)?to more\b|\belaborate\b|\bexpand on (?:this|it|that)\b|\bbreak (?:this|it|that) down\b|\b(?:have|got|ask)\b[\s\w]{0,15}\bquestion\b|\bdig (?:in|into|down|deeper)\b|\bdrill (?:in|into|down)\b/;
+const isDeeper = (t: string): boolean => DEEPEN.test(t);
 
 // A WHOLE-message acknowledgement → advance. Checked on the RAW text (before filler
 // stripping) so "yeah"/"ok" aren't stripped away and lost.
@@ -120,9 +150,21 @@ export function parseHandoverIntent(text: string, steps?: Array<{ path: string }
     return { kind: 'stop' };
   // Resume BEFORE start so "continue/resume the walkthrough" isn't read as a fresh start.
   if (isResume(t)) return { kind: 'resume' };
+  // "start/open the first/next file" → OPEN it (advance), BEFORE isStart re-lists the plan.
+  if (isStartFile(t)) return { kind: 'next' };
+  // "start from/with/at <file>" → goto that file (begin the walk THERE). Trust the name
+  // here; the handover validates it against the plan (and reports if it's unknown).
+  const sat = t.match(START_AT_FILE);
+  if (sat) {
+    const target = cleanTarget(sat[1]);
+    if (target && target.length >= 2) return { kind: 'goto', file: target };
+  }
   if (isStart(t)) return { kind: 'start' };
   if (isStatus(t)) return { kind: 'status' };
   if (isPrev(t)) return { kind: 'prev' };
+  // Deeper BEFORE advance/goto/next so "go deeper" / "explain this" don't read as a move.
+  // Carry the ORIGINAL text as the query so the deep-dive answers the actual question.
+  if (isDeeper(t)) return { kind: 'deeper', query: text.trim() };
   // Advance BEFORE goto so "go to the next file" advances, not gotos a file named "next".
   if (isAdvance(t)) return { kind: 'next' };
 

@@ -37,7 +37,7 @@ pub mod walker;
 pub use api::{
     analyze, analyze_picked_with_progress, analyze_pr_with_progress, analyze_roots,
     analyze_roots_with_progress, analyze_with_progress, AnalyzeOptions, AnalyzeOutcome,
-    AnalyzePrOutcome, PickerCaller, PickerRoot, PrScopeSummary,
+    AnalyzePrOutcome, PickerCaller, PickerRoot, PrFileSymbols, PrScopeSummary, PrSymbolSpan,
 };
 #[cfg(feature = "native")]
 pub use progress::CliProgress;
@@ -126,6 +126,17 @@ pub enum SymbolKind {
     Function,
     Method,
     Class,
+}
+
+impl SymbolKind {
+    /// Stable lowercase tag for JSON consumers (the PR symbol map).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SymbolKind::Function => "function",
+            SymbolKind::Method => "method",
+            SymbolKind::Class => "class",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

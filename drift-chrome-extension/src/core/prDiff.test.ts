@@ -7,7 +7,10 @@ import {
   fetchPrHead,
   fetchPrChangedFiles,
   fetchPrBody,
+  changedRangesFromHunks,
+  DIFF_LINE_BUDGET_PER_FILE_MIN,
 } from './prDiff';
+import type { FileDiff } from './prDiff';
 
 // A unified diff exercising every status the scanner cares about: a plain
 // modify, an add (`new file mode`), a delete (`deleted file mode`), and a
@@ -148,6 +151,61 @@ describe('issue-redirect / HTML responses are rejected (not silently empty)', ()
   });
 });
 
+describe('changedRangesFromHunks — NEW-file changed-line ranges for symbol-level attribution', () => {
+  const fd = (over: Partial<FileDiff>): FileDiff => ({
+    path: 'src/x.rs',
+    status: 'M',
+    additions: 0,
+    deletions: 0,
+    hunks: [],
+    ...over,
+  });
+
+  it('maps added lines to NEW-file line numbers (dels do not advance the counter)', () => {
+    // Hunk starts at new line 10: context(10), del(—), add(11), add(12), context(13).
+    const f = fd({
+      hunks: [
+        {
+          header: '@@ -10,3 +10,4 @@',
+          lines: [
+            { type: 'context', text: ' a' },
+            { type: 'del', text: '-old' },
+            { type: 'add', text: '+new1' },
+            { type: 'add', text: '+new2' },
+            { type: 'context', text: ' b' },
+          ],
+        },
+      ],
+    });
+    // Added new-file lines 11 and 12 → one coalesced range.
+    expect(changedRangesFromHunks([f])).toEqual({ 'src/x.rs': [[11, 12]] });
+  });
+
+  it('splits non-consecutive additions into separate ranges', () => {
+    const f = fd({
+      hunks: [
+        {
+          header: '@@ -1,5 +1,7 @@',
+          lines: [
+            { type: 'add', text: '+a' }, // line 1
+            { type: 'context', text: ' c' }, // 2
+            { type: 'context', text: ' c' }, // 3
+            { type: 'add', text: '+b' }, // 4
+            { type: 'add', text: '+b' }, // 5
+          ],
+        },
+      ],
+    });
+    expect(changedRangesFromHunks([f])).toEqual({ 'src/x.rs': [[1, 1], [4, 5]] });
+  });
+
+  it('omits binary and truncated files so the scanner falls back to file-level', () => {
+    const bin = fd({ path: 'a.bin', binary: true });
+    const trunc = fd({ path: 'big.rs', truncated: true, hunks: [{ header: '@@ -1 +1,2 @@', lines: [{ type: 'add', text: '+x' }] }] });
+    expect(changedRangesFromHunks([bin, trunc])).toEqual({});
+  });
+});
+
 describe('parseUnifiedDiff — hunk collection edge cases', () => {
   it('does not mistake an added line whose content starts with `++` for a `+++` header', () => {
     const diff = `diff --git a/x.c b/x.c
@@ -180,6 +238,23 @@ ${body}
     expect(stored).toBeLessThanOrEqual(1500); // … storage capped (per-file budget)
     expect(f.truncated).toBe(true);
     expect(r.diffTruncated).toBe(true);
+  });
+
+  it('guarantees a per-file MINIMUM so the global budget never fully starves a tail file', () => {
+    // Six 1500-line files drain the 8000-line global pool; a SEVENTH (tail) file would
+    // get ZERO hunks under a pure global budget (the "no before/after to ground on" bug).
+    // The minimum guarantee keeps the tail file's first real diff lines.
+    const newFile = (name: string, n: number) => {
+      const body = Array.from({ length: n }, (_, i) => `+l${i}`).join('\n');
+      return `diff --git a/${name} b/${name}\nnew file mode 100644\n--- /dev/null\n+++ b/${name}\n@@ -0,0 +1,${n} @@\n${body}\n`;
+    };
+    const drainers = Array.from({ length: 6 }, (_, i) => newFile(`drain${i}.txt`, 1500)).join('');
+    const r = parseUnifiedDiff(drainers + newFile('tail.txt', 1000));
+    const tail = r.fileDiffs[r.fileDiffs.length - 1];
+    const stored = tail.hunks.flatMap((h) => h.lines).length;
+    expect(stored).toBe(DIFF_LINE_BUDGET_PER_FILE_MIN); // kept its first ~120 real lines (NOT 0) …
+    expect(tail.additions).toBe(1000); // … and the +/- count stays exact
+    expect(tail.truncated).toBe(true); // marked truncated — its full diff is larger
   });
 });
 

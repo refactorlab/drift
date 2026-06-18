@@ -86,9 +86,32 @@ export interface MermaidNode {
   /** Diff status: 'added' | 'changed' | 'removed' | 'muted' | … */
   class?: string;
 }
+/** One call edge of the structured call graph (`from`/`to` are node ids). */
+export interface MermaidEdge {
+  from: string;
+  to: string;
+  label?: string;
+  /** 'solid' (a call) | 'dashed'. */
+  style?: string;
+}
+/** A node-class style (the legend) — `name` is referenced by a node's `class`. */
+export interface MermaidClassDef {
+  name: string;
+  fill: string;
+  stroke: string;
+  color: string;
+  stroke_width?: string;
+  stroke_dasharray?: string;
+}
+/** The scanner's typed call graph (the sibling of every mermaid STRING). Per the
+ *  scan-pr OpenAPI schema (`MermaidFlowchart`) the payload ALWAYS carries `edges`
+ *  and `class_defs` too — they were just never declared here, so the extension only
+ *  read `nodes`. Surfacing them lets us draw the graph (not just re-parse mermaid). */
 export interface MermaidStructured {
   direction?: string;
   nodes?: MermaidNode[];
+  edges?: MermaidEdge[];
+  class_defs?: MermaidClassDef[];
 }
 
 export interface ArchitectureFlow {
@@ -244,6 +267,21 @@ export interface PrScope {
   unreachable_changes?: string[];
 }
 
+/** One tree-sitter symbol of a changed file (from the profiler's `pr_symbols`).
+ *  Lines are 1-based, on the HEAD file — same numbering as the diff's new side. */
+export interface PrSymbol {
+  name: string;
+  kind: 'function' | 'method' | 'class' | string;
+  line: number;
+  end_line: number;
+  /** Enclosing class/type when this is a method. */
+  parent?: string;
+}
+export interface PrFileSymbols {
+  path: string;
+  symbols: PrSymbol[];
+}
+
 /** The literal +/- code change, collected client-side from GitHub's `.diff`
  *  (the scanner has no base tree to diff against) and injected into the scan-pr
  *  JSON so the actual added/removed lines travel with the report + export. */
@@ -259,6 +297,9 @@ export interface ScanOutput {
   pr_scope?: PrScope;
   pr_review?: PrReview;
   pr_review_ext?: PrReviewExt;
+  /** Per-changed-file tree-sitter symbols — anchors the live presentation on real
+   *  classes/methods/functions (exact spans), not LLM-guessed lines. */
+  pr_symbols?: PrFileSymbols[];
   pr_diff?: PrDiff;
   /** The PR's opening-comment body (the author's description), fetched
    *  client-side and injected so it travels with the report + export. */

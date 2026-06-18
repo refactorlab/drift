@@ -491,6 +491,16 @@ enum Cmd {
         /// red removed-card row that's the whole point of the panel.
         #[arg(long, value_name = "FILE")]
         diff_status: Option<PathBuf>,
+        /// Per-file changed-line ranges as JSON: `{ "path": [[start,end], ...] }`,
+        /// where each `[start,end]` is an inclusive 1-based line range in the
+        /// NEW (HEAD) file that the PR touched (the `+`/modified lines from the
+        /// diff hunks). This is what upgrades the architecture flow from
+        /// whole-file change coloring to SYMBOL-level: a function whose own
+        /// lines fall inside a range renders "changed"/"added"; an untouched
+        /// function in the same edited file renders "unchanged". Without this
+        /// flag every symbol in a touched file is treated as changed (legacy).
+        #[arg(long, value_name = "FILE")]
+        diff_hunks: Option<PathBuf>,
         /// I1: JSON file matching the `PrContext` component schema.
         /// Supplies title / body / labels / linked-issues without
         /// needing separate flags. Preferred for action callers.
@@ -691,6 +701,7 @@ fn run_scan_pr(
     commits_path: Option<&std::path::Path>,
     diff_stats_path: Option<&std::path::Path>,
     diff_status_path: Option<&std::path::Path>,
+    diff_hunks_path: Option<&std::path::Path>,
     pr_context_file: Option<&std::path::Path>,
     base_sha: Option<&str>,
     pr_title: Option<&str>,
@@ -813,6 +824,13 @@ fn run_scan_pr(
     // checkout. Absent flag → empty map → every status defaults to
     // None (back-compat: behaves like a pure "modified" PR).
     let diff_status_map = read_diff_status(diff_status_path)?;
+    // Read --diff-hunks JSON (`{ "path": [[start,end], ...] }`) so each
+    // ChangedFile carries the NEW-file line ranges the PR actually touched.
+    // This is what lets `architecture_flow` attribute change at SYMBOL
+    // granularity (an untouched function in an edited file stays "unchanged")
+    // instead of painting every symbol in the file. Absent flag → empty map →
+    // every file falls back to whole-file classification (legacy behaviour).
+    let diff_hunks_map = read_diff_hunks(diff_hunks_path)?;
     let mut changed_files: Vec<ChangedFile> = changed
         .iter()
         .map(|p| {
@@ -825,12 +843,14 @@ fn run_scan_pr(
                 Some((s, op)) => (Some(s.clone()), op.clone()),
                 None => (None, None),
             };
+            let changed_ranges = diff_hunks_map.get(&path_str).cloned().unwrap_or_default();
             ChangedFile {
                 path: path_str,
                 status,
                 additions,
                 deletions,
                 old_path,
+                changed_ranges,
             }
         })
         .collect();
@@ -875,6 +895,8 @@ fn run_scan_pr(
                     additions,
                     deletions,
                     old_path: None,
+                    // Removed files have no HEAD lines, so no ranges apply.
+                    changed_ranges: Vec::new(),
                 }
             })
             .collect();
@@ -998,6 +1020,9 @@ fn write_envelope(
         pr_review: Option<&'a PrReview>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pr_review_ext: Option<&'a PrReviewExt>,
+        // Per-changed-file tree-sitter symbols (classes/methods/functions + spans).
+        // Additive + backward-compatible; consumers that don't read it ignore it.
+        pr_symbols: &'a [drift_static_profiler::PrFileSymbols],
     }
 
     let report = &result.outcome.report;
@@ -1012,6 +1037,7 @@ fn write_envelope(
         },
         pr_review: enriched.map(|e| &e.pr_review),
         pr_review_ext: enriched.map(|e| &e.pr_review_ext),
+        pr_symbols: &result.pr_symbols,
     };
 
     match output {
@@ -1144,6 +1170,36 @@ fn read_diff_stats(
         let Ok(d) = dels.parse::<usize>() else { continue };
         out.insert(path, (a, d));
     }
+    Ok(out)
+}
+
+/// Parse the `--diff-hunks` JSON: a map of repo-relative path → list of
+/// inclusive `[start, end]` line ranges in the NEW (HEAD) file that the PR
+/// touched (the `+`/modified lines from the diff). Returned path-keyed for O(1)
+/// lookup when building the ChangedFile list. Absent flag → empty map (every
+/// file then falls back to whole-file change classification). Malformed or
+/// reversed ranges are normalized (`start <= end`); non-array entries are
+/// skipped defensively so a partial file can't abort the scan.
+fn read_diff_hunks(
+    path: Option<&std::path::Path>,
+) -> Result<std::collections::HashMap<String, Vec<(usize, usize)>>> {
+    use std::collections::HashMap;
+    let Some(p) = path else { return Ok(HashMap::new()) };
+    let raw = std::fs::read_to_string(p)
+        .with_context(|| format!("read diff-hunks file {}", p.display()))?;
+    let parsed: HashMap<String, Vec<(usize, usize)>> = serde_json::from_str(&raw)
+        .with_context(|| format!("parse diff-hunks JSON {}", p.display()))?;
+    // Normalize each range so `start <= end`; drop empty (0,0)-style noise.
+    let out = parsed
+        .into_iter()
+        .map(|(k, ranges)| {
+            let norm = ranges
+                .into_iter()
+                .map(|(a, b)| (a.min(b), a.max(b)))
+                .collect();
+            (k, norm)
+        })
+        .collect();
     Ok(out)
 }
 
@@ -1432,6 +1488,7 @@ fn main() -> Result<()> {
             commits,
             diff_stats,
             diff_status,
+            diff_hunks,
             pr_context_file,
             base_sha,
             pr_title,
@@ -1458,6 +1515,7 @@ fn main() -> Result<()> {
             commits.as_deref(),
             diff_stats.as_deref(),
             diff_status.as_deref(),
+            diff_hunks.as_deref(),
             pr_context_file.as_deref(),
             base_sha.as_deref(),
             pr_title.as_deref(),

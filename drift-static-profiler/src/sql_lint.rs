@@ -1591,6 +1591,7 @@ fn make_sql_file_node(path: &Path, root: Option<&Path>, findings: Vec<Finding>) 
         kind: SymbolKind::Function,
         file: file_str,
         line: 1,
+        line_end: 1,
         depth: 0,
         parent_class: None,
         children: Vec::new(),

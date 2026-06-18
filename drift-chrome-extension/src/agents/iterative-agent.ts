@@ -30,9 +30,11 @@ export { truncateToTokens };
 /** Working-set ceiling (architecture + question + read files). Crossing it
  *  triggers map-reduce summarization. Sits below Qwen's 4k so the reply fits. */
 export const COMPACT_AT_TOKENS = 1800;
-/** Per-file observation budget: file content + its diff, capped (head+tail). */
+/** Per-file observation budget: file content + its diff, capped (head+tail). The DIFF
+ *  (what actually changed) gets a generous share — it's the heart of a "what changed?"
+ *  answer, and was previously starved at 150. */
 export const READ_CONTENT_TOKENS = 460;
-export const READ_DIFF_TOKENS = 150;
+export const READ_DIFF_TOKENS = 360;
 /** Target size of each per-file summary produced during map-reduce. */
 export const FILE_SUMMARY_TOKENS = 180;
 /** The final answer prompt (system half) is clamped to this. */
@@ -77,6 +79,11 @@ export interface IterativeAgentOpts {
   maxFiles?: number;
   /** Optional task lens — when absent, behaves as the generic explainer. */
   lens?: IterativeLens;
+  /** Output-SHAPE guidance for the final answer (e.g. "answer in three labelled
+   *  parts"). Placed in the PROTECTED HEAD of the answer system prompt — a weak 1.5B
+   *  model follows structure from the system prompt, not from an instruction buried in
+   *  the user turn, so this is where a "give me levels 1/2/3" request must live. */
+  answerFormat?: string;
 }
 
 export interface IterativeAgentResult {
@@ -118,8 +125,18 @@ export async function runIterativeAgent(opts: IterativeAgentOpts): Promise<Itera
     const file = await getPrFile(url, sha, f.path).catch(() => null);
     if (file) {
       const content = capHeadTail(file.content, READ_CONTENT_TOKENS);
-      const diff = file.diff ? `\n--- diff ---\n${capHeadTail(file.diff, READ_DIFF_TOKENS)}` : '';
-      reads.push({ path: f.path, status: file.status, raw: `${content}${diff}` });
+      // The CHANGE is the heart of the answer, so show the diff (− removed / + added)
+      // prominently. When the line-diff wasn't cached (a NEW file, or a big-PR
+      // truncation), say so explicitly — for an add, the content above IS the change, so
+      // the model never has to guess what moved.
+      const diff = file.diff ? `\n\n--- the change (− removed · + added) ---\n${capHeadTail(file.diff, READ_DIFF_TOKENS)}` : '';
+      const note =
+        !file.diff && file.content?.trim()
+          ? file.status === 'A'
+            ? '\n\n(NEW file — its entire content above is the change.)'
+            : "\n\n(The line-level diff wasn't cached for this file; the content above is its current state.)"
+          : '';
+      reads.push({ path: f.path, status: file.status, raw: `${content}${diff}${note}` });
     } else {
       reads.push({ path: f.path, status: '?', raw: '(file not found in the scan cache)' });
     }
@@ -142,7 +159,7 @@ export async function runIterativeAgent(opts: IterativeAgentOpts): Promise<Itera
 
   // ── ONE answer generation over {architecture + (summarized) files + question} ──
   progress('answering…');
-  const answer = (await brain.generate(answerMessages(architecture, question, reads, lens, omitted), { signal })).trim();
+  const answer = (await brain.generate(answerMessages(architecture, question, reads, lens, omitted, opts.answerFormat), { signal })).trim();
   // Ground the answer: flag any file PATHS it cited that aren't in the PR's
   // changed set. The cached diff is our external oracle — the read-only analog of
   // "run the tests" — so we catch invented citations deterministically (no extra
@@ -210,6 +227,7 @@ function answerMessages(
   reads: ReadFile[],
   lens?: IterativeLens,
   omitted = 0,
+  answerFormat?: string,
 ): ChatTurn[] {
   const examined = reads
     .map((r) => `### ${r.path} (${r.status})\n${r.summary ?? r.raw}`)
@@ -223,9 +241,13 @@ function answerMessages(
     omitted > 0
       ? `You inspected the ${reads.length} most relevant changed files of ${reads.length + omitted}; if the answer may be incomplete, say so. `
       : '';
+  // Output SHAPE goes in the protected head too — early enough to survive the tail
+  // truncation AND to actually steer a weak model's formatting (the user turn won't).
+  const shape = answerFormat ? `${answerFormat}\n\n` : '';
   const system = truncateToTokens(
     task +
       scope +
+      shape +
       'Be specific and cite the file paths you used. If the examined files do not fully answer it, say what is missing.\n\n' +
       `Architecture map:\n${architecture}` +
       (examined ? `\n\nFiles examined:\n${examined}` : ''),
