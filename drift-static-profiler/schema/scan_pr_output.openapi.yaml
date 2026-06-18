@@ -62,6 +62,50 @@ components:
         # ─── pr_review_ext (algorithm extras, optional) ──────────────
         pr_review_ext:
           $ref: '#/components/schemas/PrReviewExt'
+        # ─── pr_symbols (per-changed-file tree-sitter symbols) ───────
+        pr_symbols:
+          type: array
+          items: { $ref: '#/components/schemas/PrFileSymbols' }
+          description: |
+            Per-changed-file tree-sitter symbol map (classes / methods /
+            functions + line spans), keyed by the caller's changed-file
+            path so the extension can anchor the diff to symbols. Additive
+            and backward-compatible; empty for languages the profiler
+            doesn't parse.
+
+    PrFileSymbols:
+      type: object
+      additionalProperties: false
+      required: [path, symbols]
+      description: One changed file's symbol map, keyed by the caller-supplied changed path.
+      properties:
+        path:
+          type: string
+          description: The changed-file path as supplied by the caller (matched by suffix).
+        symbols:
+          type: array
+          items: { $ref: '#/components/schemas/PrSymbolSpan' }
+
+    PrSymbolSpan:
+      type: object
+      additionalProperties: false
+      required: [name, kind, line, end_line]
+      description: A single tree-sitter symbol (class / method / function) with its line span.
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          description: Symbol kind (e.g. class, function, method).
+        line:
+          type: integer
+          description: 1-based start line.
+        end_line:
+          type: integer
+          description: 1-based end line.
+        parent:
+          type: string
+          description: Enclosing class / type name, present when the symbol is a method.
 
     Generator:
       type: object
