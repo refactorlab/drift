@@ -149,10 +149,11 @@ function planHint(session: HandoverSession): string {
 }
 
 /** Prepend the OVERVIEW lead beat (the Level 1 + Level 2 top-of-file sweep) to the change
- *  beats, sweeping down to the first change. Empty in → empty out (nothing to present). */
-function withOverviewBeat(overview: FileOverview, changeBeats: PresentBeat[], wpm: number): PresentBeat[] {
+ *  beats, sweeping down to the first change. `leadText` is the intro header shown above the
+ *  box — its reading time is folded into the start dwell. Empty in → empty out. */
+function withOverviewBeat(overview: FileOverview, changeBeats: PresentBeat[], wpm: number, leadText: string): PresentBeat[] {
   if (!changeBeats.length) return [];
-  return [buildOverviewBeat(overview, changeBeats[0].startLine, wpm), ...changeBeats];
+  return [buildOverviewBeat(overview, changeBeats[0].startLine, wpm, leadText), ...changeBeats];
 }
 
 /** Cap a code reference shown to the model (token budget). */
@@ -212,6 +213,7 @@ async function loadFileSections(input: HandoverTurnInput, step: HandoverStep): P
 async function buildPresentation(
   input: HandoverTurnInput,
   step: HandoverStep,
+  leadText: string,
 ): Promise<{ content: string; beats: PresentBeat[]; overview?: FileOverview }> {
   const wpm = input.mode === 'voice' ? VOICE_WPM : TEXT_WPM;
   const { ok, symbols, sections } = await loadFileSections(input, step);
@@ -260,7 +262,7 @@ async function buildPresentation(
   // the change beats take over. The overview's reading time is now its OWN timeline segment
   // (no longer hidden inside the first change's dwell), so the timeline reflects it, and the
   // chat clock + in-page scroller consume the SAME beats so they stay in lockstep.
-  const beats = withOverviewBeat(overview, buildPresentBeats(segs, wpm), wpm);
+  const beats = withOverviewBeat(overview, buildPresentBeats(segs, wpm), wpm, leadText);
 
   log(`present ${step.path}: → ${beats.length} beat(s) [${beats.map((b) => b.label).join(', ')}]`);
   // The content is what voice SPEAKS (and what a beat-less message shows). It must carry
@@ -286,6 +288,7 @@ async function buildDeepDive(
   step: HandoverStep,
   query: string,
   depth: number,
+  leadText: string,
 ): Promise<{ content: string; beats: PresentBeat[]; overview?: FileOverview }> {
   const wpm = input.mode === 'voice' ? VOICE_WPM : TEXT_WPM;
   const { ok, symbols, sections } = await loadFileSections(input, step);
@@ -307,7 +310,7 @@ async function buildDeepDive(
 
   // Same overview-led timeline as the walkthrough: a top-of-file slow sweep while the
   // ANSWER (Level 1) + role (Level 2) are read, then the focused spots.
-  const beats = withOverviewBeat(overview, buildPresentBeats(segs, wpm), wpm);
+  const beats = withOverviewBeat(overview, buildPresentBeats(segs, wpm), wpm, leadText);
   log(`deepdive ${step.path} (depth ${depth}): → ${beats.length} beat(s) for "${query.slice(0, 40)}"`);
   const overviewText = [overview.prChange, overview.purpose].filter(Boolean).join('\n\n');
   const content = `${overviewText}\n\n${segs.map((s) => `${s.label} — ${s.note}`).join('\n')}`;
@@ -387,8 +390,11 @@ export async function runHandoverTurn(input: HandoverTurnInput): Promise<Handove
       : (onProgress(`opening ${step.path}…`), await navigateToPrFile(pr, step.path, { anchorId: step.anchor }));
     await persist(session);
 
+    // Intro header up front so its reading time folds into the start dwell (same beats power
+    // the in-page scroll + the chat clock — no drift).
+    const intro = `Deeper on ${step.path} — depth ${depth}`;
     onProgress(`digging deeper into ${step.path}…`);
-    const { content: explanation, beats, overview } = await buildDeepDive(input, step, intent.query, depth).catch(() => ({
+    const { content: explanation, beats, overview } = await buildDeepDive(input, step, intent.query, depth, intro).catch(() => ({
       content: `(Couldn't dig into ${step.path}.)`,
       beats: [] as PresentBeat[],
       overview: undefined as FileOverview | undefined,
@@ -403,7 +409,7 @@ export async function runHandoverTurn(input: HandoverTurnInput): Promise<Handove
     }
     const proceed = `Ask another question to go deeper, or say "next" to move on.`;
     if (presentation) {
-      presentation.intro = `Deeper on ${step.path} — depth ${depth}`;
+      presentation.intro = intro;
       presentation.outro = proceed;
     }
     return {
@@ -469,8 +475,19 @@ export async function runHandoverTurn(input: HandoverTurnInput): Promise<Handove
   const nav: NavResult = already ? { ok: true } : (onProgress(`opening ${step.path}…`), await navigateToPrFile(pr, step.path, { anchorId: step.anchor }));
   await persist(moved);
 
+  // The intro header (also the timeline's start text) — computed BEFORE the presentation so
+  // its reading time is folded into the overview beat's dwell and the SAME beats power both
+  // the in-page scroll and the chat clock (no drift). See buildOverviewBeat's `leadText`.
+  const idxHuman = moved.cursor + 1;
+  const navNote = already
+    ? `You're viewing ${step.path}`
+    : nav.ok
+      ? `Opened ${step.path}`
+      : `(Couldn't move the tab: ${nav.reason}.) ${step.path}`;
+  const intro = `${navNote} — file ${idxHuman} of ${total} (${step.tier})`;
+
   onProgress(`reviewing ${step.path}…`);
-  const { content: explanation, beats, overview } = await buildPresentation(input, step).catch(() => ({
+  const { content: explanation, beats, overview } = await buildPresentation(input, step, intro).catch(() => ({
     content: `(Couldn't read ${step.path}.)`,
     beats: [] as PresentBeat[],
     overview: undefined as FileOverview | undefined,
@@ -493,12 +510,6 @@ export async function runHandoverTurn(input: HandoverTurnInput): Promise<Handove
     presentation = { path: step.path, anchorId, beats, startedAt: Date.now(), overview };
   }
 
-  const idxHuman = moved.cursor + 1;
-  const navNote = already
-    ? `You're viewing ${step.path}`
-    : nav.ok
-      ? `Opened ${step.path}`
-      : `(Couldn't move the tab: ${nav.reason}.) ${step.path}`;
   const next = moved.steps[moved.cursor + 1];
   const proceed = next
     ? `Proceed to ${next.path}? — say "next", jump to any file, or "stop".`
@@ -507,12 +518,12 @@ export async function runHandoverTurn(input: HandoverTurnInput): Promise<Handove
   // Carry the framing on the presentation so the chat renders the structured view:
   // intro header + inline section list (the beats) + outro footer.
   if (presentation) {
-    presentation.intro = `${navNote} — file ${idxHuman} of ${total} (${step.tier})`;
+    presentation.intro = intro;
     presentation.outro = proceed;
   }
 
   return {
-    content: `${navNote} — file ${idxHuman} of ${total} (${step.tier}).\n\n${explanation}\n\n${proceed}`,
+    content: `${intro}.\n\n${explanation}\n\n${proceed}`,
     summary: `File ${idxHuman}/${total}: ${basename(step.path)}`,
     handoverActive: true,
     presentation,

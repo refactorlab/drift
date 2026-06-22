@@ -88,6 +88,42 @@ export function seedIdsForFile(nodes: GraphNode[], path: string, symbolNames: st
   return (changed.length ? changed : fileNodes).map((n) => n.id);
 }
 
+/** The node ids one hop from `id` in EITHER direction (its direct callers + callees) —
+ *  just enough context to frame a focused node so the reviewer sees where it sits. Pure. */
+export function directNeighbors(edges: GraphEdge[], id: string): string[] {
+  const out = new Set<string>();
+  for (const e of edges) {
+    if (e.from === id) out.add(e.to);
+    if (e.to === id) out.add(e.from);
+  }
+  return [...out];
+}
+
+/** Resolve which node a walkthrough BEAT should zoom the graph to. The beat's symbol
+ *  (`beatName`, e.g. "toLiveContext") is matched to a node label — exact, then last-segment
+ *  ("Cls.method" → "method"); a match zooms to THAT node ('node', "show exactly where").
+ *  Otherwise fall back to the file's OWN node ('file' — the "higher component", so the camera
+ *  still lands somewhere meaningful and can slow-zoom in). null when the graph has neither.
+ *  Mirrors seedIdsForFile's matching so it agrees with what the diagram already seeds on. Pure. */
+export function focusTargetForBeat(
+  graph: ChangeGraph,
+  beatName: string | null | undefined,
+  filePath: string,
+): { id: string; mode: 'node' | 'file' } | null {
+  const norm = (s: string): string => s.toLowerCase().trim();
+  const last = (s: string): string => norm(s.split(/[.#:]/).pop() ?? s);
+  if (beatName) {
+    const want = last(beatName);
+    const hit = graph.nodes.find((n) => norm(n.label) === want) ?? graph.nodes.find((n) => last(n.label) === want);
+    if (hit) return { id: hit.id, mode: 'node' };
+  }
+  const base = norm(basename(filePath));
+  const fileNode =
+    (base ? graph.nodes.find((n) => norm(n.label) === base) : undefined) ??
+    (base.length >= 4 ? graph.nodes.find((n) => norm(n.label).includes(base)) : undefined);
+  return fileNode ? { id: fileNode.id, mode: 'file' } : null;
+}
+
 /** Adjacency lists (forward = callees, reverse = callers). */
 function adjacency(edges: GraphEdge[]): { out: Map<string, string[]>; inc: Map<string, string[]> } {
   const out = new Map<string, string[]>();

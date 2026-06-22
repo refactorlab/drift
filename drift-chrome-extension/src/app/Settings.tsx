@@ -6,6 +6,7 @@ import { ensureScanner } from '../core/scannerStore';
 import { downloadTts } from '../core/ttsStore';
 import { downloadBrain } from '../core/brainStore';
 import { isBrainSupported } from '../core/brainRuntime';
+import { DEFAULT_GEMINI_MODEL } from '../core/geminiBrain';
 import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
 import { getHistory, clearHistoryForPr, type ScanRecord } from '../state/scanHistory';
@@ -190,6 +191,7 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
   const [note, setNote] = useState<string | null>(null);
   const [pct, setPct] = useState<number | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
+  const [mode, setMode] = useState<'local' | 'gemini'>(settings.brainMode ?? 'local');
   const s = settings.brain;
   const downloaded = s?.source === 'remote';
 
@@ -222,6 +224,55 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
   return (
     <>
       <div className="section-title">AI assistant</div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Chat brain</div>
+          <div className="hint">On-device runs locally on WebGPU; Gemini uses the free API on your own key.</div>
+        </div>
+        <select
+          className="model-select"
+          value={mode}
+          onChange={(e) => {
+            const m = e.target.value as 'local' | 'gemini';
+            setMode(m);
+            void patchSettings({ brainMode: m });
+          }}
+        >
+          <option value="local">On-device (Qwen)</option>
+          <option value="gemini">Gemini (free API)</option>
+        </select>
+      </div>
+      {mode === 'gemini' && (
+        <>
+          <div className="row">
+            <div className="grow">
+              <div className="label">Gemini API key</div>
+              <div className="hint">Free key from aistudio.google.com — stored on-device, sent only to Google.</div>
+            </div>
+          </div>
+          <div className="row">
+            <input
+              className="persona-input"
+              type="password"
+              placeholder="AIza…"
+              defaultValue={settings.geminiApiKey ?? ''}
+              onBlur={(e) => void patchSettings({ geminiApiKey: e.target.value.trim() || undefined })}
+            />
+          </div>
+          <div className="row">
+            <div className="grow">
+              <div className="label">Gemini model</div>
+              <div className="hint">A free-tier Flash model.</div>
+            </div>
+            <input
+              className="model-select"
+              placeholder={DEFAULT_GEMINI_MODEL}
+              defaultValue={settings.geminiModel ?? ''}
+              onBlur={(e) => void patchSettings({ geminiModel: e.target.value.trim() || undefined })}
+            />
+          </div>
+        </>
+      )}
       <div className="row">
         <div className="grow">
           <div className="label">Assistant persona</div>

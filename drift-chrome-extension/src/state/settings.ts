@@ -64,6 +64,14 @@ export interface Settings {
   brain?: BrainMeta;
   /** Custom system prompt / persona for the chat brain (optional override). */
   persona?: string;
+  /** Which chat brain to use: 'local' = on-device Qwen/WebLLM (default);
+   *  'gemini' = the Gemini API on a BYO key. */
+  brainMode?: 'local' | 'gemini';
+  /** BYO Gemini API key (free tier — aistudio.google.com). Stored locally in
+   *  chrome.storage; never bundled or committed. */
+  geminiApiKey?: string;
+  /** Gemini model id (defaults to a free-tier Flash; see geminiBrain.ts). */
+  geminiModel?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

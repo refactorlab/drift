@@ -420,22 +420,30 @@ export function buildPresentBeats(segments: PresentSegment[], wpm: number): Pres
 /** The clickable LABEL of the overview lead beat (Level 1 + Level 2 phase). */
 export const OVERVIEW_LABEL = 'Overview';
 
+/** When a `leadText` (the intro header, e.g. "Opened X — file 1 of 60 (critical)") is
+ *  folded in, the start beat dwells at LEAST this long — the reviewer needs time to read
+ *  the header + Level 1 + Level 2 before the changes scroll past (the "give it ~10s at the
+ *  start" ask). Without a lead text (unit tests) the smaller 2.5s floor applies. */
+export const MIN_OVERVIEW_DWELL_MS = 10_000;
+
 /** Build the OVERVIEW lead beat: a synthetic first beat that owns the Level 1 + Level 2
  *  reading phase. When it plays, the page starts at the TOP of the file and slow-scrolls
- *  (paced to how long L1 + L2 take to read/speak) down to the first changed line — then
- *  the change beats take over. Its dwell is the L1 + L2 reading time, so the timeline
- *  shows that phase as its OWN segment instead of hiding it inside the first change.
- *  A generous max keeps a long overview from being clipped; a floor keeps the sweep
- *  visibly slow. Pure. */
-export function buildOverviewBeat(overview: FileOverview, firstChangeLine: number, wpm: number): PresentBeat {
-  const note = [overview.prChange, overview.purpose].filter(Boolean).join(' ');
+ *  (paced to how long the intro header + L1 + L2 take to read/speak) down to the first
+ *  changed line — then the change beats take over. Its dwell is that reading time (so the
+ *  timeline shows the phase as its OWN segment, not hidden in the first change). `leadText`
+ *  is the intro header shown ABOVE the box — its reading time counts toward the dwell, and
+ *  raises the floor so the start always lasts a readable beat. Pure. */
+export function buildOverviewBeat(overview: FileOverview, firstChangeLine: number, wpm: number, leadText = ''): PresentBeat {
+  const note = [overview.prChange, overview.purpose].filter(Boolean).join(' '); // the L1+L2 shown in the box
+  const readText = [leadText, note].filter(Boolean).join(' '); // header + L1 + L2 — everything read at the start
+  const minMs = leadText ? MIN_OVERVIEW_DWELL_MS : 2500;
   return {
     startLine: 1, // the top of the file
     endLine: Math.max(1, firstChangeLine), // …sweep down to where the changes start
     label: OVERVIEW_LABEL,
     note,
     sweep: true,
-    dwellMs: estimateReadingMs(note, wpm, 2500, 45000),
+    dwellMs: estimateReadingMs(readText, wpm, minMs, 45000),
   };
 }
 

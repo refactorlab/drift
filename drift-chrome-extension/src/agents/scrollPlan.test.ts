@@ -202,6 +202,15 @@ describe('buildOverviewBeat (the Level 1+2 top-of-file sweep)', () => {
   it('clamps the sweep target at line 1 for a zero/negative first change', () => {
     expect(buildOverviewBeat(overview, 0, TEXT_WPM).endLine).toBe(1);
   });
+
+  it('folds the intro lead-text into the dwell and floors the start at ~10s when given one', () => {
+    const lead = 'Opened src/app/LivePipelineRun.tsx — file 1 of 60 (critical)';
+    const withLead = buildOverviewBeat(overview, 130, TEXT_WPM, lead);
+    const without = buildOverviewBeat(overview, 130, TEXT_WPM);
+    expect(withLead.dwellMs).toBeGreaterThanOrEqual(10000); // the reader gets time to read the header + L1 + L2
+    expect(withLead.dwellMs).toBeGreaterThan(without.dwellMs); // the intro adds reading time
+    expect(withLead.note).not.toContain('Opened'); // the lead is shown ABOVE the box, not in the note
+  });
 });
 
 describe('symbolForRange (innermost symbol a hunk touches)', () => {

@@ -134,16 +134,27 @@ describe('runHandoverTurn', () => {
   });
 
   it('paces dwell by SPEAKING speed in voice mode (155 wpm dwells longer than text 225 wpm)', async () => {
-    const firstDwell = async (mode: 'text' | 'voice') => {
+    // Measured on the first CHANGE beat (beats[1]) — beats[0] is the overview, whose dwell is
+    // floored at ~10s once the intro header is folded in, so it can't show the wpm scaling.
+    const firstChangeDwell = async (mode: 'text' | 'voice') => {
       const seed = (t: string) =>
         runHandoverTurn({ pr: PR, url: URL, rec: REC, userText: t, brain: BRAIN, signal: new AbortController().signal, onProgress: () => {}, mode });
       await seed('walk me through this PR'); // (re)start → cursor -1
       mock.setActiveTab({ id: 9, url: URL });
-      return (await seed('next')).presentation?.beats[0].dwellMs ?? 0; // → file 1 (auth.ts)
+      return (await seed('next')).presentation?.beats[1].dwellMs ?? 0; // → file 1 (auth.ts), first change
     };
-    const textDwell = await firstDwell('text');
-    const voiceDwell = await firstDwell('voice');
+    const textDwell = await firstChangeDwell('text');
+    const voiceDwell = await firstChangeDwell('voice');
     expect(voiceDwell).toBeGreaterThan(textDwell); // same words, slower rate → longer dwell
+  });
+
+  it('folds the intro header reading time into the START beat (≥10s, so the reader can read it)', async () => {
+    await turn('walk me through this PR');
+    mock.setActiveTab({ id: 9, url: URL });
+    const r = await turn('next');
+    const overview = r.presentation?.beats[0];
+    expect(overview?.sweep).toBe(true);
+    expect(overview?.dwellMs).toBeGreaterThanOrEqual(10000); // intro + Level 1 + Level 2, floored
   });
 
   it('STILL presents from symbols when the diff cache is empty (the "fell to prose" bug)', async () => {
