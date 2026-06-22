@@ -7,6 +7,7 @@ import { downloadTts } from '../core/ttsStore';
 import { downloadBrain } from '../core/brainStore';
 import { isBrainSupported } from '../core/brainRuntime';
 import { DEFAULT_GEMINI_MODEL } from '../core/geminiBrain';
+import { DEFAULT_GEMINI_LIVE_MODEL } from '../core/geminiLiveController';
 import { checkOllama, DEFAULT_OLLAMA_URL, type OllamaStatus } from '../core/ollamaBrain';
 import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
@@ -192,7 +193,7 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
   const [note, setNote] = useState<string | null>(null);
   const [pct, setPct] = useState<number | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
-  const [mode, setMode] = useState<'local' | 'gemini' | 'ollama'>(settings.brainMode ?? 'local');
+  const [mode, setMode] = useState<'local' | 'gemini' | 'ollama' | 'gemini-live'>(settings.brainMode ?? 'local');
   const s = settings.brain;
   const downloaded = s?.source === 'remote';
 
@@ -234,23 +235,24 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
           className="model-select"
           value={mode}
           onChange={(e) => {
-            const m = e.target.value as 'local' | 'gemini' | 'ollama';
+            const m = e.target.value as 'local' | 'gemini' | 'ollama' | 'gemini-live';
             setMode(m);
             void patchSettings({ brainMode: m });
           }}
         >
           <option value="local">On-device (Qwen)</option>
           <option value="gemini">Gemini (free API)</option>
+          <option value="gemini-live">Gemini Live (voice)</option>
           <option value="ollama">Ollama (local)</option>
         </select>
       </div>
       {mode === 'ollama' && <OllamaConfig settings={settings} />}
-      {mode === 'gemini' && (
+      {(mode === 'gemini' || mode === 'gemini-live') && (
         <>
           <div className="row">
             <div className="grow">
               <div className="label">Gemini API key</div>
-              <div className="hint">Free key from aistudio.google.com — stored on-device, sent only to Google.</div>
+              <div className="hint">Free key from aistudio.google.com/app/api-keys — stored on-device, sent only to Google.</div>
             </div>
           </div>
           <div className="row">
@@ -262,18 +264,34 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
               onBlur={(e) => void patchSettings({ geminiApiKey: e.target.value.trim() || undefined })}
             />
           </div>
-          <div className="row">
-            <div className="grow">
-              <div className="label">Gemini model</div>
-              <div className="hint">A free-tier Flash model.</div>
+          {mode === 'gemini' && (
+            <div className="row">
+              <div className="grow">
+                <div className="label">Gemini model</div>
+                <div className="hint">A free-tier Flash model.</div>
+              </div>
+              <input
+                className="model-select"
+                placeholder={DEFAULT_GEMINI_MODEL}
+                defaultValue={settings.geminiModel ?? ''}
+                onBlur={(e) => void patchSettings({ geminiModel: e.target.value.trim() || undefined })}
+              />
             </div>
-            <input
-              className="model-select"
-              placeholder={DEFAULT_GEMINI_MODEL}
-              defaultValue={settings.geminiModel ?? ''}
-              onBlur={(e) => void patchSettings({ geminiModel: e.target.value.trim() || undefined })}
-            />
-          </div>
+          )}
+          {mode === 'gemini-live' && (
+            <div className="row">
+              <div className="grow">
+                <div className="label">Gemini Live model</div>
+                <div className="hint">Voice uses Gemini’s native speech — no Whisper or Kokoro download.</div>
+              </div>
+              <input
+                className="model-select"
+                placeholder={DEFAULT_GEMINI_LIVE_MODEL}
+                defaultValue={settings.geminiLiveModel ?? ''}
+                onBlur={(e) => void patchSettings({ geminiLiveModel: e.target.value.trim() || undefined })}
+              />
+            </div>
+          )}
         </>
       )}
       <div className="row">

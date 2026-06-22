@@ -13,7 +13,8 @@ import { DEFAULT_PERSONA } from '../core/brainConstants';
 import { getSharedBrain } from '../core/brainEngine';
 import { isBrainSupported } from '../core/brainRuntime';
 import { downloadBrain, isBrainAvailable, type AcquireProgress } from '../core/brainStore';
-import { VoiceController, type VoiceState } from '../core/voiceController';
+import { VoiceController, type VoiceState, type VoiceHandlers } from '../core/voiceController';
+import { startGeminiLive, type VoiceSession } from '../core/geminiLiveController';
 import { VoiceOrb } from './VoiceOrb';
 import { useActivePr } from '../state/activePr';
 import { runAgentTurn } from '../core/agentLoop';
@@ -84,7 +85,7 @@ export function Chat({
   // Which message's presentation is currently playing (its beats + anchor for the driver,
   // and so the page→panel "user scrolled" signal pauses the right message at its spot).
   const playingRef = useRef<{ msgId: number; pres: FilePresentation } | null>(null);
-  const controllerRef = useRef<VoiceController | null>(null);
+  const controllerRef = useRef<VoiceSession | null>(null);
   const voiceReplyId = useRef<number | null>(null);
   const voiceToolMsgId = useRef<number | null>(null); // current tool-step card id in voice mode
   const voicePresentation = useRef<FilePresentation | null>(null); // beats awaiting the spoken reply bubble
@@ -590,7 +591,15 @@ export function Chat({
     setVoiceState('listening');
     const history = historyTurns(chatRef.current.messages, -1);
     try {
-      const vc = await VoiceController.start(
+      // Pick the voice engine for the selected brain: Gemini Live (native audio,
+      // server-side turn-taking — replaces Whisper+Kokoro) or the local duplex
+      // cascade. Both satisfy VoiceSession and take the SAME handlers, so the
+      // whole transcript-wiring object below is shared verbatim.
+      const startVoice = (h: VoiceHandlers): Promise<VoiceSession> =>
+        settings.brainMode === 'gemini-live'
+          ? startGeminiLive(h, { apiKey: settings.geminiApiKey ?? '', model: settings.geminiLiveModel, persona: persona(), getToolState: () => toolStateRef.current })
+          : VoiceController.start(h, { persona: persona(), voice: settings.ttsVoice || 'af_heart', history, getToolState: () => toolStateRef.current });
+      const vc = await startVoice(
         {
           onUserText: (text) => {
             stopPresentation(); // the reviewer spoke — interrupt the running walkthrough
@@ -670,7 +679,6 @@ export function Chat({
           onStatePatch: (patch) => setToolState((s) => ({ ...s, ...patch, scanRunning: false })),
           onError: (msg) => setVoiceStatus(msg),
         },
-        { persona: persona(), voice: settings.ttsVoice || 'af_heart', history, getToolState: () => toolStateRef.current },
       );
       controllerRef.current = vc;
     } catch (err) {
