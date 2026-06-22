@@ -65,13 +65,18 @@ export interface Settings {
   /** Custom system prompt / persona for the chat brain (optional override). */
   persona?: string;
   /** Which chat brain to use: 'local' = on-device Qwen/WebLLM (default);
-   *  'gemini' = the Gemini API on a BYO key; 'ollama' = a LOCAL Ollama server. */
-  brainMode?: 'local' | 'gemini' | 'ollama';
+   *  'gemini' = the Gemini text API on a BYO key; 'ollama' = a LOCAL Ollama
+   *  server; 'gemini-live' = the Gemini Live API (BYO key) — text chat plus
+   *  native voice (STT+TTS) that REPLACES Whisper+Kokoro (see geminiLiveController.ts). */
+  brainMode?: 'local' | 'gemini' | 'ollama' | 'gemini-live';
   /** BYO Gemini API key (free tier — aistudio.google.com). Stored locally in
-   *  chrome.storage; never bundled or committed. */
+   *  chrome.storage; never bundled or committed. Shared by 'gemini' and 'gemini-live'. */
   geminiApiKey?: string;
   /** Gemini model id (defaults to a free-tier Flash; see geminiBrain.ts). */
   geminiModel?: string;
+  /** Gemini Live model for native voice (defaults to DEFAULT_GEMINI_LIVE_MODEL;
+   *  see geminiLiveController.ts). Only used by the 'gemini-live' voice path. */
+  geminiLiveModel?: string;
   /** Base URL of the local Ollama server (default http://localhost:11434; see
    *  ollamaBrain.ts). Nothing is downloaded — the weights live in the user's Ollama. */
   ollamaBaseUrl?: string;
