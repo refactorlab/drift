@@ -100,7 +100,7 @@ export async function downloadBrain(
 export async function isBrainAvailable(): Promise<boolean> {
   try {
     const s = await getSettings();
-    if (s.brainMode === 'gemini' || s.brainMode === 'gemini-live') return !!s.geminiApiKey;
+    if (s.brainMode === 'gemini-live') return !!s.geminiApiKey;
     if (s.brainMode === 'ollama') return !!s.ollamaModel;
     if (!(await isBrainSupported())) return false;
     return s.brain?.source === 'remote';

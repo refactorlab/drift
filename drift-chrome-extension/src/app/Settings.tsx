@@ -6,7 +6,6 @@ import { ensureScanner } from '../core/scannerStore';
 import { downloadTts } from '../core/ttsStore';
 import { downloadBrain } from '../core/brainStore';
 import { isBrainSupported } from '../core/brainRuntime';
-import { DEFAULT_GEMINI_MODEL } from '../core/geminiBrain';
 import { DEFAULT_GEMINI_LIVE_MODEL } from '../core/geminiLiveController';
 import { checkOllama, DEFAULT_OLLAMA_URL, type OllamaStatus } from '../core/ollamaBrain';
 import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
@@ -193,7 +192,7 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
   const [note, setNote] = useState<string | null>(null);
   const [pct, setPct] = useState<number | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
-  const [mode, setMode] = useState<'local' | 'gemini' | 'ollama' | 'gemini-live'>(settings.brainMode ?? 'local');
+  const [mode, setMode] = useState<'local' | 'ollama' | 'gemini-live'>(settings.brainMode ?? 'local');
   const s = settings.brain;
   const downloaded = s?.source === 'remote';
 
@@ -229,25 +228,24 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
       <div className="row">
         <div className="grow">
           <div className="label">Chat brain</div>
-          <div className="hint">On-device runs on WebGPU; Gemini uses the free API on your key; Ollama uses your local models.</div>
+          <div className="hint">On-device runs on WebGPU; Gemini uses the free API on your key (chat + voice); Ollama uses your local models.</div>
         </div>
         <select
           className="model-select"
           value={mode}
           onChange={(e) => {
-            const m = e.target.value as 'local' | 'gemini' | 'ollama' | 'gemini-live';
+            const m = e.target.value as 'local' | 'ollama' | 'gemini-live';
             setMode(m);
             void patchSettings({ brainMode: m });
           }}
         >
           <option value="local">On-device (Qwen)</option>
-          <option value="gemini">Gemini (free API)</option>
-          <option value="gemini-live">Gemini Live (voice)</option>
+          <option value="gemini-live">Gemini (free API)</option>
           <option value="ollama">Ollama (local)</option>
         </select>
       </div>
       {mode === 'ollama' && <OllamaConfig settings={settings} />}
-      {(mode === 'gemini' || mode === 'gemini-live') && (
+      {mode === 'gemini-live' && (
         <>
           <div className="row">
             <div className="grow">
@@ -264,34 +262,18 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
               onBlur={(e) => void patchSettings({ geminiApiKey: e.target.value.trim() || undefined })}
             />
           </div>
-          {mode === 'gemini' && (
-            <div className="row">
-              <div className="grow">
-                <div className="label">Gemini model</div>
-                <div className="hint">A free-tier Flash model.</div>
-              </div>
-              <input
-                className="model-select"
-                placeholder={DEFAULT_GEMINI_MODEL}
-                defaultValue={settings.geminiModel ?? ''}
-                onBlur={(e) => void patchSettings({ geminiModel: e.target.value.trim() || undefined })}
-              />
+          <div className="row">
+            <div className="grow">
+              <div className="label">Gemini Live model</div>
+              <div className="hint">Voice uses Gemini’s native speech — no Whisper or Kokoro download.</div>
             </div>
-          )}
-          {mode === 'gemini-live' && (
-            <div className="row">
-              <div className="grow">
-                <div className="label">Gemini Live model</div>
-                <div className="hint">Voice uses Gemini’s native speech — no Whisper or Kokoro download.</div>
-              </div>
-              <input
-                className="model-select"
-                placeholder={DEFAULT_GEMINI_LIVE_MODEL}
-                defaultValue={settings.geminiLiveModel ?? ''}
-                onBlur={(e) => void patchSettings({ geminiLiveModel: e.target.value.trim() || undefined })}
-              />
-            </div>
-          )}
+            <input
+              className="model-select"
+              placeholder={DEFAULT_GEMINI_LIVE_MODEL}
+              defaultValue={settings.geminiLiveModel ?? ''}
+              onBlur={(e) => void patchSettings({ geminiLiveModel: e.target.value.trim() || undefined })}
+            />
+          </div>
         </>
       )}
       <div className="row">
