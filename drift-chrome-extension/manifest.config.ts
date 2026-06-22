@@ -72,5 +72,9 @@ export default defineManifest({
   // hosts makes the background worker's fetch CORS-exempt for ANY redirect
   // target, so a failure can only be auth (404), not host coverage. This is the
   // same access a download-manager extension needs.
-  host_permissions: ['https://*/*'],
+  //
+  // The local http hosts let the optional Ollama brain reach a local server
+  // (http://localhost:11434 by default). Scoped to localhost — a non-default
+  // Ollama host would also need OLLAMA_ORIGINS set on that server.
+  host_permissions: ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*'],
 });
