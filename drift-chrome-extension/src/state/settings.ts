@@ -65,13 +65,18 @@ export interface Settings {
   /** Custom system prompt / persona for the chat brain (optional override). */
   persona?: string;
   /** Which chat brain to use: 'local' = on-device Qwen/WebLLM (default);
-   *  'gemini' = the Gemini API on a BYO key. */
-  brainMode?: 'local' | 'gemini';
+   *  'gemini' = the Gemini API on a BYO key; 'ollama' = a LOCAL Ollama server. */
+  brainMode?: 'local' | 'gemini' | 'ollama';
   /** BYO Gemini API key (free tier — aistudio.google.com). Stored locally in
    *  chrome.storage; never bundled or committed. */
   geminiApiKey?: string;
   /** Gemini model id (defaults to a free-tier Flash; see geminiBrain.ts). */
   geminiModel?: string;
+  /** Base URL of the local Ollama server (default http://localhost:11434; see
+   *  ollamaBrain.ts). Nothing is downloaded — the weights live in the user's Ollama. */
+  ollamaBaseUrl?: string;
+  /** The installed Ollama model to use (chosen from /api/tags in Settings). */
+  ollamaModel?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

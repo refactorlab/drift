@@ -7,6 +7,7 @@ import { downloadTts } from '../core/ttsStore';
 import { downloadBrain } from '../core/brainStore';
 import { isBrainSupported } from '../core/brainRuntime';
 import { DEFAULT_GEMINI_MODEL } from '../core/geminiBrain';
+import { checkOllama, DEFAULT_OLLAMA_URL, type OllamaStatus } from '../core/ollamaBrain';
 import { KOKORO_VOICE_SID, DEFAULT_VOICE } from '../core/ttsProvider';
 import { GoogleIcon } from './GoogleIcon';
 import { getHistory, clearHistoryForPr, type ScanRecord } from '../state/scanHistory';
@@ -191,7 +192,7 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
   const [note, setNote] = useState<string | null>(null);
   const [pct, setPct] = useState<number | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
-  const [mode, setMode] = useState<'local' | 'gemini'>(settings.brainMode ?? 'local');
+  const [mode, setMode] = useState<'local' | 'gemini' | 'ollama'>(settings.brainMode ?? 'local');
   const s = settings.brain;
   const downloaded = s?.source === 'remote';
 
@@ -227,21 +228,23 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
       <div className="row">
         <div className="grow">
           <div className="label">Chat brain</div>
-          <div className="hint">On-device runs locally on WebGPU; Gemini uses the free API on your own key.</div>
+          <div className="hint">On-device runs on WebGPU; Gemini uses the free API on your key; Ollama uses your local models.</div>
         </div>
         <select
           className="model-select"
           value={mode}
           onChange={(e) => {
-            const m = e.target.value as 'local' | 'gemini';
+            const m = e.target.value as 'local' | 'gemini' | 'ollama';
             setMode(m);
             void patchSettings({ brainMode: m });
           }}
         >
           <option value="local">On-device (Qwen)</option>
           <option value="gemini">Gemini (free API)</option>
+          <option value="ollama">Ollama (local)</option>
         </select>
       </div>
+      {mode === 'ollama' && <OllamaConfig settings={settings} />}
       {mode === 'gemini' && (
         <>
           <div className="row">
@@ -288,22 +291,172 @@ function AiBrainRow({ settings }: { settings: SettingsT }) {
           onBlur={(e) => void patchSettings({ persona: e.target.value.trim() || undefined })}
         />
       </div>
-      <div className="row" style={{ borderBottom: 'none' }}>
+      {mode === 'local' && (
+        <div className="row" style={{ borderBottom: 'none' }}>
+          <div className="grow">
+            <div className="label">AI model (Qwen 2.5 1.5B)</div>
+            <div className="hint">
+              {supported === false
+                ? 'This browser has no WebGPU — the on-device AI can’t run here.'
+                : (note ??
+                  (downloaded
+                    ? `${s!.version} · ~${(s!.bytes / 1024 / 1024 / 1024).toFixed(1)} GB · downloaded`
+                    : 'Not downloaded — fetch the on-device AI model (~1.1 GB, one time). Runs fully in your browser on WebGPU.'))}
+              {busy && pct != null && ` · ${pct}%`}
+            </div>
+          </div>
+          <button className="btn ghost" onClick={() => void download()} disabled={busy || supported === false}>
+            {busy ? (pct != null ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download model'}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// One OS-labelled, COPYABLE setup command (the browser can't set OLLAMA_ORIGINS for the
+// user, so we hand them the exact line to paste). Quotes are baked in so the shell can't
+// expand the value.
+function CopyableCmd({ os, cmd }: { os: string; cmd: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () =>
+    void navigator.clipboard
+      ?.writeText(cmd)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.02em', opacity: 0.85 }}>{os}</span>
+        <button type="button" className="btn ghost" style={{ fontSize: 11, padding: '1px 8px' }} onClick={copy}>
+          {copied ? 'Copied ✓' : 'Copy'}
+        </button>
+      </div>
+      <code style={{ display: 'block', marginTop: 3, padding: '6px 8px', borderRadius: 6, background: 'rgba(0,0,0,.22)', fontSize: 11.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+        {cmd}
+      </code>
+    </div>
+  );
+}
+
+// Ollama provider config: a base-URL field, a live model dropdown fetched from the local
+// server's /api/tags, and — when it can't connect — the exact OLLAMA_ORIGINS command to
+// allow THIS extension's origin (the one setup step that the browser can't do for you).
+function OllamaConfig({ settings }: { settings: SettingsT }) {
+  const [baseUrl, setBaseUrl] = useState(settings.ollamaBaseUrl ?? DEFAULT_OLLAMA_URL);
+  const [status, setStatus] = useState<OllamaStatus | null>(null);
+  const [testing, setTesting] = useState(false);
+  const extId = typeof chrome !== 'undefined' ? chrome.runtime?.id : undefined;
+
+  async function test(url: string) {
+    setTesting(true);
+    const r = await checkOllama(url);
+    setStatus(r);
+    setTesting(false);
+    // If the saved model is no longer installed, drop it so the user re-picks.
+    if (r.ok && settings.ollamaModel && !r.models.includes(settings.ollamaModel)) {
+      void patchSettings({ ollamaModel: undefined });
+    }
+  }
+
+  // Probe once when the Ollama panel opens.
+  useEffect(() => {
+    void test(baseUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hasModels = (status?.models.length ?? 0) > 0;
+  // The exact origin to allow (this extension), quoted so no shell expands it. One command
+  // per OS — each quits/stops the running Ollama, then restarts it with the origin allowed.
+  const origin = extId ? `chrome-extension://${extId}` : 'chrome-extension://*';
+  const cmds = {
+    mac: `osascript -e 'quit app "Ollama"'; pkill -x ollama; OLLAMA_ORIGINS='${origin}' ollama serve`,
+    linux: `pkill ollama; OLLAMA_ORIGINS='${origin}' ollama serve`,
+    windows: `Stop-Process -Name ollama -Force -ErrorAction SilentlyContinue; $env:OLLAMA_ORIGINS='${origin}'; ollama serve`,
+  };
+  const blocked = !!status && !status.ok; // detected a 403 / unreachable → red; else a muted guide
+  return (
+    <>
+      <div className="row">
         <div className="grow">
-          <div className="label">AI model (Qwen 2.5 1.5B)</div>
+          <div className="label">Ollama server</div>
+          <div className="hint">A local Ollama (ollama.com) — nothing is downloaded here; your models run in Ollama.</div>
+        </div>
+        <input
+          className="model-select"
+          defaultValue={baseUrl}
+          placeholder={DEFAULT_OLLAMA_URL}
+          onBlur={(e) => {
+            const u = e.target.value.trim() || DEFAULT_OLLAMA_URL;
+            setBaseUrl(u);
+            void patchSettings({ ollamaBaseUrl: u === DEFAULT_OLLAMA_URL ? undefined : u });
+            void test(u);
+          }}
+        />
+      </div>
+      <div className="row">
+        <div className="grow">
+          <div className="label">Model</div>
           <div className="hint">
-            {supported === false
-              ? 'This browser has no WebGPU — the on-device AI can’t run here.'
-              : (note ??
-                (downloaded
-                  ? `${s!.version} · ~${(s!.bytes / 1024 / 1024 / 1024).toFixed(1)} GB · downloaded`
-                  : 'Not downloaded — fetch the on-device AI model (~1.1 GB, one time). Runs fully in your browser on WebGPU.'))}
-            {busy && pct != null && ` · ${pct}%`}
+            {testing
+              ? 'Checking Ollama…'
+              : status?.blocked
+                ? '⚠️ Models found, but Ollama is blocking chat from this extension (HTTP 403) — allow the origin below.'
+                : status?.ok
+                  ? status.models.length
+                    ? `${status.models.length} installed model(s)`
+                    : 'Connected, but no models — run `ollama pull <model>`.'
+                  : (status?.error ?? 'Not connected.')}
           </div>
         </div>
-        <button className="btn ghost" onClick={() => void download()} disabled={busy || supported === false}>
-          {busy ? (pct != null ? `Downloading ${pct}%` : 'Downloading…') : downloaded ? 'Re-download' : 'Download model'}
-        </button>
+        {hasModels ? (
+          <select
+            className="model-select"
+            value={settings.ollamaModel ?? ''}
+            onChange={(e) => void patchSettings({ ollamaModel: e.target.value || undefined })}
+          >
+            <option value="">Choose…</option>
+            {status!.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <button className="btn ghost" onClick={() => void test(baseUrl)} disabled={testing}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+        )}
+      </div>
+      {/* Setup GUIDE — always shown in Ollama mode so the commands to allow this extension are
+          at hand. Red when we detect a block (403 / unreachable); a muted reference otherwise. */}
+      <div className="row" style={{ borderBottom: 'none' }}>
+        <div
+          className="grow"
+          style={{
+            borderLeft: `3px solid ${blocked ? '#f85149' : 'rgba(127,127,127,.4)'}`,
+            background: blocked ? 'rgba(248,81,73,.10)' : 'rgba(127,127,127,.07)',
+            borderRadius: 8,
+            padding: '8px 10px',
+          }}
+        >
+          <div style={{ color: blocked ? '#f85149' : 'inherit', fontWeight: 700, fontSize: 12, marginBottom: 2 }}>
+            {blocked ? '⚠️ Ollama is blocking this extension' : 'Allow this extension in Ollama'}
+          </div>
+          <div className="hint" style={{ marginBottom: 2 }}>
+            Ollama only answers chat from allowed origins. <b>Quit the Ollama app</b>, then paste the line for your OS in a
+            terminal (the quotes matter — they stop the shell mangling the value). Leave it running.
+          </div>
+          <CopyableCmd os="macOS" cmd={cmds.mac} />
+          <CopyableCmd os="Linux" cmd={cmds.linux} />
+          <CopyableCmd os="Windows (PowerShell)" cmd={cmds.windows} />
+          <div className="hint" style={{ marginTop: 8, opacity: 0.7 }}>
+            Then press <b>Test connection</b> above. {extId ? 'This allows only this extension.' : ''}
+          </div>
+        </div>
       </div>
     </>
   );

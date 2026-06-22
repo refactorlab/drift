@@ -90,13 +90,20 @@ export async function downloadBrain(
 }
 
 /**
- * CHEAP availability check used by the chat UI to decide whether to use the
- * brain. True iff WebGPU is present AND the model has been downloaded. Never throws.
+ * CHEAP availability check used by the chat UI to decide whether to use the brain. Never
+ * throws, never hits the network. By provider:
+ *   • gemini  → a BYO key is set,
+ *   • ollama  → a model is chosen (reachability is verified in Settings, and a turn that
+ *               can't reach the server fails with actionable guidance — see ollamaBrain),
+ *   • local   → WebGPU is present AND the model has been downloaded.
  */
 export async function isBrainAvailable(): Promise<boolean> {
   try {
+    const s = await getSettings();
+    if (s.brainMode === 'gemini') return !!s.geminiApiKey;
+    if (s.brainMode === 'ollama') return !!s.ollamaModel;
     if (!(await isBrainSupported())) return false;
-    return (await getSettings()).brain?.source === 'remote';
+    return s.brain?.source === 'remote';
   } catch {
     return false;
   }
