@@ -49,9 +49,9 @@ export function freeSharedBrain(): void {
  *  present; Ollama when selected AND a model is chosen; otherwise the on-device WebLLM
  *  brain. (A half-configured provider falls back to local rather than failing every turn.) */
 function pickFactory(s: Settings): BrainFactory {
-  // 'gemini-live' uses the SAME Gemini text brain for TYPED chat; its voice path
-  // (Gemini Live audio) is a separate controller, not a BrainRuntime.
-  if ((s.brainMode === 'gemini' || s.brainMode === 'gemini-live') && s.geminiApiKey) {
+  // 'gemini-live' uses the Gemini text brain for TYPED chat; its voice path (the
+  // Gemini Live audio session) is a separate controller, not a BrainRuntime.
+  if (s.brainMode === 'gemini-live' && s.geminiApiKey) {
     return makeGeminiBrainFactory({ apiKey: s.geminiApiKey, model: s.geminiModel });
   }
   if (s.brainMode === 'ollama' && s.ollamaModel) {

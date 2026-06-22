@@ -64,13 +64,14 @@ export interface Settings {
   brain?: BrainMeta;
   /** Custom system prompt / persona for the chat brain (optional override). */
   persona?: string;
-  /** Which chat brain to use: 'local' = on-device Qwen/WebLLM (default);
-   *  'gemini' = the Gemini text API on a BYO key; 'ollama' = a LOCAL Ollama
-   *  server; 'gemini-live' = the Gemini Live API (BYO key) — text chat plus
-   *  native voice (STT+TTS) that REPLACES Whisper+Kokoro (see geminiLiveController.ts). */
-  brainMode?: 'local' | 'gemini' | 'ollama' | 'gemini-live';
+  /** Which chat brain to use: 'local' = on-device Qwen/WebLLM (default); 'ollama' =
+   *  a LOCAL Ollama server; 'gemini-live' = the Gemini API (BYO key) — text chat
+   *  (via geminiBrain.ts) PLUS native voice (STT+TTS) that REPLACES Whisper+Kokoro
+   *  (see geminiLiveController.ts). The retired standalone 'gemini' (text + cascade
+   *  voice) is migrated to 'gemini-live' on read (see {@link normalizeSettings}). */
+  brainMode?: 'local' | 'ollama' | 'gemini-live';
   /** BYO Gemini API key (free tier — aistudio.google.com). Stored locally in
-   *  chrome.storage; never bundled or committed. Shared by 'gemini' and 'gemini-live'. */
+   *  chrome.storage; never bundled or committed. */
   geminiApiKey?: string;
   /** Gemini model id (defaults to a free-tier Flash; see geminiBrain.ts). */
   geminiModel?: string;
@@ -92,9 +93,19 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const KEY = 'drift:settings';
 
+/** Forward-migrate a loaded settings object so retired values keep working. The
+ *  standalone 'gemini' brain (text + Whisper/Kokoro cascade voice) was folded into
+ *  the unified 'gemini-live' (text + native voice) — same key, one fewer option — so
+ *  an existing 'gemini' user lands on 'gemini-live' instead of silently falling back
+ *  to the on-device brain. */
+function normalizeSettings(s: Settings): Settings {
+  if ((s.brainMode as string) === 'gemini') s.brainMode = 'gemini-live';
+  return s;
+}
+
 export async function getSettings(): Promise<Settings> {
   const data = await chrome.storage.local.get(KEY);
-  return { ...DEFAULT_SETTINGS, ...(data[KEY] as Partial<Settings> | undefined) };
+  return normalizeSettings({ ...DEFAULT_SETTINGS, ...(data[KEY] as Partial<Settings> | undefined) });
 }
 
 export async function patchSettings(patch: Partial<Settings>): Promise<Settings> {
@@ -109,7 +120,7 @@ export function onSettingsChange(cb: (s: Settings) => void): () => void {
     area: string,
   ) => {
     if (area === 'local' && KEY in changes) {
-      cb({ ...DEFAULT_SETTINGS, ...(changes[KEY].newValue as Partial<Settings> | undefined) });
+      cb(normalizeSettings({ ...DEFAULT_SETTINGS, ...(changes[KEY].newValue as Partial<Settings> | undefined) }));
     }
   };
   chrome.storage.onChanged.addListener(listener);
