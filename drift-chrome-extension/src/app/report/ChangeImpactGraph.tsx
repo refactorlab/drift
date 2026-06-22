@@ -12,7 +12,7 @@
 // this file is just the view + interaction. No CDN/deps — bundled React + SVG only.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { reachable, type FileGraph } from '../../core/changeImpactGraph';
+import { directNeighbors, focusTargetForBeat, reachable, type FileGraph } from '../../core/changeImpactGraph';
 import { boundsOf, layoutGraph, levelBounds, type GraphLayout, type PlacedNode } from '../../core/graphLayout';
 import { resumeChime, tick } from '../../core/uiChime';
 import './ChangeImpactGraph.css';
@@ -44,9 +44,16 @@ interface Props {
   /** The effective default for sound: voice mode passes true (auto-on); text mode
    *  passes the user's "Diagram sounds" setting. The inline ♪ can override per-session. */
   soundEnabled: boolean;
+  /** The file this graph belongs to — lets the timeline fallback zoom find the file's
+   *  own node when a beat's symbol isn't in the graph. */
+  filePath?: string;
+  /** Drive the camera from the walkthrough TIMELINE: zoom to the node matching `name` (a
+   *  beat's symbol), else high-level → slow-zoom into the file node. `nonce` retriggers the
+   *  move even when the name repeats. null/undefined → the graph runs its own build instead. */
+  focus?: { name: string | null; nonce: number } | null;
 }
 
-export function ChangeImpactGraph({ graph, soundEnabled }: Props) {
+export function ChangeImpactGraph({ graph, soundEnabled, filePath, focus }: Props) {
   const layout = useMemo<GraphLayout>(() => layoutGraph(graph), [graph]);
   const seeds = useMemo(() => new Set(graph.seeds), [graph]);
   // Reveal ORDER: left-to-right (by column x, then y) — a node's source/parent (to its
@@ -72,7 +79,12 @@ export function ChangeImpactGraph({ graph, soundEnabled }: Props) {
   const [revealed, setRevealed] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  // The node the walkthrough TIMELINE is currently pointing at (amber ring, camera zoomed
+  // to it) — distinct from `selected` (a user click, which focuses a whole branch).
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const revealedSet = useMemo(() => new Set(order.slice(0, revealed)), [order, revealed]);
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
 
   // Voice mode (soundEnabled=true) forces sound on; a settings change re-syncs the default.
   useEffect(() => setSound(soundEnabled), [soundEnabled]);
@@ -169,9 +181,15 @@ export function ChangeImpactGraph({ graph, soundEnabled }: Props) {
     [total, fullBounds, prefixBounds, fitBounds, stopBuild],
   );
 
-  // First paint: run the build (or, with reduced motion, show the whole file at once).
+  // First paint: run the build (or, with reduced motion, show the whole file at once). When
+  // the walkthrough timeline is driving the camera (focus set), skip the build entirely —
+  // reveal the whole graph and let the focus effect below own the camera.
   useEffect(() => {
     const t = window.setTimeout(() => {
+      if (focusRef.current) {
+        setRevealed(total); // timeline-driven → show everything; focus picks the camera
+        return;
+      }
       if (REDUCED) {
         setRevealed(total);
         fitBounds(fullBounds, 0);
@@ -185,6 +203,40 @@ export function ChangeImpactGraph({ graph, soundEnabled }: Props) {
     };
     // Re-run only when the underlying graph changes.
   }, [graph]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // TIMELINE-DRIVEN camera: when the active beat changes (focus.nonce), zoom to the node it
+  // names — or, if the symbol isn't in the graph (the overview / a line-range beat), pull
+  // back to a HIGH-LEVEL view then SLOWLY zoom into the file's own node (the "higher
+  // component"). Reveals the whole graph first so any target is reachable.
+  useEffect(() => {
+    if (!focus || focus.nonce < 0) return;
+    const target = focusTargetForBeat(graph, focus.name, filePath ?? '');
+    stopBuild();
+    setRevealed(total);
+    setSelected(null); // the timeline owns the camera, not a click-focus branch
+    if (!target) {
+      setFocusedId(null);
+      fitBounds(fullBounds, 520);
+      return;
+    }
+    setFocusedId(target.id);
+    // Audio feedback per spot — the SAME soft tick a click plays, so each beat that lands on
+    // a node is felt as well as seen (the AudioContext is already unlocked by the build/turn).
+    if (soundRef.current) {
+      resumeChime();
+      tick();
+    }
+    const framed = boundsOf(layout, new Set([target.id, ...directNeighbors(graph.edges, target.id)]));
+    if (target.mode === 'node') {
+      fitBounds(framed, 560); // zoom right to it + its immediate links — "show exactly where"
+      return;
+    }
+    // file fallback: high-level first, then a slow zoom into the file component.
+    fitBounds(fullBounds, 300);
+    const t = window.setTimeout(() => fitBounds(framed, 1100), 340);
+    return () => clearTimeout(t);
+    // Fire only on a new active beat; the other inputs are stable for a given graph.
+  }, [focus?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A node click focuses its branch (callers + callees / ancestors + descendants).
   useEffect(() => {
@@ -237,21 +289,25 @@ export function ChangeImpactGraph({ graph, soundEnabled }: Props) {
     };
   }, [apply]);
 
-  const down = useMemo(() => (selected ? reachable(graph.edges, selected, 'down') : null), [selected, graph]);
-  const up = useMemo(() => (selected ? reachable(graph.edges, selected, 'up') : null), [selected, graph]);
+  // The node whose BRANCH is highlighted — a user click (`selected`) OR the timeline focus
+  // (`focusedId`). Both light the connecting arrows (callees blue / callers purple) and dim
+  // everything off-branch, so the timeline gives each spot the SAME "clicked" emphasis.
+  const active = selected ?? focusedId;
+  const down = useMemo(() => (active ? reachable(graph.edges, active, 'down') : null), [active, graph]);
+  const up = useMemo(() => (active ? reachable(graph.edges, active, 'up') : null), [active, graph]);
 
   type Ring = 'select' | 'down' | 'up' | 'seed' | null;
   const nodeView = (p: PlacedNode): { shown: boolean; dim: boolean; ring: Ring } => {
     const shown = revealedSet.has(p.id);
-    if (!selected) return { shown, dim: false, ring: seeds.has(p.id) ? 'seed' : null };
-    if (p.id === selected) return { shown, dim: false, ring: 'select' };
+    if (!active) return { shown, dim: false, ring: seeds.has(p.id) ? 'seed' : null };
+    if (p.id === active) return { shown, dim: false, ring: 'select' };
     if (down?.has(p.id)) return { shown, dim: false, ring: 'down' };
     if (up?.has(p.id)) return { shown, dim: false, ring: 'up' };
     return { shown, dim: true, ring: null };
   };
   const edgeView = (from: string, to: string): { shown: boolean; sel: string } => {
     const shown = revealedSet.has(from) && revealedSet.has(to);
-    if (!selected) return { shown, sel: '' };
+    if (!active) return { shown, sel: '' };
     if (down?.has(from) && down?.has(to)) return { shown, sel: 'down' };
     if (up?.has(from) && up?.has(to)) return { shown, sel: 'up' };
     return { shown, sel: 'dim' };
@@ -259,6 +315,7 @@ export function ChangeImpactGraph({ graph, soundEnabled }: Props) {
 
   const pickNode = (id: string) => {
     resumeChime();
+    setFocusedId(null); // a manual click takes over from the timeline focus
     if (revealed < total) {
       stopBuild();
       setRevealed(total); // a click means "show me everything", then focus the branch

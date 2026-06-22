@@ -10,6 +10,8 @@ import {
   type BrainProgress,
   type BrainRuntime,
 } from './brainRuntime';
+import { getSettings, onSettingsChange, type Settings } from '../state/settings';
+import { makeGeminiBrainFactory } from './geminiBrain';
 
 let shared: Promise<BrainRuntime> | null = null;
 let factory: BrainFactory = defaultBrainFactory;
@@ -38,4 +40,37 @@ export function freeSharedBrain(): void {
   const cur = shared;
   shared = null;
   void cur?.then((rt) => rt.free()).catch(() => {});
+}
+
+/** Pick the brain factory for the given settings: Gemini when selected AND a key
+ *  is present; otherwise the on-device WebLLM brain. */
+function pickFactory(s: Settings): BrainFactory {
+  return s.brainMode === 'gemini' && s.geminiApiKey
+    ? makeGeminiBrainFactory({ apiKey: s.geminiApiKey, model: s.geminiModel })
+    : defaultBrainFactory;
+}
+
+/** Identity of the brain-relevant settings, so an unrelated change (theme, etc.)
+ *  never tears down a loaded brain. */
+const brainKey = (s: Settings): string =>
+  `${s.brainMode ?? 'local'}|${s.geminiModel ?? ''}|${s.geminiApiKey ? 'set' : ''}`;
+
+let selectorInstalled = false;
+/**
+ * Wire brain selection to persisted settings: pick the factory now, and re-pick
+ * (freeing the previous runtime) whenever a brain-relevant field changes. Call
+ * once at side-panel startup, before the first getSharedBrain(). Idempotent.
+ */
+export async function installBrainSelector(): Promise<void> {
+  if (selectorInstalled) return;
+  selectorInstalled = true;
+  const s0 = await getSettings();
+  let prev = brainKey(s0);
+  setBrainFactory(pickFactory(s0));
+  onSettingsChange((s) => {
+    if (brainKey(s) === prev) return; // unrelated settings change — leave the brain alone
+    prev = brainKey(s);
+    freeSharedBrain(); // terminate the previous runtime (e.g. the WebLLM worker)
+    setBrainFactory(pickFactory(s));
+  });
 }

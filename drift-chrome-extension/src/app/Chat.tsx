@@ -986,6 +986,11 @@ function PresentationMessage({
   const overviewIndex = pres.beats.findIndex((b) => b.sweep);
   const overviewActive = overviewIndex >= 0 && overviewIndex === activeIndex;
   const overviewPaused = overviewIndex >= 0 && overviewIndex === pausedIndex;
+  // Drive the change-impact graph from the active beat: while a beat plays, zoom the graph
+  // to its symbol's node (or, for the overview / line-range beats, the file node). `nonce`
+  // = the beat index so the zoom re-fires each step; null when not playing → the graph
+  // runs its own build.
+  const graphFocus = activeIndex != null ? { name: pres.beats[activeIndex]?.name ?? null, nonce: activeIndex } : null;
   return (
     <div className="present-msg">
       {pres.intro && <div className="present-intro">{pres.intro}</div>}
@@ -1057,7 +1062,7 @@ function PresentationMessage({
           >
             {showGraph ? '▾' : '▸'} Change-impact graph
           </button>
-          {showGraph && <ChangeImpactGraph graph={pres.graph} soundEnabled={soundEnabled} />}
+          {showGraph && <ChangeImpactGraph graph={pres.graph} soundEnabled={soundEnabled} filePath={pres.path} focus={graphFocus} />}
         </div>
       )}
       <div className="present-timeline-row">

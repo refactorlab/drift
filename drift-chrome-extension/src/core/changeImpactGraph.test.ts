@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFileGraph,
+  directNeighbors,
   distancesFrom,
+  focusTargetForBeat,
   levelsFromRanks,
   normalizeFlowchart,
   reachable,
@@ -25,6 +27,41 @@ const graph: ChangeGraph = {
   edges: [E('A', 'S'), E('S', 'B'), E('B', 'C'), E('X', 'Y')],
   classDefs: [{ name: 'changed', fill: '#9e6a03', stroke: '#d29922', color: '#fff' }],
 };
+
+describe('directNeighbors', () => {
+  it('returns the node ids one hop away in either direction', () => {
+    expect(directNeighbors(graph.edges, 'S').sort()).toEqual(['A', 'B']); // A→S and S→B
+    expect(directNeighbors(graph.edges, 'C')).toEqual(['B']);
+    expect(directNeighbors(graph.edges, 'Z')).toEqual([]); // unknown node
+  });
+});
+
+describe('focusTargetForBeat', () => {
+  // A graph with a dedicated FILE node alongside the symbol nodes.
+  const g: ChangeGraph = {
+    direction: 'LR',
+    nodes: [N('f', 'LivePipelineRun.tsx'), N('s1', 'recordToDisplay', 'changed'), N('s2', 'toLiveContext', 'changed')],
+    edges: [E('f', 's1'), E('f', 's2')],
+    classDefs: [],
+  };
+
+  it('zooms to the NODE whose label matches the beat symbol', () => {
+    expect(focusTargetForBeat(g, 'toLiveContext', 'src/app/LivePipelineRun.tsx')).toEqual({ id: 's2', mode: 'node' });
+  });
+
+  it('matches the LAST segment of a qualified symbol ("Cls.method")', () => {
+    expect(focusTargetForBeat(g, 'LivePipelineRun.recordToDisplay', 'src/app/LivePipelineRun.tsx')).toEqual({ id: 's1', mode: 'node' });
+  });
+
+  it('falls back to the FILE node when the symbol matches nothing (the overview / line-range beats)', () => {
+    expect(focusTargetForBeat(g, null, 'src/app/LivePipelineRun.tsx')).toEqual({ id: 'f', mode: 'file' });
+    expect(focusTargetForBeat(g, 'doesNotExist', 'src/app/LivePipelineRun.tsx')).toEqual({ id: 'f', mode: 'file' });
+  });
+
+  it('returns null when there is neither a matching symbol NOR a file node', () => {
+    expect(focusTargetForBeat(graph, 'nope', 'src/core/auth.ts')).toBeNull();
+  });
+});
 
 describe('normalizeFlowchart', () => {
   it('maps nodes/edges/class_defs and is tolerant of junk', () => {
