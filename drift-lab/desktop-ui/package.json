@@ -27,7 +27,7 @@
     "@tauri-apps/plugin-window-state": "^2.0.1",
     "prism-react-renderer": "^2.4.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.2.6",
     "react-flame-graph": "^1.4.0",
     "react-router-dom": "^6.27.0",
     "zustand": "^5.0.1"
@@ -36,7 +36,7 @@
     "@tauri-apps/cli": "^2.1.0",
     "@types/node": "^20.16.10",
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.3.3",
     "typescript": "^5.6.3",
     "vite": "^6.4.2"
