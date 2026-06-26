@@ -45,6 +45,7 @@ import { collectFileDiff } from './changeCollector';
 import { summarizeChange } from './changeSummary';
 import { tightenDescription } from './descriptionQuality';
 import { DEEP_DIVE_SYSTEM, buildDeepDivePrompt, deepDiveOverview, parseDeepDiveAnswer, rankSectionsByQuery } from './deepDive';
+import { buildRiskBrief, formatRiskBrief } from './riskBrief';
 
 /** Cap the symbol menu shown to the model (token budget). */
 const MAX_SYMBOL_MENU = 40;
@@ -146,6 +147,17 @@ function planHint(session: HandoverSession): string {
   const names = session.steps.slice(0, 6).map((s) => basename(s.path));
   const more = session.steps.length > names.length ? `, +${session.steps.length - names.length} more` : '';
   return `The plan covers: ${names.join(', ')}${more}. Name one to jump to it.`;
+}
+
+/** The grounded risk brief that LEADS the handover — the scan's act-before-merge items,
+ *  critical metrics and impact-ranked findings, surfaced BEFORE the file plan so the reviewer
+ *  knows what's at stake going in (and so those act-before items frame WHY the plan orders
+ *  files the way it does). Emitted VERBATIM from the deterministic brief — the exact, grounded
+ *  text `explain_risk` produces, never the model's — so the walkthrough opens on real signals
+ *  rather than a confabulated "looks fine". Null when the payload isn't a scan (skip silently). */
+function riskLead(rec: ScanRecord): { content: string; spoken: string } | null {
+  const brief = buildRiskBrief(rec.scan);
+  return brief ? formatRiskBrief(brief) : null;
 }
 
 /** Prepend the OVERVIEW lead beat (the Level 1 + Level 2 top-of-file sweep) to the change
@@ -432,15 +444,19 @@ export async function runHandoverTurn(input: HandoverTurnInput): Promise<Handove
         : `(Couldn't move the tab: ${nav.reason}.)`;
     const viewing = currentlyViewing(session.steps, loc);
     const first = session.steps[0];
+    // Lead with the grounded risk brief so the walkthrough opens on what's at stake — the
+    // act-before-merge items + critical metrics — THEN the file-by-file plan to work through it.
+    const risk = riskLead(rec);
     const content =
       `${here}${viewing ? ` You're currently viewing ${viewing.path}.` : ''}\n\n` +
+      `${risk ? `${risk.content}\n\n` : ''}` +
       `Here's the review plan — highest-level changes first, down to the routine ones:\n\n` +
       `${formatHandoverPlan(session.steps, omitted, 8)}\n\n` +
       `We'll go file by file and I'll pause after each. First up: ${first.path} — ${first.rationale}. ` +
       `Say "next" to open it (or name any file to jump there).`;
-    // Voice can't bear hearing the whole list — speak a one-liner instead.
+    // Voice can't bear hearing the whole list — speak the condensed risk line + a one-liner.
     const spoken =
-      `${here} I've lined up ${total} file(s), most critical first. ` +
+      `${here} ${risk ? `${risk.spoken} ` : ''}I've lined up ${total} file(s), most critical first. ` +
       `First up: ${first.path} — ${first.rationale}. Say next to open it, or name any file.`;
     return { content, spoken, summary: `Handover · ${total} file(s)`, handoverActive: true };
   }

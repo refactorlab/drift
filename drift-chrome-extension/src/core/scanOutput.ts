@@ -224,6 +224,8 @@ export interface NfrEdgeCases {
 }
 export interface TechDebtFinding {
   symbol?: string;
+  /** Enclosing function/symbol name (the PR-scoped findings carry this). */
+  function?: string;
   file?: string;
   line?: number;
   value?: number;
@@ -234,11 +236,25 @@ export interface TechDebtFinding {
   node_id?: string;
   /** What kind of debt this is (e.g. "recursive", "long", "complex"). */
   kind?: string;
+  /** Human-readable explanation of the finding. The PR-scoped `pr_findings_top`
+   *  set carries this (and category/severity/tier) — it is the highest-signal
+   *  text the chat can narrate verbatim instead of re-deriving it. */
+  message?: string;
+  category?: string;
+  tier?: string;
+  confidence?: number; // 0..1
+  impact_score?: number;
+  remediation?: string;
+  rule_id?: string;
 }
 export interface TechDebt {
   high_complexity?: TechDebtFinding[];
   long_functions?: TechDebtFinding[];
   summary_findings_top?: TechDebtFinding[];
+  /** PR-scoped, impact-ranked findings over the CHANGED code only — the set the
+   *  risk verdict is built from (see drift-static-profiler/pr_signals.rs). Each
+   *  carries a human `message`, `file`/`line`, `category`/`severity`/`tier`. */
+  pr_findings_top?: TechDebtFinding[];
   thresholds?: { complexity?: number; loc?: number };
 }
 
@@ -339,4 +355,20 @@ export function groupGauges(gauges: QualityGauge[]): { group: string; gauges: Qu
   return [...by.keys()]
     .sort((a, b) => order(a) - order(b))
     .map((group) => ({ group, gauges: by.get(group)! }));
+}
+
+/** The risk-quadrant items from a scan — the SSOT both the dashboard verdict and
+ *  the chat's risk explanation read. The payload nests them under
+ *  `visual_summary.risks.items` (a `RisksBlock`); reading `risks` as a bare array
+ *  silently yields zero (the verdict then never reaches "address"), so EVERY reader
+ *  must go through this one accessor to stay aligned with the real artifact. */
+export function riskItems(scan: ScanOutput | null | undefined): RiskItem[] {
+  const items = scan?.pr_review?.visual_summary?.risks?.items;
+  return Array.isArray(items) ? items : [];
+}
+
+/** Risks the scanner flagged to ACT ON before merge — the set that drives the
+ *  "Address before merge" verdict. */
+export function actBeforeMergeRisks(scan: ScanOutput | null | undefined): RiskItem[] {
+  return riskItems(scan).filter((r) => r.quadrant === 'act_before_merge');
 }

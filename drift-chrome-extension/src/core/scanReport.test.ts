@@ -10,11 +10,16 @@ const scan = {
   pr_review: {
     overall_drift: { percent: -4.6, direction: 'down', confidence: 'high' },
     code_suggestions: [{ category: 'a' }, { category: 'b' }, { category: 'c' }],
+    // Real artifact shape: risks nest under visual_summary.risks.items (a RisksBlock).
+    // The earlier fixture used a flat `risks: [...]` array, which silently diverged
+    // from production (scanToReport then saw 0 risks) — keep this matching reality.
     visual_summary: {
-      risks: [
-        { label: 'r1', quadrant: 'act_before_merge' },
-        { label: 'r2', quadrant: 'monitor_closely' },
-      ],
+      risks: {
+        items: [
+          { label: 'r1', likelihood: 0.8, severity: 0.9, quadrant: 'act_before_merge' },
+          { label: 'r2', likelihood: 0.3, severity: 0.4, quadrant: 'monitor_closely' },
+        ],
+      },
     },
   },
   pr_review_ext: {

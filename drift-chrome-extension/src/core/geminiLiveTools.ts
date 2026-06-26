@@ -13,9 +13,11 @@ import type { BrainRuntime } from './brainRuntime';
 import type { FilePresentation } from '../agents/scrollPlan';
 import { findTool, buildToolFailureReport, type ChatTool, type PrToolState, type ToolBreadcrumb } from './chatTools';
 
-/** The drift tools exposed over Gemini-Live voice — the "drive the app" set. The
- *  deep-dive lenses stay text/local-voice only (see plan). */
-export const LIVE_TOOL_NAMES = ['run_live_pr_scan', 'pr_handover_mode', 'list_changed_files'] as const;
+/** The drift tools exposed over Gemini-Live voice — the "drive the app" set, plus
+ *  explain_risk so a spoken "what's the risk?" is answered from the scan's computed
+ *  signals (not narrated from a thin verdict line). The deep-dive lenses stay
+ *  text/local-voice only (see plan). */
+export const LIVE_TOOL_NAMES = ['run_live_pr_scan', 'pr_handover_mode', 'list_changed_files', 'explain_risk', 'explain_file_risk'] as const;
 
 /** The UI handlers a tool run drives — a subset of VoiceHandlers (chatTools owns the
  *  shapes), so the Live walkthrough lights up the same chat UI as local voice. */

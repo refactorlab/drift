@@ -18,8 +18,12 @@ import { buildArchitectureOverview } from '../agents/architecture';
 import { runIterativeAgent } from '../agents/iterative-agent';
 import { LENSES, type AgentLens } from '../agents/lenses';
 import { runHandoverTurn } from '../agents/handover';
+import { buildExplainerDoc, type ExplainerDoc } from '../agents/explainerDoc';
+import { narrateDeck } from '../agents/deckNarrator';
 import type { FilePresentation } from '../agents/scrollPlan';
 import { fileGraphFromScan } from './scanFileGraph';
+import { runRiskReview } from '../agents/riskReview';
+import { isRiskQuestion } from '../agents/riskIntent';
 import { parseHandoverIntent } from './handoverIntent';
 import { getHandoverSession, currentStep } from '../state/handoverSession';
 import { listPrFiles } from '../state/prFileStore';
@@ -142,6 +146,9 @@ export interface ToolResult {
   /** The handover's clickable presentation (line-range beats) for this file, so the
    *  chat message can render breathing buttons that replay the scroll+highlight. */
   presentation?: FilePresentation;
+  /** The `summary_presentation_deck` tool's narrated slide deck — the chat message
+   *  renders it as a playable <DeckPlayer> card (the `deck` message kind). */
+  deck?: ExplainerDoc;
 }
 
 /** A timestamped progress note captured while a tool runs, kept so a failure can
@@ -223,6 +230,49 @@ const FILE_NAME_CAP = 60;
  *  "smallest PR to largest" intent for staying under the limit. */
 function byChangeSize(a: ChangedFileStatus, b: ChangedFileStatus): number {
   return a.additions + a.deletions - (b.additions + b.deletions);
+}
+
+const baseName = (p: string): string => p.split('/').pop() ?? p;
+
+/**
+ * Run the grounded qualitative risk review and shape it as a `final` tool result —
+ * shared by the two risk tools. `focusPaths` (the handover's current file) scopes the
+ * review to those files; omitted, it reviews the whole PR. Always initiates the brain:
+ * `runRiskReview` collects diffs from GitHub when the file cache was evicted.
+ */
+async function runRiskTool(ctx: ToolRunContext, focusPaths?: string[]): Promise<ToolResult> {
+  if (!ctx.state.pr) return { ok: false, content: 'No pull request is open.' };
+  const rec = await latestScanForPr(ctx.state.pr);
+  if (!rec) return { ok: false, content: 'No scan result found — run run_live_pr_scan first.' };
+  const scope = focusPaths?.length ? focusPaths.map(baseName).join(', ') : '';
+  ctx.onProgress(scope ? `reviewing the risk in ${scope}…` : 'reviewing the risk in the changed code…');
+  log(`${scope ? 'explain_file_risk' : 'explain_risk'} ${rec.owner}/${rec.repo}#${rec.number} · "${ctx.userText.slice(0, 40)}"`);
+  const { content, readPaths, verdict } = await runRiskReview({
+    rec,
+    pr: ctx.state.pr, // lets MAP fetch diffs from GitHub when the file cache was evicted
+    focusPaths,
+    brain: ctx.brain,
+    userText: ctx.userText,
+    signal: ctx.signal,
+    onProgress: ctx.onProgress,
+    mode: ctx.mode ?? 'text',
+  });
+  // `final`: emit the grounded review VERBATIM (no answer-model re-generation, which
+  // collapses a rich multi-section review into a generic sentence). In voice the review
+  // is already shaped concise, so TTS speaks it directly.
+  return {
+    ok: true,
+    content,
+    spoken: content,
+    summary: scope
+      ? `Risk · ${scope}`
+      : readPaths.length
+        ? `Risk review · ${readPaths.length} file(s)`
+        : verdict === 'address'
+          ? 'Risk · address before merge'
+          : 'Risk reviewed',
+    final: true,
+  };
 }
 
 export const TOOLS: ChatTool[] = [
@@ -387,6 +437,84 @@ export const TOOLS: ChatTool[] = [
       };
     },
   },
+  {
+    name: 'summary_presentation_deck',
+    description:
+      'Build a narrated PR summary DECK from the scan — a playable slide presentation (overview, per-file deep dives, change-impact graph, scope map, critique) with synced two-host narration the user can play and drill into. Use when the user asks for a deck, a slide deck, a presentation, a summary deck, a narrated or visual walkthrough, or an overview to "present"/"play". For a step-by-step BROWSER-DRIVEN walkthrough instead, use pr_handover_mode.',
+    capability:
+      'Build a narrated summary presentation deck — overview, per-file slides, change-impact graph, scope map and critique, playable with drill-in (summary_presentation_deck).',
+    spokenAction: 'Composing the summary presentation deck…',
+    available: (s) => s.scanRan && !!s.pr,
+    async run(_args, ctx) {
+      if (!ctx.state.pr) return { ok: false, content: 'No pull request is open.' };
+      const rec = await latestScanForPr(ctx.state.pr);
+      if (!rec) return { ok: false, content: 'No scan result found — run run_live_pr_scan first.' };
+      ctx.onProgress('composing the deck…');
+      const deck = buildExplainerDoc(rec);
+      // Attach the file-scoped change-impact graph to slides that name a file (and
+      // to the graph slide via the lead file) — derived from the cached scan, same
+      // helper the handover uses; null when the scan has no structured graph.
+      const focusPath = deck.slides.find((s) => s.kind === 'file')?.path;
+      for (const s of deck.slides) {
+        const p = s.path ?? (s.kind === 'graph' ? focusPath : undefined);
+        if (p) {
+          const g = fileGraphFromScan(rec.scan, p);
+          if (g) s.graph = g;
+        }
+      }
+      // Each slide is written by the brain — one grounded agent per slide, in
+      // sequence, token-bounded — so the deck reads like analysis, not a template.
+      // Soft: a brain/abort failure keeps that slide's deterministic narration.
+      await narrateDeck(rec, deck, { brain: ctx.brain, signal: ctx.signal, onProgress: ctx.onProgress }).catch(() => deck);
+      log(`summary_presentation_deck ${rec.owner}/${rec.repo}#${rec.number} · ${deck.slides.length} slide(s)`);
+      const kinds = deck.slides.map((s) => s.kind).join(' → ');
+      const mins = Math.max(1, Math.round(deck.totalSec / 60));
+      // `final`: the deck card IS the reply — emit verbatim, no answer-model re-gen
+      // (same contract as pr_handover_mode). `deck` carries the playable ExplainerDoc.
+      return {
+        ok: true,
+        content:
+          `Built a ${deck.slides.length}-slide summary presentation deck for ${rec.owner}/${rec.repo}#${rec.number}. ` +
+          `Verdict: ${deck.verdictLabel || deck.verdict}. Slides: ${kinds}. ` +
+          `Press play for the ~${mins} min narrated walkthrough, or tap a question to drill in.`,
+        // In voice mode the deck auto-plays its own narration, so keep the spoken
+        // lead-in short (the voice loop speaks this) to avoid talking over the deck.
+        spoken:
+          ctx.mode === 'voice'
+            ? 'Here is your PR summary presentation deck.'
+            : `Here's a ${deck.slides.length}-slide summary presentation deck — press play for the narrated walkthrough.`,
+        summary: `Summary presentation deck · ${deck.slides.length} slides`,
+        final: true,
+        deck,
+      };
+    },
+  },
+  {
+    name: 'explain_risk',
+    description:
+      "Give a QUALITATIVE risk review of the WHOLE PR — reasoned over the actual code, diff, flow, and call graph (NOT a list of scores): the soundness of the logic, whether the change fits the architecture, what could break downstream and how to mitigate it, and what could have been implemented better. Use when the user asks what the risk is, what could go wrong / break / fail, whether it's safe to merge, what to address or fix first, or why the verdict is what it is — when NOT walking through a specific file. Prefer this over assess_merge_risk — it grounds in the scan's findings + blast-radius graph.",
+    capability:
+      "Give a qualitative risk review of the whole PR — logic, architecture fit, breaking-change risk + mitigation, and what could be done better, grounded in the code and call graph (explain_risk).",
+    spokenAction: 'Reviewing the risk in the code…',
+    available: (s) => s.scanRan && !!s.pr,
+    run: (_args, ctx) => runRiskTool(ctx),
+  },
+  {
+    name: 'explain_file_risk',
+    description:
+      "Give a QUALITATIVE risk review of the FILE currently open in the handover walkthrough (not the whole PR): the soundness of its logic, what its change could break downstream and how to mitigate it, and what could be done better — grounded in that file's diff and call graph. Use when a handover walkthrough is active and the user asks about the risk / what could break / what to fix in the file being walked through.",
+    capability: "Review the risk of the file you're walking through — what could break in it and how to mitigate (explain_file_risk).",
+    spokenAction: 'Reviewing the risk in this file…',
+    // Only meaningful mid-walkthrough — a session exists for the open PR.
+    available: (s) => s.scanRan && !!s.pr && s.handoverActive,
+    async run(_args, ctx) {
+      // Scope to the file the walkthrough is positioned on; at the overview (no current
+      // file) fall back to a whole-PR review so the question is never met with nothing.
+      const session = ctx.state.url ? await getHandoverSession(ctx.state.url).catch(() => null) : null;
+      const step = session ? currentStep(session) : null;
+      return runRiskTool(ctx, step ? [step.path] : undefined);
+    },
+  },
   // The 5 specialized question agents — one shared iterative engine, per-lens
   // task + file-bias + narration (see agents/lenses.ts). All read the changed
   // files so their answers are GROUNDED (real paths/contents), not guessed.
@@ -405,6 +533,33 @@ export function routeHandover(userText: string, state: PrToolState): 'pr_handove
   if (!intent) return null;
   if (intent.kind === 'start' || intent.kind === 'stop') return 'pr_handover_mode';
   return state.handoverActive ? 'pr_handover_mode' : null;
+}
+
+/** Deterministic RISK routing — the analog of `routeHandover`, run in the same
+ *  forced short-circuit BEFORE the LLM router (and before the meta/chit-chat guard).
+ *  A direct risk question ("what's the risk", "is it safe to merge", "what could
+ *  break") must be answered from the scan's COMPUTED signals, not generated freely —
+ *  so it routes to a grounded risk review. SCOPE follows context: while a handover
+ *  walkthrough is live, the question is about the file being walked through →
+ *  `explain_file_risk`; otherwise it's about the whole PR → `explain_risk`. Requires a
+ *  scan (the signals don't exist otherwise). Returns null → normal routing (so a nuanced
+ *  risk ask the matcher misses can still reach the assess_merge_risk lens via the LLM). */
+export function routeRisk(userText: string, state: PrToolState): 'explain_risk' | 'explain_file_risk' | null {
+  if (!state.scanRan || !state.pr) return null; // tool unavailable
+  if (!isRiskQuestion(userText)) return null;
+  return state.handoverActive ? 'explain_file_risk' : 'explain_risk';
+}
+
+/** Deterministic DECK routing — the analog of routeHandover/routeRisk. The weak 1.5B
+ *  router won't reliably pick summary_presentation_deck from its description (it answers in
+ *  prose instead), so a direct "deck / slide deck / summary deck / presentation"
+ *  request is forced to the tool in code. Requires a scan (the deck is built from it),
+ *  and not while a handover is live (so "next"/"stop" there isn't hijacked). Returns
+ *  null → normal LLM routing. */
+export function routeDeck(userText: string, state: PrToolState): 'summary_presentation_deck' | null {
+  if (!state.scanRan || !state.pr) return null; // tool unavailable
+  if (state.handoverActive) return null; // don't hijack an active walkthrough
+  return /\b(slide\s*)?deck\b|\bpresentation\b|\bslide\s?show\b/i.test(userText) ? 'summary_presentation_deck' : null;
 }
 
 /** Turn a lens (agents/lenses.ts) into a routable, grounded ChatTool. Each runs
@@ -532,6 +687,11 @@ export function buildRouterSystemPrompt(persona: string, state: PrToolState): st
       `- The user wants a guided walkthrough / handover / file-by-file or step-by-step review or tour of the PR, OR — while one is in progress (handover_in_progress) — says next / proceed / continue / "go to <file>" / back / resume / "where are we" / "go deeper" / "tell me more" / "I have a question" / stop → pr_handover_mode (NOT explain_architecture).`,
     );
   }
+  if (has('summary_presentation_deck')) {
+    rules.push(
+      `- The user wants a DECK / slide deck / summary deck / scan summary deck / presentation, or says "present" / "play" the PR / "show me a deck" / "give me a deck" / "summary deck" → summary_presentation_deck (a playable slide card; NOT pr_handover_mode, which drives the browser file-by-file).`,
+    );
+  }
   if (has('run_live_pr_scan')) {
     rules.push(
       `- scan_ran is false AND the user asks about THIS pull request's code, changes, quality, intent, or "what's going on here" → run_live_pr_scan. A scan is the only way to read the PR — scan it, don't ask the user to paste it.`,
@@ -542,6 +702,14 @@ export function buildRouterSystemPrompt(persona: string, state: PrToolState): st
   if (has('get_pr_architecture')) rules.push(`- The user asks about the PR's architecture, design, or structure → get_pr_architecture.`);
   if (has('explain_architecture'))
     rules.push(`- The user asks a deep "how / why does this work", "walk me through it", or anything needing the actual file contents → explain_architecture.`);
+  if (has('explain_risk'))
+    rules.push(
+      `- The user asks what the RISK is, what could go wrong / break / fail, whether it's safe to merge, what to address or fix first, or about a risk metric (blast radius, review fatigue, fragility) → explain_risk (NOT assess_merge_risk — explain_risk reads the scan's computed signals).`,
+    );
+  if (has('explain_file_risk'))
+    rules.push(
+      `- During a handover walkthrough, a risk question ("what could break here", "is this file safe", "what to fix") is about the FILE being walked through → explain_file_risk (the file-scoped review), NOT explain_risk (the whole PR).`,
+    );
   // The specialized question agents (available once a scan ran). Each rule is
   // generated from the lens's own example questions, so the routing contract lives
   // in agents/lenses.ts (one source of truth) and can't drift on a rename.
