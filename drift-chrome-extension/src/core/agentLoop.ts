@@ -17,6 +17,7 @@ import type { BrainRuntime } from './brainRuntime';
 import { logger } from './debug';
 import { buildMessages, type ChatTurn, type Turn } from './chatContext';
 import type { FilePresentation } from '../agents/scrollPlan';
+import type { ExplainerDoc } from '../agents/explainerDoc';
 import {
   buildSystemPrompt,
   buildRouterSystemPrompt,
@@ -26,6 +27,8 @@ import {
   findTool,
   isMetaQuestion,
   routeHandover,
+  routeRisk,
+  routeDeck,
   buildToolFailureReport,
   type PrToolState,
   type ToolRunContext,
@@ -47,6 +50,8 @@ export interface AgentEvents {
   /** A handover file step produced clickable presentation beats — attach them to the
    *  reply so the message can render breathing buttons (replay scroll+highlight). */
   onPresentation?: (presentation: FilePresentation) => void;
+  /** The summary_presentation_deck tool produced a playable deck — attach it to the reply. */
+  onDeck?: (deck: ExplainerDoc) => void;
 }
 
 export interface AgentTurnOpts {
@@ -113,10 +118,13 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
     // bypasses the weak LLM router — same principle as isMetaQuestion. Checked
     // EVERY round so a "walk me through" on an unscanned PR can scan (round 0) then
     // start the walkthrough (round 1, once scan_ran flips in turnPatch).
-    const forced = routeHandover(userText, state);
+    // Risk routing joins the handover short-circuit: a direct risk question must hit
+    // the grounded explain_risk before the weak router (or the meta guard) can answer
+    // it from imagination — the "Address before merge → 'no obvious risks'" bug.
+    const forced = routeHandover(userText, state) ?? routeRisk(userText, state) ?? routeDeck(userText, state);
     if (forced && findTool(forced)?.available(state)) {
       chosen = forced;
-      log.log(`route → ${chosen} (handover short-circuit)`);
+      log.log(`route → ${chosen} (forced short-circuit)`);
     } else if (tools.length && !(round === 0 && extra.length === 0 && isMetaQuestion(userText))) {
       const routeMsgs = [
         ...buildMessages(buildRouterSystemPrompt(persona, state), history, userText),
@@ -180,6 +188,7 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
       details?: string;
       final?: boolean;
       presentation?: FilePresentation;
+      deck?: ExplainerDoc;
     };
     try {
       result = await tool.run(call_args(), ctx);
@@ -208,6 +217,7 @@ export async function runAgentTurn(opts: AgentTurnOpts): Promise<string> {
     // cursor advance.
     if (result.final) {
       if (result.presentation) events.onPresentation?.(result.presentation);
+      if (result.deck) events.onDeck?.(result.deck);
       if (result.content) events.onToken(result.content);
       return result.content;
     }

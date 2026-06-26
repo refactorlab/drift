@@ -86,6 +86,28 @@ describe('runHandoverTurn', () => {
     expect((await getHandoverSession(URL))?.cursor).toBe(-1);
   });
 
+  it('START leads with the grounded risk brief (act-before-merge items) BEFORE the plan', async () => {
+    const rec = {
+      ...REC,
+      scan: {
+        pr_review: {
+          visual_summary: {
+            key_files: { groups: [{ name: 'g', files: [{ path: 'src/core/auth.ts', why: 'Auth rewrite' }] }] },
+            risks: { items: [{ quadrant: 'act_before_merge', label: 'Token refresh can deadlock', severity: 0.9, likelihood: 0.7 }] },
+          },
+        },
+      },
+    } as unknown as ScanRecord;
+    const r = await runHandoverTurn({ pr: PR, url: URL, rec, userText: 'walk me through this PR', brain: BRAIN, signal: new AbortController().signal, onProgress: () => {} });
+    // The verbatim risk verdict + the act-before item open the handover…
+    expect(r.content).toMatch(/Risk verdict: Address before merge/);
+    expect(r.content).toContain('Token refresh can deadlock');
+    // …ABOVE the review plan (the brief frames the walkthrough).
+    expect(r.content.indexOf('Risk verdict')).toBeLessThan(r.content.indexOf('review plan'));
+    // Voice gets the condensed risk line, not the bulleted brief.
+    expect(r.spoken).toMatch(/rated address before merge/i);
+  });
+
   it('NEXT advances to the first file, navigates to its diff anchor, and explains it', async () => {
     await turn('walk me through this PR'); // seed the session
     mock.setActiveTab({ id: 9, url: URL });

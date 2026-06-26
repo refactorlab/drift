@@ -9,6 +9,8 @@ import {
   buildScanContext,
   isMetaQuestion,
   routeHandover,
+  routeRisk,
+  routeDeck,
   type PrToolState,
   type ScanContextInput,
 } from './chatTools';
@@ -72,6 +74,40 @@ describe('tool gating', () => {
   it('pr_handover_mode is available after a scan (PR open), not before', () => {
     expect(getAvailableTools(withPr()).map((t) => t.name)).not.toContain('pr_handover_mode');
     expect(getAvailableTools(withPr({ scanRan: true })).map((t) => t.name)).toContain('pr_handover_mode');
+  });
+
+  it('summary_presentation_deck is available after a scan (PR open), not before', () => {
+    expect(getAvailableTools(withPr()).map((t) => t.name)).not.toContain('summary_presentation_deck');
+    expect(getAvailableTools(withPr({ scanRan: true })).map((t) => t.name)).toContain('summary_presentation_deck');
+  });
+
+  it('routeDeck forces the deck tool on a direct request (after a scan), bypassing the weak model', () => {
+    expect(routeDeck('give me a PR scan summary deck', withPr({ scanRan: true }))).toBe('summary_presentation_deck');
+    expect(routeDeck('show me a summary deck', withPr({ scanRan: true }))).toBe('summary_presentation_deck');
+    expect(routeDeck('present this PR as a slide deck', withPr({ scanRan: true }))).toBe('summary_presentation_deck');
+  });
+
+  it('routeDeck stays out of the way when it should', () => {
+    expect(routeDeck('give me a deck', withPr())).toBeNull(); // no scan yet → let it scan first
+    expect(routeDeck('what changed in this PR', withPr({ scanRan: true }))).toBeNull(); // not a deck ask
+    expect(routeDeck('next', withPr({ scanRan: true, handoverActive: true }))).toBeNull(); // mid-handover
+  });
+
+  it('the router prompt carries an explicit deck routing rule once a scan ran', () => {
+    const prompt = buildRouterSystemPrompt('persona', withPr({ scanRan: true }));
+    // the tool is listed AND there is a rule line pointing deck/presentation phrasing at it
+    expect(prompt).toContain('summary_presentation_deck');
+    expect(prompt).toMatch(/deck.*summary_presentation_deck|summary_presentation_deck.*deck/s);
+  });
+
+  it('explain_risk is available after a scan (PR open), not before', () => {
+    expect(getAvailableTools(withPr()).map((t) => t.name)).not.toContain('explain_risk');
+    expect(getAvailableTools(withPr({ scanRan: true })).map((t) => t.name)).toContain('explain_risk');
+  });
+
+  it('explain_file_risk is offered ONLY while a handover walkthrough is active', () => {
+    expect(getAvailableTools(withPr({ scanRan: true })).map((t) => t.name)).not.toContain('explain_file_risk');
+    expect(getAvailableTools(withPr({ scanRan: true, handoverActive: true })).map((t) => t.name)).toContain('explain_file_risk');
   });
 
   it('after a scan → get_pr_architecture is offered; explain_architecture only once mapped', () => {
@@ -273,6 +309,50 @@ describe('routeHandover (deterministic handover short-circuit)', () => {
   it('returns null without a scan, and for off-topic questions mid-walkthrough', () => {
     expect(routeHandover('walk me through this PR', withPr())).toBeNull(); // no scan → tool unavailable
     expect(routeHandover('what does auth.ts do?', withPr({ scanRan: true, handoverActive: true }))).toBeNull();
+  });
+});
+
+describe('routeRisk (deterministic risk short-circuit)', () => {
+  it('routes risk / merge-safety questions to explain_risk once a scan exists', () => {
+    for (const q of [
+      'can you explain the risk in this PR?',
+      "what's the risk",
+      'is this safe to merge',
+      'what could break',
+      'what should I address first',
+    ])
+      expect(routeRisk(q, withPr({ scanRan: true }))).toBe('explain_risk');
+  });
+
+  it('returns null before a scan (the signals do not exist yet)', () => {
+    expect(routeRisk('what is the risk', withPr())).toBeNull();
+  });
+
+  it('SCOPES a risk question to the current file MID-handover, whole-PR otherwise', () => {
+    // routeHandover declines non-control questions; routeRisk then catches it so the answer
+    // is grounded instead of confabulated. While a walkthrough is live the question is about
+    // the file being walked through → the file-scoped tool; outside handover → the whole PR.
+    expect(routeHandover('explain the risk in this PR', withPr({ scanRan: true, handoverActive: true }))).toBeNull();
+    expect(routeRisk('explain the risk', withPr({ scanRan: true, handoverActive: true }))).toBe('explain_file_risk');
+    expect(routeRisk('explain the risk', withPr({ scanRan: true }))).toBe('explain_risk');
+  });
+
+  it('does NOT steal handover control, file, or architecture questions', () => {
+    for (const q of ['next', 'walk me through this PR', 'which files changed', "what's the architecture", 'what does auth.ts do'])
+      expect(routeRisk(q, withPr({ scanRan: true, handoverActive: true }))).toBeNull();
+  });
+});
+
+describe('risk router wiring', () => {
+  it('explain_risk is in the router enum after a scan, gated before', () => {
+    expect(JSON.parse(routerSchema(withPr({ scanRan: true }))).properties.tool.enum).toContain('explain_risk');
+    expect(JSON.parse(routerSchema(withPr())).properties.tool.enum).not.toContain('explain_risk');
+  });
+
+  it('the router prompt carries the explain_risk rule (preferred over assess_merge_risk)', () => {
+    const p = buildRouterSystemPrompt('P', withPr({ scanRan: true }));
+    expect(p).toContain('explain_risk');
+    expect(p).toContain('what could go wrong');
   });
 });
 

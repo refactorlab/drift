@@ -26,6 +26,8 @@ import {
   findTool,
   isMetaQuestion,
   routeHandover,
+  routeRisk,
+  routeDeck,
   buildRouterSystemPrompt,
   routerSchema,
   parseRouterDecision,
@@ -36,6 +38,7 @@ import {
 import { logger } from './debug';
 import type { KokoroRuntime } from './kokoroRuntime';
 import type { FilePresentation } from '../agents/scrollPlan';
+import type { ExplainerDoc } from '../agents/explainerDoc';
 
 const log = logger('voice');
 
@@ -73,6 +76,8 @@ export interface VoiceHandlers {
   onStatePatch?: (patch: Partial<PrToolState>) => void;
   /** Handover presentation beats (clickable line spots) for the transcript message. */
   onPresentation?: (presentation: FilePresentation) => void;
+  /** The summary_presentation_deck tool's playable deck for the transcript message. */
+  onDeck?: (deck: ExplainerDoc) => void;
   /** Normalized 0..1 audio energy for the UI orb: mic loudness while listening,
    *  agent playback loudness while speaking. High-rate (per frame) — the sink
    *  should write a ref, not setState. */
@@ -345,10 +350,10 @@ export class VoiceController {
     // checked BEFORE the meta/chit-chat guard because affirmatives like "ok"/"got
     // it" are BOTH greetings and walkthrough "proceed" — during an active handover
     // they must advance it, not be answered as small talk (matches the text path).
-    let chosen: string | null = routeHandover(userText, state);
+    let chosen: string | null = routeHandover(userText, state) ?? routeRisk(userText, state) ?? routeDeck(userText, state);
     if (chosen && !findTool(chosen)?.available(state)) chosen = null;
     if (chosen) {
-      log.log(`route → ${chosen} (handover short-circuit)`);
+      log.log(`route → ${chosen} (forced short-circuit)`);
     } else {
       // A question about US / chit-chat needs no tool — short-circuit deterministically
       // so the 1.5B router can't misfire it into a PR scan (matches the text path).
@@ -400,6 +405,7 @@ export class VoiceController {
       );
       if (result.statePatch) this.handlers.onStatePatch?.(result.statePatch);
       if (result.presentation) this.handlers.onPresentation?.(result.presentation);
+      if (result.deck) this.handlers.onDeck?.(result.deck);
       this.handlers.onToolEnd?.(tool.name, result.ok, result.summary ?? (result.ok ? 'done' : 'failed'), result.details);
       // `final` (handover): the content IS the reply → show it + speak it (the
       // condensed `spoken` variant when present). Otherwise wrap it as a tool-result

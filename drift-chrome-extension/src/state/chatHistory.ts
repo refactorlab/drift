@@ -4,6 +4,7 @@
 
 import type { ReasoningStep } from '../app/reasoning';
 import type { FilePresentation } from '../agents/scrollPlan';
+import type { ExplainerDoc } from '../agents/explainerDoc';
 
 export interface ChatMessage {
   id: number;
@@ -18,6 +19,8 @@ export interface ChatMessage {
   /** A handover file step's clickable presentation — rendered as breathing buttons
    *  that replay the scroll+highlight from a chosen spot (only on explain-PR turns). */
   presentation?: FilePresentation;
+  /** The summary_presentation_deck tool's playable deck — rendered as a <DeckPlayer> card. */
+  deck?: ExplainerDoc;
   /** Agent tool-step card: an inline record of a tool the assistant called. */
   tool?: {
     name: string;

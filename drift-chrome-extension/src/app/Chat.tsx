@@ -25,6 +25,7 @@ import { hasHandoverSession, clearHandoverSession } from '../state/handoverSessi
 import { runScrollPlanThroughFile } from '../core/prNavigate';
 import type { FilePresentation, PresentBeat } from '../agents/scrollPlan';
 import { ChangeImpactGraph } from './report/ChangeImpactGraph';
+import { DeckPlayer } from './report/DeckPlayer';
 import {
   beatAtElapsed,
   beatStartOffsets,
@@ -537,6 +538,12 @@ export function Chat({
             // handover already started (reading pace). Clicking a beat re-seeks both.
             playPresentation(replyId, presentation, { drivePage: false });
           },
+          onDeck: (deck) => {
+            setChat((prev) => ({
+              ...prev,
+              messages: prev.messages.map((m) => (m.id === replyId ? { ...m, deck } : m)),
+            }));
+          },
         },
       });
     } catch (err) {
@@ -640,6 +647,18 @@ export function Chat({
                 messages: prev.messages.map((m) => (m.id === id ? { ...m, presentation } : m)),
               }));
               startVoiceFollow(id, presentation);
+            }
+          },
+          onDeck: (deck) => {
+            // Attach to the open voice reply if there is one; otherwise the deck is
+            // its own assistant message (a `final` deck tool may resolve before a
+            // spoken bubble exists).
+            const id = voiceReplyId.current;
+            if (id != null) {
+              setChat((prev) => ({ ...prev, messages: prev.messages.map((m) => (m.id === id ? { ...m, deck } : m)) }));
+            } else {
+              const nid = nextId.current++;
+              setChat((prev) => ({ ...prev, messages: [...prev.messages, { id: nid, role: 'assistant', deck }] }));
             }
           },
           onAssistantDone: () => {
@@ -847,8 +866,10 @@ export function Chat({
               />
             ) : (
               <div key={m.id} className={`msg ${m.role}`}>
-                <div className={`bubble ${m.role === 'assistant' ? 'muted' : ''}`}>
-                  {m.presentation && m.presentation.beats.length > 0 ? (
+                <div className={`bubble ${m.deck ? 'deck-host' : m.role === 'assistant' ? 'muted' : ''}`}>
+                  {m.deck ? (
+                    <DeckPlayer doc={m.deck} soundEnabled={mode === 'voice' || settings.graphSoundEnabled !== false} autoPlay={mode === 'voice'} />
+                  ) : m.presentation && m.presentation.beats.length > 0 ? (
                     // A handover file step renders as a STRUCTURED playbook: intro + inline
                     // sections (button + note, active one lit with the page) + outro + a
                     // hideable replay timeline — not a raw prose blob.

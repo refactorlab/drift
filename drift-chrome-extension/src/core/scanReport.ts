@@ -6,6 +6,7 @@
 // Everything is read defensively — partial scans render what they have.
 
 import type { DriftReport, Gauge, Metric, MetricLevel, MetricSection, Verdict } from './types';
+import { asScanOutput, riskItems } from './scanOutput';
 
 interface QualityGauge {
   id?: string;
@@ -20,9 +21,6 @@ interface Composite {
   band?: string; // A..E
   label?: string;
 }
-interface RiskItem {
-  quadrant?: string;
-}
 interface ScanShape {
   pr_review_ext?: {
     pr_quality?: { gauges?: QualityGauge[]; composite?: Composite };
@@ -30,7 +28,8 @@ interface ScanShape {
   pr_review?: {
     overall_drift?: { percent?: number; direction?: string };
     code_suggestions?: unknown[];
-    visual_summary?: { risks?: RiskItem[] };
+    // Risks are read through `riskItems(asScanOutput(scan))` (the shared accessor),
+    // NOT off this shape — they nest under visual_summary.risks.items.
   };
 }
 
@@ -145,7 +144,10 @@ export function scanToReport(scan: unknown, prUrl: string | null): DriftReport |
       tone: 'info',
     });
   }
-  const risks = Array.isArray(review.visual_summary?.risks) ? review.visual_summary!.risks! : [];
+  // Risks nest under visual_summary.risks.items (a RisksBlock) — read through the
+  // shared accessor so this never silently sees an empty array again (the bug where
+  // every live scan showed "0 risks" and never reached the "address" verdict).
+  const risks = riskItems(asScanOutput(scan));
   gauges.push({
     key: 'risks',
     label: 'RISKS',
